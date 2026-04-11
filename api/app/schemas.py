@@ -51,3 +51,38 @@ class RootFolderResponse(BaseModel):
 
     root_folder: str | None
     updated_at: str | None
+
+
+class DocumentScanResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    root_folder: str
+    found: int
+    created: int
+    skipped: int
+    scanned_at: str
+
+
+class DocumentListItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    relative_path: str
+    file_type: Literal["md", "txt"]
+    title: str
+    modified_at: str
+    scanned_at: str
+
+
+class DocumentDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    relative_path: str
+    file_type: Literal["md", "txt"]
+    title: str
+    size_bytes: int
+    modified_at: str
+    content_hash: str
+    content: str
+    scanned_at: str

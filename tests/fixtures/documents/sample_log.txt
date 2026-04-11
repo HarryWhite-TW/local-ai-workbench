@@ -1,0 +1,3 @@
+Block B text fixture line one.
+Block B text fixture line two.
+
