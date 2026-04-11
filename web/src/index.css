@@ -57,9 +57,15 @@ pre {
   color: #45617f;
 }
 
-.grid {
+.workspace-grid {
   display: grid;
   grid-template-columns: 1fr 1.2fr 1fr;
+  gap: 16px;
+}
+
+.panel-stack {
+  display: flex;
+  flex-direction: column;
   gap: 16px;
 }
 
@@ -69,6 +75,10 @@ pre {
   border-radius: 18px;
   padding: 18px;
   box-shadow: 0 10px 28px rgba(16, 32, 51, 0.06);
+}
+
+.status-panel {
+  margin-bottom: 16px;
 }
 
 .panel-header {
@@ -87,6 +97,10 @@ pre {
 .muted {
   color: #5f738a;
   font-size: 0.92rem;
+}
+
+.muted.compact {
+  margin: 6px 0 0;
 }
 
 .list {
@@ -125,34 +139,6 @@ pre {
   gap: 12px;
   font-size: 0.9rem;
   color: #50657e;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 88px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 0.82rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.badge-preview {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.badge-approved {
-  background: #dcfce7;
-  color: #166534;
-}
-
-.preview-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
 }
 
 .detail-row {
@@ -210,14 +196,47 @@ pre {
   padding: 12px 14px;
 }
 
+.root-folder-box,
+.content-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 96px;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.status-pill.configured {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-pill.missing {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.summary-paragraph {
+  margin: 0;
+  line-height: 1.55;
+}
+
 @media (max-width: 960px) {
   .hero {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .grid {
+  .workspace-grid {
     grid-template-columns: 1fr;
   }
 }
-

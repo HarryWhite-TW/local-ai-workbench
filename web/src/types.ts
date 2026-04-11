@@ -1,17 +1,3 @@
-export type ActionType = "stub_email_draft" | "stub_calendar_event" | "stub_export";
-export type ActionStatus = "preview" | "approved";
-
-export interface ActionRecord {
-  id: string;
-  action_type: ActionType;
-  title: string;
-  status: ActionStatus;
-  preview_payload: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-  approved_at: string | null;
-}
-
 export interface AuditEventRecord {
   id: number;
   action_id: string | null;
@@ -20,9 +6,56 @@ export interface AuditEventRecord {
   created_at: string;
 }
 
-export interface CreatePreviewRequest {
-  action_type: ActionType;
+export interface ActionRecord {
+  id: string;
+  action_type: string;
   title: string;
+  status: "preview" | "approved";
   preview_payload: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
 }
 
+export interface RootFolderStatusRecord {
+  root_folder: string | null;
+  updated_at: string | null;
+}
+
+export interface DocumentScanResult {
+  root_folder: string;
+  found: number;
+  created: number;
+  skipped: number;
+  scanned_at: string;
+}
+
+export interface DocumentListItemRecord {
+  id: string;
+  relative_path: string;
+  file_type: "md" | "txt";
+  title: string;
+  modified_at: string;
+  scanned_at: string;
+}
+
+export interface DocumentDetailRecord {
+  id: string;
+  relative_path: string;
+  file_type: "md" | "txt";
+  title: string;
+  size_bytes: number;
+  modified_at: string;
+  content_hash: string;
+  content: string;
+  scanned_at: string;
+}
+
+export interface SummaryArtifactRecord {
+  id: string;
+  document_id: string;
+  method: "extractive_v1";
+  source_content_hash: string;
+  summary_text: string;
+  created_at: string;
+}
