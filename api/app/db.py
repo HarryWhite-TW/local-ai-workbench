@@ -12,6 +12,7 @@ ALLOWED_ACTION_TYPES = (
     "stub_export",
 )
 ALLOWED_STATUSES = ("preview", "approved")
+ROOT_FOLDER_SETTING_KEY = "root_folder"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "app.db"
@@ -62,6 +63,45 @@ def init_db() -> None:
             ON audit_events (created_at DESC, id DESC)
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                relative_path TEXT NOT NULL UNIQUE,
+                file_type TEXT NOT NULL
+                    CHECK (file_type IN ('md', 'txt')),
+                title TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                modified_at TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                content TEXT NOT NULL,
+                scanned_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS summary_artifacts (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                method TEXT NOT NULL
+                    CHECK (method = 'extractive_v1'),
+                source_content_hash TEXT NOT NULL,
+                summary_text TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (document_id) REFERENCES documents(id)
+            )
+            """
+        )
         connection.commit()
 
 
@@ -75,4 +115,3 @@ def get_connection() -> Iterator[sqlite3.Connection]:
         connection.commit()
     finally:
         connection.close()
-

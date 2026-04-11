@@ -41,3 +41,13 @@ class AuditEventResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
 
+
+class RootFolderUpdateRequest(BaseModel):
+    root_folder: str = Field(min_length=1)
+
+
+class RootFolderResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    root_folder: str | None
+    updated_at: str | None
