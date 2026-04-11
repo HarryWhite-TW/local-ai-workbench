@@ -27,7 +27,7 @@ def list_audit_events(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         """
         SELECT id, action_id, event_type, event_payload, created_at
         FROM audit_events
-        ORDER BY created_at DESC, id DESC
+        ORDER BY julianday(created_at) DESC, id DESC
         """
     ).fetchall()
 
@@ -41,4 +41,3 @@ def list_audit_events(connection: sqlite3.Connection) -> list[dict[str, Any]]:
         }
         for row in rows
     ]
-

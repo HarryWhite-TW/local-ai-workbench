@@ -1,7 +1,12 @@
 from fastapi import APIRouter, HTTPException, status
 
 from api.app.db import get_connection
-from api.app.schemas import DocumentDetailResponse, DocumentListItemResponse, DocumentScanResponse
+from api.app.schemas import (
+    DocumentDetailResponse,
+    DocumentListItemResponse,
+    DocumentScanResponse,
+    SummaryArtifactResponse,
+)
 from api.app.services.documents import (
     DocumentNotFoundError,
     RootFolderNotConfiguredError,
@@ -10,6 +15,11 @@ from api.app.services.documents import (
     scan_documents,
 )
 from api.app.services.settings import InvalidRootFolderError
+from api.app.services.summary import (
+    SummaryArtifactNotFoundError,
+    create_summary_artifact,
+    get_latest_summary_artifact,
+)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -40,3 +50,28 @@ def get_document_by_id(document_id: str) -> DocumentDetailResponse:
         except DocumentNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.") from exc
     return DocumentDetailResponse(**document)
+
+
+@router.post("/{document_id}/summary", response_model=SummaryArtifactResponse)
+def post_document_summary(document_id: str) -> SummaryArtifactResponse:
+    with get_connection() as connection:
+        try:
+            artifact = create_summary_artifact(connection, document_id)
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.") from exc
+    return SummaryArtifactResponse(**artifact)
+
+
+@router.get("/{document_id}/summary", response_model=SummaryArtifactResponse)
+def get_document_summary(document_id: str) -> SummaryArtifactResponse:
+    with get_connection() as connection:
+        try:
+            artifact = get_latest_summary_artifact(connection, document_id)
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.") from exc
+        except SummaryArtifactNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Summary artifact not found.",
+            ) from exc
+    return SummaryArtifactResponse(**artifact)

@@ -86,3 +86,14 @@ class DocumentDetailResponse(BaseModel):
     content_hash: str
     content: str
     scanned_at: str
+
+
+class SummaryArtifactResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    document_id: str
+    method: Literal["extractive_v1"]
+    source_content_hash: str
+    summary_text: str
+    created_at: str
