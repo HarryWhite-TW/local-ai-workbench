@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import {
   ApiError,
@@ -8,13 +8,15 @@ import {
   getDocumentSummary,
   getDocuments,
   getRootFolderStatus,
-  scanDocuments
+  scanDocuments,
+  searchDocuments
 } from "./api";
 import { AuditList } from "./components/AuditList";
 import type {
   AuditEventRecord,
   DocumentDetailRecord,
   DocumentListItemRecord,
+  DocumentSearchResultRecord,
   RootFolderStatusRecord,
   SummaryArtifactRecord
 } from "./types";
@@ -29,11 +31,16 @@ export default function App() {
   const [selectedDocument, setSelectedDocument] = useState<DocumentDetailRecord | null>(null);
   const [summaryArtifact, setSummaryArtifact] = useState<SummaryArtifactRecord | null>(null);
   const [summaryState, setSummaryState] = useState<SummaryState>("idle");
+  const [searchInput, setSearchInput] = useState("");
+  const [activeQuery, setActiveQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<DocumentSearchResultRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   async function loadAudit() {
     const nextAuditEvents = await getAuditEvents();
@@ -121,6 +128,8 @@ export default function App() {
         setSelectedDocument(null);
         setSummaryArtifact(null);
         setSummaryState("idle");
+        setSearchResults([]);
+        setActiveQuery("");
         return;
       }
 
@@ -150,6 +159,10 @@ export default function App() {
     setError(null);
     try {
       await scanDocuments();
+      setSearchInput("");
+      setActiveQuery("");
+      setSearchResults([]);
+      setSearchError(null);
       await loadOverview(selectedDocumentId);
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : "Failed to scan documents.");
@@ -179,6 +192,29 @@ export default function App() {
       setError(generateError instanceof Error ? generateError.message : "Failed to generate summary.");
     } finally {
       setIsGeneratingSummary(false);
+    }
+  }
+
+  async function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSearchError(null);
+
+    const normalizedQuery = searchInput.trim();
+    if (!normalizedQuery) {
+      setActiveQuery("");
+      setSearchResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const results = await searchDocuments(normalizedQuery);
+      setActiveQuery(normalizedQuery);
+      setSearchResults(results);
+    } catch (searchRequestError) {
+      setSearchError(searchRequestError instanceof Error ? searchRequestError.message : "Failed to search documents.");
+    } finally {
+      setIsSearching(false);
     }
   }
 
@@ -234,36 +270,92 @@ export default function App() {
         </section>
       ) : (
         <div className="workspace-grid">
-          <section className="panel">
-            <div className="panel-header">
-              <h2>Documents</h2>
-              <span className="muted">{documents.length} item(s)</span>
-            </div>
-            {hasDocuments ? (
-              <div className="list">
-                {documents.map((document) => (
-                  <button
-                    key={document.id}
-                    type="button"
-                    className={`list-item ${selectedDocumentId === document.id ? "selected" : ""}`}
-                    onClick={() => void handleSelectDocument(document.id)}
-                  >
-                    <div className="list-item-title">{document.relative_path}</div>
-                    <div className="list-item-meta">
-                      <span>{document.file_type}</span>
-                      <span>{document.modified_at}</span>
-                    </div>
-                  </button>
-                ))}
+          <div className="panel-stack">
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Search</h2>
+                  <p className="muted compact">Search indexed document title, path, or content with a manual submit.</p>
+                </div>
               </div>
-            ) : (
-              <p className="empty-state">
-                {hasRootFolder
-                  ? "No indexed documents yet. Run a manual scan to load md/txt files from the configured root folder."
-                  : "No root folder configured yet, so the document list is empty."}
-              </p>
-            )}
-          </section>
+              <form className="search-form" onSubmit={(event) => void handleSearchSubmit(event)}>
+                <input
+                  type="text"
+                  className="search-input"
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                  placeholder="Search indexed documents"
+                  disabled={!hasDocuments || isLoading || isScanning || isSearching}
+                />
+                <button
+                  type="submit"
+                  className="secondary-button"
+                  disabled={!hasDocuments || isLoading || isScanning || isSearching}
+                >
+                  {isSearching ? "Searching..." : "Search"}
+                </button>
+              </form>
+              {searchError ? <div className="error-banner search-error">{searchError}</div> : null}
+              {!hasRootFolder ? (
+                <p className="empty-state">Search is unavailable until a root folder is configured.</p>
+              ) : !hasDocuments ? (
+                <p className="empty-state">Search will be available after you scan indexed md/txt documents.</p>
+              ) : !activeQuery ? (
+                <p className="empty-state">Enter a keyword and click Search to query title, path, and content.</p>
+              ) : searchResults.length === 0 ? (
+                <p className="empty-state">No matches found for "{activeQuery}".</p>
+              ) : (
+                <div className="list">
+                  {searchResults.map((result) => (
+                    <button
+                      key={`${result.document_id}-${result.relative_path}`}
+                      type="button"
+                      className={`list-item ${selectedDocumentId === result.document_id ? "selected" : ""}`}
+                      onClick={() => void handleSelectDocument(result.document_id)}
+                    >
+                      <div className="list-item-title">{result.title}</div>
+                      <div className="list-item-meta">
+                        <span>{result.file_type}</span>
+                        <span>{result.relative_path}</span>
+                      </div>
+                      <p className="search-snippet">{result.snippet}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="panel">
+              <div className="panel-header">
+                <h2>Documents</h2>
+                <span className="muted">{documents.length} item(s)</span>
+              </div>
+              {hasDocuments ? (
+                <div className="list">
+                  {documents.map((document) => (
+                    <button
+                      key={document.id}
+                      type="button"
+                      className={`list-item ${selectedDocumentId === document.id ? "selected" : ""}`}
+                      onClick={() => void handleSelectDocument(document.id)}
+                    >
+                      <div className="list-item-title">{document.relative_path}</div>
+                      <div className="list-item-meta">
+                        <span>{document.file_type}</span>
+                        <span>{document.modified_at}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-state">
+                  {hasRootFolder
+                    ? "No indexed documents yet. Run a manual scan to load md/txt files from the configured root folder."
+                    : "No root folder configured yet, so the document list is empty."}
+                </p>
+              )}
+            </section>
+          </div>
 
           <div className="panel-stack">
             <section className="panel">

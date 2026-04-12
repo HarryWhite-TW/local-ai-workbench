@@ -4,6 +4,7 @@ from api.app.db import get_connection
 from api.app.schemas import (
     DocumentDetailResponse,
     DocumentListItemResponse,
+    DocumentSearchResultResponse,
     DocumentScanResponse,
     SummaryArtifactResponse,
 )
@@ -13,6 +14,7 @@ from api.app.services.documents import (
     get_document,
     list_documents,
     scan_documents,
+    search_documents,
 )
 from api.app.services.settings import InvalidRootFolderError
 from api.app.services.summary import (
@@ -40,6 +42,12 @@ def post_documents_scan() -> DocumentScanResponse:
 def get_documents() -> list[DocumentListItemResponse]:
     with get_connection() as connection:
         return [DocumentListItemResponse(**document) for document in list_documents(connection)]
+
+
+@router.get("/search", response_model=list[DocumentSearchResultResponse])
+def get_document_search_results(q: str) -> list[DocumentSearchResultResponse]:
+    with get_connection() as connection:
+        return [DocumentSearchResultResponse(**result) for result in search_documents(connection, q)]
 
 
 @router.get("/{document_id}", response_model=DocumentDetailResponse)

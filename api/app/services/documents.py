@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 from pathlib import Path
 
@@ -8,6 +9,10 @@ from api.app.services.audit import create_audit_event
 from api.app.services.settings import InvalidRootFolderError, get_root_folder_setting, utc_now, validate_root_folder
 
 SUPPORTED_SUFFIXES = {".md": "md", ".txt": "txt"}
+WHITESPACE_PATTERN = re.compile(r"\s+")
+SNIPPET_PREFIX_CHARS = 40
+SNIPPET_SUFFIX_CHARS = 80
+SNIPPET_MAX_LENGTH = 121
 
 
 class RootFolderNotConfiguredError(Exception):
@@ -16,6 +21,55 @@ class RootFolderNotConfiguredError(Exception):
 
 class DocumentNotFoundError(Exception):
     """Raised when a document cannot be found."""
+
+
+def normalize_search_text(text: str) -> str:
+    return WHITESPACE_PATTERN.sub(" ", text).strip()
+
+
+def build_search_snippet(text: str, query: str) -> str:
+    normalized_text = normalize_search_text(text)
+    if not normalized_text:
+        return ""
+
+    lowered_text = normalized_text.lower()
+    lowered_query = query.lower()
+    match_index = lowered_text.find(lowered_query)
+
+    if match_index == -1:
+        snippet = normalized_text[:SNIPPET_MAX_LENGTH].strip()
+        if len(normalized_text) > len(snippet):
+            snippet = f"{snippet.rstrip()}..."
+        return snippet
+
+    snippet_start = max(0, match_index - SNIPPET_PREFIX_CHARS)
+    snippet_end = min(len(normalized_text), match_index + len(lowered_query) + SNIPPET_SUFFIX_CHARS)
+    snippet = normalized_text[snippet_start:snippet_end].strip()
+
+    if snippet_start > 0:
+        snippet = f"...{snippet}"
+    if snippet_end < len(normalized_text):
+        snippet = f"{snippet}..."
+    if len(snippet) > SNIPPET_MAX_LENGTH:
+        snippet = f"{snippet[:SNIPPET_MAX_LENGTH - 3].rstrip()}..."
+
+    return snippet
+
+
+def select_snippet_source(
+    *,
+    title: str,
+    relative_path: str,
+    content: str,
+    query: str,
+) -> str:
+    lowered_query = query.lower()
+    for candidate in (title, relative_path, content):
+        normalized_candidate = normalize_search_text(candidate)
+        if lowered_query in normalized_candidate.lower():
+            return build_search_snippet(normalized_candidate, query)
+
+    return build_search_snippet(content, query)
 
 
 def get_configured_root_folder(connection: sqlite3.Connection) -> str:
@@ -139,6 +193,41 @@ def list_documents(connection: sqlite3.Connection) -> list[dict[str, object]]:
             "title": row["title"],
             "modified_at": row["modified_at"],
             "scanned_at": row["scanned_at"],
+        }
+        for row in rows
+    ]
+
+
+def search_documents(connection: sqlite3.Connection, query: str) -> list[dict[str, str]]:
+    normalized_query = normalize_search_text(query)
+    if not normalized_query:
+        return []
+
+    search_pattern = f"%{normalized_query.lower()}%"
+    rows = connection.execute(
+        """
+        SELECT id, relative_path, title, file_type, content
+        FROM documents
+        WHERE lower(title) LIKE ?
+           OR lower(relative_path) LIKE ?
+           OR lower(content) LIKE ?
+        ORDER BY relative_path ASC
+        """,
+        (search_pattern, search_pattern, search_pattern),
+    ).fetchall()
+
+    return [
+        {
+            "document_id": row["id"],
+            "relative_path": row["relative_path"],
+            "title": row["title"],
+            "file_type": row["file_type"],
+            "snippet": select_snippet_source(
+                title=row["title"],
+                relative_path=row["relative_path"],
+                content=row["content"],
+                query=normalized_query,
+            ),
         }
         for row in rows
     ]

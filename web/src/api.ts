@@ -2,6 +2,7 @@ import type {
   AuditEventRecord,
   DocumentDetailRecord,
   DocumentListItemRecord,
+  DocumentSearchResultRecord,
   DocumentScanResult,
   RootFolderStatusRecord,
   SummaryArtifactRecord
@@ -55,6 +56,10 @@ export function scanDocuments(): Promise<DocumentScanResult> {
 
 export function getDocuments(): Promise<DocumentListItemRecord[]> {
   return request<DocumentListItemRecord[]>("/documents");
+}
+
+export function searchDocuments(query: string): Promise<DocumentSearchResultRecord[]> {
+  return request<DocumentSearchResultRecord[]>(`/documents/search?q=${encodeURIComponent(query)}`);
 }
 
 export function getDocumentDetail(documentId: string): Promise<DocumentDetailRecord> {

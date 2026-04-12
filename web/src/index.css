@@ -94,6 +94,23 @@ pre {
   font-size: 1.1rem;
 }
 
+.search-form {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #cbd7e4;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font: inherit;
+  color: #102033;
+  background: #ffffff;
+}
+
 .muted {
   color: #5f738a;
   font-size: 0.92rem;
@@ -196,6 +213,10 @@ pre {
   padding: 12px 14px;
 }
 
+.search-error {
+  margin-top: 0;
+}
+
 .root-folder-box,
 .content-block {
   display: flex;
@@ -230,6 +251,12 @@ pre {
   line-height: 1.55;
 }
 
+.search-snippet {
+  margin: 10px 0 0;
+  color: #41576f;
+  line-height: 1.45;
+}
+
 @media (max-width: 960px) {
   .hero {
     flex-direction: column;
@@ -238,5 +265,9 @@ pre {
 
   .workspace-grid {
     grid-template-columns: 1fr;
+  }
+
+  .search-form {
+    flex-direction: column;
   }
 }

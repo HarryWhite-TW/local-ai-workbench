@@ -39,6 +39,14 @@ export interface DocumentListItemRecord {
   scanned_at: string;
 }
 
+export interface DocumentSearchResultRecord {
+  document_id: string;
+  relative_path: string;
+  title: string;
+  file_type: "md" | "txt";
+  snippet: string;
+}
+
 export interface DocumentDetailRecord {
   id: string;
   relative_path: string;

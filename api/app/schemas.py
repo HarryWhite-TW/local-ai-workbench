@@ -74,6 +74,16 @@ class DocumentListItemResponse(BaseModel):
     scanned_at: str
 
 
+class DocumentSearchResultResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    relative_path: str
+    title: str
+    file_type: Literal["md", "txt"]
+    snippet: str
+
+
 class DocumentDetailResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
