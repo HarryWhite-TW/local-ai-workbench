@@ -14,6 +14,9 @@ WHITESPACE_PATTERN = re.compile(r"\s+")
 SNIPPET_PREFIX_CHARS = 40
 SNIPPET_SUFFIX_CHARS = 80
 SNIPPET_MAX_LENGTH = 121
+TITLE_MATCH_RANK = 0
+RELATIVE_PATH_MATCH_RANK = 1
+CONTENT_MATCH_RANK = 2
 
 
 class RootFolderNotConfiguredError(Exception):
@@ -72,6 +75,41 @@ def build_search_snippet(text: str, query: str) -> str:
     return snippet
 
 
+def build_document_start_snippet(text: str) -> str:
+    normalized_text = normalize_search_text(text)
+    if not normalized_text:
+        return ""
+
+    snippet = normalized_text[:SNIPPET_MAX_LENGTH].strip()
+    if len(normalized_text) > len(snippet):
+        snippet = f"{snippet.rstrip()}..."
+    return snippet
+
+
+def get_match_index(text: str, query: str) -> int:
+    normalized_text = normalize_search_text(text)
+    return normalized_text.lower().find(query.lower())
+
+
+def get_search_sort_key(
+    *,
+    title: str,
+    relative_path: str,
+    content: str,
+    query: str,
+) -> tuple[int, int, str]:
+    title_match_index = get_match_index(title, query)
+    if title_match_index != -1:
+        return (TITLE_MATCH_RANK, title_match_index, relative_path)
+
+    relative_path_match_index = get_match_index(relative_path, query)
+    if relative_path_match_index != -1:
+        return (RELATIVE_PATH_MATCH_RANK, relative_path_match_index, relative_path)
+
+    content_match_index = get_match_index(content, query)
+    return (CONTENT_MATCH_RANK, content_match_index, relative_path)
+
+
 def select_snippet_source(
     *,
     title: str,
@@ -79,13 +117,10 @@ def select_snippet_source(
     content: str,
     query: str,
 ) -> str:
-    lowered_query = query.lower()
-    for candidate in (title, relative_path, content):
-        normalized_candidate = normalize_search_text(candidate)
-        if lowered_query in normalized_candidate.lower():
-            return build_search_snippet(normalized_candidate, query)
+    if get_match_index(content, query) != -1:
+        return build_search_snippet(content, query)
 
-    return build_search_snippet(content, query)
+    return build_document_start_snippet(content)
 
 
 def get_configured_root_folder(connection: sqlite3.Connection) -> str:
@@ -236,10 +271,19 @@ def search_documents(connection: sqlite3.Connection, query: str) -> list[dict[st
         WHERE lower(title) LIKE ?
            OR lower(relative_path) LIKE ?
            OR lower(content) LIKE ?
-        ORDER BY relative_path ASC
         """,
         (search_pattern, search_pattern, search_pattern),
     ).fetchall()
+
+    ordered_rows = sorted(
+        rows,
+        key=lambda row: get_search_sort_key(
+            title=row["title"],
+            relative_path=row["relative_path"],
+            content=row["content"],
+            query=normalized_query,
+        ),
+    )
 
     return [
         {
@@ -254,7 +298,7 @@ def search_documents(connection: sqlite3.Connection, query: str) -> list[dict[st
                 query=normalized_query,
             ),
         }
-        for row in rows
+        for row in ordered_rows
     ]
 
 

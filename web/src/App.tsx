@@ -220,6 +220,11 @@ export default function App() {
 
   const hasRootFolder = Boolean(rootFolder?.root_folder);
   const hasDocuments = documents.length > 0;
+  const normalizedSearchInput = searchInput.trim();
+  const canSubmitSearch = hasDocuments && !isLoading && !isScanning && !isSearching && normalizedSearchInput.length > 0;
+  const showSearchIdleState = hasRootFolder && hasDocuments && !activeQuery;
+  const showSearchNoMatchState = hasRootFolder && hasDocuments && Boolean(activeQuery) && searchResults.length === 0;
+  const showSearchResultState = hasRootFolder && hasDocuments && Boolean(activeQuery) && searchResults.length > 0;
 
   return (
     <main className="app-shell">
@@ -290,7 +295,7 @@ export default function App() {
                 <button
                   type="submit"
                   className="secondary-button"
-                  disabled={!hasDocuments || isLoading || isScanning || isSearching}
+                  disabled={!canSubmitSearch}
                 >
                   {isSearching ? "Searching..." : "Search"}
                 </button>
@@ -299,30 +304,42 @@ export default function App() {
               {!hasRootFolder ? (
                 <p className="empty-state">Search is unavailable until a root folder is configured.</p>
               ) : !hasDocuments ? (
-                <p className="empty-state">Search will be available after you scan indexed md/txt documents.</p>
-              ) : !activeQuery ? (
-                <p className="empty-state">Enter a keyword and click Search to query title, path, and content.</p>
-              ) : searchResults.length === 0 ? (
-                <p className="empty-state">No matches found for "{activeQuery}".</p>
-              ) : (
-                <div className="list">
-                  {searchResults.map((result) => (
-                    <button
-                      key={`${result.document_id}-${result.relative_path}`}
-                      type="button"
-                      className={`list-item ${selectedDocumentId === result.document_id ? "selected" : ""}`}
-                      onClick={() => void handleSelectDocument(result.document_id)}
-                    >
-                      <div className="list-item-title">{result.title}</div>
-                      <div className="list-item-meta">
-                        <span>{result.file_type}</span>
-                        <span>{result.relative_path}</span>
-                      </div>
-                      <p className="search-snippet">{result.snippet}</p>
-                    </button>
-                  ))}
-                </div>
-              )}
+                <p className="empty-state">Search will be available after you scan indexed md/txt/pdf/docx documents.</p>
+              ) : showSearchIdleState ? (
+                <>
+                  <p className="empty-state">Search is ready. Enter a keyword and click Search to query title, path, and content.</p>
+                  <p className="muted compact">Results stay local and load the existing document detail and summary panels.</p>
+                </>
+              ) : showSearchNoMatchState ? (
+                <>
+                  <p className="empty-state">No matches found for "{activeQuery}".</p>
+                  <p className="muted compact">Search checks title, relative path, and extracted content only.</p>
+                </>
+              ) : showSearchResultState ? (
+                <>
+                  <p className="muted compact">
+                    Showing {searchResults.length} result(s) for "{activeQuery}". Results prefer title matches, then
+                    path, then content.
+                  </p>
+                  <div className="list">
+                    {searchResults.map((result) => (
+                      <button
+                        key={`${result.document_id}-${result.relative_path}`}
+                        type="button"
+                        className={`list-item ${selectedDocumentId === result.document_id ? "selected" : ""}`}
+                        onClick={() => void handleSelectDocument(result.document_id)}
+                      >
+                        <div className="list-item-title">{result.title}</div>
+                        <div className="list-item-meta">
+                          <span>{result.file_type}</span>
+                          <span>{result.relative_path}</span>
+                        </div>
+                        <p className="search-snippet">{result.snippet}</p>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </section>
 
             <section className="panel">

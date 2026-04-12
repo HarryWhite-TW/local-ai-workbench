@@ -48,11 +48,11 @@ def test_search_matches_title_relative_path_and_content_case_insensitively(clien
 
     assert len(title_match) == 1
     assert title_match[0]["title"] == "AlphaPlan"
-    assert "AlphaPlan" in title_match[0]["snippet"]
+    assert title_match[0]["snippet"].startswith("# Alpha Plan This file tracks orchard milestones")
 
     assert len(path_match) == 1
     assert path_match[0]["relative_path"] == "nested/release-log.txt"
-    assert "nested/release-log.txt" in path_match[0]["snippet"]
+    assert path_match[0]["snippet"].startswith("First line. Second line mentions LaunchWindow")
 
     assert len(content_match) == 1
     assert content_match[0]["relative_path"] == "nested/release-log.txt"
@@ -90,6 +90,78 @@ def test_search_snippet_uses_fixed_single_line_window(client, tmp_path: Path):
     assert "NeedleToken" in snippet
     assert "\n" not in snippet
     assert len(snippet) <= 121
+    assert snippet.startswith("...")
+    assert snippet.endswith("...")
+
+
+def test_search_orders_results_by_match_scope_then_earliest_match_then_relative_path(client, tmp_path: Path):
+    root = tmp_path / "documents"
+    (root / "folder-keyword").mkdir(parents=True)
+    (root / "folder-target").mkdir(parents=True)
+    (root / "alpha").mkdir(parents=True)
+    (root / "beta").mkdir(parents=True)
+    (root / "TargetAlpha.txt").write_text("Document body without the special term.", encoding="utf-8")
+    (root / "prefix-target.txt").write_text("Document body without the special term.", encoding="utf-8")
+    (root / "folder-keyword" / "notes.txt").write_text("Path match only body.", encoding="utf-8")
+    (root / "folder-target" / "notes.txt").write_text("Path match only body.", encoding="utf-8")
+    (root / "alpha" / "content-a.txt").write_text("prefix keyword appears in this content body.", encoding="utf-8")
+    (root / "beta" / "content-b.txt").write_text("prefix keyword appears in this content body.", encoding="utf-8")
+
+    client.put("/settings/root-folder", json={"root_folder": str(root)})
+    client.post("/documents/scan")
+
+    response = client.get("/documents/search", params={"q": "keyword"})
+
+    assert response.status_code == 200
+    results = response.json()
+    assert [result["relative_path"] for result in results] == [
+        "folder-keyword/notes.txt",
+        "alpha/content-a.txt",
+        "beta/content-b.txt",
+    ]
+
+    title_response = client.get("/documents/search", params={"q": "target"})
+
+    assert title_response.status_code == 200
+    title_results = title_response.json()
+    assert [result["relative_path"] for result in title_results[:3]] == [
+        "TargetAlpha.txt",
+        "prefix-target.txt",
+        "folder-target/notes.txt",
+    ]
+
+
+def test_search_uses_document_start_snippet_only_for_title_or_path_only_matches(client, tmp_path: Path):
+    prepare_search_root(client, tmp_path)
+
+    title_response = client.get("/documents/search", params={"q": "alphaplan"})
+    path_response = client.get("/documents/search", params={"q": "nested/release"})
+
+    assert title_response.status_code == 200
+    assert path_response.status_code == 200
+    assert title_response.json()[0]["snippet"] == "# Alpha Plan This file tracks orchard milestones and delivery notes."
+    assert path_response.json()[0]["snippet"] == (
+        "First line. Second line mentions LaunchWindow in the content body. Third line stays searchable."
+    )
+
+
+def test_search_uses_content_snippet_when_title_or_path_and_content_both_match(client, tmp_path: Path):
+    root = tmp_path / "documents"
+    root.mkdir()
+    (root / "NeedleToken-guide.txt").write_text(
+        "A" * 60 + "\n\nNeedleToken appears in the middle of this long searchable paragraph.\n" + "B" * 120,
+        encoding="utf-8",
+    )
+    client.put("/settings/root-folder", json={"root_folder": str(root)})
+    client.post("/documents/scan")
+
+    response = client.get("/documents/search", params={"q": "needletoken"})
+
+    assert response.status_code == 200
+    results = response.json()
+    assert len(results) == 1
+    snippet = results[0]["snippet"]
+    assert "NeedleToken" in snippet
     assert snippet.startswith("...")
     assert snippet.endswith("...")
 
