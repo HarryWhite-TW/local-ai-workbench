@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.api.document_factories import write_simple_docx, write_text_pdf
+
 
 def prepare_search_root(client, tmp_path: Path) -> None:
     root = tmp_path / "documents"
@@ -90,3 +92,22 @@ def test_search_snippet_uses_fixed_single_line_window(client, tmp_path: Path):
     assert len(snippet) <= 121
     assert snippet.startswith("...")
     assert snippet.endswith("...")
+
+
+def test_search_matches_ingested_pdf_and_docx_content(client, tmp_path: Path):
+    root = tmp_path / "documents"
+    root.mkdir()
+    write_text_pdf(root / "roadmap.pdf", "PDF roadmap includes DeltaLaunch milestone and owner notes.")
+    write_simple_docx(root / "meeting.docx", ["Meeting notes paragraph.", "Docx mentions PineappleTrack token."])
+    client.put("/settings/root-folder", json={"root_folder": str(root)})
+    client.post("/documents/scan")
+
+    pdf_response = client.get("/documents/search", params={"q": "deltalaunch"})
+    docx_response = client.get("/documents/search", params={"q": "pineappletrack"})
+
+    assert pdf_response.status_code == 200
+    assert docx_response.status_code == 200
+    assert pdf_response.json()[0]["file_type"] == "pdf"
+    assert "DeltaLaunch" in pdf_response.json()[0]["snippet"]
+    assert docx_response.json()[0]["file_type"] == "docx"
+    assert "PineappleTrack" in docx_response.json()[0]["snippet"]

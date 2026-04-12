@@ -68,7 +68,7 @@ class DocumentListItemResponse(BaseModel):
 
     id: str
     relative_path: str
-    file_type: Literal["md", "txt"]
+    file_type: Literal["md", "txt", "pdf", "docx"]
     title: str
     modified_at: str
     scanned_at: str
@@ -80,7 +80,7 @@ class DocumentSearchResultResponse(BaseModel):
     document_id: str
     relative_path: str
     title: str
-    file_type: Literal["md", "txt"]
+    file_type: Literal["md", "txt", "pdf", "docx"]
     snippet: str
 
 
@@ -89,7 +89,7 @@ class DocumentDetailResponse(BaseModel):
 
     id: str
     relative_path: str
-    file_type: Literal["md", "txt"]
+    file_type: Literal["md", "txt", "pdf", "docx"]
     title: str
     size_bytes: int
     modified_at: str

@@ -4,6 +4,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from tests.api.document_factories import write_simple_docx
+
 
 def prepare_scanned_root(client, tmp_path: Path, filename: str, content: str) -> str:
     root = tmp_path / "documents"
@@ -94,3 +96,26 @@ def test_summary_endpoints_return_404_when_document_is_missing(client):
     assert post_response.json() == {"detail": "Document not found."}
     assert get_response.status_code == 404
     assert get_response.json() == {"detail": "Document not found."}
+
+
+def test_summary_can_be_generated_from_docx_extracted_content(client, tmp_path: Path):
+    root = tmp_path / "documents"
+    root.mkdir()
+    write_simple_docx(
+        root / "docx-summary.docx",
+        [
+            "This DOCX paragraph should be summarized.",
+            "It includes a second sentence for extractive output.",
+            "A third sentence keeps the artifact deterministic.",
+        ],
+    )
+    client.put("/settings/root-folder", json={"root_folder": str(root)})
+    client.post("/documents/scan")
+    document_id = client.get("/documents").json()[0]["id"]
+
+    response = client.post(f"/documents/{document_id}/summary")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["method"] == "extractive_v1"
+    assert "DOCX paragraph should be summarized." in body["summary_text"]

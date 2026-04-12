@@ -33,7 +33,7 @@ export interface DocumentScanResult {
 export interface DocumentListItemRecord {
   id: string;
   relative_path: string;
-  file_type: "md" | "txt";
+  file_type: "md" | "txt" | "pdf" | "docx";
   title: string;
   modified_at: string;
   scanned_at: string;
@@ -43,14 +43,14 @@ export interface DocumentSearchResultRecord {
   document_id: string;
   relative_path: string;
   title: string;
-  file_type: "md" | "txt";
+  file_type: "md" | "txt" | "pdf" | "docx";
   snippet: string;
 }
 
 export interface DocumentDetailRecord {
   id: string;
   relative_path: string;
-  file_type: "md" | "txt";
+  file_type: "md" | "txt" | "pdf" | "docx";
   title: string;
   size_bytes: number;
   modified_at: string;

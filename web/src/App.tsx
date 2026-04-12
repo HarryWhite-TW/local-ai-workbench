@@ -229,8 +229,8 @@ export default function App() {
           <h1>Document Scan / Read / Summary</h1>
         </div>
         <p className="hero-copy">
-          This local UI wires the existing root-folder, document scan, single-document read, summary artifact, and
-          audit flow into one minimal workspace.
+          This local UI wires root-folder configuration, local document scan, single-document read, summary artifact,
+          keyword search, and audit into one minimal workspace.
         </p>
       </header>
 
@@ -348,11 +348,11 @@ export default function App() {
                   ))}
                 </div>
               ) : (
-                <p className="empty-state">
-                  {hasRootFolder
-                    ? "No indexed documents yet. Run a manual scan to load md/txt files from the configured root folder."
-                    : "No root folder configured yet, so the document list is empty."}
-                </p>
+              <p className="empty-state">
+                {hasRootFolder
+                  ? "No indexed documents yet. Run a manual scan to load md/txt/pdf/docx files from the configured root folder."
+                  : "No root folder configured yet, so the document list is empty."}
+              </p>
               )}
             </section>
           </div>

@@ -6,9 +6,10 @@ import sqlite3
 from pathlib import Path
 
 from api.app.services.audit import create_audit_event
+from api.app.services.file_extractors import extract_docx_text, extract_pdf_text, read_text_file
 from api.app.services.settings import InvalidRootFolderError, get_root_folder_setting, utc_now, validate_root_folder
 
-SUPPORTED_SUFFIXES = {".md": "md", ".txt": "txt"}
+SUPPORTED_SUFFIXES = {".md": "md", ".txt": "txt", ".pdf": "pdf", ".docx": "docx"}
 WHITESPACE_PATTERN = re.compile(r"\s+")
 SNIPPET_PREFIX_CHARS = 40
 SNIPPET_SUFFIX_CHARS = 80
@@ -25,6 +26,21 @@ class DocumentNotFoundError(Exception):
 
 def normalize_search_text(text: str) -> str:
     return WHITESPACE_PATTERN.sub(" ", text).strip()
+
+
+def has_usable_text(text: str) -> bool:
+    return bool(normalize_search_text(text))
+
+
+def extract_document_content(file_path: Path, file_type: str) -> str:
+    if file_type in {"md", "txt"}:
+        return read_text_file(file_path)
+    if file_type == "pdf":
+        return extract_pdf_text(file_path)
+    if file_type == "docx":
+        return extract_docx_text(file_path)
+
+    raise ValueError(f"Unsupported file type: {file_type}")
 
 
 def build_search_snippet(text: str, query: str) -> str:
@@ -116,8 +132,17 @@ def scan_documents(connection: sqlite3.Connection) -> dict[str, object]:
 
         relative_path = normalize_relative_path(root_folder, file_path)
         stat = file_path.stat()
-        content_bytes = file_path.read_bytes()
-        content = content_bytes.decode("utf-8", errors="replace")
+        try:
+            content = extract_document_content(file_path, file_type)
+        except Exception:
+            skipped += 1
+            continue
+
+        if file_type in {"pdf", "docx"} and not has_usable_text(content):
+            skipped += 1
+            continue
+
+        content_bytes = content.encode("utf-8")
         supported_documents.append(
             {
                 "id": build_document_id(relative_path),
