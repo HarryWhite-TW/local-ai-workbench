@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from api.app.services.audit import create_audit_event
-from api.app.services.file_extractors import extract_docx_text, extract_pdf_text, read_text_file
+from api.app.services.file_extractors import extract_docx_text, extract_pdf_text, normalize_extracted_text, read_text_file
 from api.app.services.settings import InvalidRootFolderError, get_root_folder_setting, utc_now, validate_root_folder
 
 SUPPORTED_SUFFIXES = {".md": "md", ".txt": "txt", ".pdf": "pdf", ".docx": "docx"}
@@ -39,9 +39,9 @@ def extract_document_content(file_path: Path, file_type: str) -> str:
     if file_type in {"md", "txt"}:
         return read_text_file(file_path)
     if file_type == "pdf":
-        return extract_pdf_text(file_path)
+        return normalize_extracted_text(extract_pdf_text(file_path))
     if file_type == "docx":
-        return extract_docx_text(file_path)
+        return normalize_extracted_text(extract_docx_text(file_path))
 
     raise ValueError(f"Unsupported file type: {file_type}")
 

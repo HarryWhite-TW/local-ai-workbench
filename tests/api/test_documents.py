@@ -6,7 +6,14 @@ import sqlite3
 from pathlib import Path
 
 from api.app.db import init_db
-from tests.api.document_factories import write_blank_pdf, write_simple_docx, write_text_pdf
+from api.app.services.file_extractors import normalize_extracted_text
+from tests.api.document_factories import (
+    write_blank_pdf,
+    write_invalid_docx,
+    write_invalid_pdf,
+    write_simple_docx,
+    write_text_pdf,
+)
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "documents"
 
@@ -154,6 +161,7 @@ def test_scan_indexes_pdf_and_docx_and_skips_empty_extracts(client, tmp_path: Pa
         ["Project brief paragraph one.", "Paragraph two mentions orchard planning."],
     )
     write_blank_pdf(root / "blank.pdf")
+    write_simple_docx(root / "blank.docx", ["   \t   "])
 
     client.put("/settings/root-folder", json={"root_folder": str(root)})
     scan_response = client.post("/documents/scan")
@@ -162,7 +170,7 @@ def test_scan_indexes_pdf_and_docx_and_skips_empty_extracts(client, tmp_path: Pa
     body = scan_response.json()
     assert body["found"] == 2
     assert body["created"] == 2
-    assert body["skipped"] == 1
+    assert body["skipped"] == 2
 
     documents = client.get("/documents").json()
     assert [document["relative_path"] for document in documents] == ["brief.docx", "report.pdf"]
@@ -177,3 +185,63 @@ def test_scan_indexes_pdf_and_docx_and_skips_empty_extracts(client, tmp_path: Pa
     assert "Quarterly PDF update with LaunchWindow milestone." in report["content"]
     assert "Project brief paragraph one." in brief["content"]
     assert "Paragraph two mentions orchard planning." in brief["content"]
+
+
+def test_normalize_extracted_text_removes_control_noise_without_rewriting_content():
+    normalized = normalize_extracted_text("\x00 Alpha\t\tBeta \r\n\r\n \x07Gamma \r\n\r\n\r\nDelta\x0b ")
+
+    assert normalized == "Alpha Beta\n\nGamma\n\nDelta"
+
+
+def test_scan_keeps_short_non_blank_pdf_and_docx_content(client, tmp_path: Path):
+    root = tmp_path / "documents"
+    root.mkdir()
+    write_text_pdf(root / "short.pdf", "OK")
+    write_simple_docx(root / "short.docx", ["A"])
+
+    client.put("/settings/root-folder", json={"root_folder": str(root)})
+    scan_response = client.post("/documents/scan")
+
+    assert scan_response.status_code == 200
+    body = scan_response.json()
+    assert body["found"] == 2
+    assert body["created"] == 2
+    assert body["skipped"] == 0
+
+    documents = client.get("/documents").json()
+    assert [document["relative_path"] for document in documents] == ["short.docx", "short.pdf"]
+
+    short_docx_id = next(document["id"] for document in documents if document["relative_path"] == "short.docx")
+    short_pdf_id = next(document["id"] for document in documents if document["relative_path"] == "short.pdf")
+
+    assert client.get(f"/documents/{short_docx_id}").json()["content"] == "A"
+    assert client.get(f"/documents/{short_pdf_id}").json()["content"] == "OK"
+
+
+def test_scan_skips_invalid_pdf_docx_and_stays_consistent_across_repeated_scans(client, tmp_path: Path):
+    root = tmp_path / "documents"
+    root.mkdir()
+    write_text_pdf(root / "valid.pdf", "Valid PDF content for mixed-batch scan.")
+    write_simple_docx(root / "valid.docx", ["Valid DOCX content for mixed-batch scan."])
+    write_blank_pdf(root / "blank.pdf")
+    write_invalid_pdf(root / "broken.pdf")
+    write_invalid_docx(root / "broken.docx")
+
+    client.put("/settings/root-folder", json={"root_folder": str(root)})
+
+    first_scan_response = client.post("/documents/scan")
+    first_documents = client.get("/documents").json()
+    second_scan_response = client.post("/documents/scan")
+    second_documents = client.get("/documents").json()
+
+    assert first_scan_response.status_code == 200
+    assert second_scan_response.status_code == 200
+    assert first_scan_response.json()["found"] == 2
+    assert first_scan_response.json()["created"] == 2
+    assert first_scan_response.json()["skipped"] == 3
+    assert second_scan_response.json()["found"] == 2
+    assert second_scan_response.json()["created"] == 2
+    assert second_scan_response.json()["skipped"] == 3
+    assert [document["relative_path"] for document in first_documents] == ["valid.docx", "valid.pdf"]
+    assert [document["relative_path"] for document in second_documents] == ["valid.docx", "valid.pdf"]
+    assert [document["id"] for document in first_documents] == [document["id"] for document in second_documents]

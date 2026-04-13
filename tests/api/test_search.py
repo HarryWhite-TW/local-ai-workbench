@@ -183,3 +183,27 @@ def test_search_matches_ingested_pdf_and_docx_content(client, tmp_path: Path):
     assert "DeltaLaunch" in pdf_response.json()[0]["snippet"]
     assert docx_response.json()[0]["file_type"] == "docx"
     assert "PineappleTrack" in docx_response.json()[0]["snippet"]
+
+
+def test_search_uses_normalized_docx_ingestion_content(client, tmp_path: Path, monkeypatch):
+    root = tmp_path / "documents"
+    root.mkdir()
+    write_simple_docx(root / "noisy.docx", ["placeholder"])
+
+    monkeypatch.setattr(
+        "api.app.services.documents.extract_docx_text",
+        lambda _path: "\x00 First sentence.\tSecond sentence.\r\nThird sentence.\x07",
+    )
+
+    client.put("/settings/root-folder", json={"root_folder": str(root)})
+    scan_response = client.post("/documents/scan")
+
+    assert scan_response.status_code == 200
+
+    search_response = client.get("/documents/search", params={"q": "third sentence"})
+
+    assert search_response.status_code == 200
+    results = search_response.json()
+    assert len(results) == 1
+    assert results[0]["file_type"] == "docx"
+    assert results[0]["snippet"] == "First sentence. Second sentence. Third sentence."

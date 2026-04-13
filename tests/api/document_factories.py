@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -56,9 +57,17 @@ def write_blank_pdf(path: Path) -> None:
     path.write_bytes(_build_pdf_bytes(b""))
 
 
+def write_invalid_pdf(path: Path) -> None:
+    path.write_bytes(b"this is not a valid pdf file")
+
+
+def write_invalid_docx(path: Path) -> None:
+    path.write_bytes(b"this is not a valid docx file")
+
+
 def write_simple_docx(path: Path, paragraphs: list[str]) -> None:
     paragraph_xml = "".join(
-        f"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>"
+        f"<w:p><w:r><w:t xml:space='preserve'>{escape(paragraph)}</w:t></w:r></w:p>"
         for paragraph in paragraphs
     )
     document_xml = (
@@ -89,4 +98,3 @@ def write_simple_docx(path: Path, paragraphs: list[str]) -> None:
         archive.writestr("[Content_Types].xml", content_types_xml)
         archive.writestr("_rels/.rels", rels_xml)
         archive.writestr("word/document.xml", document_xml)
-

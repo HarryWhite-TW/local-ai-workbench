@@ -119,3 +119,30 @@ def test_summary_can_be_generated_from_docx_extracted_content(client, tmp_path: 
     body = response.json()
     assert body["method"] == "extractive_v1"
     assert "DOCX paragraph should be summarized." in body["summary_text"]
+
+
+def test_summary_uses_normalized_ingested_docx_content(client, tmp_path: Path, monkeypatch):
+    root = tmp_path / "documents"
+    root.mkdir()
+    write_simple_docx(root / "noisy-summary.docx", ["placeholder"])
+
+    monkeypatch.setattr(
+        "api.app.services.documents.extract_docx_text",
+        lambda _path: "\x00 First sentence.\tSecond sentence.\r\nThird sentence.\x07",
+    )
+
+    client.put("/settings/root-folder", json={"root_folder": str(root)})
+    scan_response = client.post("/documents/scan")
+    assert scan_response.status_code == 200
+
+    documents = client.get("/documents").json()
+    document_id = documents[0]["id"]
+    detail_response = client.get(f"/documents/{document_id}")
+
+    assert detail_response.status_code == 200
+    assert detail_response.json()["content"] == "First sentence. Second sentence.\nThird sentence."
+
+    summary_response = client.post(f"/documents/{document_id}/summary")
+
+    assert summary_response.status_code == 200
+    assert summary_response.json()["summary_text"] == "First sentence. Second sentence. Third sentence."
