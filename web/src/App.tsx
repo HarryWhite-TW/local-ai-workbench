@@ -218,13 +218,28 @@ export default function App() {
     }
   }
 
+  function handleClearSearch() {
+    setSearchInput("");
+    setActiveQuery("");
+    setSearchResults([]);
+    setSearchError(null);
+  }
+
   const hasRootFolder = Boolean(rootFolder?.root_folder);
   const hasDocuments = documents.length > 0;
+  const hasActiveSearch = Boolean(activeQuery);
+  const hasSearchResults = searchResults.length > 0;
   const normalizedSearchInput = searchInput.trim();
   const canSubmitSearch = hasDocuments && !isLoading && !isScanning && !isSearching && normalizedSearchInput.length > 0;
-  const showSearchIdleState = hasRootFolder && hasDocuments && !activeQuery;
-  const showSearchNoMatchState = hasRootFolder && hasDocuments && Boolean(activeQuery) && searchResults.length === 0;
-  const showSearchResultState = hasRootFolder && hasDocuments && Boolean(activeQuery) && searchResults.length > 0;
+  const canClearSearch =
+    !isSearching && (searchInput.length > 0 || activeQuery.length > 0 || searchResults.length > 0 || Boolean(searchError));
+  const selectedDocumentInSearchResults = Boolean(
+    selectedDocumentId && searchResults.some((result) => result.document_id === selectedDocumentId)
+  );
+  const showSearchIdleState = hasRootFolder && hasDocuments && !hasActiveSearch;
+  const showSearchNoMatchState = hasRootFolder && hasDocuments && hasActiveSearch && !hasSearchResults;
+  const showSearchResultState = hasRootFolder && hasDocuments && hasActiveSearch && hasSearchResults;
+  const showSearchOutsideResultHint = showSearchResultState && Boolean(selectedDocumentId) && !selectedDocumentInSearchResults;
 
   return (
     <main className="app-shell">
@@ -299,6 +314,14 @@ export default function App() {
                 >
                   {isSearching ? "Searching..." : "Search"}
                 </button>
+                <button
+                  type="button"
+                  className="secondary-button clear-button"
+                  disabled={!canClearSearch}
+                  onClick={handleClearSearch}
+                >
+                  Clear search
+                </button>
               </form>
               {searchError ? <div className="error-banner search-error">{searchError}</div> : null}
               {!hasRootFolder ? (
@@ -321,6 +344,11 @@ export default function App() {
                     Showing {searchResults.length} result(s) for "{activeQuery}". Results prefer title matches, then
                     path, then content.
                   </p>
+                  <p className={`search-context ${showSearchOutsideResultHint ? "warning" : ""}`}>
+                    {showSearchOutsideResultHint
+                      ? "The selected document is outside the current search results. Search results stay available until you clear them."
+                      : "The selected document is part of the current search results."}
+                  </p>
                   <div className="list">
                     {searchResults.map((result) => (
                       <button
@@ -334,6 +362,9 @@ export default function App() {
                           <span>{result.file_type}</span>
                           <span>{result.relative_path}</span>
                         </div>
+                        {selectedDocumentId === result.document_id ? (
+                          <div className="search-selection-note">Open in the detail and summary panels.</div>
+                        ) : null}
                         <p className="search-snippet">{result.snippet}</p>
                       </button>
                     ))}

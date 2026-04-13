@@ -193,6 +193,11 @@ pre {
   color: #0f2741;
 }
 
+.clear-button {
+  background: #f3f6fa;
+  color: #486179;
+}
+
 .primary-button:disabled,
 .secondary-button:disabled {
   opacity: 0.65;
@@ -255,6 +260,29 @@ pre {
   margin: 10px 0 0;
   color: #41576f;
   line-height: 1.45;
+}
+
+.search-context {
+  margin: 0 0 12px;
+  border: 1px solid #d8e5f2;
+  border-radius: 12px;
+  background: #f7fbff;
+  color: #42627f;
+  padding: 10px 12px;
+  font-size: 0.92rem;
+}
+
+.search-context.warning {
+  border-color: #f1d4a7;
+  background: #fff9ef;
+  color: #8b5c10;
+}
+
+.search-selection-note {
+  margin-top: 10px;
+  color: #1d4ed8;
+  font-size: 0.88rem;
+  font-weight: 600;
 }
 
 @media (max-width: 960px) {
