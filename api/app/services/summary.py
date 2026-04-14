@@ -15,6 +15,36 @@ CODE_FENCE_PATTERNS = [
 MARKDOWN_PREFIX_PATTERN = re.compile(r"(?m)^[ \t]*(#{1,6}|[-*+]|>|\d+\.)[ \t]*")
 LINK_PATTERN = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 WHITESPACE_PATTERN = re.compile(r"\s+")
+PARAGRAPH_SPLIT_PATTERN = re.compile(r"\n\s*\n+")
+SENTENCE_PUNCTUATION_PATTERN = re.compile(r"[.!?。！？]")
+SECTION_HEADING_PATTERN = re.compile(r"^(?:\d+(?:\.\d+)*)[.)、 ]")
+HEADER_LIKE_MARKERS = (
+    "file header",
+    "檔案標籤區",
+    "摘要區",
+    "abstract",
+)
+HEADER_LIKE_PREFIXES = (
+    "[卷名]：",
+    "[主題]：",
+    "[輸出模式]：",
+    "[參照文件]：",
+    "[版本]：",
+    "[作者]：",
+    "[狀態]：",
+    "文件名稱：",
+    "文件版本：",
+    "所屬專案：",
+    "卷別：",
+    "覆蓋章節：",
+    "文件層級：",
+    "關聯文件：",
+)
+DOCX_OPENING_BLOCK_LIMIT = 3
+DOCX_MIN_PARAGRAPH_COUNT = 4
+DOCX_MIN_MEANINGFUL_CHARS = 100
+BODY_BLOCK_MIN_MEANINGFUL_CHARS = 20
+DEFAULT_PARAGRAPH_MIN_MEANINGFUL_CHARS = 12
 SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?。！？])\s+")
 
 
@@ -39,26 +69,109 @@ def normalize_markdown_text(text: str) -> str:
     return without_prefixes.strip()
 
 
-def select_meaningful_paragraph(text: str) -> str:
-    paragraphs = [normalize_markdown_text(paragraph) for paragraph in re.split(r"\n\s*\n+", text)]
+def collapse_whitespace(text: str) -> str:
+    return WHITESPACE_PATTERN.sub(" ", text).strip()
 
-    for paragraph in paragraphs:
-        collapsed = WHITESPACE_PATTERN.sub(" ", paragraph).strip()
-        meaningful_chars = re.sub(r"[\W_]+", "", collapsed, flags=re.UNICODE)
-        if len(meaningful_chars) >= 12:
-            return collapsed
 
-    for paragraph in paragraphs:
-        collapsed = WHITESPACE_PATTERN.sub(" ", paragraph).strip()
+def count_meaningful_chars(text: str) -> int:
+    return len(re.sub(r"[\W_]+", "", text, flags=re.UNICODE))
+
+
+def build_candidate_paragraphs(text: str) -> list[str]:
+    paragraphs = []
+    for paragraph in PARAGRAPH_SPLIT_PATTERN.split(text):
+        collapsed = collapse_whitespace(normalize_markdown_text(paragraph))
         if collapsed:
-            return collapsed
+            paragraphs.append(collapsed)
+    return paragraphs
+
+
+def is_header_like_paragraph(paragraph: str) -> bool:
+    meaningful_chars = count_meaningful_chars(paragraph)
+    lowered = paragraph.casefold()
+
+    if any(marker in lowered for marker in HEADER_LIKE_MARKERS):
+        return True
+
+    if paragraph.startswith("[") or paragraph.startswith("【"):
+        return True
+
+    if any(paragraph.startswith(prefix) for prefix in HEADER_LIKE_PREFIXES):
+        return True
+
+    if SECTION_HEADING_PATTERN.match(paragraph) and meaningful_chars <= 60:
+        return True
+
+    if meaningful_chars <= 30 and not SENTENCE_PUNCTUATION_PATTERN.search(paragraph):
+        return True
+
+    return False
+
+
+def build_opening_blocks(paragraphs: list[str]) -> list[tuple[str, bool]]:
+    blocks: list[tuple[str, bool]] = []
+    current_block: list[str] = []
+    current_is_header_like: bool | None = None
+
+    for paragraph in paragraphs:
+        is_header_like = is_header_like_paragraph(paragraph)
+        if current_is_header_like is None:
+            current_block = [paragraph]
+            current_is_header_like = is_header_like
+            continue
+
+        if current_is_header_like and is_header_like:
+            current_block.append(paragraph)
+            continue
+
+        blocks.append((" ".join(current_block).strip(), current_is_header_like))
+        current_block = [paragraph]
+        current_is_header_like = is_header_like
+
+    if current_block and current_is_header_like is not None:
+        blocks.append((" ".join(current_block).strip(), current_is_header_like))
+
+    return blocks
+
+
+def is_large_structured_docx(paragraphs: list[str]) -> bool:
+    if len(paragraphs) < DOCX_MIN_PARAGRAPH_COUNT:
+        return False
+    return sum(count_meaningful_chars(paragraph) for paragraph in paragraphs) >= DOCX_MIN_MEANINGFUL_CHARS
+
+
+def select_docx_opening_body_block(paragraphs: list[str]) -> str:
+    if not is_large_structured_docx(paragraphs):
+        return ""
+
+    opening_blocks = build_opening_blocks(paragraphs)[:DOCX_OPENING_BLOCK_LIMIT]
+    for block_text, is_header_like in opening_blocks:
+        if is_header_like:
+            continue
+        if count_meaningful_chars(block_text) >= BODY_BLOCK_MIN_MEANINGFUL_CHARS:
+            return block_text
 
     return ""
 
 
-def build_extractive_summary(content: str) -> str:
+def select_meaningful_paragraph(text: str, *, file_type: str | None = None) -> str:
+    paragraphs = build_candidate_paragraphs(text)
+
+    if file_type == "docx":
+        opening_body_block = select_docx_opening_body_block(paragraphs)
+        if opening_body_block:
+            return opening_body_block
+
+    for paragraph in paragraphs:
+        if count_meaningful_chars(paragraph) >= DEFAULT_PARAGRAPH_MIN_MEANINGFUL_CHARS:
+            return paragraph
+
+    return paragraphs[0] if paragraphs else ""
+
+
+def build_extractive_summary(content: str, *, file_type: str | None = None) -> str:
     without_code = strip_code_fences(content)
-    paragraph = select_meaningful_paragraph(without_code)
+    paragraph = select_meaningful_paragraph(without_code, file_type=file_type)
     if not paragraph:
         return ""
 
@@ -73,7 +186,7 @@ def create_summary_artifact(connection: sqlite3.Connection, document_id: str) ->
     document = get_document(connection, document_id)
     timestamp = utc_now_precise()
     artifact_id = f"sum_{uuid4().hex}"
-    summary_text = build_extractive_summary(document["content"])
+    summary_text = build_extractive_summary(document["content"], file_type=document["file_type"])
 
     connection.execute(
         """
