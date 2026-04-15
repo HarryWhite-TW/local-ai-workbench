@@ -16,6 +16,7 @@ import type {
   AuditEventRecord,
   DocumentDetailRecord,
   DocumentListItemRecord,
+  DocumentScanResult,
   DocumentSearchResultRecord,
   RootFolderStatusRecord,
   SummaryArtifactRecord
@@ -23,10 +24,45 @@ import type {
 
 type SummaryState = "idle" | "loading" | "empty" | "ready";
 
+function getLatestScanResult(events: AuditEventRecord[]): DocumentScanResult | null {
+  for (const event of events) {
+    if (event.event_type !== "documents_scanned") {
+      continue;
+    }
+
+    const { root_folder, found, created, skipped } = event.event_payload;
+    if (
+      typeof root_folder === "string" &&
+      typeof found === "number" &&
+      typeof created === "number" &&
+      typeof skipped === "number"
+    ) {
+      return {
+        root_folder,
+        found,
+        created,
+        skipped,
+        scanned_at: event.created_at
+      };
+    }
+  }
+
+  return null;
+}
+
+function formatScanSummary(scanResult: DocumentScanResult | null): string {
+  if (!scanResult) {
+    return "No scan run yet.";
+  }
+
+  return `${scanResult.found} found · ${scanResult.created} created · ${scanResult.skipped} skipped`;
+}
+
 export default function App() {
   const [rootFolder, setRootFolder] = useState<RootFolderStatusRecord | null>(null);
   const [documents, setDocuments] = useState<DocumentListItemRecord[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
+  const [lastScanResult, setLastScanResult] = useState<DocumentScanResult | null>(null);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<DocumentDetailRecord | null>(null);
   const [summaryArtifact, setSummaryArtifact] = useState<SummaryArtifactRecord | null>(null);
@@ -45,6 +81,7 @@ export default function App() {
   async function loadAudit() {
     const nextAuditEvents = await getAuditEvents();
     setAuditEvents(nextAuditEvents);
+    setLastScanResult(getLatestScanResult(nextAuditEvents));
   }
 
   async function loadSelectedDocument(documentId: string) {
@@ -122,6 +159,7 @@ export default function App() {
       setRootFolder(nextRootFolder);
       setDocuments(nextDocuments);
       setAuditEvents(nextAuditEvents);
+      setLastScanResult(getLatestScanResult(nextAuditEvents));
 
       if (nextDocuments.length === 0) {
         setSelectedDocumentId(null);
@@ -158,7 +196,8 @@ export default function App() {
     setIsScanning(true);
     setError(null);
     try {
-      await scanDocuments();
+      const result = await scanDocuments();
+      setLastScanResult(result);
       setSearchInput("");
       setActiveQuery("");
       setSearchResults([]);
@@ -243,59 +282,85 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">M2 local documents prototype</p>
-          <h1>Document Scan / Read / Summary</h1>
-        </div>
-        <p className="hero-copy">
-          This local UI wires root-folder configuration, local document scan, single-document read, summary artifact,
-          keyword search, and audit into one minimal workspace.
-        </p>
-      </header>
-
-      <section className="panel status-panel">
-        <div className="panel-header">
-          <div>
-            <h2>Root Folder</h2>
-            <p className="muted compact">
-              Configure the path via API first. This UI only reads the current root folder state.
+      <header className="panel workspace-header">
+        <div className="workspace-header-top">
+          <div className="workspace-title-block">
+            <p className="eyebrow">Local document assistant v1</p>
+            <h1>Local Document Workbench</h1>
+            <p className="workspace-intro">
+              A local document workspace for scan, read, search, summary, and audit. Search and summary stay attached
+              to the selected document instead of taking over the page.
             </p>
           </div>
-          <button
-            type="button"
-            className="primary-button"
-            disabled={!hasRootFolder || isScanning || isLoading}
-            onClick={() => void handleScan()}
-          >
-            {isScanning ? "Scanning..." : "Scan documents"}
-          </button>
-        </div>
-        <div className="root-folder-box">
-          <div className="detail-row">
-            <span className="detail-label">Current root folder</span>
+          <div className="workspace-header-actions">
             <span className={`status-pill ${hasRootFolder ? "configured" : "missing"}`}>
-              {hasRootFolder ? "Configured" : "Not configured"}
+              {hasRootFolder ? "Root folder ready" : "Root folder required"}
             </span>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={!hasRootFolder || isScanning || isLoading}
+              onClick={() => void handleScan()}
+            >
+              {isScanning ? "Scanning..." : "Scan documents"}
+            </button>
           </div>
-          <pre>{rootFolder?.root_folder ?? "Set root folder with PUT /settings/root-folder before using Block D."}</pre>
         </div>
-      </section>
+
+        <div className="header-status-grid">
+          <div className="status-card">
+            <span className="status-card-label">Data source</span>
+            <strong>{hasRootFolder ? "Root folder configured" : "No root folder configured"}</strong>
+            <p>
+              {rootFolder?.root_folder ??
+                "Configure the root folder through the current API flow first. This workspace only reads and reports that state."}
+            </p>
+          </div>
+
+          <div className="status-card">
+            <span className="status-card-label">Scan status</span>
+            <strong>{lastScanResult ? `Last scan: ${lastScanResult.scanned_at}` : "No scan completed yet"}</strong>
+            <p>
+              {hasRootFolder
+                ? formatScanSummary(lastScanResult)
+                : "Scan stays unavailable until the root folder has been configured."}
+            </p>
+          </div>
+
+          <div className="status-card">
+            <span className="status-card-label">Workspace focus</span>
+            <strong>
+              {selectedDocument
+                ? selectedDocument.title
+                : hasDocuments
+                  ? "Select a document from the left column"
+                  : "Scan documents to start reading"}
+            </strong>
+            <p>
+              {selectedDocument
+                ? `${selectedDocument.file_type.toUpperCase()} · ${selectedDocument.relative_path}`
+                : `${documents.length} indexed document(s) currently loaded in this workspace.`}
+            </p>
+          </div>
+        </div>
+      </header>
 
       {error ? <div className="error-banner">{error}</div> : null}
 
       {isLoading ? (
-        <section className="panel">
-          <p className="empty-state">Loading document workspace...</p>
+        <section className="panel loading-panel">
+          <p className="empty-state">Loading the local document workspace...</p>
         </section>
       ) : (
-        <div className="workspace-grid">
-          <div className="panel-stack">
-            <section className="panel">
+        <div className="workspace-layout">
+          <aside className="left-column panel-stack">
+            <section className="panel search-panel">
               <div className="panel-header">
                 <div>
                   <h2>Search</h2>
-                  <p className="muted compact">Search indexed document title, path, or content with a manual submit.</p>
+                  <p className="muted compact">
+                    Manual keyword search across indexed title, relative path, and extracted content.
+                  </p>
                 </div>
               </div>
               <form className="search-form" onSubmit={(event) => void handleSearchSubmit(event)}>
@@ -307,49 +372,51 @@ export default function App() {
                   placeholder="Search indexed documents"
                   disabled={!hasDocuments || isLoading || isScanning || isSearching}
                 />
-                <button
-                  type="submit"
-                  className="secondary-button"
-                  disabled={!canSubmitSearch}
-                >
-                  {isSearching ? "Searching..." : "Search"}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button clear-button"
-                  disabled={!canClearSearch}
-                  onClick={handleClearSearch}
-                >
-                  Clear search
-                </button>
+                <div className="search-actions">
+                  <button type="submit" className="secondary-button" disabled={!canSubmitSearch}>
+                    {isSearching ? "Searching..." : "Search"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button clear-button"
+                    disabled={!canClearSearch}
+                    onClick={handleClearSearch}
+                  >
+                    Clear search
+                  </button>
+                </div>
               </form>
               {searchError ? <div className="error-banner search-error">{searchError}</div> : null}
               {!hasRootFolder ? (
                 <p className="empty-state">Search is unavailable until a root folder is configured.</p>
               ) : !hasDocuments ? (
-                <p className="empty-state">Search will be available after you scan indexed md/txt/pdf/docx documents.</p>
+                <p className="empty-state">
+                  Search becomes available after a manual scan indexes md, txt, pdf, or docx documents.
+                </p>
               ) : showSearchIdleState ? (
                 <>
-                  <p className="empty-state">Search is ready. Enter a keyword and click Search to query title, path, and content.</p>
-                  <p className="muted compact">Results stay local and load the existing document detail and summary panels.</p>
+                  <p className="empty-state">Search is ready. Submit a keyword to build a local result set.</p>
+                  <p className="muted compact">
+                    Clear search only resets the search state. It does not reload document detail or summary.
+                  </p>
                 </>
               ) : showSearchNoMatchState ? (
                 <>
                   <p className="empty-state">No matches found for "{activeQuery}".</p>
-                  <p className="muted compact">Search checks title, relative path, and extracted content only.</p>
+                  <p className="muted compact">This workbench searches title, relative path, and extracted content only.</p>
                 </>
               ) : showSearchResultState ? (
                 <>
-                  <p className="muted compact">
-                    Showing {searchResults.length} result(s) for "{activeQuery}". Results prefer title matches, then
-                    path, then content.
-                  </p>
+                  <div className="search-summary-row">
+                    <span className="search-query-chip">Active query: "{activeQuery}"</span>
+                    <span className="muted">{searchResults.length} result(s)</span>
+                  </div>
                   <p className={`search-context ${showSearchOutsideResultHint ? "warning" : ""}`}>
                     {showSearchOutsideResultHint
-                      ? "The selected document is outside the current search results. Search results stay available until you clear them."
-                      : "The selected document is part of the current search results."}
+                      ? "The selected document is outside the current results. Search results stay in place until you clear them."
+                      : "The selected document belongs to the current result set."}
                   </p>
-                  <div className="list">
+                  <div className="list search-results-list">
                     {searchResults.map((result) => (
                       <button
                         key={`${result.document_id}-${result.relative_path}`}
@@ -367,19 +434,22 @@ export default function App() {
                         ) : null}
                         <p className="search-snippet">{result.snippet}</p>
                       </button>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-            </section>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </section>
 
-            <section className="panel">
+            <section className="panel documents-panel">
               <div className="panel-header">
-                <h2>Documents</h2>
+                <div>
+                  <h2>Documents</h2>
+                  <p className="muted compact">The local index currently loaded in this workbench.</p>
+                </div>
                 <span className="muted">{documents.length} item(s)</span>
               </div>
               {hasDocuments ? (
-                <div className="list">
+                <div className="list documents-list">
                   {documents.map((document) => (
                     <button
                       key={document.id}
@@ -387,58 +457,83 @@ export default function App() {
                       className={`list-item ${selectedDocumentId === document.id ? "selected" : ""}`}
                       onClick={() => void handleSelectDocument(document.id)}
                     >
-                      <div className="list-item-title">{document.relative_path}</div>
+                      <div className="list-item-title">{document.title}</div>
                       <div className="list-item-meta">
                         <span>{document.file_type}</span>
-                        <span>{document.modified_at}</span>
+                        <span>{document.relative_path}</span>
                       </div>
                     </button>
                   ))}
                 </div>
               ) : (
-              <p className="empty-state">
-                {hasRootFolder
-                  ? "No indexed documents yet. Run a manual scan to load md/txt/pdf/docx files from the configured root folder."
-                  : "No root folder configured yet, so the document list is empty."}
-              </p>
+                <p className="empty-state">
+                  {hasRootFolder
+                    ? "No indexed documents yet. Run Scan documents to load files from the configured root folder."
+                    : "No document list is available until the root folder is configured and scanned."}
+                </p>
               )}
             </section>
-          </div>
+          </aside>
 
-          <div className="panel-stack">
-            <section className="panel">
+          <section className="center-column">
+            <section className="panel detail-panel">
               <div className="panel-header">
-                <h2>Document Content</h2>
+                <div>
+                  <h2>Document detail</h2>
+                  <p className="muted compact">
+                    The main reading area shows extracted plain text for the selected document.
+                  </p>
+                </div>
                 <span className="muted">
                   {selectedDocument ? selectedDocument.file_type.toUpperCase() : "No document selected"}
                 </span>
               </div>
               {!selectedDocumentId ? (
-                <p className="empty-state">Select a document to load its full content.</p>
+                <p className="empty-state">Select a document from the left column to inspect its extracted content.</p>
               ) : isLoadingDocument && !selectedDocument ? (
-                <p className="empty-state">Loading document content...</p>
+                <p className="empty-state">Loading extracted document content...</p>
               ) : selectedDocument ? (
-                <div className="content-block">
-                  <div className="detail-row">
-                    <span className="detail-label">Path</span>
-                    <span>{selectedDocument.relative_path}</span>
+                <div className="detail-layout">
+                  <div className="detail-meta-grid">
+                    <div className="meta-card">
+                      <span className="detail-label">Title</span>
+                      <strong>{selectedDocument.title}</strong>
+                    </div>
+                    <div className="meta-card">
+                      <span className="detail-label">Relative path</span>
+                      <strong>{selectedDocument.relative_path}</strong>
+                    </div>
+                    <div className="meta-card">
+                      <span className="detail-label">Modified</span>
+                      <strong>{selectedDocument.modified_at}</strong>
+                    </div>
+                    <div className="meta-card">
+                      <span className="detail-label">Scanned</span>
+                      <strong>{selectedDocument.scanned_at}</strong>
+                    </div>
                   </div>
-                  <div className="detail-row">
-                    <span className="detail-label">Size</span>
-                    <span>{selectedDocument.size_bytes} bytes</span>
+                  <div className="content-block detail-content-block">
+                    <div className="detail-row">
+                      <span className="detail-label">Extracted content</span>
+                      <span className="muted">{selectedDocument.size_bytes} bytes</span>
+                    </div>
+                    <pre>{selectedDocument.content}</pre>
                   </div>
-                  <pre>{selectedDocument.content}</pre>
                 </div>
               ) : (
-                <p className="empty-state">Document content is unavailable.</p>
+                <p className="empty-state">Document detail is unavailable.</p>
               )}
             </section>
+          </section>
 
-            <section className="panel">
+          <aside className="right-column panel-stack">
+            <section className="panel summary-panel">
               <div className="panel-header">
                 <div>
-                  <h2>Summary Artifact</h2>
-                  <p className="muted compact">Deterministic extractive_v1 summary for the selected document.</p>
+                  <h2>Summary</h2>
+                  <p className="muted compact">
+                    Deterministic extractive_v1 summary for the selected document. This is the main secondary panel.
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -450,13 +545,18 @@ export default function App() {
                 </button>
               </div>
               {!selectedDocumentId ? (
-                <p className="empty-state">Select a document before generating a summary.</p>
+                <p className="empty-state">Choose a document before generating or reviewing a summary.</p>
               ) : summaryState === "loading" ? (
-                <p className="empty-state">Loading latest summary artifact...</p>
+                <p className="empty-state">Loading the latest summary artifact for this document...</p>
               ) : summaryState === "empty" || !summaryArtifact ? (
-                <p className="empty-state">No summary artifact yet. Generate one for the selected document.</p>
+                <>
+                  <p className="empty-state">No summary artifact exists for the selected document yet.</p>
+                  <p className="muted compact">
+                    Generate one to keep a grounded, deterministic summary beside the main reading view.
+                  </p>
+                </>
               ) : (
-                <div className="content-block">
+                <div className="content-block summary-content-block">
                   <div className="detail-row">
                     <span className="detail-label">Method</span>
                     <span>{summaryArtifact.method}</span>
@@ -466,15 +566,16 @@ export default function App() {
                     <span>{summaryArtifact.created_at}</span>
                   </div>
                   <div className="detail-row stacked">
-                    <span className="detail-label">Summary</span>
+                    <span className="detail-label">Summary text</span>
                     <p className="summary-paragraph">{summaryArtifact.summary_text}</p>
                   </div>
                 </div>
               )}
             </section>
-          </div>
-
-          <AuditList events={auditEvents} />
+            <div className="audit-panel-wrap">
+              <AuditList events={auditEvents} />
+            </div>
+          </aside>
         </div>
       )}
     </main>
