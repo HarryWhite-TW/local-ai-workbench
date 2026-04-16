@@ -8,3 +8,11 @@ coverage/
 *.pyc
 data/app.db
 data/app.db-journal
+34_blueprint_v1_2_collab_integrated.docx
+34_blueprint_working.docx
+integrate_docx.py
+real_docs_check_01/
+data/api_walkthrough.err.log
+data/api_walkthrough.out.log
+data/real_docs_check_01_validation.db
+data/real_docs_check_01_validation.db-journal
