@@ -16,3 +16,4 @@ data/api_walkthrough.err.log
 data/api_walkthrough.out.log
 data/real_docs_check_01_validation.db
 data/real_docs_check_01_validation.db-journal
+demo_docs/
