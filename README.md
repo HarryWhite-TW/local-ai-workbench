@@ -13,6 +13,10 @@ The app stays intentionally simple:
 - local deterministic processing only
 - no external LLM or background automation
 
+![Local document workbench overview](docs/images/local-document-workbench-overview.png)
+
+*Local document workbench on localhost: left for search and indexed documents, center for the selected document detail, right for the deterministic summary artifact and audit trail.*
+
 ## Project Positioning
 
 - Localhost only
