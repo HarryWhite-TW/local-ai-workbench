@@ -2,8 +2,8 @@
 
 ## Project Positioning
 - This repo is a localhost, single-user, personal-use prototype.
-- It is not the mainline of a formal product.
-- It is not a SaaS or multi-user system.
+- This repo is also intended as a public portfolio engineering project for a local-first AI assistant / workflow-tool prototype.
+- Do not change the project's positioning, target audience, or showcase storyline unless the user explicitly asks.
 
 ## Non-Goals
 - No automatic email sending.
@@ -11,6 +11,7 @@
 - No background schedulers or long-running automation.
 - No multi-agent chaining.
 - No productization-first abstractions.
+- Do not add new features, milestones, or scope that the user did not request.
 
 ## Core Rule
 - Default is read-only.
@@ -35,3 +36,33 @@
 - Protect audit event creation.
 - Do not spend effort on full E2E infrastructure in M1 unless scope changes later.
 
+## Codex Collaboration Rules
+- Keep diffs small, reviewable, and easy to inspect.
+- Stay aligned with the README public showcase path instead of drifting into completeness-first work.
+- Do not assume Unicode, full-width punctuation, box-drawing characters, or other special symbols are mojibake; verify before editing.
+- Do not stage or commit playground files, scratch outputs, temporary logs, cache directories, or unapproved Codex drafts.
+- Do not make unilateral decisions about the main direction, large refactors, or scope expansion.
+- Respect any task-local edit boundary from the user; if only certain files are allowed, edit only those files.
+- Do not auto-commit unless the user explicitly asks.
+
+## Verification
+- After code changes, run `pytest -q` by default when the repo provides a pytest-based test suite, unless the user gives a narrower command.
+- For CLI-related changes, run the documented CLI command from `README.md` or project docs. If no CLI entrypoint exists, report that explicitly in the final report.
+- For Docker-related changes, run `docker build` and `docker run` for the affected flow. If Docker assets are absent, report that the check is not applicable.
+- For documentation changes, verify that the written description still matches current repo behavior, commands, and visible structure.
+- If a task does not modify code, explain why `pytest -q` was not run.
+- If a requested verification cannot be run, report the exact blocker instead of claiming it passed.
+
+## Response Format
+For every completed task, report in this order:
+1. Summary
+2. Modified files
+3. Commands run
+4. Test results
+5. Risks / assumptions
+6. Suggested next step
+
+## Decision Boundary
+- Codex may implement requested changes, run verification, tidy docs, and make bounded suggestions.
+- Codex may not unilaterally decide the project direction, repo positioning, large refactors, or new features.
+- If a task would change the mainline direction, public positioning, or scope, stop and list the decisions that require user approval first.
