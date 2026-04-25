@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+TASK_REQUIREMENTS_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "task_requirements"
+
 
 def prepare_search_root(client, tmp_path: Path) -> None:
     root = tmp_path / "documents"
@@ -33,6 +35,11 @@ def prepare_summary_root(client, tmp_path: Path, filename: str, content: str) ->
     assert scan_response.status_code == 200
     documents = client.get("/documents").json()
     return documents[0]["id"]
+
+
+def prepare_fixture_document(client, tmp_path: Path, fixture_name: str, *, filename: str) -> str:
+    content = (TASK_REQUIREMENTS_FIXTURES_DIR / fixture_name).read_text(encoding="utf-8")
+    return prepare_summary_root(client, tmp_path, filename, content)
 
 
 def test_run_find_documents_returns_completed_results_and_task_audit_events(client, tmp_path: Path):
@@ -201,8 +208,156 @@ def test_run_summarize_selected_document_returns_404_for_unknown_document(client
     assert audit_events[1]["event_type"] == "task_run_requested"
 
 
+def test_run_extract_requirements_returns_items_and_task_audit_events(client, tmp_path: Path, db_path: Path):
+    document_id = prepare_fixture_document(
+        client,
+        tmp_path,
+        "requirements_sample.md",
+        filename="requirements_sample.md",
+    )
+
+    response = client.post(
+        "/tasks/run",
+        json={"task_type": "extract_requirements", "document_id": document_id},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["task_type"] == "extract_requirements"
+    assert body["status"] == "completed"
+    assert body["result_kind"] == "requirements_list"
+    assert body["source_document_id"] == document_id
+    assert body["warnings"] == []
+    assert body["error"] is None
+    assert body["result"]["method"] == "extract_requirements_v1"
+    assert body["result"]["items"] == [
+        {
+            "text": "The system must store scanned document metadata in SQLite.",
+            "source_excerpt": "The system must store scanned document metadata in SQLite.",
+            "match_reason": "requirements_heading",
+        },
+        {
+            "text": "Search results shall include a snippet from the matched document.",
+            "source_excerpt": "Search results shall include a snippet from the matched document.",
+            "match_reason": "requirements_heading",
+        },
+        {
+            "text": "The API is required to reject unsupported task types with a 422 response.",
+            "source_excerpt": "The API is required to reject unsupported task types with a 422 response.",
+            "match_reason": "requirements_heading",
+        },
+        {
+            "text": "The task runner must return warnings when no matches are found.",
+            "source_excerpt": "The task runner must return warnings when no matches are found.",
+            "match_reason": "acceptance_criteria_heading",
+        },
+        {
+            "text": "The prototype must remain localhost-only and single-user.",
+            "source_excerpt": "The prototype must remain localhost-only and single-user.",
+            "match_reason": "constraints_heading",
+        },
+    ]
+
+    audit_events = client.get("/audit").json()
+    assert audit_events[0]["event_type"] == "task_run_completed"
+    assert audit_events[0]["event_payload"]["task_type"] == "extract_requirements"
+    assert audit_events[0]["event_payload"]["result_kind"] == "requirements_list"
+    assert audit_events[0]["event_payload"]["source_document_id"] == document_id
+    assert audit_events[0]["event_payload"]["item_count"] == len(body["result"]["items"])
+    assert audit_events[0]["event_payload"]["method"] == "extract_requirements_v1"
+    assert audit_events[1]["event_type"] == "task_run_requested"
+
+    with sqlite3.connect(db_path) as connection:
+        summary_count = connection.execute("SELECT COUNT(*) FROM summary_artifacts").fetchone()[0]
+    assert summary_count == 0
+
+
+def test_run_extract_requirements_returns_completed_with_warnings_for_empty_result(client, tmp_path: Path, db_path: Path):
+    document_id = prepare_fixture_document(
+        client,
+        tmp_path,
+        "requirements_no_match.md",
+        filename="requirements_no_match.md",
+    )
+
+    response = client.post(
+        "/tasks/run",
+        json={"task_type": "extract_requirements", "document_id": document_id},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed_with_warnings"
+    assert body["result_kind"] == "requirements_list"
+    assert body["source_document_id"] == document_id
+    assert body["result"]["method"] == "extract_requirements_v1"
+    assert body["result"]["items"] == []
+    assert body["warnings"] == ["No requirements found."]
+    assert body["error"] is None
+
+    audit_events = client.get("/audit").json()
+    assert audit_events[0]["event_type"] == "task_run_completed"
+    assert audit_events[0]["event_payload"]["task_type"] == "extract_requirements"
+    assert audit_events[0]["event_payload"]["item_count"] == 0
+    assert audit_events[0]["event_payload"]["warnings"] == ["No requirements found."]
+
+    with sqlite3.connect(db_path) as connection:
+        summary_count = connection.execute("SELECT COUNT(*) FROM summary_artifacts").fetchone()[0]
+    assert summary_count == 0
+
+
+def test_run_extract_requirements_returns_422_when_document_id_is_missing(client):
+    response = client.post("/tasks/run", json={"task_type": "extract_requirements"})
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Document ID is required for extract_requirements."}
+
+    audit_events = client.get("/audit").json()
+    assert audit_events[0]["event_type"] == "task_run_failed"
+    assert audit_events[0]["event_payload"]["task_type"] == "extract_requirements"
+    assert audit_events[0]["event_payload"]["error"] == "Document ID is required for extract_requirements."
+    assert audit_events[1]["event_type"] == "task_run_requested"
+
+
+def test_run_extract_requirements_returns_422_when_query_is_provided(client):
+    response = client.post(
+        "/tasks/run",
+        json={
+            "task_type": "extract_requirements",
+            "document_id": "doc_any",
+            "query": "find requirements",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Query is not allowed for extract_requirements."}
+
+    audit_events = client.get("/audit").json()
+    assert audit_events[0]["event_type"] == "task_run_failed"
+    assert audit_events[0]["event_payload"]["task_type"] == "extract_requirements"
+    assert audit_events[0]["event_payload"]["query"] == "find requirements"
+    assert audit_events[0]["event_payload"]["error"] == "Query is not allowed for extract_requirements."
+    assert audit_events[1]["event_type"] == "task_run_requested"
+
+
+def test_run_extract_requirements_returns_404_for_unknown_document(client):
+    response = client.post(
+        "/tasks/run",
+        json={"task_type": "extract_requirements", "document_id": "doc_missing"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Document not found."}
+
+    audit_events = client.get("/audit").json()
+    assert audit_events[0]["event_type"] == "task_run_failed"
+    assert audit_events[0]["event_payload"]["task_type"] == "extract_requirements"
+    assert audit_events[0]["event_payload"]["document_id"] == "doc_missing"
+    assert audit_events[1]["event_type"] == "task_run_requested"
+
+
 def test_run_task_returns_422_for_unsupported_task_type(client):
-    response = client.post("/tasks/run", json={"task_type": "extract_requirements", "document_id": "doc_any"})
+    response = client.post("/tasks/run", json={"task_type": "extract_todos", "document_id": "doc_any"})
 
     assert response.status_code == 422
     detail = response.json()["detail"]
