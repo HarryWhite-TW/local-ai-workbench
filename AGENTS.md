@@ -1,8 +1,9 @@
 # AGENTS.md
 
 ## Project Positioning
+- The canonical showcase identity for this repo is `Local Document Assistant Prototype`, presented as a local document workbench.
 - This repo is a localhost, single-user, personal-use prototype.
-- This repo is also intended as a public portfolio engineering project for a local-first AI assistant / workflow-tool prototype.
+- This repo is also intended as a public portfolio engineering project for a local-first document assistant prototype centered on the local document workbench showcase.
 - Do not change the project's positioning, target audience, or showcase storyline unless the user explicitly asks.
 
 ## Non-Goals
@@ -16,25 +17,25 @@
 ## Core Rule
 - Default is read-only.
 - Any write-like action must go through preview before approve.
-- In M1, approve only changes local status and audit records. It does not trigger external side effects.
+- In the current baseline, approve only changes local status and audit records. It does not trigger external side effects.
 
 ## Architecture Principles
 - Prefer the simplest maintainable design that works on localhost.
 - Avoid premature package extraction, infra setup, or platform abstractions.
 - Keep logic in the Python API. Keep the Web app focused on display and user interaction.
-- Use SQLite with the smallest schema that supports the current milestone.
+- Use SQLite with the smallest schema that supports the current baseline.
 
 ## Development Rules
 - Root-level rule files stay at repo root: `AGENTS.md`, `PLANS.md`.
 - General documentation can go under `docs/`.
-- `docs/prompts/` is a placeholder in M1, not a full prompt versioning system.
-- `tests/e2e/` may exist as a placeholder, but M1 testing focuses on API tests.
+- `docs/prompts/` is a placeholder in the current baseline, not a full prompt versioning system.
+- `tests/e2e/` may exist as a placeholder, but the current baseline keeps testing focused on API tests.
 
-## Testing Focus for M1
+## Testing Focus for Current Baseline
 - Protect preview creation.
 - Protect approve state transition.
 - Protect audit event creation.
-- Do not spend effort on full E2E infrastructure in M1 unless scope changes later.
+- Do not spend effort on full E2E infrastructure in the current baseline unless scope changes later.
 
 ## Codex Collaboration Rules
 - Keep diffs small, reviewable, and easy to inspect.
