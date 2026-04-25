@@ -7,6 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 ActionType = Literal["stub_email_draft", "stub_calendar_event", "stub_export"]
 ActionStatus = Literal["preview", "approved"]
+TaskType = Literal["find_documents", "summarize_selected_document"]
+TaskRunStatus = Literal["completed", "completed_with_warnings"]
+TaskResultKind = Literal["document_search_results", "summary_artifact"]
 
 
 class ActionPreviewCreateRequest(BaseModel):
@@ -106,4 +109,23 @@ class SummaryArtifactResponse(BaseModel):
     method: Literal["extractive_v1"]
     source_content_hash: str
     summary_text: str
+    created_at: str
+
+
+class TaskRunRequest(BaseModel):
+    task_type: TaskType
+    query: str | None = None
+    document_id: str | None = None
+
+
+class TaskRunResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_type: TaskType
+    status: TaskRunStatus
+    result_kind: TaskResultKind
+    source_document_id: str | None
+    result: dict[str, Any]
+    warnings: list[str] = Field(default_factory=list)
+    error: str | None
     created_at: str
