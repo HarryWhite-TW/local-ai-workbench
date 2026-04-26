@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,8 +12,14 @@ from api.app.routes.settings import router as settings_router
 from api.app.routes.tasks import router as tasks_router
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_db()
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Local AI Assistant Prototype", version="0.1.0")
+    app = FastAPI(title="Local AI Assistant Prototype", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -24,10 +32,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    @app.on_event("startup")
-    def on_startup() -> None:
-        init_db()
 
     app.include_router(health_router)
     app.include_router(actions_router)
