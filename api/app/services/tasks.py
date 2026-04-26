@@ -8,6 +8,7 @@ from api.app.schemas import TaskRunRequest
 from api.app.services.audit import create_audit_event
 from api.app.services.documents import DocumentNotFoundError, get_document, search_documents
 from api.app.services.summary import create_summary_artifact
+from api.app.services.task_extractors import extract_requirements_v1
 
 
 class TaskRunError(Exception):
@@ -77,6 +78,10 @@ def create_task_completed_audit_event(
         payload["artifact_id"] = artifact["id"]
         payload["method"] = artifact["method"]
         payload["source_content_hash"] = artifact["source_content_hash"]
+
+    if task_response["task_type"] == "extract_requirements":
+        payload["method"] = task_response["result"]["method"]
+        payload["item_count"] = len(task_response["result"]["items"])
 
     create_audit_event(
         connection,
@@ -171,6 +176,42 @@ def run_summarize_selected_document_task(
     }
 
 
+def run_extract_requirements_task(
+    connection: sqlite3.Connection,
+    payload: TaskRunRequest,
+) -> dict[str, Any]:
+    if normalize_query(payload.query):
+        raise TaskRunError(status_code=422, detail="Query is not allowed for extract_requirements.")
+
+    document_id = payload.document_id
+    if not document_id:
+        raise TaskRunError(status_code=422, detail="Document ID is required for extract_requirements.")
+
+    try:
+        document = get_document(connection, document_id)
+    except DocumentNotFoundError as exc:
+        raise TaskRunError(status_code=404, detail="Document not found.") from exc
+
+    extraction_result = extract_requirements_v1(document["content"], file_type=document["file_type"])
+    items = extraction_result["items"]
+    warnings: list[str] = []
+    status = "completed"
+    if not items:
+        status = "completed_with_warnings"
+        warnings.append("No requirements found.")
+
+    return {
+        "task_type": "extract_requirements",
+        "status": status,
+        "result_kind": "requirements_list",
+        "source_document_id": document_id,
+        "result": extraction_result,
+        "warnings": warnings,
+        "error": None,
+        "created_at": utc_now(),
+    }
+
+
 def run_task(connection: sqlite3.Connection, payload: TaskRunRequest) -> dict[str, Any]:
     requested_at = utc_now()
     create_task_requested_audit_event(connection, payload=payload, created_at=requested_at)
@@ -180,6 +221,8 @@ def run_task(connection: sqlite3.Connection, payload: TaskRunRequest) -> dict[st
             task_response = run_find_documents_task(connection, payload)
         elif payload.task_type == "summarize_selected_document":
             task_response = run_summarize_selected_document_task(connection, payload)
+        elif payload.task_type == "extract_requirements":
+            task_response = run_extract_requirements_task(connection, payload)
         else:
             raise TaskRunError(status_code=422, detail="Unsupported task type.")
     except TaskRunError as exc:

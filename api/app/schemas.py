@@ -7,9 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 ActionType = Literal["stub_email_draft", "stub_calendar_event", "stub_export"]
 ActionStatus = Literal["preview", "approved"]
-TaskType = Literal["find_documents", "summarize_selected_document"]
+TaskType = Literal["find_documents", "summarize_selected_document", "extract_requirements"]
 TaskRunStatus = Literal["completed", "completed_with_warnings"]
-TaskResultKind = Literal["document_search_results", "summary_artifact"]
+TaskResultKind = Literal["document_search_results", "summary_artifact", "requirements_list"]
 
 
 class ActionPreviewCreateRequest(BaseModel):

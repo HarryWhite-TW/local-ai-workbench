@@ -2,6 +2,8 @@
 
 This repository is a localhost, single-user, personal-use prototype for working with a local document collection. It is not the mainline of a formal product, not a SaaS system, and not a productization-first codebase.
 
+The GitHub repo name `local-ai-workbench` is the working repository name. The public showcase identity for this repo remains `Local Document Assistant Prototype`, presented as a local document workbench.
+
 Current baseline:
 - `M1` through `M8` complete
 - `v1` complete

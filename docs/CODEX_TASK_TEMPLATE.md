@@ -44,6 +44,8 @@ docker run --rm <image>
 5. Risks / assumptions
 6. Suggested next step
 
+若任務是 read-only audit，可將 `Modified files` 改為 `Files inspected`，並在 `Test results` 說明未跑測試原因。
+
 ## 需要我拍板的點
 - 若沒有，請寫 `None`。
 - 若有，請列成可決策清單，不要模糊帶過。
