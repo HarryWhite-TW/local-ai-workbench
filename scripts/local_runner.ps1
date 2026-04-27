@@ -51,12 +51,13 @@ function Get-GitStatusShort {
     if ($result.ExitCode -ne 0) {
         throw "git status failed with exit code $($result.ExitCode): $($result.Stderr)"
     }
-    return $result.Stdout.Trim()
+    return $result.Stdout.TrimEnd()
 }
 
 function Test-AllowedStatus {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$Status
     )
 
