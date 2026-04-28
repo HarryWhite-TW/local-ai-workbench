@@ -14,8 +14,8 @@ $Gh = "C:\Program Files\GitHub CLI\gh.exe"
 $RunnerScriptPath = "scripts/local_runner.ps1"
 $MaxIssueBodyChars = 12000
 $MaxStdoutChars = 6000
-$MaxStderrPreviewChars = 1200
-$MaxStderrPreviewLines = 8
+$MaxStderrPreviewChars = 900
+$MaxStderrPreviewLines = 6
 
 function Invoke-Captured {
     param(
@@ -108,14 +108,37 @@ function Get-StderrSummary {
             Truncated = "no"
             LineCount = 0
             CharCount = 0
+            KnownNoise = "none detected"
         }
     }
 
     $lines = $Text -split "\r?\n"
     $previewLines = @()
+    $hasCloudflareHtml = $false
+    $hasPluginSyncWarning = $false
+    $hasPowerShellWrapper = $false
+    $hasResearchPreview = $false
+
     foreach ($line in $lines) {
         $trimmed = $line.Trim()
         if ([string]::IsNullOrWhiteSpace($trimmed)) {
+            continue
+        }
+
+        if ($trimmed -match "Cloudflare|cf_chl|challenge-platform|Enable JavaScript and cookies|<html>|</html>|<script|</script>") {
+            $hasCloudflareHtml = $true
+            continue
+        }
+        if ($trimmed -match "plugin sync|plugins/list|plugins/featured|403 Forbidden|startup remote plugin sync failed|failed to warm featured plugin") {
+            $hasPluginSyncWarning = $true
+            continue
+        }
+        if ($trimmed -match "NativeCommandError|At .*codex\.ps1|CategoryInfo|FullyQualifiedErrorId|node\.exe :|RemoteException") {
+            $hasPowerShellWrapper = $true
+            continue
+        }
+        if ($trimmed -match "research preview") {
+            $hasResearchPreview = $true
             continue
         }
         if ($trimmed -match "^\s*<" -or $trimmed -match "^\s*(var |function|\}|\{)") {
@@ -131,7 +154,7 @@ function Get-StderrSummary {
     }
 
     if ($previewLines.Count -eq 0) {
-        $previewLines = @("[stderr contained only omitted markup or blank lines]")
+        $previewLines = @("[stderr contained only known runner/Codex warning noise or omitted markup]")
     }
 
     $preview = $previewLines -join [Environment]::NewLine
@@ -141,6 +164,13 @@ function Get-StderrSummary {
         $truncated = "yes"
     }
 
+    $knownNoise = @()
+    if ($hasResearchPreview) { $knownNoise += "Codex research preview notice" }
+    if ($hasPluginSyncWarning) { $knownNoise += "plugin sync / 403 warning" }
+    if ($hasPowerShellWrapper) { $knownNoise += "PowerShell codex.ps1 wrapper noise" }
+    if ($hasCloudflareHtml) { $knownNoise += "Cloudflare/HTML challenge response omitted" }
+    $knownNoiseSummary = if ($knownNoise.Count -eq 0) { "none detected" } else { $knownNoise -join "; " }
+
     return [pscustomobject]@{
         Present = "yes"
         Classification = if ($ExitCode -eq 0) { "non-blocking stderr/warning" } else { "stderr with non-zero exit" }
@@ -148,6 +178,7 @@ function Get-StderrSummary {
         Truncated = $truncated
         LineCount = $lines.Count
         CharCount = $Text.Length
+        KnownNoise = $knownNoiseSummary
     }
 }
 
@@ -204,37 +235,42 @@ $cleanText = if ($repoStayedClean) { "yes" } else { "no" }
 $displayStatus = if ([string]::IsNullOrWhiteSpace($finalStatus)) { "(clean)" } else { $finalStatus }
 $initialDisplayStatus = if ([string]::IsNullOrWhiteSpace($initialStatus)) { "(clean)" } else { $initialStatus }
 $stdoutDisplay = if ([string]::IsNullOrWhiteSpace($codexStdout)) { "(no stdout)" } else { $codexStdout }
+$TextFence = '```text'
+$Fence = '```'
 
 $comment = @"
 ## local-runner-v0 result
 
+### Run metadata
+
 - Runner: $RunnerName
 - Issue: #$IssueNumber
 - Codex exit code: $($codexResult.ExitCode)
-- Repo clean before: $initialDisplayStatus
-- Repo clean after except approved runner script: $cleanText
-- Stderr present: $($stderrSummary.Present)
-- Stderr classification: $($stderrSummary.Classification)
-- Stderr lines/chars: $($stderrSummary.LineCount) lines / $($stderrSummary.CharCount) chars
-- Stderr preview truncated: $($stderrSummary.Truncated)
+- Repo status before: $initialDisplayStatus
+- Repo status after: $displayStatus
+- Repo stayed clean except approved runner script: $cleanText
+- Stderr: $($stderrSummary.Classification); present=$($stderrSummary.Present); truncated=$($stderrSummary.Truncated)
 
-### Stderr preview
+### Codex result
 
-````text
-$($stderrSummary.Preview)
-````
-
-### Codex stdout
-
-````text
+$TextFence
 $stdoutDisplay
-````
+$Fence
+
+### Diagnostics
+
+- Stderr lines/chars: $($stderrSummary.LineCount) lines / $($stderrSummary.CharCount) chars
+- Known omitted noise: $($stderrSummary.KnownNoise)
+
+$TextFence
+$($stderrSummary.Preview)
+$Fence
 
 ### Final git status
 
-````text
+$TextFence
 $displayStatus
-````
+$Fence
 "@
 
 $commentFile = New-TemporaryFile
