@@ -28,7 +28,7 @@ The app stays intentionally simple:
 
 ## Core Capabilities
 
-- Configure one root folder through the API
+- Configure one root folder through the web UI or API
 - Manually scan `md`, `txt`, `pdf`, and `docx` files into SQLite
 - List indexed documents and open document detail
 - Generate a deterministic single-document summary artifact
@@ -38,7 +38,7 @@ The app stays intentionally simple:
 ## Current UI
 
 The current web app is a three-column local document workbench:
-- Header: data source and scan status
+- Header: root folder setup, data source, and scan status
 - Left column: search and document list
 - Center column: document detail
 - Right column: summary as the primary panel and audit as secondary context
@@ -88,7 +88,7 @@ python -m pytest tests\api -q -p no:cacheprovider
 ## Basic Usage Path
 
 1. Start the API and web app locally.
-2. Configure the document root folder.
+2. Configure the document root folder from the workbench header.
 3. Run a manual scan to index supported files into SQLite.
 4. Use the left pane to search and select a document.
 5. Read document detail in the center pane.

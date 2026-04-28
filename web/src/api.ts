@@ -48,6 +48,13 @@ export function getRootFolderStatus(): Promise<RootFolderStatusRecord> {
   return request<RootFolderStatusRecord>("/settings/root-folder");
 }
 
+export function setRootFolder(rootFolder: string): Promise<RootFolderStatusRecord> {
+  return request<RootFolderStatusRecord>("/settings/root-folder", {
+    method: "PUT",
+    body: JSON.stringify({ root_folder: rootFolder })
+  });
+}
+
 export function scanDocuments(): Promise<DocumentScanResult> {
   return request<DocumentScanResult>("/documents/scan", {
     method: "POST"

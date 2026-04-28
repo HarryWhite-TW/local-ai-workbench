@@ -9,7 +9,8 @@ import {
   getDocuments,
   getRootFolderStatus,
   scanDocuments,
-  searchDocuments
+  searchDocuments,
+  setRootFolder as saveRootFolder
 } from "./api";
 import { AuditList } from "./components/AuditList";
 import type {
@@ -67,6 +68,9 @@ export default function App() {
   const [selectedDocument, setSelectedDocument] = useState<DocumentDetailRecord | null>(null);
   const [summaryArtifact, setSummaryArtifact] = useState<SummaryArtifactRecord | null>(null);
   const [summaryState, setSummaryState] = useState<SummaryState>("idle");
+  const [rootFolderInput, setRootFolderInput] = useState("");
+  const [rootFolderMessage, setRootFolderMessage] = useState<string | null>(null);
+  const [rootFolderError, setRootFolderError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
   const [searchResults, setSearchResults] = useState<DocumentSearchResultRecord[]>([]);
@@ -75,6 +79,7 @@ export default function App() {
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isSavingRootFolder, setIsSavingRootFolder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
@@ -157,6 +162,7 @@ export default function App() {
       ]);
 
       setRootFolder(nextRootFolder);
+      setRootFolderInput(nextRootFolder.root_folder ?? "");
       setDocuments(nextDocuments);
       setAuditEvents(nextAuditEvents);
       setLastScanResult(getLatestScanResult(nextAuditEvents));
@@ -207,6 +213,33 @@ export default function App() {
       setError(scanError instanceof Error ? scanError.message : "Failed to scan documents.");
     } finally {
       setIsScanning(false);
+    }
+  }
+
+  async function handleRootFolderSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedRootFolder = rootFolderInput.trim();
+
+    setRootFolderMessage(null);
+    setRootFolderError(null);
+
+    if (!normalizedRootFolder) {
+      setRootFolderError("Enter an absolute folder path before saving.");
+      return;
+    }
+
+    setIsSavingRootFolder(true);
+    setError(null);
+    try {
+      const nextRootFolder = await saveRootFolder(normalizedRootFolder);
+      setRootFolder(nextRootFolder);
+      setRootFolderInput(nextRootFolder.root_folder ?? "");
+      setRootFolderMessage("Root folder saved. You can scan documents when ready.");
+      await loadAudit();
+    } catch (saveError) {
+      setRootFolderError(saveError instanceof Error ? saveError.message : "Failed to save root folder.");
+    } finally {
+      setIsSavingRootFolder(false);
     }
   }
 
@@ -269,6 +302,8 @@ export default function App() {
   const hasActiveSearch = Boolean(activeQuery);
   const hasSearchResults = searchResults.length > 0;
   const normalizedSearchInput = searchInput.trim();
+  const normalizedRootFolderInput = rootFolderInput.trim();
+  const canSaveRootFolder = !isLoading && !isScanning && !isSavingRootFolder && normalizedRootFolderInput.length > 0;
   const canSubmitSearch = hasDocuments && !isLoading && !isScanning && !isSearching && normalizedSearchInput.length > 0;
   const canClearSearch =
     !isSearching && (searchInput.length > 0 || activeQuery.length > 0 || searchResults.length > 0 || Boolean(searchError));
@@ -299,7 +334,7 @@ export default function App() {
             <button
               type="button"
               className="primary-button"
-              disabled={!hasRootFolder || isScanning || isLoading}
+              disabled={!hasRootFolder || isScanning || isLoading || isSavingRootFolder}
               onClick={() => void handleScan()}
             >
               {isScanning ? "Scanning..." : "Scan documents"}
@@ -311,10 +346,30 @@ export default function App() {
           <div className="status-card">
             <span className="status-card-label">Data source</span>
             <strong>{hasRootFolder ? "Root folder configured" : "No root folder configured"}</strong>
-            <p>
-              {rootFolder?.root_folder ??
-                "Configure the root folder through the current API flow first. This workspace only reads and reports that state."}
-            </p>
+            <form className="root-folder-form" onSubmit={(event) => void handleRootFolderSubmit(event)}>
+              <label htmlFor="root-folder-input" className="sr-only">
+                Local root folder
+              </label>
+              <input
+                id="root-folder-input"
+                type="text"
+                className="root-folder-input"
+                value={rootFolderInput}
+                onChange={(event) => {
+                  setRootFolderInput(event.target.value);
+                  setRootFolderMessage(null);
+                  setRootFolderError(null);
+                }}
+                placeholder={"C:\\Users\\harry\\Documents\\notes"}
+                disabled={isLoading || isSavingRootFolder || isScanning}
+              />
+              <button type="submit" className="secondary-button" disabled={!canSaveRootFolder}>
+                {isSavingRootFolder ? "Saving..." : hasRootFolder ? "Update folder" : "Save folder"}
+              </button>
+            </form>
+            <p>{rootFolder?.root_folder ?? "Set one local folder, then run a manual scan."}</p>
+            {rootFolderMessage ? <p className="inline-success">{rootFolderMessage}</p> : null}
+            {rootFolderError ? <p className="inline-error">{rootFolderError}</p> : null}
           </div>
 
           <div className="status-card">
