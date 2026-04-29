@@ -5,7 +5,7 @@ This repository is a localhost, single-user, personal-use prototype for working 
 The GitHub repo name `local-ai-workbench` is the working repository name. The public showcase identity for this repo remains `Local Document Assistant Prototype`, presented as a local document workbench.
 
 Current baseline:
-- `M1` through `M8` complete
+- `M1` through `M9` complete
 - `v1` complete
 - showcase UI workbench redesign complete
 
@@ -78,6 +78,20 @@ npm run dev
 
 The Vite dev server runs on `http://127.0.0.1:5173`.
 
+## Demo Walkthrough
+
+1. Start the API with `uvicorn api.app.main:app --reload`.
+2. Start the web app with `npm run dev` from `web/`.
+3. Open `http://127.0.0.1:5173` in a browser.
+4. In the workbench header, paste one existing local root folder path and save it.
+5. Run `Scan documents` to index supported `md`, `txt`, `pdf`, and `docx` files into local SQLite.
+6. Use keyword search in the left column to search indexed title, relative path, and extracted content.
+7. Select a document to read its extracted text in the center detail panel.
+8. Generate or view the deterministic single-document summary in the right panel.
+9. Inspect audit context in the right panel to see local root folder, scan, and summary events.
+
+The walkthrough stays local-first: it uses one configured folder, manual scans, deterministic processing, and localhost services only.
+
 ### Tests
 
 ```powershell
@@ -89,10 +103,12 @@ python -m pytest tests\api -q -p no:cacheprovider
 
 1. Start the API and web app locally.
 2. Configure the document root folder from the workbench header.
-3. Run a manual scan to index supported files into SQLite.
-4. Use the left pane to search and select a document.
-5. Read document detail in the center pane.
-6. Review the generated summary and related audit context in the right pane.
+3. Run a manual scan to index supported `md`, `txt`, `pdf`, and `docx` files into SQLite.
+4. Search indexed documents from the left pane.
+5. Select a document from the results or document list.
+6. Read document detail in the center pane.
+7. Generate or view the deterministic summary in the right pane.
+8. Review related audit context in the right pane.
 
 ## Non-Goals And Known Limits
 
