@@ -59,6 +59,10 @@ function formatScanSummary(scanResult: DocumentScanResult | null): string {
   return `${scanResult.found} found · ${scanResult.created} created · ${scanResult.skipped} skipped`;
 }
 
+function getErrorDetail(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export default function App() {
   const [rootFolder, setRootFolder] = useState<RootFolderStatusRecord | null>(null);
   const [documents, setDocuments] = useState<DocumentListItemRecord[]>([]);
@@ -78,7 +82,7 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
+  const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
   const [isSavingRootFolder, setIsSavingRootFolder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -110,7 +114,12 @@ export default function App() {
         return;
       }
 
-      setError(loadError instanceof Error ? loadError.message : "Failed to load document details.");
+      setError(
+        `Could not load document details. ${getErrorDetail(
+          loadError,
+          "The API did not return an error detail."
+        )} Run Scan documents to refresh the local index, then select the document again.`
+      );
       return;
     }
 
@@ -144,7 +153,12 @@ export default function App() {
 
       setSummaryArtifact(null);
       setSummaryState("empty");
-      setError(loadError instanceof Error ? loadError.message : "Failed to load summary artifact.");
+      setError(
+        `Could not load the latest summary. ${getErrorDetail(
+          loadError,
+          "The API did not return an error detail."
+        )} You can still read the document or generate a new summary.`
+      );
     } finally {
       setIsLoadingDocument(false);
     }
@@ -184,7 +198,12 @@ export default function App() {
 
       await loadSelectedDocument(nextDocumentId);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Failed to load document workspace.");
+      setError(
+        `Could not load the local workbench. ${getErrorDetail(
+          loadError,
+          "The API did not return an error detail."
+        )} Confirm the API is running, then refresh the page.`
+      );
     } finally {
       setIsLoading(false);
     }
@@ -210,7 +229,12 @@ export default function App() {
       setSearchError(null);
       await loadOverview(selectedDocumentId);
     } catch (scanError) {
-      setError(scanError instanceof Error ? scanError.message : "Failed to scan documents.");
+      setError(
+        `Could not scan documents. ${getErrorDetail(
+          scanError,
+          "The API did not return an error detail."
+        )} Confirm the configured folder still exists, then try Scan documents again.`
+      );
     } finally {
       setIsScanning(false);
     }
@@ -237,7 +261,12 @@ export default function App() {
       setRootFolderMessage("Root folder saved. You can scan documents when ready.");
       await loadAudit();
     } catch (saveError) {
-      setRootFolderError(saveError instanceof Error ? saveError.message : "Failed to save root folder.");
+      setRootFolderError(
+        `Could not save root folder. ${getErrorDetail(
+          saveError,
+          "The API did not return an error detail."
+        )} Use an existing absolute folder path on this computer.`
+      );
     } finally {
       setIsSavingRootFolder(false);
     }
@@ -261,7 +290,12 @@ export default function App() {
       setSummaryState("ready");
       await loadAudit();
     } catch (generateError) {
-      setError(generateError instanceof Error ? generateError.message : "Failed to generate summary.");
+      setError(
+        `Could not generate summary. ${getErrorDetail(
+          generateError,
+          "The API did not return an error detail."
+        )} The source document stays unchanged; try again after selecting the document.`
+      );
     } finally {
       setIsGeneratingSummary(false);
     }
@@ -275,18 +309,28 @@ export default function App() {
     if (!normalizedQuery) {
       setActiveQuery("");
       setSearchResults([]);
+      setPendingSearchQuery(null);
       return;
     }
 
-    setIsSearching(true);
+    if (pendingSearchQuery !== null) {
+      return;
+    }
+
+    setPendingSearchQuery(normalizedQuery);
     try {
       const results = await searchDocuments(normalizedQuery);
       setActiveQuery(normalizedQuery);
       setSearchResults(results);
+      setPendingSearchQuery(null);
     } catch (searchRequestError) {
-      setSearchError(searchRequestError instanceof Error ? searchRequestError.message : "Failed to search documents.");
-    } finally {
-      setIsSearching(false);
+      setSearchError(
+        `Search failed. ${getErrorDetail(
+          searchRequestError,
+          "The API did not return an error detail."
+        )} Confirm the API is running and try again.`
+      );
+      setPendingSearchQuery(null);
     }
   }
 
@@ -295,14 +339,18 @@ export default function App() {
     setActiveQuery("");
     setSearchResults([]);
     setSearchError(null);
+    setPendingSearchQuery(null);
   }
 
   const hasRootFolder = Boolean(rootFolder?.root_folder);
   const hasDocuments = documents.length > 0;
+  const hasCompletedScan = Boolean(lastScanResult);
+  const latestScanFoundNoFiles = Boolean(lastScanResult && lastScanResult.found === 0);
   const hasActiveSearch = Boolean(activeQuery);
   const hasSearchResults = searchResults.length > 0;
   const normalizedSearchInput = searchInput.trim();
   const normalizedRootFolderInput = rootFolderInput.trim();
+  const isSearching = pendingSearchQuery !== null;
   const canSaveRootFolder = !isLoading && !isScanning && !isSavingRootFolder && normalizedRootFolderInput.length > 0;
   const canSubmitSearch = hasDocuments && !isLoading && !isScanning && !isSearching && normalizedSearchInput.length > 0;
   const canClearSearch =
@@ -345,7 +393,7 @@ export default function App() {
         <div className="header-status-grid">
           <div className="status-card">
             <span className="status-card-label">Data source</span>
-            <strong>{hasRootFolder ? "Root folder configured" : "No root folder configured"}</strong>
+            <strong>{hasRootFolder ? "Root folder configured" : "Choose a local folder to begin"}</strong>
             <form className="root-folder-form" onSubmit={(event) => void handleRootFolderSubmit(event)}>
               <label htmlFor="root-folder-input" className="sr-only">
                 Local root folder
@@ -367,7 +415,10 @@ export default function App() {
                 {isSavingRootFolder ? "Saving..." : hasRootFolder ? "Update folder" : "Save folder"}
               </button>
             </form>
-            <p>{rootFolder?.root_folder ?? "Set one local folder, then run a manual scan."}</p>
+            <p>
+              {rootFolder?.root_folder ??
+                "Paste an existing absolute folder path. The workbench indexes supported files only after you run Scan documents."}
+            </p>
             {rootFolderMessage ? <p className="inline-success">{rootFolderMessage}</p> : null}
             {rootFolderError ? <p className="inline-error">{rootFolderError}</p> : null}
           </div>
@@ -376,9 +427,13 @@ export default function App() {
             <span className="status-card-label">Scan status</span>
             <strong>{lastScanResult ? `Last scan: ${lastScanResult.scanned_at}` : "No scan completed yet"}</strong>
             <p>
-              {hasRootFolder
-                ? formatScanSummary(lastScanResult)
-                : "Scan stays unavailable until the root folder has been configured."}
+              {!hasRootFolder
+                ? "Save a root folder before scanning."
+                : latestScanFoundNoFiles
+                  ? "Scan completed but found no supported md, txt, pdf, or docx files. Add supported files or choose another folder, then scan again."
+                  : hasCompletedScan
+                    ? formatScanSummary(lastScanResult)
+                    : "Ready for the first manual scan. Scan documents reads the configured folder into the local SQLite index."}
             </p>
           </div>
 
@@ -387,14 +442,22 @@ export default function App() {
             <strong>
               {selectedDocument
                 ? selectedDocument.title
-                : hasDocuments
-                  ? "Select a document from the left column"
-                  : "Scan documents to start reading"}
+                : !hasRootFolder
+                  ? "Set a root folder to start"
+                  : hasDocuments
+                    ? "Select a document from the left column"
+                    : latestScanFoundNoFiles
+                      ? "No supported files found"
+                      : "Scan documents to start reading"}
             </strong>
             <p>
               {selectedDocument
                 ? `${selectedDocument.file_type.toUpperCase()} · ${selectedDocument.relative_path}`
-                : `${documents.length} indexed document(s) currently loaded in this workspace.`}
+                : !hasRootFolder
+                  ? "The workbench stays local. Choose one folder, save it, then scan when ready."
+                  : latestScanFoundNoFiles
+                    ? "The latest scan finished, but there are no supported files to open yet."
+                    : `${documents.length} indexed document(s) currently loaded in this workspace.`}
             </p>
           </div>
         </div>
@@ -443,10 +506,14 @@ export default function App() {
               </form>
               {searchError ? <div className="error-banner search-error">{searchError}</div> : null}
               {!hasRootFolder ? (
-                <p className="empty-state">Search is unavailable until a root folder is configured.</p>
+                <p className="empty-state">
+                  Save a root folder first. Search uses the local index created by Scan documents.
+                </p>
               ) : !hasDocuments ? (
                 <p className="empty-state">
-                  Search becomes available after a manual scan indexes md, txt, pdf, or docx documents.
+                  {latestScanFoundNoFiles
+                    ? "The latest scan found no supported files, so there is nothing to search yet."
+                    : "Run Scan documents before searching. Search covers indexed title, relative path, and extracted content."}
                 </p>
               ) : showSearchIdleState ? (
                 <>
@@ -457,8 +524,10 @@ export default function App() {
                 </>
               ) : showSearchNoMatchState ? (
                 <>
-                  <p className="empty-state">No matches found for "{activeQuery}".</p>
-                  <p className="muted compact">This workbench searches title, relative path, and extracted content only.</p>
+                  <p className="empty-state">No indexed documents matched "{activeQuery}".</p>
+                  <p className="muted compact">
+                    Try a different keyword, or scan again if files changed in the configured folder.
+                  </p>
                 </>
               ) : showSearchResultState ? (
                 <>
@@ -522,9 +591,11 @@ export default function App() {
                 </div>
               ) : (
                 <p className="empty-state">
-                  {hasRootFolder
-                    ? "No indexed documents yet. Run Scan documents to load files from the configured root folder."
-                    : "No document list is available until the root folder is configured and scanned."}
+                  {!hasRootFolder
+                    ? "Save a root folder in Data source, then run Scan documents to build the local index."
+                    : latestScanFoundNoFiles
+                      ? "The latest scan found no supported files. Add md, txt, pdf, or docx files to the configured folder, or choose another folder."
+                      : "No indexed documents yet. Run Scan documents to load files from the configured root folder."}
                 </p>
               )}
             </section>
@@ -544,7 +615,15 @@ export default function App() {
                 </span>
               </div>
               {!selectedDocumentId ? (
-                <p className="empty-state">Select a document from the left column to inspect its extracted content.</p>
+                <p className="empty-state">
+                  {!hasRootFolder
+                    ? "Configure a root folder and run a scan before opening document detail."
+                    : !hasDocuments && latestScanFoundNoFiles
+                      ? "No document can be selected because the latest scan found no supported files."
+                      : !hasDocuments
+                        ? "Run Scan documents, then select a document from the left column to inspect its extracted content."
+                        : "Select a document from the left column to inspect its extracted content."}
+                </p>
               ) : isLoadingDocument && !selectedDocument ? (
                 <p className="empty-state">Loading extracted document content...</p>
               ) : selectedDocument ? (
@@ -600,7 +679,15 @@ export default function App() {
                 </button>
               </div>
               {!selectedDocumentId ? (
-                <p className="empty-state">Choose a document before generating or reviewing a summary.</p>
+                <p className="empty-state">
+                  {!hasRootFolder
+                    ? "Summary stays unavailable until a root folder is configured, scanned, and a document is selected."
+                    : !hasDocuments && latestScanFoundNoFiles
+                      ? "There is no document to summarize because the latest scan found no supported files."
+                      : !hasDocuments
+                        ? "Run Scan documents, then choose a document before generating or reviewing a summary."
+                        : "Choose a document before generating or reviewing a summary."}
+                </p>
               ) : summaryState === "loading" ? (
                 <p className="empty-state">Loading the latest summary artifact for this document...</p>
               ) : summaryState === "empty" || !summaryArtifact ? (
@@ -628,7 +715,10 @@ export default function App() {
               )}
             </section>
             <div className="audit-panel-wrap">
-              <AuditList events={auditEvents} />
+              <AuditList
+                events={auditEvents}
+                emptyMessage="Audit events will appear after saving a root folder, scanning documents, or generating a summary."
+              />
             </div>
           </aside>
         </div>

@@ -2,9 +2,10 @@ import type { AuditEventRecord } from "../types";
 
 interface AuditListProps {
   events: AuditEventRecord[];
+  emptyMessage?: string;
 }
 
-export function AuditList({ events }: AuditListProps) {
+export function AuditList({ events, emptyMessage = "No audit events yet." }: AuditListProps) {
   return (
     <section className="panel">
       <div className="panel-header">
@@ -13,7 +14,7 @@ export function AuditList({ events }: AuditListProps) {
       </div>
       <div className="list audit-list">
         {events.length === 0 ? (
-          <p className="empty-state">No audit events yet.</p>
+          <p className="empty-state">{emptyMessage}</p>
         ) : (
           events.map((event) => (
             <div key={event.id} className="audit-item">
@@ -30,4 +31,3 @@ export function AuditList({ events }: AuditListProps) {
     </section>
   );
 }
-
