@@ -276,18 +276,24 @@ function New-ReviewBundleComment {
         [Parameter(Mandatory = $true)]
         [string]$RepoCleanBefore,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$ModifiedFiles,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$DiffStat,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$CachedDiffStat,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$CommandsSummary,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$CodexFinalReport,
         [Parameter(Mandatory = $true)]
         [object]$StderrSummary,
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$FinalStatus
     )
 

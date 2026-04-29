@@ -6,6 +6,8 @@ Runner v1 is a review-bundle-only helper for write-capable GitHub Issues.
 
 It can run Codex locally for an Issue, leave any repo changes unstaged, collect review data, and post a structured `local-runner-v1 review bundle` comment back to the same Issue.
 
+Current limit: this version is review-bundle-only and does not implement approval-token local commit yet.
+
 Runner v1 does not approve, stage, commit, push, close issues, edit labels, create pull requests, or consume approval tokens.
 
 ## When to use it
