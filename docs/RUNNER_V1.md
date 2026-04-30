@@ -8,6 +8,8 @@ It can run Codex locally for an Issue, leave any repo changes unstaged, collect 
 
 Current limit: this version is review-bundle-only and does not implement approval-token local commit yet.
 
+Validation status: runner v1 is currently validated only for producing review bundles with local unstaged changes.
+
 Runner v1 does not approve, stage, commit, push, close issues, edit labels, create pull requests, or consume approval tokens.
 
 ## When to use it
