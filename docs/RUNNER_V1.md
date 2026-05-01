@@ -45,6 +45,8 @@ The script derives the repo root from its own location, so it does not require a
 
 ## Level 3A local commit mode
 
+Validate Level 3A `CommitApproved` with a tiny docs-only Issue before using it on product work.
+
 After reviewing a `local-runner-v1 review bundle`, run commit mode only when a human / ChatGPT reviewer has approved the exact local state:
 
 ```powershell
