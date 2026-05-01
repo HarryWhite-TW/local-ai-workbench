@@ -326,7 +326,7 @@ function Get-ApprovalState {
 
     $trackedDiff = Get-GitOutput -GitArgs @("diff", "--binary") -Action "git diff --binary"
     $untrackedPayload = Get-UntrackedFileFingerprintPayload -Status $statusForState
-    $modifiedFilesForState = Get-StatusPaths -Status $statusForState
+    $modifiedFilesForState = @(Get-StatusPaths -Status $statusForState)
     $statusPayload = $statusLines -join [Environment]::NewLine
     $filesPayload = "issue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`nstatus=`n$statusPayload"
     $diffPayload = "issue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`nstatus=`n$statusPayload`ntracked-diff=`n$trackedDiff`nuntracked=`n$untrackedPayload"
