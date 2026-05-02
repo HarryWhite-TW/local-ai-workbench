@@ -43,6 +43,18 @@ The script derives the repo root from its own location, so it does not require a
 .\scripts\local_runner_v1.ps1 -IssueNumber <N> -Mode ReviewBundle
 ```
 
+## Initial CommitApproved usage policy
+
+`ReviewBundle` remains the default runner v1 mode.
+
+`CommitApproved` is explicit, approval-gated, and currently allowed only for tiny docs-only or similarly low-risk tasks. Do not use `CommitApproved` for product application code yet.
+
+The approval token is a state-bound confirmation string, not a secret credential. Human / ChatGPT review of the review bundle and local diff is still required before entering the token.
+
+`CommitApproved` must stop on any mismatch, stale approval, unexpected modified file, preexisting staged file, or untracked file. Push, issue close, label edits, PR creation, merges, and force pushes remain out of scope.
+
+If `CommitApproved` fails after staging, the runner should report the final state and require human cleanup. It should not auto-reset.
+
 ## Level 3A local commit mode
 
 Validate Level 3A `CommitApproved` with a tiny docs-only Issue before using it on product work.
