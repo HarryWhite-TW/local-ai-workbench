@@ -29,7 +29,6 @@ $ErrorActionPreference = "Stop"
 $RunnerName = "local-runner-v2"
 $RunnerVersion = "v2A-dry-run-detector"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
-$ScriptReviewPath = "scripts/local_runner_v2.ps1"
 $RequiredMarkers = @(
     "Runner marker: runner-v2-reviewbundle-ready",
     "write-capable",
@@ -130,15 +129,6 @@ function Assert-CleanRepo {
             Status = ""
             IsClean = $true
             Summary = "yes"
-        }
-    }
-
-    $statusLines = @($status -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if (($statusLines.Count -eq 1) -and ($statusLines[0] -eq "?? $ScriptReviewPath")) {
-        return [pscustomobject]@{
-            Status = $status
-            IsClean = $true
-            Summary = "yes (only untracked $ScriptReviewPath detected for local review-bundle smoke testing)"
         }
     }
 
