@@ -1,15 +1,18 @@
 <#
 .SYNOPSIS
-Detects runner v2A ReviewBundle-ready issues without writing anything.
+Detects runner v2A ReviewBundle-ready issues and can run one ReviewBundle.
 
 .DESCRIPTION
-local_runner_v2.ps1 starts as a local, on-demand dry-run detector. In -DryRun
-mode it checks local repository state, reads open GitHub issues, prints matching
-candidate issues, and stops. It does not call Codex, run runner v1, modify
-files, post GitHub comments, or perform any git/GitHub write operation.
+local_runner_v2.ps1 is a local, on-demand v2A runner. In -DryRun mode it checks
+local repository state, reads open GitHub issues, prints matching candidate
+issues, and stops. In -RunOnce mode it requires exactly one matching candidate
+and delegates only to runner v1 ReviewBundle for that issue.
 
 .EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun
+
+.EXAMPLE
+.\scripts\local_runner_v2.ps1 -RunOnce
 
 .EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun -Repo "HarryWhite-TW/local-ai-workbench" -MaxIssues 20
@@ -17,6 +20,7 @@ files, post GitHub comments, or perform any git/GitHub write operation.
 
 param(
     [switch]$DryRun,
+    [switch]$RunOnce,
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
     [ValidateRange(1, 100)]
@@ -27,7 +31,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RunnerName = "local-runner-v2"
-$RunnerVersion = "v2A-dry-run-detector"
+$RunnerVersion = "v2A-runonce-reviewbundle"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
 $RequiredMarkers = @(
     "Runner marker: runner-v2-reviewbundle-ready",
@@ -35,6 +39,7 @@ $RequiredMarkers = @(
     "review-bundle capable"
 )
 $NoWriteGuarantee = "DryRun detection only: does not call Codex, run runner v1, modify files, post comments, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, or invoke external agents."
+$RunOnceSafetyBoundary = "RunOnce delegates only to runner v1 ReviewBundle for exactly one eligible candidate. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -118,7 +123,7 @@ function Assert-RepoRoot {
     $currentPath = ConvertTo-NormalizedProviderPath -Path (Get-Location).ProviderPath
 
     if (-not [string]::Equals($currentPath, $expectedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Run this dry-run detector from the repo root. Current path: $currentPath. Repo root: $expectedRoot."
+        throw "Run local-runner-v2 from the repo root. Current path: $currentPath. Repo root: $expectedRoot."
     }
 }
 
@@ -132,7 +137,7 @@ function Assert-CleanRepo {
         }
     }
 
-    throw "Repo is dirty; runner v2 dry-run stops before issue detection. git status --short:`n$status"
+    throw "Repo is dirty; runner v2 stops before issue detection. git status --short:`n$status"
 }
 
 function Get-CurrentBranch {
@@ -145,6 +150,10 @@ function Get-CurrentBranch {
 
 function Get-CurrentHead {
     return Get-GitOutput -GitArgs @("rev-parse", "--short", "HEAD") -Action "git rev-parse --short HEAD"
+}
+
+function Get-GitStatusShort {
+    return Get-GitOutput -GitArgs @("status", "--short") -Action "git status --short"
 }
 
 function Assert-GhAvailable {
@@ -290,6 +299,45 @@ function Format-DryRunCandidate {
     return ($lines -join [Environment]::NewLine)
 }
 
+function Format-CandidateLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Candidate
+    )
+
+    return "Issue #$($Candidate.Issue.number): $($Candidate.Issue.title)"
+}
+
+function Find-RunnerV2CandidateIssues {
+    $issues = Get-OpenIssues
+
+    $candidates = @()
+    $skippedIssues = @()
+    foreach ($issue in $issues) {
+        $bodyResult = Get-IssueBodyReadResult -IssueNumber ([int]$issue.number)
+        if (-not $bodyResult.Success) {
+            $skippedIssues += [pscustomobject]@{
+                Issue = $issue
+                Reason = $bodyResult.Reason
+            }
+            continue
+        }
+
+        $markerResult = Test-RunnerV2ReadyIssue -Body $bodyResult.Body
+        if ($markerResult.IsCandidate) {
+            $candidates += [pscustomobject]@{
+                Issue = $issue
+                MatchedMarkers = [string[]]$markerResult.MatchedMarkers
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        Candidates = @($candidates)
+        SkippedIssues = @($skippedIssues)
+    }
+}
+
 function Write-DryRunSummary {
     param(
         [Parameter(Mandatory = $true)]
@@ -321,28 +369,9 @@ function Invoke-DryRun {
     $cleanResult = Assert-CleanRepo
     $branch = Get-CurrentBranch
     $head = Get-CurrentHead
-    $issues = Get-OpenIssues
-
-    $candidates = @()
-    $skippedIssues = @()
-    foreach ($issue in $issues) {
-        $bodyResult = Get-IssueBodyReadResult -IssueNumber ([int]$issue.number)
-        if (-not $bodyResult.Success) {
-            $skippedIssues += [pscustomobject]@{
-                Issue = $issue
-                Reason = $bodyResult.Reason
-            }
-            continue
-        }
-
-        $markerResult = Test-RunnerV2ReadyIssue -Body $bodyResult.Body
-        if ($markerResult.IsCandidate) {
-            $candidates += [pscustomobject]@{
-                Issue = $issue
-                MatchedMarkers = [string[]]$markerResult.MatchedMarkers
-            }
-        }
-    }
+    $scanResult = Find-RunnerV2CandidateIssues
+    $candidates = @($scanResult.Candidates)
+    $skippedIssues = @($scanResult.SkippedIssues)
 
     Write-Host "$RunnerName $RunnerVersion"
     Write-Host "Mode: DryRun"
@@ -370,12 +399,123 @@ function Invoke-DryRun {
     Write-DryRunSummary -Branch $branch -Head $head -RepoCleanSummary $cleanResult.Summary -CandidateCount $candidates.Count -SkippedCount $skippedIssues.Count
 }
 
-try {
-    if (-not $DryRun) {
-        throw "Unsupported mode. Use: .\scripts\local_runner_v2.ps1 -DryRun"
+function Get-PowerShellExecutablePath {
+    $currentProcess = Get-Process -Id $PID -ErrorAction SilentlyContinue
+    if ($null -ne $currentProcess -and -not [string]::IsNullOrWhiteSpace($currentProcess.Path)) {
+        return $currentProcess.Path
     }
 
-    Invoke-DryRun
+    $preferredName = if ($PSVersionTable.PSEdition -eq "Core") { "pwsh" } else { "powershell.exe" }
+    $command = Get-Command $preferredName -ErrorAction SilentlyContinue
+    if ($null -ne $command) {
+        return $command.Source
+    }
+
+    $fallbackCommand = Get-Command "powershell.exe" -ErrorAction SilentlyContinue
+    if ($null -ne $fallbackCommand) {
+        return $fallbackCommand.Source
+    }
+
+    throw "Could not resolve a PowerShell executable to invoke runner v1."
+}
+
+function Invoke-RunnerV1ReviewBundle {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber
+    )
+
+    $runnerV1Path = Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1"
+    if (-not (Test-Path -LiteralPath $runnerV1Path -PathType Leaf)) {
+        throw "Runner v1 script path is missing: $runnerV1Path"
+    }
+
+    $powerShellPath = Get-PowerShellExecutablePath
+    & $powerShellPath -NoProfile -File $runnerV1Path -IssueNumber $IssueNumber
+    return if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+}
+
+function Write-FinalGitStatus {
+    Write-Host "Final local git status:"
+    $finalStatus = Get-GitStatusShort
+    if ([string]::IsNullOrWhiteSpace($finalStatus)) {
+        Write-Host "(clean)"
+    }
+    else {
+        Write-Host $finalStatus
+    }
+}
+
+function Invoke-RunOnce {
+    Assert-RepoRoot
+    $null = Assert-CleanRepo
+    $scanResult = Find-RunnerV2CandidateIssues
+    $candidates = @($scanResult.Candidates)
+    $skippedIssues = @($scanResult.SkippedIssues)
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: RunOnce"
+    Write-Host "Marker matching: lightweight issue search, then exact case-sensitive marker matching on individually fetched issue bodies"
+
+    foreach ($skippedIssue in $skippedIssues) {
+        Write-Host ""
+        Write-Host "Skipped issue #$($skippedIssue.Issue.number): could not read issue body. $($skippedIssue.Reason)"
+    }
+
+    if ($candidates.Count -eq 0) {
+        Write-Host ""
+        Write-Host "No eligible candidate issue found. RunOnce exits without running runner v1."
+        Write-FinalGitStatus
+        return
+    }
+
+    if ($candidates.Count -gt 1) {
+        Write-Host ""
+        Write-Host "Ambiguous candidate issues found. RunOnce requires exactly one candidate and will not choose automatically."
+        foreach ($candidate in $candidates) {
+            Write-Host (Format-CandidateLine -Candidate $candidate)
+        }
+        throw "RunOnce stopped because multiple eligible candidate issues were found."
+    }
+
+    $candidate = $candidates[0]
+    $issueNumber = [int]$candidate.Issue.number
+
+    Write-Host ""
+    Write-Host "Candidate issue number: #$issueNumber"
+    Write-Host "Candidate title: $($candidate.Issue.title)"
+    Write-Host "Planned action: Run runner v1 ReviewBundle for issue #$issueNumber."
+    Write-Host "Safety boundary: $RunOnceSafetyBoundary"
+    Write-Host ""
+
+    $runnerExitCode = Invoke-RunnerV1ReviewBundle -IssueNumber $issueNumber
+
+    Write-Host ""
+    Write-Host "Runner v1 exit code: $runnerExitCode"
+    Write-Host "Next step: notify ChatGPT that issue #$issueNumber ReviewBundle was posted."
+    Write-FinalGitStatus
+
+    if ($runnerExitCode -ne 0) {
+        Write-Host "Failure: runner v1 ReviewBundle failed with exit code $runnerExitCode."
+        exit $runnerExitCode
+    }
+}
+
+try {
+    if ($DryRun -and $RunOnce) {
+        throw "Choose exactly one mode. Use either .\scripts\local_runner_v2.ps1 -DryRun or .\scripts\local_runner_v2.ps1 -RunOnce."
+    }
+
+    if (-not $DryRun -and -not $RunOnce) {
+        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun or .\scripts\local_runner_v2.ps1 -RunOnce."
+    }
+
+    if ($DryRun) {
+        Invoke-DryRun
+    }
+    else {
+        Invoke-RunOnce
+    }
 }
 catch {
     Write-Error $_.Exception.Message
