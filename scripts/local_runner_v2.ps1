@@ -432,7 +432,11 @@ function Invoke-RunnerV1ReviewBundle {
 
     $powerShellPath = Get-PowerShellExecutablePath
     & $powerShellPath -NoProfile -File $runnerV1Path -IssueNumber $IssueNumber
-    return if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+    if ($null -eq $LASTEXITCODE) {
+        return 0
+    }
+
+    return [int]$LASTEXITCODE
 }
 
 function Write-FinalGitStatus {
