@@ -92,6 +92,8 @@ A later implementation may add:
 
 Before broader use, v2A `-RunOnce` should be validated through a dedicated docs-only marker issue that leaves reviewable unstaged changes.
 
+That validation path should stay docs-only until the RunOnce handoff and review bundle output are confirmed.
+
 It must not run `CommitApproved`. It must not push, close issues, edit labels, create PRs, merge, or force push.
 
 ## Approval and CommitApproved boundary
