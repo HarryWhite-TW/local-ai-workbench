@@ -431,12 +431,14 @@ function Invoke-RunnerV1ReviewBundle {
     }
 
     $powerShellPath = Get-PowerShellExecutablePath
-    & $powerShellPath -NoProfile -File $runnerV1Path -IssueNumber $IssueNumber
-    if ($null -eq $LASTEXITCODE) {
-        return 0
+    $runnerOutput = & $powerShellPath -NoProfile -File $runnerV1Path -IssueNumber $IssueNumber 2>&1
+    $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+
+    foreach ($line in @($runnerOutput)) {
+        Write-Host $line
     }
 
-    return [int]$LASTEXITCODE
+    return $exitCode
 }
 
 function Write-FinalGitStatus {
