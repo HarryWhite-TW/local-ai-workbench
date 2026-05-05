@@ -90,6 +90,8 @@ A later implementation may add:
 
 `-RunOnce` may run runner v1 `ReviewBundle` only for explicitly marked issues after the same dry-run validation succeeds.
 
+Before broader use, v2A `-RunOnce` should be validated through a dedicated docs-only marker issue that leaves reviewable unstaged changes.
+
 It must not run `CommitApproved`. It must not push, close issues, edit labels, create PRs, merge, or force push.
 
 ## Approval and CommitApproved boundary
