@@ -98,6 +98,8 @@ It must not run `CommitApproved`. It must not push, close issues, edit labels, c
 
 ## Approval and CommitApproved boundary
 
+Initial `ApprovalOnce` validation is limited to `action=run-reviewbundle`; additional approval actions require separate design and validation.
+
 For now:
 
 - v2A must not auto-run `CommitApproved`.
