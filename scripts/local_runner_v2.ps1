@@ -15,6 +15,8 @@ delegates only to runner v1 ReviewBundle for the approved issue.
 In -ApprovalNextDryRun mode it searches a bounded set of open issues, validates
 the unique current RUNNER-V2-APPROVE action=run-reviewbundle marker, prints the
 planned action, and stops without executing anything.
+In -ApprovalNextOnce mode it uses the same unique approval validation, then
+delegates once to runner v1 ReviewBundle for the selected issue.
 
 .EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun
@@ -32,6 +34,9 @@ planned action, and stops without executing anything.
 .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun
 
 .EXAMPLE
+.\scripts\local_runner_v2.ps1 -ApprovalNextOnce
+
+.EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun -Repo "HarryWhite-TW/local-ai-workbench" -MaxIssues 20
 #>
 
@@ -41,6 +46,7 @@ param(
     [switch]$ApprovalDryRun,
     [switch]$ApprovalOnce,
     [switch]$ApprovalNextDryRun,
+    [switch]$ApprovalNextOnce,
     [int]$IssueNumber = 0,
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
@@ -84,6 +90,7 @@ $ApprovalKnownFields = $ApprovalRequiredFields
 $ApprovalDryRunNoWriteGuarantee = "ApprovalDryRun detection only: does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop, daemon, or scheduler."
 $ApprovalOnceSafetyBoundary = "ApprovalOnce delegates only to runner v1 ReviewBundle for the approved issue. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop."
 $ApprovalNextDryRunNoWriteGuarantee = "ApprovalNextDryRun detection only: does not call Codex, run runner v1, execute ApprovalOnce, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run polling, watch, daemon, or scheduler behavior."
+$ApprovalNextOnceSafetyBoundary = "ApprovalNextOnce delegates once to runner v1 ReviewBundle for exactly one current action=run-reviewbundle approval. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run polling, watch, daemon, or scheduler behavior."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -809,6 +816,91 @@ function Invoke-ApprovalNextDryRun {
     Write-Host "No-write guarantee: $ApprovalNextDryRunNoWriteGuarantee"
 }
 
+function Invoke-ApprovalNextOnce {
+    if (-not [string]::Equals($Repo, $ExpectedApprovalRepo, [System.StringComparison]::Ordinal)) {
+        throw "ApprovalNextOnce supports only repo=$ExpectedApprovalRepo for this execution slice."
+    }
+
+    Assert-RepoRoot
+    $null = Assert-CleanRepo
+
+    $branch = Get-CurrentBranch
+    $head = Get-CurrentFullHead
+    $nowUtc = [System.DateTime]::UtcNow
+    $scanResult = Find-ApprovalNextDryRunSelections -CurrentBranch $branch -CurrentHead $head -NowUtc $nowUtc
+    $validSelections = @($scanResult.ValidSelections)
+    $skippedMarkers = @($scanResult.SkippedMarkers)
+    $skippedIssues = @($scanResult.SkippedIssues)
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: ApprovalNextOnce"
+    Write-Host "Approval search: open issues, exact RUNNER-V2-APPROVE comment validation"
+    Write-Host "Issues scanned: $($scanResult.IssuesScanned)"
+
+    foreach ($skippedIssue in $skippedIssues) {
+        Write-Host ""
+        Write-Host "Skipped issue #$($skippedIssue.IssueNumber): could not read issue comments. $($skippedIssue.Reason)"
+    }
+
+    foreach ($skippedMarker in $skippedMarkers) {
+        Write-Host ""
+        Write-Host "Skipped approval marker on issue #$($skippedMarker.IssueNumber): $($skippedMarker.Reason)"
+    }
+
+    if ($validSelections.Count -eq 0) {
+        Write-Host ""
+        Write-Host "No approval found. No current action=run-reviewbundle approval matched local state. No action will be taken."
+        Write-FinalGitStatus
+        return
+    }
+
+    if ($validSelections.Count -gt 1) {
+        Write-Host ""
+        Write-Host "Ambiguous approvals found. ApprovalNextOnce requires exactly one valid current approval and will not choose automatically."
+        foreach ($selection in $validSelections) {
+            Write-Host "Issue #$($selection.IssueNumber): $($selection.IssueTitle)"
+        }
+        throw "ApprovalNextOnce stopped because multiple valid current approvals were found."
+    }
+
+    $selection = $validSelections[0]
+    $selected = $selection.Selected
+    $commentId = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "id"
+    $commentAuthor = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
+    $commentCreatedAt = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "createdAt"
+    $action = [string]$selected.Fields["action"]
+
+    if (-not [string]::Equals($action, $ApprovalNextDryRunSupportedAction, [System.StringComparison]::Ordinal)) {
+        throw "ApprovalNextOnce supports only action=$ApprovalNextDryRunSupportedAction. Parsed action: $action."
+    }
+
+    Write-Host ""
+    Write-Host "Selected approval"
+    Write-Host "Issue: #$($selection.IssueNumber)"
+    Write-Host "Title: $($selection.IssueTitle)"
+    Write-Host "Approval comment id: $commentId"
+    Write-Host "Approval comment author: $commentAuthor"
+    Write-Host "Approval comment created_at: $commentCreatedAt"
+    Write-Host "Parsed action: $action"
+    Write-Host "Branch: $($selection.Branch)"
+    Write-Host "HEAD: $($selection.Head)"
+    Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
+    Write-Host "Safety boundary: $ApprovalNextOnceSafetyBoundary"
+    Write-Host ""
+
+    $runnerExitCode = Invoke-RunnerV1ReviewBundle -IssueNumber ([int]$selection.IssueNumber)
+
+    Write-Host ""
+    Write-Host "Runner v1 exit code: $runnerExitCode"
+    Write-Host "Next step: notify ChatGPT that issue #$($selection.IssueNumber) ReviewBundle was posted."
+    Write-FinalGitStatus
+
+    if ($runnerExitCode -ne 0) {
+        Write-Host "Failure: runner v1 ReviewBundle failed with exit code $runnerExitCode."
+        exit $runnerExitCode
+    }
+}
+
 function Invoke-ApprovalDryRun {
     if ($IssueNumber -lt 1) {
         throw "ApprovalDryRun requires -IssueNumber <N>."
@@ -1224,9 +1316,12 @@ try {
     if ($ApprovalNextDryRun) {
         $selectedModes += "ApprovalNextDryRun"
     }
+    if ($ApprovalNextOnce) {
+        $selectedModes += "ApprovalNextOnce"
+    }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, or .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun."
+        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, or .\scripts\local_runner_v2.ps1 -ApprovalNextOnce."
     }
 
     if ($selectedModes.Count -gt 1) {
@@ -1253,8 +1348,11 @@ try {
     elseif ($ApprovalOnce) {
         Invoke-ApprovalOnce
     }
-    else {
+    elseif ($ApprovalNextDryRun) {
         Invoke-ApprovalNextDryRun
+    }
+    else {
+        Invoke-ApprovalNextOnce
     }
 }
 catch {
