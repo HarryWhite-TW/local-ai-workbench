@@ -17,6 +17,9 @@ the unique current RUNNER-V2-APPROVE action=run-reviewbundle marker, prints the
 planned action, and stops without executing anything.
 In -ApprovalNextOnce mode it uses the same unique approval validation, then
 delegates once to runner v1 ReviewBundle for the selected issue.
+In -ApprovalNextWatch mode it polls in the foreground for one bounded
+action=run-reviewbundle approval, delegates at most once to runner v1
+ReviewBundle, and exits.
 
 .EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun
@@ -37,6 +40,9 @@ delegates once to runner v1 ReviewBundle for the selected issue.
 .\scripts\local_runner_v2.ps1 -ApprovalNextOnce
 
 .EXAMPLE
+.\scripts\local_runner_v2.ps1 -ApprovalNextWatch -TimeoutSeconds 300 -PollSeconds 15
+
+.EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun -Repo "HarryWhite-TW/local-ai-workbench" -MaxIssues 20
 #>
 
@@ -47,11 +53,16 @@ param(
     [switch]$ApprovalOnce,
     [switch]$ApprovalNextDryRun,
     [switch]$ApprovalNextOnce,
+    [switch]$ApprovalNextWatch,
     [int]$IssueNumber = 0,
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
     [ValidateRange(1, 100)]
-    [int]$MaxIssues = 50
+    [int]$MaxIssues = 50,
+    [ValidateRange(1, 2147483647)]
+    [int]$TimeoutSeconds = 300,
+    [ValidateRange(10, 2147483647)]
+    [int]$PollSeconds = 15
 )
 
 Set-StrictMode -Version Latest
@@ -91,6 +102,7 @@ $ApprovalDryRunNoWriteGuarantee = "ApprovalDryRun detection only: does not call 
 $ApprovalOnceSafetyBoundary = "ApprovalOnce delegates only to runner v1 ReviewBundle for the approved issue. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop."
 $ApprovalNextDryRunNoWriteGuarantee = "ApprovalNextDryRun detection only: does not call Codex, run runner v1, execute ApprovalOnce, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run polling, watch, daemon, or scheduler behavior."
 $ApprovalNextOnceSafetyBoundary = "ApprovalNextOnce delegates once to runner v1 ReviewBundle for exactly one current action=run-reviewbundle approval. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run polling, watch, daemon, or scheduler behavior."
+$ApprovalNextWatchSafetyBoundary = "ApprovalNextWatch is a bounded foreground poller. It delegates at most once to runner v1 ReviewBundle for exactly one current action=run-reviewbundle approval, returns runner v1's exit code after delegation, and does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run a daemon, run a scheduler, or chain approvals."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -667,7 +679,10 @@ function Find-ApprovalNextDryRunSelections {
         [Parameter(Mandatory = $true)]
         [string]$CurrentHead,
         [Parameter(Mandatory = $true)]
-        [datetime]$NowUtc
+        [datetime]$NowUtc,
+        [switch]$StopOnReadFailure,
+        [switch]$StopOnMarkerFailure,
+        [string]$ModeName = "ApprovalNextDryRun"
     )
 
     $issues = Get-OpenApprovalSearchIssues
@@ -683,6 +698,10 @@ function Find-ApprovalNextDryRunSelections {
             $readResult = Get-IssueApprovalMarkerReadResult -IssueNumber $issueNumber
         }
         catch {
+            if ($StopOnReadFailure) {
+                throw "GitHub read failure while scanning issue #$issueNumber cannot be safely ignored. $($_.Exception.Message)"
+            }
+
             $skippedIssues += [pscustomobject]@{
                 IssueNumber = $issueNumber
                 IssueTitle = $issueTitle
@@ -708,7 +727,7 @@ function Find-ApprovalNextDryRunSelections {
                     -Fields $parsed.Fields `
                     -ExpectedIssueNumber $issueNumber `
                     -ExpectedAction $ApprovalNextDryRunSupportedAction `
-                    -ModeName "ApprovalNextDryRun" `
+                    -ModeName $ModeName `
                     -CurrentBranch $CurrentBranch `
                     -CurrentHead $CurrentHead `
                     -ExpiresUtc $parsed.ExpiresUtc `
@@ -730,6 +749,10 @@ function Find-ApprovalNextDryRunSelections {
                 }
             }
             catch {
+                if ($StopOnMarkerFailure) {
+                    throw "Approval marker on issue #$issueNumber failed validation in ${ModeName}. $($_.Exception.Message)"
+                }
+
                 $skippedMarkers += [pscustomobject]@{
                     IssueNumber = $issueNumber
                     IssueTitle = $issueTitle
@@ -898,6 +921,167 @@ function Invoke-ApprovalNextOnce {
     if ($runnerExitCode -ne 0) {
         Write-Host "Failure: runner v1 ReviewBundle failed with exit code $runnerExitCode."
         exit $runnerExitCode
+    }
+}
+
+function Assert-ApprovalNextWatchRepoUnchanged {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InitialBranch,
+        [Parameter(Mandatory = $true)]
+        [string]$InitialHead
+    )
+
+    $status = Get-GitStatusShort
+    if (-not [string]::IsNullOrWhiteSpace($status)) {
+        throw "Repo became dirty while watching. ApprovalNextWatch stops before runner v1 handoff. git status --short:`n$status"
+    }
+
+    $currentBranch = Get-CurrentBranch
+    if (-not [string]::Equals($currentBranch, $InitialBranch, [System.StringComparison]::Ordinal)) {
+        throw "Branch changed while watching. Started on '$InitialBranch', now on '$currentBranch'. ApprovalNextWatch stops before runner v1 handoff."
+    }
+
+    $currentHead = Get-CurrentFullHead
+    if (-not [string]::Equals($currentHead, $InitialHead, [System.StringComparison]::Ordinal)) {
+        throw "HEAD changed while watching. Started at '$InitialHead', now at '$currentHead'. ApprovalNextWatch stops before runner v1 handoff."
+    }
+}
+
+function Write-ApprovalNextSelectionSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Selection,
+        [Parameter(Mandatory = $true)]
+        [string]$SafetyBoundary
+    )
+
+    $selected = $Selection.Selected
+    $commentId = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "id"
+    $commentAuthor = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
+    $commentCreatedAt = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "createdAt"
+    $action = [string]$selected.Fields["action"]
+
+    if (-not [string]::Equals($action, $ApprovalNextDryRunSupportedAction, [System.StringComparison]::Ordinal)) {
+        throw "ApprovalNext execution supports only action=$ApprovalNextDryRunSupportedAction. Parsed action: $action."
+    }
+
+    Write-Host ""
+    Write-Host "Selected approval"
+    Write-Host "Issue: #$($Selection.IssueNumber)"
+    Write-Host "Title: $($Selection.IssueTitle)"
+    Write-Host "Approval comment id: $commentId"
+    Write-Host "Approval comment author: $commentAuthor"
+    Write-Host "Approval comment created_at: $commentCreatedAt"
+    Write-Host "Parsed action: $action"
+    Write-Host "Branch: $($Selection.Branch)"
+    Write-Host "HEAD: $($Selection.Head)"
+    Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
+    Write-Host "Safety boundary: $SafetyBoundary"
+    Write-Host ""
+}
+
+function Invoke-ApprovalNextWatch {
+    if (-not [string]::Equals($Repo, $ExpectedApprovalRepo, [System.StringComparison]::Ordinal)) {
+        throw "ApprovalNextWatch supports only repo=$ExpectedApprovalRepo for this execution slice."
+    }
+
+    Assert-RepoRoot
+    $null = Assert-CleanRepo
+
+    $initialBranch = Get-CurrentBranch
+    $initialHead = Get-CurrentFullHead
+    $startedUtc = [System.DateTime]::UtcNow
+    $deadlineUtc = $startedUtc.AddSeconds($TimeoutSeconds)
+    $pollNumber = 0
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: ApprovalNextWatch"
+    Write-Host "Approval search: bounded foreground polling of open issues, exact RUNNER-V2-APPROVE comment validation"
+    Write-Host "Timeout seconds: $TimeoutSeconds"
+    Write-Host "Poll seconds: $PollSeconds"
+    Write-Host "Branch: $initialBranch"
+    Write-Host "HEAD: $initialHead"
+    Write-Host "Safety boundary: $ApprovalNextWatchSafetyBoundary"
+
+    while ($true) {
+        Assert-ApprovalNextWatchRepoUnchanged -InitialBranch $initialBranch -InitialHead $initialHead
+
+        $nowUtc = [System.DateTime]::UtcNow
+        if ($nowUtc -ge $deadlineUtc) {
+            Write-Host ""
+            Write-Host "Timeout reached with no valid approval. No runner v1 handoff will be performed."
+            Write-FinalGitStatus
+            return
+        }
+
+        $pollNumber += 1
+        Write-Host ""
+        Write-Host "ApprovalNextWatch poll #$pollNumber at $($nowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
+
+        $scanResult = Find-ApprovalNextDryRunSelections `
+            -CurrentBranch $initialBranch `
+            -CurrentHead $initialHead `
+            -NowUtc $nowUtc `
+            -ModeName "ApprovalNextWatch"
+        $validSelections = @($scanResult.ValidSelections)
+        $skippedMarkers = @($scanResult.SkippedMarkers)
+        $skippedIssues = @($scanResult.SkippedIssues)
+
+        Write-Host "Issues scanned: $($scanResult.IssuesScanned)"
+
+        foreach ($skippedIssue in $skippedIssues) {
+            Write-Host "Skipped issue #$($skippedIssue.IssueNumber): could not read issue comments. $($skippedIssue.Reason)"
+        }
+
+        foreach ($skippedMarker in $skippedMarkers) {
+            Write-Host "Skipped approval marker on issue #$($skippedMarker.IssueNumber): $($skippedMarker.Reason)"
+        }
+
+        $unsupportedActionMarkers = @($skippedMarkers | Where-Object { [string]$_.Reason -like "Unsupported approval action*" })
+        if ($unsupportedActionMarkers.Count -gt 0) {
+            Write-Host ""
+            foreach ($unsupportedMarker in $unsupportedActionMarkers) {
+                Write-Host "Unsupported approval action on issue #$($unsupportedMarker.IssueNumber): $($unsupportedMarker.IssueTitle)"
+                Write-Host $unsupportedMarker.Reason
+            }
+            throw "ApprovalNextWatch stopped because an unsupported approval action was found."
+        }
+
+        if ($validSelections.Count -gt 1) {
+            Write-Host ""
+            Write-Host "Ambiguous approvals found. ApprovalNextWatch requires exactly one valid current approval and will not choose automatically."
+            foreach ($selection in $validSelections) {
+                Write-Host "Issue #$($selection.IssueNumber): $($selection.IssueTitle)"
+            }
+            throw "ApprovalNextWatch stopped because multiple valid current approvals were found."
+        }
+
+        if ($validSelections.Count -eq 1) {
+            $selection = $validSelections[0]
+            Assert-ApprovalNextWatchRepoUnchanged -InitialBranch $initialBranch -InitialHead $initialHead
+            Write-ApprovalNextSelectionSummary -Selection $selection -SafetyBoundary $ApprovalNextWatchSafetyBoundary
+
+            $runnerExitCode = Invoke-RunnerV1ReviewBundle -IssueNumber ([int]$selection.IssueNumber)
+
+            Write-Host ""
+            Write-Host "Runner v1 exit code: $runnerExitCode"
+            Write-Host "Next step: notify ChatGPT that issue #$($selection.IssueNumber) ReviewBundle was posted."
+            Write-FinalGitStatus
+            exit $runnerExitCode
+        }
+
+        $remainingSeconds = ($deadlineUtc - [System.DateTime]::UtcNow).TotalSeconds
+        if ($remainingSeconds -le 0) {
+            Write-Host ""
+            Write-Host "Timeout reached with no valid approval. No runner v1 handoff will be performed."
+            Write-FinalGitStatus
+            return
+        }
+
+        $sleepSeconds = [int][System.Math]::Min($PollSeconds, [System.Math]::Ceiling($remainingSeconds))
+        Write-Host "No current action=run-reviewbundle approval matched local state. Sleeping $sleepSeconds second(s)."
+        Start-Sleep -Seconds $sleepSeconds
     }
 }
 
@@ -1319,9 +1503,12 @@ try {
     if ($ApprovalNextOnce) {
         $selectedModes += "ApprovalNextOnce"
     }
+    if ($ApprovalNextWatch) {
+        $selectedModes += "ApprovalNextWatch"
+    }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, or .\scripts\local_runner_v2.ps1 -ApprovalNextOnce."
+        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, or .\scripts\local_runner_v2.ps1 -ApprovalNextWatch."
     }
 
     if ($selectedModes.Count -gt 1) {
@@ -1351,8 +1538,11 @@ try {
     elseif ($ApprovalNextDryRun) {
         Invoke-ApprovalNextDryRun
     }
-    else {
+    elseif ($ApprovalNextOnce) {
         Invoke-ApprovalNextOnce
+    }
+    else {
+        Invoke-ApprovalNextWatch
     }
 }
 catch {
