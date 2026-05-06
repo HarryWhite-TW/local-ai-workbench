@@ -10,6 +10,8 @@ and delegates only to runner v1 ReviewBundle for that issue.
 In -ApprovalDryRun mode it reads one issue's comments for a structured
 RUNNER-V2-APPROVE marker, validates it against local state, prints the planned
 action, and stops without executing anything.
+In -ApprovalOnce mode it validates a structured RUNNER-V2-APPROVE marker and
+delegates only to runner v1 ReviewBundle for the approved issue.
 
 .EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun
@@ -21,6 +23,9 @@ action, and stops without executing anything.
 .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber 39
 
 .EXAMPLE
+.\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber 41
+
+.EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun -Repo "HarryWhite-TW/local-ai-workbench" -MaxIssues 20
 #>
 
@@ -28,6 +33,7 @@ param(
     [switch]$DryRun,
     [switch]$RunOnce,
     [switch]$ApprovalDryRun,
+    [switch]$ApprovalOnce,
     [int]$IssueNumber = 0,
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
@@ -51,7 +57,8 @@ $NoWriteGuarantee = "DryRun detection only: does not call Codex, run runner v1, 
 $RunOnceSafetyBoundary = "RunOnce delegates only to runner v1 ReviewBundle for exactly one eligible candidate. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop."
 $ApprovalMarkerPrefix = "RUNNER-V2-APPROVE"
 $ApprovalProtocol = "v2.approval.1"
-$ApprovalSupportedAction = "detect-approval"
+$ApprovalDryRunSupportedAction = "detect-approval"
+$ApprovalOnceSupportedAction = "run-reviewbundle"
 $ApprovalRequiredFields = @(
     "protocol",
     "action",
@@ -67,6 +74,7 @@ $ApprovalRequiredFields = @(
 )
 $ApprovalKnownFields = $ApprovalRequiredFields
 $ApprovalDryRunNoWriteGuarantee = "ApprovalDryRun detection only: does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop, daemon, or scheduler."
+$ApprovalOnceSafetyBoundary = "ApprovalOnce delegates only to runner v1 ReviewBundle for the approved issue. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -410,6 +418,10 @@ function Assert-ApprovalMarkerMatchesLocalState {
         [Parameter(Mandatory = $true)]
         [int]$ExpectedIssueNumber,
         [Parameter(Mandatory = $true)]
+        [string]$ExpectedAction,
+        [Parameter(Mandatory = $true)]
+        [string]$ModeName,
+        [Parameter(Mandatory = $true)]
         [string]$CurrentBranch,
         [Parameter(Mandatory = $true)]
         [string]$CurrentHead,
@@ -422,8 +434,8 @@ function Assert-ApprovalMarkerMatchesLocalState {
     Assert-ApprovalFieldEquals -Fields $Fields -Name "protocol" -Expected $ApprovalProtocol
 
     $action = [string]$Fields["action"]
-    if (-not [string]::Equals($action, $ApprovalSupportedAction, [System.StringComparison]::Ordinal)) {
-        throw "Unsupported approval action '$action'. ApprovalDryRun supports only action=$ApprovalSupportedAction."
+    if (-not [string]::Equals($action, $ExpectedAction, [System.StringComparison]::Ordinal)) {
+        throw "Unsupported approval action '$action'. $ModeName supports only action=$ExpectedAction."
     }
 
     Assert-ApprovalFieldEquals -Fields $Fields -Name "issue" -Expected ([string]$ExpectedIssueNumber)
@@ -437,6 +449,76 @@ function Assert-ApprovalMarkerMatchesLocalState {
 
     if ($ExpiresUtc -le $NowUtc) {
         throw "Approval marker expired at $($ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")); current UTC time is $($NowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+    }
+}
+
+function Get-ValidatedApprovalSelection {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedAction,
+        [Parameter(Mandatory = $true)]
+        [string]$ModeName,
+        [switch]$AllowNoMarkerLines
+    )
+
+    $branch = Get-CurrentBranch
+    $head = Get-CurrentFullHead
+    $nowUtc = [System.DateTime]::UtcNow
+    $readResult = Get-IssueApprovalMarkerReadResult -IssueNumber $IssueNumber
+    $markers = @($readResult.Markers)
+
+    if ($markers.Count -eq 0) {
+        if ($AllowNoMarkerLines) {
+            return [pscustomobject]@{
+                HasSelection = $false
+                ReadResult = $readResult
+                Markers = @()
+                Branch = $branch
+                Head = $head
+                NowUtc = $nowUtc
+                Selected = $null
+            }
+        }
+
+        throw "No current approval marker found for issue #$IssueNumber. No RUNNER-V2-APPROVE marker lines were found."
+    }
+
+    $parsedMarkers = @()
+    foreach ($marker in $markers) {
+        $parsedMarkers += ConvertTo-ParsedApprovalMarker -Marker $marker -NowUtc $nowUtc
+    }
+
+    $currentMarkers = @($parsedMarkers | Where-Object { $_.IsCurrent })
+    if ($currentMarkers.Count -eq 0) {
+        $latestMarker = $parsedMarkers[$parsedMarkers.Count - 1]
+        throw "No current approval marker found for issue #$IssueNumber. Latest marker expired at $($latestMarker.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+    }
+
+    if ($currentMarkers.Count -gt 1) {
+        throw "Ambiguous approval markers found for issue #$IssueNumber. Found $($currentMarkers.Count) current RUNNER-V2-APPROVE marker lines; exactly one is required."
+    }
+
+    $selected = $currentMarkers[0]
+    Assert-ApprovalMarkerMatchesLocalState `
+        -Fields $selected.Fields `
+        -ExpectedIssueNumber $IssueNumber `
+        -ExpectedAction $ExpectedAction `
+        -ModeName $ModeName `
+        -CurrentBranch $branch `
+        -CurrentHead $head `
+        -ExpiresUtc $selected.ExpiresUtc `
+        -NowUtc $nowUtc
+
+    return [pscustomobject]@{
+        HasSelection = $true
+        ReadResult = $readResult
+        Markers = @($markers)
+        Branch = $branch
+        Head = $head
+        NowUtc = $nowUtc
+        Selected = $selected
     }
 }
 
@@ -534,11 +616,12 @@ function Invoke-ApprovalDryRun {
 
     Assert-RepoRoot
     $null = Assert-CleanRepo
-    $branch = Get-CurrentBranch
-    $head = Get-CurrentFullHead
-    $nowUtc = [System.DateTime]::UtcNow
-    $readResult = Get-IssueApprovalMarkerReadResult -IssueNumber $IssueNumber
-    $markers = @($readResult.Markers)
+    $selection = Get-ValidatedApprovalSelection `
+        -IssueNumber $IssueNumber `
+        -ExpectedAction $ApprovalDryRunSupportedAction `
+        -ModeName "ApprovalDryRun" `
+        -AllowNoMarkerLines
+    $readResult = $selection.ReadResult
 
     Write-Host "$RunnerName $RunnerVersion"
     Write-Host "Mode: ApprovalDryRun"
@@ -546,35 +629,15 @@ function Invoke-ApprovalDryRun {
     Write-Host "Issue state: $($readResult.IssueState)"
     Write-Host "No-write guarantee: $ApprovalDryRunNoWriteGuarantee"
 
-    if ($markers.Count -eq 0) {
+    if (-not $selection.HasSelection) {
         Write-Host ""
         Write-Host "No approval marker lines found for issue #$IssueNumber. No action will be taken."
         return
     }
 
-    $parsedMarkers = @()
-    foreach ($marker in $markers) {
-        $parsedMarkers += ConvertTo-ParsedApprovalMarker -Marker $marker -NowUtc $nowUtc
-    }
-
-    $currentMarkers = @($parsedMarkers | Where-Object { $_.IsCurrent })
-    if ($currentMarkers.Count -eq 0) {
-        $latestMarker = $parsedMarkers[$parsedMarkers.Count - 1]
-        throw "No current approval marker found for issue #$IssueNumber. Latest marker expired at $($latestMarker.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
-    }
-
-    if ($currentMarkers.Count -gt 1) {
-        throw "Ambiguous approval markers found for issue #$IssueNumber. Found $($currentMarkers.Count) current RUNNER-V2-APPROVE marker lines; exactly one is required."
-    }
-
-    $selected = $currentMarkers[0]
-    Assert-ApprovalMarkerMatchesLocalState `
-        -Fields $selected.Fields `
-        -ExpectedIssueNumber $IssueNumber `
-        -CurrentBranch $branch `
-        -CurrentHead $head `
-        -ExpiresUtc $selected.ExpiresUtc `
-        -NowUtc $nowUtc
+    $selected = $selection.Selected
+    $branch = $selection.Branch
+    $head = $selection.Head
 
     $commentId = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "id"
     $commentAuthor = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
@@ -591,6 +654,59 @@ function Invoke-ApprovalDryRun {
     Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
     Write-Host "Planned action: Approval detected and validated. No execution action is implemented in ApprovalDryRun."
     Write-Host "No-write guarantee: $ApprovalDryRunNoWriteGuarantee"
+}
+
+function Invoke-ApprovalOnce {
+    if ($IssueNumber -lt 1) {
+        throw "ApprovalOnce requires -IssueNumber <N>."
+    }
+
+    if (-not [string]::Equals($Repo, $ExpectedApprovalRepo, [System.StringComparison]::Ordinal)) {
+        throw "ApprovalOnce supports only repo=$ExpectedApprovalRepo for this execution slice."
+    }
+
+    Assert-RepoRoot
+    $null = Assert-CleanRepo
+    $selection = Get-ValidatedApprovalSelection `
+        -IssueNumber $IssueNumber `
+        -ExpectedAction $ApprovalOnceSupportedAction `
+        -ModeName "ApprovalOnce"
+    $readResult = $selection.ReadResult
+    $selected = $selection.Selected
+    $branch = $selection.Branch
+    $head = $selection.Head
+
+    $commentId = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "id"
+    $commentAuthor = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
+    $commentCreatedAt = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "createdAt"
+    $action = [string]$selected.Fields["action"]
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: ApprovalOnce"
+    Write-Host "Issue number: #$IssueNumber"
+    Write-Host "Issue state: $($readResult.IssueState)"
+    Write-Host ""
+    Write-Host "Approval comment id: $commentId"
+    Write-Host "Approval comment author: $commentAuthor"
+    Write-Host "Approval comment created_at: $commentCreatedAt"
+    Write-Host "Parsed action: $action"
+    Write-Host "Branch: $branch"
+    Write-Host "HEAD: $head"
+    Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
+    Write-Host "Safety boundary: $ApprovalOnceSafetyBoundary"
+    Write-Host ""
+
+    $runnerExitCode = Invoke-RunnerV1ReviewBundle -IssueNumber $IssueNumber
+
+    Write-Host ""
+    Write-Host "Runner v1 exit code: $runnerExitCode"
+    Write-Host "Next step: notify ChatGPT that issue #$IssueNumber ReviewBundle was posted."
+    Write-FinalGitStatus
+
+    if ($runnerExitCode -ne 0) {
+        Write-Host "Failure: runner v1 ReviewBundle failed with exit code $runnerExitCode."
+        exit $runnerExitCode
+    }
 }
 
 function Get-IssueBodyReadResult {
@@ -898,13 +1014,24 @@ try {
     if ($ApprovalDryRun) {
         $selectedModes += "ApprovalDryRun"
     }
+    if ($ApprovalOnce) {
+        $selectedModes += "ApprovalOnce"
+    }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, or .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>."
+        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, or .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>."
     }
 
     if ($selectedModes.Count -gt 1) {
         throw "Choose exactly one mode. Supplied modes: $($selectedModes -join ', ')."
+    }
+
+    if ($ApprovalDryRun -and $IssueNumber -lt 1) {
+        throw "ApprovalDryRun requires -IssueNumber <N>."
+    }
+
+    if ($ApprovalOnce -and $IssueNumber -lt 1) {
+        throw "ApprovalOnce requires -IssueNumber <N>."
     }
 
     if ($DryRun) {
@@ -913,8 +1040,11 @@ try {
     elseif ($RunOnce) {
         Invoke-RunOnce
     }
-    else {
+    elseif ($ApprovalDryRun) {
         Invoke-ApprovalDryRun
+    }
+    else {
+        Invoke-ApprovalOnce
     }
 }
 catch {
