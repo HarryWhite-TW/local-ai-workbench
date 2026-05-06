@@ -102,6 +102,31 @@ Initial `ApprovalOnce` validation is limited to `action=run-reviewbundle`; addit
 
 `ApprovalNextOnce` validates that exactly one current approval exists across bounded open issues before delegating once to runner v1 `ReviewBundle`; it does not commit, push, close issues, or run `CommitApproved`.
 
+## ApprovalNextOnce rail SOP
+
+Use `ApprovalNextOnce` only when a bounded open issue already has the required runner markers and the intended next action is exactly:
+
+```text
+action=run-reviewbundle
+```
+
+Expected flow:
+
+- runner v2 scans bounded open issues
+- validates that exactly one current approval exists
+- confirms that the approved action is `run-reviewbundle`
+- delegates once to runner v1 `ReviewBundle`
+- leaves reviewable local changes unstaged for human inspection
+
+Safety boundaries:
+
+- no commit, push, close, label edit, PR creation, merge, or force push
+- no automatic `CommitApproved`
+- no original source document modification
+- stop if the repo is dirty, approval is missing or stale, multiple approvals exist, or the action is not supported
+
+Current limitation: `ApprovalNextOnce` supports only `action=run-reviewbundle`. Any other approval action requires separate design and validation before use.
+
 For now:
 
 - v2A must not auto-run `CommitApproved`.
