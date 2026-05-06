@@ -100,6 +100,8 @@ It must not run `CommitApproved`. It must not push, close issues, edit labels, c
 
 Initial `ApprovalOnce` validation is limited to `action=run-reviewbundle`; additional approval actions require separate design and validation.
 
+`ApprovalNextOnce` validates that exactly one current approval exists across bounded open issues before delegating once to runner v1 `ReviewBundle`; it does not commit, push, close issues, or run `CommitApproved`.
+
 For now:
 
 - v2A must not auto-run `CommitApproved`.
