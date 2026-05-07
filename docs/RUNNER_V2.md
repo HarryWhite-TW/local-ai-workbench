@@ -102,6 +102,8 @@ Initial `ApprovalOnce` validation is limited to `action=run-reviewbundle`; addit
 
 `ApprovalNextOnce` validates that exactly one current approval exists across bounded open issues before delegating once to runner v1 `ReviewBundle`; it does not commit, push, close issues, or run `CommitApproved`.
 
+`ApprovalNextWatch` is a bounded foreground convenience mode that polls for one valid `run-reviewbundle` approval, delegates once to runner v1 `ReviewBundle`, and exits.
+
 ## ApprovalNextOnce rail SOP
 
 Use `ApprovalNextOnce` only when a bounded open issue already has the required runner markers and the intended next action is exactly:
