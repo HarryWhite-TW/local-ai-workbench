@@ -178,15 +178,19 @@ function Invoke-AllowlistedGit {
 
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $stderrPath = [System.IO.Path]::GetTempFileName()
     try {
-        $output = & git -C $RepoRoot @GitArgs 2>&1
+        $output = & git -C $RepoRoot @GitArgs 2> $stderrPath
+        $stderr = [System.IO.File]::ReadAllText($stderrPath).TrimEnd()
         $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
     }
     catch {
         $output = @($_.Exception.Message)
+        $stderr = ""
         $exitCode = 1
     }
     finally {
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
         $ErrorActionPreference = $previousErrorActionPreference
     }
 
@@ -210,9 +214,16 @@ function Invoke-AllowlistedGit {
             Add-TranscriptLine "  $line"
         }
     }
+    if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+        Add-TranscriptLine "STDERR $Action"
+        foreach ($line in ($stderr -split "`r?`n")) {
+            Add-TranscriptLine "  $line"
+        }
+    }
 
     if ($exitCode -ne 0) {
-        throw "$Action failed with exit code ${exitCode}: $stdout"
+        $failureText = (Join-Lines -Lines @($stdout, $stderr))
+        throw "$Action failed with exit code ${exitCode}: $failureText"
     }
 
     return $stdout
@@ -264,6 +275,7 @@ function Test-IsArtifactStatusLine {
 function Get-SourceStatusLines {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$StatusText,
         [Parameter(Mandatory = $true)]
         [string]$ArtifactPrefix,
@@ -282,6 +294,7 @@ function Get-SourceStatusLines {
 function Get-UntrackedSourceStatusLines {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$StatusText,
         [Parameter(Mandatory = $true)]
         [string]$ArtifactPrefix
