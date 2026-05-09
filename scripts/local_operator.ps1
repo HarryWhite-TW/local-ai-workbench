@@ -389,11 +389,8 @@ if ($insideWorkTree.Trim() -ne "true") {
     throw "Resolved path is not inside a Git work tree: $RepoRoot"
 }
 
-$gitTopLevel = Invoke-AllowlistedGit -RepoRoot $RepoRoot -GitArgs @("rev-parse", "--show-toplevel") -Action "verify repository top level"
-$normalizedGitTopLevel = (ConvertTo-NormalizedPath -Path $gitTopLevel)
-if ($normalizedGitTopLevel -ne $RepoRoot) {
-    throw "Repository root mismatch. Script root resolved to '$RepoRoot' but git top level is '$normalizedGitTopLevel'."
-}
+$gitTopLevel = Invoke-AllowlistedGit -RepoRoot $RepoRoot -GitArgs @("rev-parse", "--show-toplevel") -Action "capture repository top level diagnostic"
+Add-TranscriptLine "Git top-level stdout is diagnostic only; filesystem operations use the PowerShell-resolved repository root."
 
 $branch = Invoke-AllowlistedGit -RepoRoot $RepoRoot -GitArgs @("branch", "--show-current") -Action "capture branch"
 if ([string]::IsNullOrWhiteSpace($branch)) {
@@ -504,6 +501,7 @@ $metadata = [pscustomobject]@{
     version = $RunnerVersion
     mode = $Mode
     repoRoot = $RepoRoot
+    gitTopLevelRaw = $gitTopLevel
     branch = $branch
     head = $head
     startedUtc = $startedAtUtc.ToString("o")
