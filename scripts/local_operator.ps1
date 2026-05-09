@@ -95,6 +95,7 @@ function Join-Lines {
 function ConvertTo-NormalizedPath {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowNull()]
         [object]$Path
     )
 
@@ -110,9 +111,12 @@ function ConvertTo-NormalizedPath {
         $pathValue = $Path[0]
     }
 
-    $providerPathProperty = $pathValue.PSObject.Properties["ProviderPath"]
-    if ($null -ne $providerPathProperty -and $null -ne $providerPathProperty.Value) {
-        $pathText = [string]$providerPathProperty.Value
+    if ($null -eq $pathValue) {
+        throw "Path cannot be null."
+    }
+
+    if ($pathValue -is [System.Management.Automation.PathInfo]) {
+        $pathText = [string]$pathValue.ProviderPath
     }
     else {
         $pathText = [string]$pathValue
@@ -123,24 +127,17 @@ function ConvertTo-NormalizedPath {
         throw "Path cannot be empty."
     }
 
-    $resolved = Resolve-Path -LiteralPath $pathText -ErrorAction Stop
-    $resolvedValue = $resolved
-    if ($resolved -is [array]) {
-        if ($resolved.Count -ne 1) {
-            throw "Expected a single resolved path, but received $($resolved.Count) paths."
-        }
-        $resolvedValue = $resolved[0]
+    $resolvedPaths = @(Convert-Path -LiteralPath $pathText -ErrorAction Stop)
+    if ($resolvedPaths.Count -ne 1) {
+        throw "Expected a single resolved path, but received $($resolvedPaths.Count) paths."
     }
 
-    $resolvedProviderPathProperty = $resolvedValue.PSObject.Properties["ProviderPath"]
-    if ($null -ne $resolvedProviderPathProperty -and $null -ne $resolvedProviderPathProperty.Value) {
-        $resolvedPathText = [string]$resolvedProviderPathProperty.Value
-    }
-    else {
-        $resolvedPathText = [string]$resolvedValue
+    $resolvedPathText = [string]$resolvedPaths[0]
+    if ([string]::IsNullOrWhiteSpace($resolvedPathText)) {
+        throw "Resolved path cannot be empty."
     }
 
-    return $resolvedPathText.TrimEnd("\", "/")
+    return $resolvedPathText.TrimEnd([char[]]@("\", "/"))
 }
 
 function Test-GitArgsAllowed {
