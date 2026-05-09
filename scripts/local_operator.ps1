@@ -95,11 +95,52 @@ function Join-Lines {
 function ConvertTo-NormalizedPath {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Path
+        [object]$Path
     )
 
-    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
-    return $resolved.ProviderPath.TrimEnd("\", "/")
+    if ($null -eq $Path) {
+        throw "Path cannot be null."
+    }
+
+    $pathValue = $Path
+    if ($Path -is [array]) {
+        if ($Path.Count -ne 1) {
+            throw "Expected a single path, but received $($Path.Count) paths."
+        }
+        $pathValue = $Path[0]
+    }
+
+    $providerPathProperty = $pathValue.PSObject.Properties["ProviderPath"]
+    if ($null -ne $providerPathProperty -and $null -ne $providerPathProperty.Value) {
+        $pathText = [string]$providerPathProperty.Value
+    }
+    else {
+        $pathText = [string]$pathValue
+    }
+
+    $pathText = $pathText.Trim()
+    if ([string]::IsNullOrWhiteSpace($pathText)) {
+        throw "Path cannot be empty."
+    }
+
+    $resolved = Resolve-Path -LiteralPath $pathText -ErrorAction Stop
+    $resolvedValue = $resolved
+    if ($resolved -is [array]) {
+        if ($resolved.Count -ne 1) {
+            throw "Expected a single resolved path, but received $($resolved.Count) paths."
+        }
+        $resolvedValue = $resolved[0]
+    }
+
+    $resolvedProviderPathProperty = $resolvedValue.PSObject.Properties["ProviderPath"]
+    if ($null -ne $resolvedProviderPathProperty -and $null -ne $resolvedProviderPathProperty.Value) {
+        $resolvedPathText = [string]$resolvedProviderPathProperty.Value
+    }
+    else {
+        $resolvedPathText = [string]$resolvedValue
+    }
+
+    return $resolvedPathText.TrimEnd("\", "/")
 }
 
 function Test-GitArgsAllowed {
