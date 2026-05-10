@@ -143,6 +143,8 @@ For now:
 
 External agents are optional workflow executor adapters only.
 
+For the separate validated no-agent report workflow, see [LOCAL_OPERATOR.md](LOCAL_OPERATOR.md).
+
 Allowed future role:
 
 - operate the local shell under runner control
