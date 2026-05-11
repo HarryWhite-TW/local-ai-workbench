@@ -104,6 +104,28 @@ Initial `ApprovalOnce` validation is limited to `action=run-reviewbundle`; addit
 
 `ApprovalNextWatch` is a bounded foreground convenience mode that polls for one valid `run-reviewbundle` approval, delegates once to runner v1 `ReviewBundle`, and exits.
 
+## No-agent LV4 operating boundary
+
+`ApprovalNextWatch` is the current no-agent LV4 foreground execution rail for the review-bundle handoff.
+
+After user review, ChatGPT can post a structured GitHub issue comment with:
+
+```text
+RUNNER-V2-APPROVE action=run-reviewbundle
+```
+
+The user can then run one fixed command without specifying the issue number:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -ApprovalNextWatch -TimeoutSeconds 300 -PollSeconds 15
+```
+
+Runner v2 must find exactly one current approval, validate that the approved action is `run-reviewbundle`, and delegate only to runner v1 `ReviewBundle`.
+
+Runner v2 does not run `CommitApproved`, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change `PATH`, change Windows settings, invoke external agents, run a daemon, run a scheduler, or chain approvals.
+
+After `ReviewBundle`, ChatGPT or human review is still required before any commit or push. This completes the current no-agent LV4 review-bundle handoff target, but not higher-risk commit or push automation.
+
 ## ApprovalNextOnce rail SOP
 
 Use `ApprovalNextOnce` only when a bounded open issue already has the required runner markers and the intended next action is exactly:
