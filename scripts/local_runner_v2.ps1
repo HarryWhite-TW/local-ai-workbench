@@ -256,6 +256,20 @@ function Get-Sha256Text {
     }
 }
 
+function Format-Block {
+    param(
+        [AllowNull()]
+        [string]$Text,
+        [string]$EmptyText = "(none)"
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $EmptyText
+    }
+
+    return $Text.TrimEnd()
+}
+
 function Get-StatusLines {
     param(
         [AllowEmptyString()]
@@ -298,6 +312,53 @@ function Get-StatusPaths {
     }
 
     return @($paths | Sort-Object -Unique)
+}
+
+function Test-SafeRepoRelativePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $normalized = $Path -replace "\\", "/"
+    if ([string]::IsNullOrWhiteSpace($normalized)) { return $false }
+    if ([System.IO.Path]::IsPathRooted($normalized)) { return $false }
+    if ($normalized -match "(^|/)\.\.(/|$)") { return $false }
+    if ($normalized -match "(^|/)\.git(/|$)") { return $false }
+    if ($normalized -match "(^|/)(node_modules|\.venv|venv|__pycache__|\.pytest_cache|dist|build|coverage)(/|$)") { return $false }
+    if ($normalized -match "(^|/)(app\.db|.*\.(sqlite|sqlite3|db))$") { return $false }
+    if ($normalized -match "(^|/)(\.env|\.env\..+)$") { return $false }
+    return $true
+}
+
+function Assert-ReviewableStatus {
+    param(
+        [AllowEmptyString()]
+        [string]$Status
+    )
+
+    foreach ($line in (Get-StatusLines -Status $Status)) {
+        if ($line.Length -lt 3) {
+            throw "Unexpected git status line: $line"
+        }
+
+        $x = $line.Substring(0, 1)
+        $y = $line.Substring(1, 1)
+        if (($x -eq "U") -or ($y -eq "U") -or ($line.Substring(0, 2) -in @("DD", "AA"))) {
+            throw "Unmerged git status is not supported by runner v1 commit mode: $line"
+        }
+
+        $path = Get-StatusPath -Line $line
+        if (-not (Test-SafeRepoRelativePath -Path $path)) {
+            throw "Refusing unsafe or outside-allowlist path: $path"
+        }
+
+        $fullPath = Join-Path -Path $RepoRoot -ChildPath $path
+        $resolvedParent = Resolve-Path -LiteralPath (Split-Path -Parent $fullPath) -ErrorAction SilentlyContinue
+        if ($null -ne $resolvedParent -and -not $resolvedParent.Path.StartsWith($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing path outside repo root: $path"
+        }
+    }
 }
 
 function Assert-NoPreexistingStagedFiles {
@@ -374,9 +435,10 @@ function Get-CommitApprovalState {
         [int]$IssueNumberForState
     )
 
-    $branchForState = Get-CurrentBranch
-    $headForState = Get-CurrentFullHead
+    $branchForState = Format-Block -Text (Get-GitOutput -GitArgs @("branch", "--show-current") -Action "git branch --show-current") -EmptyText "(detached HEAD)"
+    $headForState = Get-GitOutput -GitArgs @("rev-parse", "HEAD") -Action "git rev-parse HEAD"
     $statusForState = Get-GitStatusShort
+    Assert-ReviewableStatus -Status $statusForState
     Assert-NoPreexistingStagedFiles -Status $statusForState
     Assert-DocsOnlyMarkdownChanges -Status $statusForState
 
@@ -396,8 +458,9 @@ function Get-CommitApprovalState {
         Branch = $branchForState
         Head = $headForState
         Status = $statusForState
+        StatusRecords = $statusPayload
         ModifiedFiles = $modifiedFilesForState
-        ModifiedFilesText = $modifiedFilesForState -join [Environment]::NewLine
+        ModifiedFilesText = if ($modifiedFilesForState.Count -eq 0) { "(none)" } else { $modifiedFilesForState -join [Environment]::NewLine }
         DiffFingerprint = $diffFingerprint
         FilesFingerprint = $filesFingerprint
         ReviewId = $reviewId
@@ -1031,10 +1094,19 @@ function Find-ApprovalNextCommitSelections {
 
                 $action = [string]$parsed.Fields["action"]
                 if (-not [string]::Equals($action, $ApprovalNextCommitSupportedAction, [System.StringComparison]::Ordinal)) {
-                    $unsupportedMarkers += [pscustomobject]@{
-                        IssueNumber = $issueNumber
-                        IssueTitle = $issueTitle
-                        Reason = "Unsupported approval action '$action'. $ModeName supports only action=$ApprovalNextCommitSupportedAction."
+                    if ($action -in @($ApprovalDryRunSupportedAction, $ApprovalOnceSupportedAction, $ApprovalNextDryRunSupportedAction)) {
+                        $skippedMarkers += [pscustomobject]@{
+                            IssueNumber = $issueNumber
+                            IssueTitle = $issueTitle
+                            Reason = "Ignored current non-commit approval action '$action'. $ModeName selects only action=$ApprovalNextCommitSupportedAction."
+                        }
+                    }
+                    else {
+                        $unsupportedMarkers += [pscustomobject]@{
+                            IssueNumber = $issueNumber
+                            IssueTitle = $issueTitle
+                            Reason = "Unsupported approval action '$action'. $ModeName supports only action=$ApprovalNextCommitSupportedAction."
+                        }
                     }
                     continue
                 }
