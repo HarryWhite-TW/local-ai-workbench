@@ -19,7 +19,8 @@ param(
     [ValidateRange(1, [int]::MaxValue)]
     [int]$IssueNumber,
     [ValidateSet("ReviewBundle", "CommitApproved")]
-    [string]$Mode = "ReviewBundle"
+    [string]$Mode = "ReviewBundle",
+    [string]$ApprovalToken = ""
 )
 
 Set-StrictMode -Version Latest
@@ -715,6 +716,8 @@ function New-CommitApprovedComment {
         [Parameter(Mandatory = $true)]
         [string]$FilesFingerprint,
         [Parameter(Mandatory = $true)]
+        [string]$ApprovalSource,
+        [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
         [string]$CommittedFiles,
         [Parameter(Mandatory = $true)]
@@ -751,7 +754,7 @@ function New-CommitApprovedComment {
 - No issue close performed: yes
 - No label edit performed: yes
 - No PR created: yes
-- Approval source: local prompt only
+- Approval source: $ApprovalSource
 
 ### Committed files
 
@@ -888,7 +891,12 @@ function Invoke-CommitApprovedMode {
     Write-Output "Modified files:"
     Write-Output $state.ModifiedFilesText
 
-    $tokenText = Read-Host "Enter exact ASCII approval token"
+    $tokenText = $ApprovalToken
+    $approvalSource = "non-interactive parameter"
+    if ([string]::IsNullOrWhiteSpace($tokenText)) {
+        $tokenText = Read-Host "Enter exact ASCII approval token"
+        $approvalSource = "local prompt"
+    }
     $token = ConvertFrom-ApprovalToken -Token $tokenText
 
     $stateBeforeStage = Get-ApprovalState -IssueNumberForState $IssueNumber -RequireChanges
@@ -935,6 +943,7 @@ function Invoke-CommitApprovedMode {
         -ReviewId $stateBeforeStage.ReviewId `
         -DiffFingerprint $stateBeforeStage.DiffFingerprint `
         -FilesFingerprint $stateBeforeStage.FilesFingerprint `
+        -ApprovalSource $approvalSource `
         -CommittedFiles ($approvedFileList -join [Environment]::NewLine) `
         -FinalStatus $finalStatusAfterCommit
 

@@ -6,9 +6,9 @@ Runner v1 is a helper for write-capable GitHub Issues.
 
 By default, it runs in review-bundle-only mode. It can run Codex locally for an Issue, leave any repo changes unstaged, collect review data, and post a structured `local-runner-v1 review bundle` comment back to the same Issue.
 
-It also has an explicit Level 3A local commit mode through `-Mode CommitApproved`. That mode requires a local ASCII approval token and creates one local commit after validating the current repo state.
+It also has an explicit Level 3A local commit mode through `-Mode CommitApproved`. That mode requires an ASCII approval token and creates one local commit after validating the current repo state.
 
-Current limit: this version does not push, close issues, edit labels, create PRs, merge, force push, or parse GitHub comments for approval.
+Current limit: this version does not push, close issues, edit labels, create PRs, merge, or force push. Runner v1 can accept a token from a local prompt or from runner v2's approved docs-only commit rail; runner v1 itself still does not scan GitHub comments for approval.
 
 Review-bundle mode does not approve, stage, commit, push, close issues, edit labels, create pull requests, or consume approval tokens.
 
@@ -72,6 +72,8 @@ LRV1-APPROVE issue=<N> mode=Level3A branch=<branch> head=<head> review=<review-i
 ```
 
 The approval token is not a secret credential. It is a state-bound local confirmation string for the current issue, branch, HEAD, review id, diff fingerprint, and files fingerprint. Human / ChatGPT review is still required before entering it.
+
+Runner v2 may pass the same token non-interactively only after validating a structured `RUNNER-V2-APPROVE action=commit-approved-docs-only` GitHub approval comment. The v1 prompt behavior remains unchanged when no token parameter is supplied.
 
 Before staging, commit mode recomputes the current branch, HEAD, modified file list, diff fingerprint, and files fingerprint. It rejects stale tokens, preexisting staged files, and outside-allowlist changes.
 

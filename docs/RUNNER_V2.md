@@ -151,15 +151,51 @@ Safety boundaries:
 
 Current limitation: `ApprovalNextOnce` supports only `action=run-reviewbundle`. Any other approval action requires separate design and validation before use.
 
-For now:
+## Approved docs-only local commit rail
 
-- v2A must not auto-run `CommitApproved`.
-- `CommitApproved` remains explicit and manual.
-- The user must still enter the exact state-bound ASCII approval token locally.
-- ChatGPT approval language by itself is not enough to trigger a commit.
-- GitHub approval comments may be considered later, but must not directly trigger commits in v2A.
+The approved commit rail is higher risk than the ReviewBundle handoff because it can create one local Git commit. It is still narrow:
 
-`CommitApproved` remains a separate local action with its own validation and approval token. It is not part of v2A dry-run orchestration.
+- docs-only markdown files only, currently `docs/*.md`
+- local commit only
+- no push
+- no issue close
+- no label edit
+- no PR creation
+- no merge or force push
+- no Codex or external-agent execution
+- no daemon, scheduler, background service, or approval chaining
+
+Use the dry run first:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun
+```
+
+After review, use the execution mode only when exactly one current approval exists:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce
+```
+
+The approval comment format is:
+
+```text
+RUNNER-V2-APPROVE protocol=v2.approval.1 action=commit-approved-docs-only issue=<N> repo=HarryWhite-TW/local-ai-workbench branch=<branch> head=<sha> review=<review-id> diff=<diff-sha256> files=<files-sha256> filelist=<sha256-or-none> expires=<UTC_BASIC>
+```
+
+Required fields are `protocol`, `action`, `issue`, `repo`, `branch`, `head`, `review`, `diff`, `files`, and `expires`. `filelist` may be present, but it is not the primary security field. The `files` fingerprint remains required.
+
+Approval token means a structured ASCII line that binds approval to one exact local state. Approval token（核准權杖）不是密碼，而是一次性的狀態確認字串。
+
+Diff fingerprint means the SHA-256 fingerprint of the approved diff payload, including tracked diff and untracked file hashes. Diff fingerprint（差異指紋）用來確認目前差異內容沒有被替換。
+
+Files fingerprint means the SHA-256 fingerprint of the approved file status payload. Files fingerprint（檔案清單指紋）用來確認目前被修改的檔案狀態仍是被審核的狀態。
+
+`ApprovalNextCommitDryRun` scans bounded open issues and requires exactly one current valid `action=commit-approved-docs-only` approval. It rejects stale approvals, multiple approvals, unsupported actions, repo mismatch, branch mismatch, HEAD mismatch, issue mismatch, review id mismatch, diff fingerprint mismatch, files fingerprint mismatch, non-docs paths, and preexisting staged files. It prints the planned commit action and does not stage, commit, push, or post comments.
+
+`ApprovalNextCommitOnce` performs the same validation, then delegates to runner v1 `CommitApproved` with the exact state-bound token. Runner v1 stages only the approved files, creates exactly one local commit, and posts the commit result, commit SHA, final git status, and next step to the GitHub Issue.
+
+Human / ChatGPT review is still required before posting the commit approval comment. This rail exists only after a ReviewBundle has already been reviewed and approved. Push remains a later separate rail and is not performed here.
 
 ## External-agent boundary
 

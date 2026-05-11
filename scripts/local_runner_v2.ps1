@@ -20,6 +20,12 @@ delegates once to runner v1 ReviewBundle for the selected issue.
 In -ApprovalNextWatch mode it polls in the foreground for one bounded
 action=run-reviewbundle approval, delegates at most once to runner v1
 ReviewBundle, and exits.
+In -ApprovalNextCommitDryRun mode it validates one bounded
+action=commit-approved-docs-only approval against the current docs-only local
+state, prints the planned local commit action, and exits without writing.
+In -ApprovalNextCommitOnce mode it performs the same validation and delegates
+once to runner v1 CommitApproved using a non-interactive state-bound approval
+token, creating at most one local docs-only commit.
 
 .EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun
@@ -43,6 +49,12 @@ ReviewBundle, and exits.
 .\scripts\local_runner_v2.ps1 -ApprovalNextWatch -TimeoutSeconds 300 -PollSeconds 15
 
 .EXAMPLE
+.\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun
+
+.EXAMPLE
+.\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce
+
+.EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun -Repo "HarryWhite-TW/local-ai-workbench" -MaxIssues 20
 #>
 
@@ -54,6 +66,8 @@ param(
     [switch]$ApprovalNextDryRun,
     [switch]$ApprovalNextOnce,
     [switch]$ApprovalNextWatch,
+    [switch]$ApprovalNextCommitDryRun,
+    [switch]$ApprovalNextCommitOnce,
     [int]$IssueNumber = 0,
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
@@ -84,6 +98,7 @@ $ApprovalProtocol = "v2.approval.1"
 $ApprovalDryRunSupportedAction = "detect-approval"
 $ApprovalOnceSupportedAction = "run-reviewbundle"
 $ApprovalNextDryRunSupportedAction = "run-reviewbundle"
+$ApprovalNextCommitSupportedAction = "commit-approved-docs-only"
 $ApprovalRequiredFields = @(
     "protocol",
     "action",
@@ -94,15 +109,16 @@ $ApprovalRequiredFields = @(
     "review",
     "diff",
     "files",
-    "filelist",
     "expires"
 )
-$ApprovalKnownFields = $ApprovalRequiredFields
+$ApprovalKnownFields = @($ApprovalRequiredFields + "filelist")
 $ApprovalDryRunNoWriteGuarantee = "ApprovalDryRun detection only: does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop, daemon, or scheduler."
 $ApprovalOnceSafetyBoundary = "ApprovalOnce delegates only to runner v1 ReviewBundle for the approved issue. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop."
 $ApprovalNextDryRunNoWriteGuarantee = "ApprovalNextDryRun detection only: does not call Codex, run runner v1, execute ApprovalOnce, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run polling, watch, daemon, or scheduler behavior."
 $ApprovalNextOnceSafetyBoundary = "ApprovalNextOnce delegates once to runner v1 ReviewBundle for exactly one current action=run-reviewbundle approval. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run polling, watch, daemon, or scheduler behavior."
 $ApprovalNextWatchSafetyBoundary = "ApprovalNextWatch is a bounded foreground poller. It delegates at most once to runner v1 ReviewBundle for exactly one current action=run-reviewbundle approval, returns runner v1's exit code after delegation, and does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run a daemon, run a scheduler, or chain approvals."
+$ApprovalNextCommitDryRunNoWriteGuarantee = "ApprovalNextCommitDryRun validates one current action=commit-approved-docs-only approval only. It does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
+$ApprovalNextCommitOnceSafetyBoundary = "ApprovalNextCommitOnce validates one current action=commit-approved-docs-only approval, then delegates once to runner v1 CommitApproved with a non-interactive state-bound token. It creates at most one local docs-only commit and does not push, close issues, edit labels, create PRs, merge, force push, call Codex, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -221,6 +237,172 @@ function Get-CurrentFullHead {
 
 function Get-GitStatusShort {
     return Get-GitOutput -GitArgs @("status", "--short") -Action "git status --short"
+}
+
+function Get-Sha256Text {
+    param(
+        [AllowNull()]
+        [string]$Text
+    )
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($(if ($null -eq $Text) { "" } else { $Text }))
+        $hashBytes = $sha256.ComputeHash($bytes)
+        return (($hashBytes | ForEach-Object { $_.ToString("x2") }) -join "")
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-StatusLines {
+    param(
+        [AllowEmptyString()]
+        [string]$Status
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Status)) {
+        return @()
+    }
+
+    return @($Status -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Get-StatusPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Line
+    )
+
+    if ($Line.Length -le 3) {
+        throw "Unexpected git status line: $Line"
+    }
+
+    $path = $Line.Substring(3).Trim()
+    if ($path -match " -> ") {
+        throw "Renamed or copied paths are not supported by ApprovalNextCommit modes: $path"
+    }
+
+    return $path
+}
+
+function Get-StatusPaths {
+    param(
+        [AllowEmptyString()]
+        [string]$Status
+    )
+
+    $paths = foreach ($line in (Get-StatusLines -Status $Status)) {
+        Get-StatusPath -Line $line
+    }
+
+    return @($paths | Sort-Object -Unique)
+}
+
+function Assert-NoPreexistingStagedFiles {
+    param(
+        [AllowEmptyString()]
+        [string]$Status
+    )
+
+    $stagedLines = foreach ($line in (Get-StatusLines -Status $Status)) {
+        if (($line.Substring(0, 1) -ne " ") -and ($line.Substring(0, 1) -ne "?")) {
+            $line
+        }
+    }
+
+    if (@($stagedLines).Count -gt 0) {
+        throw "Refusing ApprovalNextCommit mode because staged files already exist:`n$($stagedLines -join [Environment]::NewLine)"
+    }
+}
+
+function Test-DocsOnlyMarkdownPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $normalized = $Path -replace "\\", "/"
+    if ([string]::IsNullOrWhiteSpace($normalized)) { return $false }
+    if ([System.IO.Path]::IsPathRooted($normalized)) { return $false }
+    if ($normalized -match "(^|/)\.\.(/|$)") { return $false }
+    return ($normalized -match "^docs/[^/]+\.md$")
+}
+
+function Assert-DocsOnlyMarkdownChanges {
+    param(
+        [AllowEmptyString()]
+        [string]$Status
+    )
+
+    $paths = @(Get-StatusPaths -Status $Status)
+    if ($paths.Count -eq 0) {
+        throw "No modified files are available for ApprovalNextCommit mode."
+    }
+
+    $blockedPaths = @($paths | Where-Object { -not (Test-DocsOnlyMarkdownPath -Path $_) })
+    if ($blockedPaths.Count -gt 0) {
+        throw "ApprovalNextCommit mode is docs-only and accepts only docs/*.md paths. Refused path(s):`n$($blockedPaths -join [Environment]::NewLine)"
+    }
+}
+
+function Get-UntrackedFileFingerprintPayload {
+    param(
+        [AllowEmptyString()]
+        [string]$Status
+    )
+
+    $payloadLines = foreach ($line in (Get-StatusLines -Status $Status)) {
+        if ($line.StartsWith("??")) {
+            $path = Get-StatusPath -Line $line
+            $fullPath = Join-Path -Path $RepoRoot -ChildPath $path
+            if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+                throw "Untracked directories are not supported by ApprovalNextCommit mode: $path"
+            }
+            $hash = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$path $hash"
+        }
+    }
+
+    return (@($payloadLines) | Sort-Object) -join [Environment]::NewLine
+}
+
+function Get-CommitApprovalState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumberForState
+    )
+
+    $branchForState = Get-CurrentBranch
+    $headForState = Get-CurrentFullHead
+    $statusForState = Get-GitStatusShort
+    Assert-NoPreexistingStagedFiles -Status $statusForState
+    Assert-DocsOnlyMarkdownChanges -Status $statusForState
+
+    $statusLines = @(Get-StatusLines -Status $statusForState | Sort-Object)
+    $trackedDiff = Get-GitOutput -GitArgs @("diff", "--binary") -Action "git diff --binary"
+    $untrackedPayload = Get-UntrackedFileFingerprintPayload -Status $statusForState
+    $modifiedFilesForState = @(Get-StatusPaths -Status $statusForState)
+    $statusPayload = $statusLines -join [Environment]::NewLine
+    $filesPayload = "issue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`nstatus=`n$statusPayload"
+    $diffPayload = "issue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`nstatus=`n$statusPayload`ntracked-diff=`n$trackedDiff`nuntracked=`n$untrackedPayload"
+    $filesFingerprint = Get-Sha256Text -Text $filesPayload
+    $diffFingerprint = Get-Sha256Text -Text $diffPayload
+    $reviewId = (Get-Sha256Text -Text "review`nissue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`ndiff=$diffFingerprint`nfiles=$filesFingerprint").Substring(0, 16)
+
+    return [pscustomobject]@{
+        IssueNumber = [string]$IssueNumberForState
+        Branch = $branchForState
+        Head = $headForState
+        Status = $statusForState
+        ModifiedFiles = $modifiedFilesForState
+        ModifiedFilesText = $modifiedFilesForState -join [Environment]::NewLine
+        DiffFingerprint = $diffFingerprint
+        FilesFingerprint = $filesFingerprint
+        ReviewId = $reviewId
+        ApprovalToken = "LRV1-APPROVE issue=$IssueNumberForState mode=Level3A branch=$branchForState head=$headForState review=$reviewId diff=$diffFingerprint files=$filesFingerprint"
+    }
 }
 
 function Assert-GhAvailable {
@@ -509,7 +691,36 @@ function Assert-ApprovalMarkerMatchesLocalState {
     Assert-ApprovalFieldEquals -Fields $Fields -Name "review" -Expected "none"
     Assert-ApprovalFieldEquals -Fields $Fields -Name "diff" -Expected "none"
     Assert-ApprovalFieldEquals -Fields $Fields -Name "files" -Expected "none"
-    Assert-ApprovalFieldEquals -Fields $Fields -Name "filelist" -Expected "none"
+    if ($Fields.ContainsKey("filelist")) {
+        Assert-ApprovalFieldEquals -Fields $Fields -Name "filelist" -Expected "none"
+    }
+
+    if ($ExpiresUtc -le $NowUtc) {
+        throw "Approval marker expired at $($ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")); current UTC time is $($NowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+    }
+}
+
+function Assert-CommitApprovalMarkerMatchesState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Fields,
+        [Parameter(Mandatory = $true)]
+        [object]$State,
+        [Parameter(Mandatory = $true)]
+        [datetime]$ExpiresUtc,
+        [Parameter(Mandatory = $true)]
+        [datetime]$NowUtc
+    )
+
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "protocol" -Expected $ApprovalProtocol
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "action" -Expected $ApprovalNextCommitSupportedAction
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "issue" -Expected $State.IssueNumber
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "repo" -Expected $ExpectedApprovalRepo
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "branch" -Expected $State.Branch
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "head" -Expected $State.Head
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "review" -Expected $State.ReviewId
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "diff" -Expected $State.DiffFingerprint
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "files" -Expected $State.FilesFingerprint
 
     if ($ExpiresUtc -le $NowUtc) {
         throw "Approval marker expired at $($ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")); current UTC time is $($NowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
@@ -770,6 +981,104 @@ function Find-ApprovalNextDryRunSelections {
     }
 }
 
+function Find-ApprovalNextCommitSelections {
+    param(
+        [Parameter(Mandatory = $true)]
+        [datetime]$NowUtc,
+        [switch]$StopOnReadFailure,
+        [switch]$StopOnMarkerFailure,
+        [string]$ModeName = "ApprovalNextCommitDryRun"
+    )
+
+    $issues = Get-OpenApprovalSearchIssues
+    $validSelections = @()
+    $skippedMarkers = @()
+    $skippedIssues = @()
+    $unsupportedMarkers = @()
+
+    foreach ($issue in $issues) {
+        $issueNumber = [int]$issue.number
+        $issueTitle = Get-ObjectPropertyText -Object $issue -PropertyName "title"
+
+        try {
+            $readResult = Get-IssueApprovalMarkerReadResult -IssueNumber $issueNumber
+        }
+        catch {
+            if ($StopOnReadFailure) {
+                throw "GitHub read failure while scanning issue #$issueNumber cannot be safely ignored. $($_.Exception.Message)"
+            }
+
+            $skippedIssues += [pscustomobject]@{
+                IssueNumber = $issueNumber
+                IssueTitle = $issueTitle
+                Reason = $_.Exception.Message
+            }
+            continue
+        }
+
+        $markers = @($readResult.Markers)
+        foreach ($marker in $markers) {
+            try {
+                $parsed = ConvertTo-ParsedApprovalMarker -Marker $marker -NowUtc $NowUtc
+                if (-not $parsed.IsCurrent) {
+                    $skippedMarkers += [pscustomobject]@{
+                        IssueNumber = $issueNumber
+                        IssueTitle = $issueTitle
+                        Reason = "Approval marker expired at $($parsed.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+                    }
+                    continue
+                }
+
+                $action = [string]$parsed.Fields["action"]
+                if (-not [string]::Equals($action, $ApprovalNextCommitSupportedAction, [System.StringComparison]::Ordinal)) {
+                    $unsupportedMarkers += [pscustomobject]@{
+                        IssueNumber = $issueNumber
+                        IssueTitle = $issueTitle
+                        Reason = "Unsupported approval action '$action'. $ModeName supports only action=$ApprovalNextCommitSupportedAction."
+                    }
+                    continue
+                }
+
+                $state = Get-CommitApprovalState -IssueNumberForState $issueNumber
+                Assert-CommitApprovalMarkerMatchesState -Fields $parsed.Fields -State $state -ExpiresUtc $parsed.ExpiresUtc -NowUtc $NowUtc
+
+                $selectedTitle = Get-ObjectPropertyText -Object $readResult -PropertyName "Title"
+                if ([string]::IsNullOrWhiteSpace($selectedTitle)) {
+                    $selectedTitle = $issueTitle
+                }
+
+                $validSelections += [pscustomobject]@{
+                    IssueNumber = $issueNumber
+                    IssueTitle = $selectedTitle
+                    ReadResult = $readResult
+                    Selected = $parsed
+                    State = $state
+                    NowUtc = $NowUtc
+                }
+            }
+            catch {
+                if ($StopOnMarkerFailure) {
+                    throw "Approval marker on issue #$issueNumber failed validation in ${ModeName}. $($_.Exception.Message)"
+                }
+
+                $skippedMarkers += [pscustomobject]@{
+                    IssueNumber = $issueNumber
+                    IssueTitle = $issueTitle
+                    Reason = $_.Exception.Message
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        IssuesScanned = @($issues).Count
+        ValidSelections = @($validSelections)
+        SkippedMarkers = @($skippedMarkers)
+        SkippedIssues = @($skippedIssues)
+        UnsupportedMarkers = @($unsupportedMarkers)
+    }
+}
+
 function Invoke-ApprovalNextDryRun {
     if (-not [string]::Equals($Repo, $ExpectedApprovalRepo, [System.StringComparison]::Ordinal)) {
         throw "ApprovalNextDryRun supports only repo=$ExpectedApprovalRepo for this detection-only slice."
@@ -979,6 +1288,149 @@ function Write-ApprovalNextSelectionSummary {
     Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
     Write-Host "Safety boundary: $SafetyBoundary"
     Write-Host ""
+}
+
+function Write-ApprovalNextCommitScanMessages {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ScanResult,
+        [Parameter(Mandatory = $true)]
+        [string]$ModeName
+    )
+
+    foreach ($skippedIssue in @($ScanResult.SkippedIssues)) {
+        Write-Host ""
+        Write-Host "Skipped issue #$($skippedIssue.IssueNumber): could not read issue comments. $($skippedIssue.Reason)"
+    }
+
+    foreach ($skippedMarker in @($ScanResult.SkippedMarkers)) {
+        Write-Host ""
+        Write-Host "Skipped approval marker on issue #$($skippedMarker.IssueNumber): $($skippedMarker.Reason)"
+    }
+
+    $unsupportedMarkers = @($ScanResult.UnsupportedMarkers)
+    if ($unsupportedMarkers.Count -gt 0) {
+        Write-Host ""
+        foreach ($unsupportedMarker in $unsupportedMarkers) {
+            Write-Host "Unsupported approval action on issue #$($unsupportedMarker.IssueNumber): $($unsupportedMarker.IssueTitle)"
+            Write-Host $unsupportedMarker.Reason
+        }
+        throw "$ModeName stopped because an unsupported current approval action was found."
+    }
+}
+
+function Get-UniqueApprovalNextCommitSelection {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ScanResult,
+        [Parameter(Mandatory = $true)]
+        [string]$ModeName
+    )
+
+    $validSelections = @($ScanResult.ValidSelections)
+    if ($validSelections.Count -eq 0) {
+        throw "$ModeName requires exactly one current valid action=$ApprovalNextCommitSupportedAction approval. No matching approval was found."
+    }
+
+    if ($validSelections.Count -gt 1) {
+        Write-Host ""
+        Write-Host "Ambiguous approvals found. $ModeName requires exactly one valid current approval and will not choose automatically."
+        foreach ($selection in $validSelections) {
+            Write-Host "Issue #$($selection.IssueNumber): $($selection.IssueTitle)"
+        }
+        throw "$ModeName stopped because multiple valid current approvals were found."
+    }
+
+    return $validSelections[0]
+}
+
+function Write-ApprovalNextCommitSelectionSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Selection,
+        [Parameter(Mandatory = $true)]
+        [string]$SafetyBoundary
+    )
+
+    $selected = $Selection.Selected
+    $state = $Selection.State
+    $commentId = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "id"
+    $commentAuthor = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
+    $commentCreatedAt = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "createdAt"
+    $action = [string]$selected.Fields["action"]
+
+    Write-Host ""
+    Write-Host "Selected approval"
+    Write-Host "Issue: #$($Selection.IssueNumber)"
+    Write-Host "Title: $($Selection.IssueTitle)"
+    Write-Host "Approval comment id: $commentId"
+    Write-Host "Approval comment author: $commentAuthor"
+    Write-Host "Approval comment created_at: $commentCreatedAt"
+    Write-Host "Parsed action: $action"
+    Write-Host "Branch: $($state.Branch)"
+    Write-Host "HEAD: $($state.Head)"
+    Write-Host "Review id: $($state.ReviewId)"
+    Write-Host "Diff fingerprint: $($state.DiffFingerprint)"
+    Write-Host "Files fingerprint: $($state.FilesFingerprint)"
+    Write-Host "Modified docs-only files:"
+    Write-Host $state.ModifiedFilesText
+    Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
+    Write-Host "Safety boundary: $SafetyBoundary"
+    Write-Host ""
+}
+
+function Invoke-ApprovalNextCommitDryRun {
+    if (-not [string]::Equals($Repo, $ExpectedApprovalRepo, [System.StringComparison]::Ordinal)) {
+        throw "ApprovalNextCommitDryRun supports only repo=$ExpectedApprovalRepo for this docs-only local commit slice."
+    }
+
+    Assert-RepoRoot
+    $nowUtc = [System.DateTime]::UtcNow
+    $scanResult = Find-ApprovalNextCommitSelections -NowUtc $nowUtc -ModeName "ApprovalNextCommitDryRun"
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: ApprovalNextCommitDryRun"
+    Write-Host "Approval search: bounded open issues, exact RUNNER-V2-APPROVE action=commit-approved-docs-only validation"
+    Write-Host "Issues scanned: $($scanResult.IssuesScanned)"
+    Write-Host "No-write guarantee: $ApprovalNextCommitDryRunNoWriteGuarantee"
+
+    Write-ApprovalNextCommitScanMessages -ScanResult $scanResult -ModeName "ApprovalNextCommitDryRun"
+    $selection = Get-UniqueApprovalNextCommitSelection -ScanResult $scanResult -ModeName "ApprovalNextCommitDryRun"
+
+    Write-ApprovalNextCommitSelectionSummary -Selection $selection -SafetyBoundary $ApprovalNextCommitDryRunNoWriteGuarantee
+    Write-Host "Planned action: Would delegate to runner v1 CommitApproved for issue #$($selection.IssueNumber) with a state-bound approval token. No files will be staged and no commit will be created in dry-run mode."
+    Write-FinalGitStatus
+}
+
+function Invoke-ApprovalNextCommitOnce {
+    if (-not [string]::Equals($Repo, $ExpectedApprovalRepo, [System.StringComparison]::Ordinal)) {
+        throw "ApprovalNextCommitOnce supports only repo=$ExpectedApprovalRepo for this docs-only local commit slice."
+    }
+
+    Assert-RepoRoot
+    $nowUtc = [System.DateTime]::UtcNow
+    $scanResult = Find-ApprovalNextCommitSelections -NowUtc $nowUtc -ModeName "ApprovalNextCommitOnce" -StopOnReadFailure -StopOnMarkerFailure
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: ApprovalNextCommitOnce"
+    Write-Host "Approval search: bounded open issues, exact RUNNER-V2-APPROVE action=commit-approved-docs-only validation"
+    Write-Host "Issues scanned: $($scanResult.IssuesScanned)"
+
+    Write-ApprovalNextCommitScanMessages -ScanResult $scanResult -ModeName "ApprovalNextCommitOnce"
+    $selection = Get-UniqueApprovalNextCommitSelection -ScanResult $scanResult -ModeName "ApprovalNextCommitOnce"
+    Write-ApprovalNextCommitSelectionSummary -Selection $selection -SafetyBoundary $ApprovalNextCommitOnceSafetyBoundary
+
+    $runnerExitCode = Invoke-RunnerV1CommitApproved -IssueNumber ([int]$selection.IssueNumber) -ApprovalToken ([string]$selection.State.ApprovalToken)
+
+    Write-Host ""
+    Write-Host "Runner v1 exit code: $runnerExitCode"
+    Write-Host "Next step: review the local commit and final GitHub issue comment before any separate push approval."
+    Write-FinalGitStatus
+
+    if ($runnerExitCode -ne 0) {
+        Write-Host "Failure: runner v1 CommitApproved failed with exit code $runnerExitCode."
+        exit $runnerExitCode
+    }
 }
 
 function Invoke-ApprovalNextWatch {
@@ -1417,6 +1869,30 @@ function Invoke-RunnerV1ReviewBundle {
     return $exitCode
 }
 
+function Invoke-RunnerV1CommitApproved {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber,
+        [Parameter(Mandatory = $true)]
+        [string]$ApprovalToken
+    )
+
+    $runnerV1Path = Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1"
+    if (-not (Test-Path -LiteralPath $runnerV1Path -PathType Leaf)) {
+        throw "Runner v1 script path is missing: $runnerV1Path"
+    }
+
+    $powerShellPath = Get-PowerShellExecutablePath
+    $runnerOutput = & $powerShellPath -NoProfile -File $runnerV1Path -IssueNumber $IssueNumber -Mode CommitApproved -ApprovalToken $ApprovalToken 2>&1
+    $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+
+    foreach ($line in @($runnerOutput)) {
+        Write-Host $line
+    }
+
+    return $exitCode
+}
+
 function Write-FinalGitStatus {
     Write-Host "Final local git status:"
     $finalStatus = Get-GitStatusShort
@@ -1506,9 +1982,15 @@ try {
     if ($ApprovalNextWatch) {
         $selectedModes += "ApprovalNextWatch"
     }
+    if ($ApprovalNextCommitDryRun) {
+        $selectedModes += "ApprovalNextCommitDryRun"
+    }
+    if ($ApprovalNextCommitOnce) {
+        $selectedModes += "ApprovalNextCommitOnce"
+    }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, or .\scripts\local_runner_v2.ps1 -ApprovalNextWatch."
+        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, .\scripts\local_runner_v2.ps1 -ApprovalNextWatch, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun, or .\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce."
     }
 
     if ($selectedModes.Count -gt 1) {
@@ -1541,8 +2023,14 @@ try {
     elseif ($ApprovalNextOnce) {
         Invoke-ApprovalNextOnce
     }
-    else {
+    elseif ($ApprovalNextWatch) {
         Invoke-ApprovalNextWatch
+    }
+    elseif ($ApprovalNextCommitDryRun) {
+        Invoke-ApprovalNextCommitDryRun
+    }
+    else {
+        Invoke-ApprovalNextCommitOnce
     }
 }
 catch {
