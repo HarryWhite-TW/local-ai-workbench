@@ -131,11 +131,15 @@ function Invoke-ReadOnlyCommand {
         [string]$Action
     )
 
+    $stdoutFile = New-TemporaryFile
+    $stderrFile = New-TemporaryFile
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $output = & $FilePath @Arguments 2>&1
+        & $FilePath @Arguments 1> $stdoutFile.FullName 2> $stderrFile.FullName
         $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+        $stdout = Get-Content -LiteralPath $stdoutFile.FullName -Raw -ErrorAction SilentlyContinue
+        $stderr = Get-Content -LiteralPath $stderrFile.FullName -Raw -ErrorAction SilentlyContinue
     }
     catch {
         return [pscustomobject]@{
@@ -146,13 +150,14 @@ function Invoke-ReadOnlyCommand {
     }
     finally {
         $ErrorActionPreference = $previousErrorActionPreference
+        Remove-Item -LiteralPath $stdoutFile.FullName -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrFile.FullName -Force -ErrorAction SilentlyContinue
     }
 
-    $text = (@($output) | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
     return [pscustomobject]@{
         ExitCode = $exitCode
-        Stdout = $text.TrimEnd()
-        Stderr = ""
+        Stdout = if ($null -eq $stdout) { "" } else { $stdout.TrimEnd() }
+        Stderr = if ($null -eq $stderr) { "" } else { $stderr.TrimEnd() }
     }
 }
 
@@ -465,15 +470,18 @@ function Get-UntrackedFileFingerprintPayload {
 function Get-CommitApprovalState {
     param(
         [Parameter(Mandatory = $true)]
-        [int]$IssueNumberForState
+        [int]$IssueNumberForState,
+        [switch]$ValidateDocsOnlyCommit
     )
 
     $branchForState = Format-Block -Text (Get-GitOutput -GitArgs @("branch", "--show-current") -Action "git branch --show-current") -EmptyText "(detached HEAD)"
     $headForState = Get-GitOutput -GitArgs @("rev-parse", "HEAD") -Action "git rev-parse HEAD"
     $statusForState = Get-GitStatusShort
     Assert-ReviewableStatus -Status $statusForState
-    Assert-NoPreexistingStagedFiles -Status $statusForState
-    Assert-DocsOnlyMarkdownChanges -Status $statusForState
+    if ($ValidateDocsOnlyCommit) {
+        Assert-NoPreexistingStagedFiles -Status $statusForState
+        Assert-DocsOnlyMarkdownChanges -Status $statusForState
+    }
 
     $statusLines = @(Get-StatusLines -Status $statusForState | Sort-Object)
     $trackedDiff = Get-GitOutput -GitArgs @("diff", "--binary") -Action "git diff --binary"
@@ -1199,7 +1207,7 @@ function Find-ApprovalNextCommitSelections {
                     continue
                 }
 
-                $state = Get-CommitApprovalState -IssueNumberForState $issueNumber
+                $state = Get-CommitApprovalState -IssueNumberForState $issueNumber -ValidateDocsOnlyCommit
                 Assert-CommitApprovalMarkerMatchesState -Fields $parsed.Fields -State $state -ExpiresUtc $parsed.ExpiresUtc -NowUtc $NowUtc
 
                 $selectedTitle = Get-ObjectPropertyText -Object $readResult -PropertyName "Title"
