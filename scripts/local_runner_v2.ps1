@@ -68,6 +68,7 @@ param(
     [switch]$ApprovalNextWatch,
     [switch]$ApprovalNextCommitDryRun,
     [switch]$ApprovalNextCommitOnce,
+    [switch]$ApprovalStateDiagnostic,
     [int]$IssueNumber = 0,
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
@@ -254,6 +255,38 @@ function Get-Sha256Text {
     finally {
         $sha256.Dispose()
     }
+}
+
+function Get-TextLineCount {
+    param(
+        [AllowNull()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrEmpty($Text)) {
+        return 0
+    }
+
+    return @($Text -split "\r?\n").Count
+}
+
+function Get-TextPreview {
+    param(
+        [AllowNull()]
+        [string]$Text,
+        [int]$MaxChars = 2000
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return "(none)"
+    }
+
+    $normalized = $Text.TrimEnd() -replace "`r", "\r" -replace "`n", "\n`n"
+    if ($normalized.Length -le $MaxChars) {
+        return $normalized
+    }
+
+    return $normalized.Substring(0, $MaxChars) + "`n[truncated]"
 }
 
 function Format-Block {
@@ -458,14 +491,69 @@ function Get-CommitApprovalState {
         Branch = $branchForState
         Head = $headForState
         Status = $statusForState
+        StatusRawHash = Get-Sha256Text -Text $statusForState
         StatusRecords = $statusPayload
         ModifiedFiles = $modifiedFilesForState
         ModifiedFilesText = if ($modifiedFilesForState.Count -eq 0) { "(none)" } else { $modifiedFilesForState -join [Environment]::NewLine }
+        TrackedDiff = $trackedDiff
+        TrackedDiffHash = Get-Sha256Text -Text $trackedDiff
+        TrackedDiffLength = $trackedDiff.Length
+        TrackedDiffLineCount = Get-TextLineCount -Text $trackedDiff
+        UntrackedPayload = $untrackedPayload
+        UntrackedPayloadHash = Get-Sha256Text -Text $untrackedPayload
+        FilesPayload = $filesPayload
+        FilesPayloadHash = Get-Sha256Text -Text $filesPayload
+        DiffPayload = $diffPayload
+        DiffPayloadHash = Get-Sha256Text -Text $diffPayload
         DiffFingerprint = $diffFingerprint
         FilesFingerprint = $filesFingerprint
         ReviewId = $reviewId
         ApprovalToken = "LRV1-APPROVE issue=$IssueNumberForState mode=Level3A branch=$branchForState head=$headForState review=$reviewId diff=$diffFingerprint files=$filesFingerprint"
     }
+}
+
+function Invoke-ApprovalStateDiagnostic {
+    if ($IssueNumber -lt 1) {
+        throw "ApprovalStateDiagnostic requires -IssueNumber <N>."
+    }
+
+    if (-not [string]::Equals($Repo, $ExpectedApprovalRepo, [System.StringComparison]::Ordinal)) {
+        throw "ApprovalStateDiagnostic supports only repo=$ExpectedApprovalRepo for this approval-state slice."
+    }
+
+    Assert-RepoRoot
+    $state = Get-CommitApprovalState -IssueNumberForState $IssueNumber
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: ApprovalStateDiagnostic"
+    Write-Host "Read-only: yes"
+    Write-Host "Issue number: #$($state.IssueNumber)"
+    Write-Host "Branch: $($state.Branch)"
+    Write-Host "Full HEAD: $($state.Head)"
+    Write-Host "Git status raw hash: $($state.StatusRawHash)"
+    Write-Host "Git status normalized visible representation:"
+    Write-Host (Get-TextPreview -Text $state.Status)
+    Write-Host "Status records used for fingerprinting:"
+    Write-Host (Get-TextPreview -Text $state.StatusRecords)
+    Write-Host "Modified files payload:"
+    Write-Host (Get-TextPreview -Text $state.ModifiedFilesText)
+    Write-Host "Tracked diff fingerprint: $($state.TrackedDiffHash)"
+    Write-Host "Tracked diff length: $($state.TrackedDiffLength)"
+    Write-Host "Tracked diff line count: $($state.TrackedDiffLineCount)"
+    Write-Host "Untracked payload fingerprint: $($state.UntrackedPayloadHash)"
+    Write-Host "Untracked payload visible representation:"
+    Write-Host (Get-TextPreview -Text $state.UntrackedPayload)
+    Write-Host "Files payload hash: $($state.FilesPayloadHash)"
+    Write-Host "Files payload preview:"
+    Write-Host (Get-TextPreview -Text $state.FilesPayload)
+    Write-Host "Diff payload hash: $($state.DiffPayloadHash)"
+    Write-Host "Diff payload length: $($state.DiffPayload.Length)"
+    Write-Host "Diff payload line count: $(Get-TextLineCount -Text $state.DiffPayload)"
+    Write-Host "Final files fingerprint: $($state.FilesFingerprint)"
+    Write-Host "Final diff fingerprint: $($state.DiffFingerprint)"
+    Write-Host "Final review id: $($state.ReviewId)"
+    Write-Host "Approval token preview: $($state.ApprovalToken)"
+    Write-Host "No-write guarantee: diagnostic mode does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or consume approval tokens."
 }
 
 function Assert-GhAvailable {
@@ -2060,9 +2148,12 @@ try {
     if ($ApprovalNextCommitOnce) {
         $selectedModes += "ApprovalNextCommitOnce"
     }
+    if ($ApprovalStateDiagnostic) {
+        $selectedModes += "ApprovalStateDiagnostic"
+    }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, .\scripts\local_runner_v2.ps1 -ApprovalNextWatch, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun, or .\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce."
+        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, .\scripts\local_runner_v2.ps1 -ApprovalNextWatch, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce, or .\scripts\local_runner_v2.ps1 -ApprovalStateDiagnostic -IssueNumber <N>."
     }
 
     if ($selectedModes.Count -gt 1) {
@@ -2075,6 +2166,10 @@ try {
 
     if ($ApprovalOnce -and $IssueNumber -lt 1) {
         throw "ApprovalOnce requires -IssueNumber <N>."
+    }
+
+    if ($ApprovalStateDiagnostic -and $IssueNumber -lt 1) {
+        throw "ApprovalStateDiagnostic requires -IssueNumber <N>."
     }
 
     if ($DryRun) {
@@ -2101,8 +2196,11 @@ try {
     elseif ($ApprovalNextCommitDryRun) {
         Invoke-ApprovalNextCommitDryRun
     }
-    else {
+    elseif ($ApprovalNextCommitOnce) {
         Invoke-ApprovalNextCommitOnce
+    }
+    else {
+        Invoke-ApprovalStateDiagnostic
     }
 }
 catch {

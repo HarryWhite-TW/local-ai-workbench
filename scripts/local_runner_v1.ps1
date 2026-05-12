@@ -18,7 +18,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateRange(1, [int]::MaxValue)]
     [int]$IssueNumber,
-    [ValidateSet("ReviewBundle", "CommitApproved")]
+    [ValidateSet("ReviewBundle", "CommitApproved", "ApprovalStateDiagnostic")]
     [string]$Mode = "ReviewBundle",
     [string]$ApprovalToken = ""
 )
@@ -136,6 +136,38 @@ function Get-Sha256Text {
     finally {
         $sha256.Dispose()
     }
+}
+
+function Get-TextLineCount {
+    param(
+        [AllowNull()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrEmpty($Text)) {
+        return 0
+    }
+
+    return @($Text -split "\r?\n").Count
+}
+
+function Get-TextPreview {
+    param(
+        [AllowNull()]
+        [string]$Text,
+        [int]$MaxChars = 2000
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return "(none)"
+    }
+
+    $normalized = $Text.TrimEnd() -replace "`r", "\r" -replace "`n", "\n`n"
+    if ($normalized.Length -le $MaxChars) {
+        return $normalized
+    }
+
+    return $normalized.Substring(0, $MaxChars) + "`n[truncated]"
 }
 
 function Get-GitStatusShort {
@@ -340,14 +372,67 @@ function Get-ApprovalState {
         Branch = $branchForState
         Head = $headForState
         Status = $statusForState
+        StatusRawHash = Get-Sha256Text -Text $statusForState
         StatusRecords = $statusPayload
         ModifiedFiles = $modifiedFilesForState
         ModifiedFilesText = if ($modifiedFilesForState.Count -eq 0) { "(none)" } else { $modifiedFilesForState -join [Environment]::NewLine }
+        TrackedDiff = $trackedDiff
+        TrackedDiffHash = Get-Sha256Text -Text $trackedDiff
+        TrackedDiffLength = $trackedDiff.Length
+        TrackedDiffLineCount = Get-TextLineCount -Text $trackedDiff
+        UntrackedPayload = $untrackedPayload
+        UntrackedPayloadHash = Get-Sha256Text -Text $untrackedPayload
+        FilesPayload = $filesPayload
+        FilesPayloadHash = Get-Sha256Text -Text $filesPayload
+        DiffPayload = $diffPayload
+        DiffPayloadHash = Get-Sha256Text -Text $diffPayload
         DiffFingerprint = $diffFingerprint
         FilesFingerprint = $filesFingerprint
         ReviewId = $reviewId
         ApprovalToken = "LRV1-APPROVE issue=$IssueNumberForState mode=Level3A branch=$branchForState head=$headForState review=$reviewId diff=$diffFingerprint files=$filesFingerprint"
     }
+}
+
+function Write-ApprovalStateDiagnostic {
+    if ($IssueNumber -lt 1) {
+        throw "ApprovalStateDiagnostic requires -IssueNumber <N>."
+    }
+
+    if (-not (Test-Path -LiteralPath $RepoPath)) {
+        throw "Repository path was not found: $RepoPath"
+    }
+
+    $state = Get-ApprovalState -IssueNumberForState $IssueNumber
+
+    Write-Output "$RunnerName $RunnerVersion"
+    Write-Output "Mode: ApprovalStateDiagnostic"
+    Write-Output "Read-only: yes"
+    Write-Output "Issue number: #$($state.IssueNumber)"
+    Write-Output "Branch: $($state.Branch)"
+    Write-Output "Full HEAD: $($state.Head)"
+    Write-Output "Git status raw hash: $($state.StatusRawHash)"
+    Write-Output "Git status normalized visible representation:"
+    Write-Output (Get-TextPreview -Text $state.Status)
+    Write-Output "Status records used for fingerprinting:"
+    Write-Output (Get-TextPreview -Text $state.StatusRecords)
+    Write-Output "Modified files payload:"
+    Write-Output (Get-TextPreview -Text $state.ModifiedFilesText)
+    Write-Output "Tracked diff fingerprint: $($state.TrackedDiffHash)"
+    Write-Output "Tracked diff length: $($state.TrackedDiffLength)"
+    Write-Output "Tracked diff line count: $($state.TrackedDiffLineCount)"
+    Write-Output "Untracked payload fingerprint: $($state.UntrackedPayloadHash)"
+    Write-Output "Untracked payload visible representation:"
+    Write-Output (Get-TextPreview -Text $state.UntrackedPayload)
+    Write-Output "Files payload hash: $($state.FilesPayloadHash)"
+    Write-Output "Files payload preview:"
+    Write-Output (Get-TextPreview -Text $state.FilesPayload)
+    Write-Output "Diff payload hash: $($state.DiffPayloadHash)"
+    Write-Output "Diff payload length: $($state.DiffPayload.Length)"
+    Write-Output "Diff payload line count: $(Get-TextLineCount -Text $state.DiffPayload)"
+    Write-Output "Final files fingerprint: $($state.FilesFingerprint)"
+    Write-Output "Final diff fingerprint: $($state.DiffFingerprint)"
+    Write-Output "Final review id: $($state.ReviewId)"
+    Write-Output "Approval token preview: $($state.ApprovalToken)"
 }
 
 function Test-IssueAllowsWriteCapableRun {
@@ -955,11 +1040,17 @@ function Invoke-CommitApprovedMode {
     Write-Output $commentResult.Stdout
 }
 
-if (-not (Test-Path -LiteralPath $Gh)) {
-    throw "GitHub CLI was not found at expected path: $Gh"
-}
 if (-not (Test-Path -LiteralPath $RepoPath)) {
     throw "Repository path was not found: $RepoPath"
+}
+
+if ($Mode -eq "ApprovalStateDiagnostic") {
+    Write-ApprovalStateDiagnostic
+    exit 0
+}
+
+if (-not (Test-Path -LiteralPath $Gh)) {
+    throw "GitHub CLI was not found at expected path: $Gh"
 }
 
 if ($Mode -eq "CommitApproved") {
