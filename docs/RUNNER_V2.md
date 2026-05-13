@@ -171,6 +171,8 @@ Use the dry run first:
 .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun
 ```
 
+Final validation should confirm `ApprovalNextCommitOnce` creates a local docs-only commit only after a matching dry run.
+
 After review, use the execution mode only when exactly one current approval exists:
 
 ```powershell
