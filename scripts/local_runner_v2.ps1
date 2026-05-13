@@ -1577,7 +1577,7 @@ function Invoke-ApprovalNextCommitOnce {
 
     Assert-RepoRoot
     $nowUtc = [System.DateTime]::UtcNow
-    $scanResult = Find-ApprovalNextCommitSelections -NowUtc $nowUtc -ModeName "ApprovalNextCommitOnce" -StopOnReadFailure -StopOnMarkerFailure
+    $scanResult = Find-ApprovalNextCommitSelections -NowUtc $nowUtc -ModeName "ApprovalNextCommitOnce" -StopOnMarkerFailure
 
     Write-Host "$RunnerName $RunnerVersion"
     Write-Host "Mode: ApprovalNextCommitOnce"
