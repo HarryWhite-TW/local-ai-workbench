@@ -199,6 +199,57 @@ Files fingerprint means the SHA-256 fingerprint of the approved file status payl
 
 Human / ChatGPT review is still required before posting the commit approval comment. This rail exists only after a ReviewBundle has already been reviewed and approved. Push remains a later separate rail and is not performed here.
 
+## PushDryRun rail
+
+`PushDryRun` is a read-only push validation rail. It validates one current `action=push-dryrun-approved` marker, reports the planned push target, and stops before any remote write.
+
+Use:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -PushDryRun
+```
+
+The approval comment format is:
+
+```text
+RUNNER-V2-APPROVE protocol=v2.approval.1 action=push-dryrun-approved issue=<N> repo=HarryWhite-TW/local-ai-workbench branch=<branch> localhead=<local-head-sha> remote=<remote-name> upstream=<remote-tracking-branch> remotehead=<remote-branch-head-sha> commit=<approved-commit-sha> ahead=1 commitfiles=<sha256> expires=<UTC_BASIC>
+```
+
+`PushDryRun` requires a clean working tree, no staged files, the current branch and local HEAD to match the marker, the approved commit to equal local HEAD, exactly one local commit ahead, no behind count, the remote name and upstream to match, the remote URL to point to `HarryWhite-TW/local-ai-workbench`, and the committed file-list fingerprint to match.
+
+The remote branch HEAD check uses a read-only query:
+
+```powershell
+git ls-remote origin refs/heads/master
+```
+
+`PushDryRun` does not run `git fetch` by default. If the read-only remote HEAD does not match `remotehead`, it stops.
+
+The committed file-list fingerprint is the SHA-256 of the normalized committed file list from:
+
+```powershell
+git show --name-only --format= <approved-commit-sha>
+```
+
+The normalized list uses forward slashes, removes blank lines, sorts unique paths, and joins them with LF. For the no-agent local commit rail SOP commit, the normalized file list is:
+
+```text
+docs/NO_AGENT_LOCAL_COMMIT_RAIL_SOP.md
+```
+
+Safety boundaries:
+
+- PushDryRun only
+- one commit only
+- no PushOnce
+- no `git push`
+- no issue close
+- no label edit
+- no PR creation
+- no merge or force push
+- no approval chaining
+- no reuse of commit approval markers as push approval markers
+
 ## External-agent boundary
 
 External agents are optional workflow executor adapters only.
