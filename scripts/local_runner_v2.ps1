@@ -831,6 +831,26 @@ function ConvertFrom-ApprovalMarkerLine {
     return $fields
 }
 
+function Get-ApprovalMarkerActionToken {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$MarkerLine
+    )
+
+    $parts = $MarkerLine.Split(" ")
+    if ($parts.Count -lt 2 -or -not [string]::Equals($parts[0], $ApprovalMarkerPrefix, [System.StringComparison]::Ordinal)) {
+        return $null
+    }
+
+    foreach ($part in @($parts | Select-Object -Skip 1)) {
+        if ($part -match "^action=([^=\s]+)$") {
+            return $Matches[1]
+        }
+    }
+
+    return $null
+}
+
 function Assert-ApprovalRequiredFields {
     param(
         [Parameter(Mandatory = $true)]
@@ -2183,10 +2203,25 @@ function Get-ValidatedCloseIssueOnceSelection {
     }
 
     $currentCloseMarkers = @()
-    $currentNonCloseMarkers = @()
     $expiredCloseMarkers = @()
+    $skippedNonCloseMarkers = @()
 
     foreach ($marker in $markers) {
+        $actionToken = Get-ApprovalMarkerActionToken -MarkerLine ([string]$marker.Line)
+        if (-not [string]::Equals($actionToken, $CloseIssueOnceSupportedAction, [System.StringComparison]::Ordinal)) {
+            $skipReason = if ([string]::IsNullOrWhiteSpace($actionToken)) {
+                "Skipped non-close approval content with no action token."
+            } else {
+                "Skipped non-close approval action '$actionToken'."
+            }
+            $skippedNonCloseMarkers += [pscustomobject]@{
+                Marker = $marker
+                Action = $actionToken
+                Reason = $skipReason
+            }
+            continue
+        }
+
         $parsed = ConvertTo-ParsedApprovalMarker -Marker $marker -NowUtc $NowUtc
         $action = [string]$parsed.Fields["action"]
 
@@ -2198,20 +2233,12 @@ function Get-ValidatedCloseIssueOnceSelection {
                 $expiredCloseMarkers += $parsed
             }
         }
-        elseif ($parsed.IsCurrent) {
-            $currentNonCloseMarkers += $parsed
-        }
     }
 
     if ($currentCloseMarkers.Count -eq 0) {
         if ($expiredCloseMarkers.Count -gt 0) {
             $latestMarker = $expiredCloseMarkers[$expiredCloseMarkers.Count - 1]
             throw "No current close approval marker found for issue #$IssueNumber. Latest close marker expired at $($latestMarker.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
-        }
-
-        if ($currentNonCloseMarkers.Count -gt 0) {
-            $actions = @($currentNonCloseMarkers | ForEach-Object { [string]$_.Fields["action"] } | Sort-Object -Unique)
-            throw "CloseIssueOnce requires action=$CloseIssueOnceSupportedAction. Current non-close approval action(s) cannot authorize close: $($actions -join ', ')."
         }
 
         throw "CloseIssueOnce requires exactly one current action=$CloseIssueOnceSupportedAction approval on issue #$IssueNumber. No matching approval was found."
@@ -2236,6 +2263,7 @@ function Get-ValidatedCloseIssueOnceSelection {
         Selected = $selected
         State = $state
         NowUtc = $NowUtc
+        SkippedNonCloseMarkers = @($skippedNonCloseMarkers)
     }
 }
 
@@ -2270,6 +2298,9 @@ function Write-CloseIssueOnceSelectionSummary {
     Write-Host "Remote HEAD: $($state.RemoteHead)"
     Write-Host "Pushed commit: $($state.Pushed)"
     Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
+    foreach ($skippedMarker in @($Selection.SkippedNonCloseMarkers)) {
+        Write-Host "Skipped approval marker on issue #$($Selection.IssueNumber): $($skippedMarker.Reason)"
+    }
     Write-Host "Safety boundary: $CloseIssueOnceSafetyBoundary"
     Write-Host ""
 }
