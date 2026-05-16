@@ -32,6 +32,9 @@ target, and exits without running git push.
 In -PushOnce mode it validates one current action=push-approved-once approval
 against the same one-commit-ahead state, runs exactly one narrow git push, and
 reports the pushed commit and remote result.
+In -CloseIssueOnce mode it validates one current action=close-issue-approved-once
+approval on the explicitly selected issue against the current pushed local /
+remote state, closes exactly that one issue, and reports the final state.
 
 .EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun
@@ -67,6 +70,9 @@ reports the pushed commit and remote result.
 .\scripts\local_runner_v2.ps1 -PushOnce
 
 .EXAMPLE
+.\scripts\local_runner_v2.ps1 -CloseIssueOnce -IssueNumber 73
+
+.EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun -Repo "HarryWhite-TW/local-ai-workbench" -MaxIssues 20
 #>
 
@@ -82,6 +88,7 @@ param(
     [switch]$ApprovalNextCommitOnce,
     [switch]$PushDryRun,
     [switch]$PushOnce,
+    [switch]$CloseIssueOnce,
     [switch]$ApprovalStateDiagnostic,
     [int]$IssueNumber = 0,
     [ValidateNotNullOrEmpty()]
@@ -116,6 +123,7 @@ $ApprovalNextDryRunSupportedAction = "run-reviewbundle"
 $ApprovalNextCommitSupportedAction = "commit-approved-docs-only"
 $PushDryRunSupportedAction = "push-dryrun-approved"
 $PushOnceSupportedAction = "push-approved-once"
+$CloseIssueOnceSupportedAction = "close-issue-approved-once"
 $ApprovalBaseRequiredFields = @(
     "protocol",
     "action",
@@ -141,7 +149,17 @@ $PushDryRunRequiredFields = @(
     "ahead",
     "commitfiles"
 )
-$ApprovalKnownFields = @($ApprovalRequiredFields + $PushDryRunRequiredFields + "filelist" | Sort-Object -Unique)
+$CloseIssueOnceRequiredFields = @(
+    $ApprovalBaseRequiredFields +
+    "target",
+    "targetstate",
+    "localhead",
+    "remote",
+    "upstream",
+    "remotehead",
+    "pushed"
+)
+$ApprovalKnownFields = @($ApprovalRequiredFields + $PushDryRunRequiredFields + $CloseIssueOnceRequiredFields + "filelist" | Sort-Object -Unique)
 $ApprovalDryRunNoWriteGuarantee = "ApprovalDryRun detection only: does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop, daemon, or scheduler."
 $ApprovalOnceSafetyBoundary = "ApprovalOnce delegates only to runner v1 ReviewBundle for the approved issue. It does not call Codex directly, run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run a polling loop."
 $ApprovalNextDryRunNoWriteGuarantee = "ApprovalNextDryRun detection only: does not call Codex, run runner v1, execute ApprovalOnce, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, or run polling, watch, daemon, or scheduler behavior."
@@ -151,6 +169,7 @@ $ApprovalNextCommitDryRunNoWriteGuarantee = "ApprovalNextCommitDryRun validates 
 $ApprovalNextCommitOnceSafetyBoundary = "ApprovalNextCommitOnce validates one current action=commit-approved-docs-only approval, then delegates once to runner v1 CommitApproved with a non-interactive state-bound token. It creates at most one local docs-only commit and does not push, close issues, edit labels, create PRs, merge, force push, call Codex, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 $PushDryRunNoWriteGuarantee = "PushDryRun validates one current action=push-dryrun-approved approval only. It does not run git push, call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 $PushOnceSafetyBoundary = "PushOnce validates one current action=push-approved-once approval, re-runs PushDryRun-equivalent checks immediately before push, executes exactly one narrow non-force git push for the approved HEAD, and does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
+$CloseIssueOnceSafetyBoundary = "CloseIssueOnce validates one current action=close-issue-approved-once approval on the explicitly selected issue, requires local HEAD, remote HEAD, and pushed to match the same approved commit, then closes exactly one selected open issue. It does not call Codex, run runner v1, modify files, stage files, commit, push, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -1179,6 +1198,87 @@ function Get-PushDryRunState {
     }
 }
 
+function Get-CloseIssueOnceState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Fields,
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber,
+        [Parameter(Mandatory = $true)]
+        [string]$IssueState,
+        [Parameter(Mandatory = $true)]
+        [datetime]$ExpiresUtc,
+        [Parameter(Mandatory = $true)]
+        [datetime]$NowUtc
+    )
+
+    Assert-ApprovalRequiredFields -Fields $Fields -RequiredFields $CloseIssueOnceRequiredFields -Context "CloseIssueOnce"
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "protocol" -Expected $ApprovalProtocol
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "action" -Expected $CloseIssueOnceSupportedAction
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "repo" -Expected $ExpectedApprovalRepo
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "issue" -Expected ([string]$IssueNumber)
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "target" -Expected ([string]$IssueNumber)
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "targetstate" -Expected "OPEN"
+
+    if (-not [string]::Equals($IssueState, "OPEN", [System.StringComparison]::Ordinal)) {
+        throw "Selected issue #$IssueNumber must be currently OPEN. Found state '$IssueState'."
+    }
+
+    if ($ExpiresUtc -le $NowUtc) {
+        throw "Approval marker expired at $($ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")); current UTC time is $($NowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+    }
+
+    $cleanResult = Assert-CleanRepo
+    $staged = Get-GitOutput -GitArgs @("diff", "--cached", "--name-only") -Action "git diff --cached --name-only"
+    if (-not [string]::IsNullOrWhiteSpace($staged)) {
+        throw "Staged files exist; CloseIssueOnce requires no staged files:`n$staged"
+    }
+
+    $branch = Get-CurrentBranch
+    $localHead = Get-CurrentFullHead
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "branch" -Expected $branch
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "localhead" -Expected $localHead
+
+    $remote = [string]$Fields["remote"]
+    $remoteNames = @(Get-RemoteNames)
+    if (-not ($remoteNames -contains $remote)) {
+        throw "Remote '$remote' does not exist. Available remotes: $($remoteNames -join ', ')"
+    }
+
+    $remoteUrl = Get-GitOutput -GitArgs @("remote", "get-url", $remote) -Action "git remote get-url $remote"
+    if (-not (Test-RemoteUrlMatchesExpectedRepo -RemoteUrl $remoteUrl)) {
+        throw "Remote '$remote' URL does not point to expected repo $ExpectedApprovalRepo. Found: $remoteUrl"
+    }
+
+    $upstream = Get-GitOutput -GitArgs @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") -Action "git rev-parse --abbrev-ref --symbolic-full-name @{u}"
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "upstream" -Expected $upstream
+
+    $remoteBranchName = Get-RemoteBranchNameFromUpstream -Upstream $upstream -Remote $remote
+    $remoteHead = Get-RemoteBranchHead -Remote $remote -BranchName $remoteBranchName
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "remotehead" -Expected $remoteHead
+
+    if (-not [string]::Equals($localHead, $remoteHead, [System.StringComparison]::Ordinal)) {
+        throw "CloseIssueOnce requires local HEAD to equal remote HEAD. localhead=$localHead remotehead=$remoteHead."
+    }
+
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "pushed" -Expected $localHead
+    if (-not [string]::Equals([string]$Fields["pushed"], $remoteHead, [System.StringComparison]::Ordinal)) {
+        throw "Approval marker field 'pushed' must equal remote HEAD. pushed=$($Fields["pushed"]) remotehead=$remoteHead."
+    }
+
+    return [pscustomobject]@{
+        CleanSummary = $cleanResult.Summary
+        Branch = $branch
+        LocalHead = $localHead
+        Remote = $remote
+        RemoteUrl = $remoteUrl
+        Upstream = $upstream
+        RemoteHead = $remoteHead
+        Pushed = [string]$Fields["pushed"]
+        PreviousIssueState = $IssueState
+    }
+}
+
 function Get-ValidatedApprovalSelection {
     param(
         [Parameter(Mandatory = $true)]
@@ -1600,7 +1700,7 @@ function Find-PushDryRunSelections {
 
                 $action = [string]$parsed.Fields["action"]
                 if (-not [string]::Equals($action, $ExpectedAction, [System.StringComparison]::Ordinal)) {
-                    if ($action -in @($ApprovalDryRunSupportedAction, $ApprovalOnceSupportedAction, $ApprovalNextDryRunSupportedAction, $ApprovalNextCommitSupportedAction, $PushDryRunSupportedAction, $PushOnceSupportedAction)) {
+                    if ($action -in @($ApprovalDryRunSupportedAction, $ApprovalOnceSupportedAction, $ApprovalNextDryRunSupportedAction, $ApprovalNextCommitSupportedAction, $PushDryRunSupportedAction, $PushOnceSupportedAction, $CloseIssueOnceSupportedAction)) {
                         $skippedMarkers += [pscustomobject]@{
                             IssueNumber = $issueNumber
                             IssueTitle = $issueTitle
@@ -2068,6 +2168,121 @@ function Get-UniquePushDryRunSelection {
     return $validSelections[0]
 }
 
+function Get-ValidatedCloseIssueOnceSelection {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber,
+        [Parameter(Mandatory = $true)]
+        [datetime]$NowUtc
+    )
+
+    $readResult = Get-IssueApprovalMarkerReadResult -IssueNumber $IssueNumber
+    $markers = @($readResult.Markers)
+    if ($markers.Count -eq 0) {
+        throw "CloseIssueOnce requires exactly one current action=$CloseIssueOnceSupportedAction approval on issue #$IssueNumber. No RUNNER-V2-APPROVE marker lines were found."
+    }
+
+    $currentCloseMarkers = @()
+    $currentNonCloseMarkers = @()
+    $expiredCloseMarkers = @()
+
+    foreach ($marker in $markers) {
+        $parsed = ConvertTo-ParsedApprovalMarker -Marker $marker -NowUtc $NowUtc
+        $action = [string]$parsed.Fields["action"]
+
+        if ([string]::Equals($action, $CloseIssueOnceSupportedAction, [System.StringComparison]::Ordinal)) {
+            if ($parsed.IsCurrent) {
+                $currentCloseMarkers += $parsed
+            }
+            else {
+                $expiredCloseMarkers += $parsed
+            }
+        }
+        elseif ($parsed.IsCurrent) {
+            $currentNonCloseMarkers += $parsed
+        }
+    }
+
+    if ($currentCloseMarkers.Count -eq 0) {
+        if ($expiredCloseMarkers.Count -gt 0) {
+            $latestMarker = $expiredCloseMarkers[$expiredCloseMarkers.Count - 1]
+            throw "No current close approval marker found for issue #$IssueNumber. Latest close marker expired at $($latestMarker.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+        }
+
+        if ($currentNonCloseMarkers.Count -gt 0) {
+            $actions = @($currentNonCloseMarkers | ForEach-Object { [string]$_.Fields["action"] } | Sort-Object -Unique)
+            throw "CloseIssueOnce requires action=$CloseIssueOnceSupportedAction. Current non-close approval action(s) cannot authorize close: $($actions -join ', ')."
+        }
+
+        throw "CloseIssueOnce requires exactly one current action=$CloseIssueOnceSupportedAction approval on issue #$IssueNumber. No matching approval was found."
+    }
+
+    if ($currentCloseMarkers.Count -gt 1) {
+        throw "Ambiguous close approvals found for issue #$IssueNumber. Found $($currentCloseMarkers.Count) current action=$CloseIssueOnceSupportedAction marker lines; exactly one is required."
+    }
+
+    $selected = $currentCloseMarkers[0]
+    $state = Get-CloseIssueOnceState `
+        -Fields $selected.Fields `
+        -IssueNumber $IssueNumber `
+        -IssueState ([string]$readResult.IssueState) `
+        -ExpiresUtc $selected.ExpiresUtc `
+        -NowUtc $NowUtc
+
+    return [pscustomobject]@{
+        IssueNumber = $IssueNumber
+        IssueTitle = $readResult.Title
+        ReadResult = $readResult
+        Selected = $selected
+        State = $state
+        NowUtc = $NowUtc
+    }
+}
+
+function Write-CloseIssueOnceSelectionSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Selection
+    )
+
+    $selected = $Selection.Selected
+    $state = $Selection.State
+    $commentId = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "id"
+    $commentAuthor = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
+    $commentCreatedAt = Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "createdAt"
+    $action = [string]$selected.Fields["action"]
+
+    Write-Host ""
+    Write-Host "Selected close approval"
+    Write-Host "Issue: #$($Selection.IssueNumber)"
+    Write-Host "Title: $($Selection.IssueTitle)"
+    Write-Host "Previous issue state: $($state.PreviousIssueState)"
+    Write-Host "Approval comment id: $commentId"
+    Write-Host "Approval comment author: $commentAuthor"
+    Write-Host "Approval comment created_at: $commentCreatedAt"
+    Write-Host "Selected close marker: $($selected.Marker.Line)"
+    Write-Host "Parsed action: $action"
+    Write-Host "Branch: $($state.Branch)"
+    Write-Host "Local HEAD: $($state.LocalHead)"
+    Write-Host "Remote: $($state.Remote)"
+    Write-Host "Remote URL: $($state.RemoteUrl)"
+    Write-Host "Upstream: $($state.Upstream)"
+    Write-Host "Remote HEAD: $($state.RemoteHead)"
+    Write-Host "Pushed commit: $($state.Pushed)"
+    Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
+    Write-Host "Safety boundary: $CloseIssueOnceSafetyBoundary"
+    Write-Host ""
+}
+
+function Invoke-GhIssueCloseOnce {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber
+    )
+
+    return Invoke-WriteCommand -FilePath "gh" -Arguments @("issue", "close", "$IssueNumber", "--repo", $Repo) -Action "gh issue close"
+}
+
 function Write-PushSelectionSummary {
     param(
         [Parameter(Mandatory = $true)]
@@ -2201,6 +2416,64 @@ function Invoke-PushOnce {
         Write-Host $pushResult.Stderr
     }
     Write-Host "Post-push statement: exactly one git push command was executed; no issue close, label, PR, merge, force push, or approval chaining was performed."
+    Write-FinalGitStatus
+}
+
+function Invoke-CloseIssueOnce {
+    if (-not [string]::Equals($Repo, $ExpectedApprovalRepo, [System.StringComparison]::Ordinal)) {
+        throw "CloseIssueOnce supports only repo=$ExpectedApprovalRepo for this close-once slice."
+    }
+    if ($IssueNumber -le 0) {
+        throw "CloseIssueOnce requires -IssueNumber <N> and scans only that issue."
+    }
+
+    Assert-RepoRoot
+    $nowUtc = [System.DateTime]::UtcNow
+    $selection = Get-ValidatedCloseIssueOnceSelection -IssueNumber $IssueNumber -NowUtc $nowUtc
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: CloseIssueOnce"
+    Write-Host "Approval search: selected issue only, exact RUNNER-V2-APPROVE action=close-issue-approved-once validation"
+    Write-Host "Issues scanned: 1"
+
+    Write-CloseIssueOnceSelectionSummary -Selection $selection
+
+    Write-Host "Executing close command: gh issue close $IssueNumber --repo $Repo"
+    $closeResult = Invoke-GhIssueCloseOnce -IssueNumber $IssueNumber
+    if ($closeResult.ExitCode -ne 0) {
+        $details = (($closeResult.Stdout, $closeResult.Stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        throw "gh issue close failed with exit code $($closeResult.ExitCode): $details"
+    }
+
+    $finalReadResult = Get-IssueApprovalMarkerReadResult -IssueNumber $IssueNumber
+    if (-not [string]::Equals([string]$finalReadResult.IssueState, "CLOSED", [System.StringComparison]::Ordinal)) {
+        throw "Post-close issue state mismatch. Expected issue #$IssueNumber to be CLOSED, found '$($finalReadResult.IssueState)'."
+    }
+
+    $remoteHeadAfterClose = Get-RemoteBranchHead -Remote ([string]$selection.State.Remote) -BranchName (Get-RemoteBranchNameFromUpstream -Upstream ([string]$selection.State.Upstream) -Remote ([string]$selection.State.Remote))
+    if (-not [string]::Equals($remoteHeadAfterClose, [string]$selection.State.RemoteHead, [System.StringComparison]::Ordinal)) {
+        throw "Remote HEAD changed during CloseIssueOnce. Expected $($selection.State.RemoteHead), found $remoteHeadAfterClose."
+    }
+
+    $null = Assert-CleanRepo
+
+    Write-Host ""
+    Write-Host "CloseIssueOnce result"
+    Write-Host "Selected issue number: #$IssueNumber"
+    Write-Host "Previous issue state: $($selection.State.PreviousIssueState)"
+    Write-Host "Final issue state: $($finalReadResult.IssueState)"
+    Write-Host "Local HEAD: $($selection.State.LocalHead)"
+    Write-Host "Remote HEAD: $remoteHeadAfterClose"
+    Write-Host "Pushed commit SHA: $($selection.State.Pushed)"
+    if (-not [string]::IsNullOrWhiteSpace($closeResult.Stdout)) {
+        Write-Host "gh issue close stdout:"
+        Write-Host $closeResult.Stdout
+    }
+    if (-not [string]::IsNullOrWhiteSpace($closeResult.Stderr)) {
+        Write-Host "gh issue close stderr:"
+        Write-Host $closeResult.Stderr
+    }
+    Write-Host "Post-close statement: exactly one selected issue was closed; no labels, PRs, merges, pushes, commits, staging, or approval chaining were performed."
     Write-FinalGitStatus
 }
 
@@ -2765,12 +3038,15 @@ try {
     if ($PushOnce) {
         $selectedModes += "PushOnce"
     }
+    if ($CloseIssueOnce) {
+        $selectedModes += "CloseIssueOnce"
+    }
     if ($ApprovalStateDiagnostic) {
         $selectedModes += "ApprovalStateDiagnostic"
     }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, .\scripts\local_runner_v2.ps1 -ApprovalNextWatch, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce, .\scripts\local_runner_v2.ps1 -PushDryRun, .\scripts\local_runner_v2.ps1 -PushOnce, or .\scripts\local_runner_v2.ps1 -ApprovalStateDiagnostic -IssueNumber <N>."
+        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, .\scripts\local_runner_v2.ps1 -ApprovalNextWatch, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce, .\scripts\local_runner_v2.ps1 -PushDryRun, .\scripts\local_runner_v2.ps1 -PushOnce, .\scripts\local_runner_v2.ps1 -CloseIssueOnce -IssueNumber <N>, or .\scripts\local_runner_v2.ps1 -ApprovalStateDiagnostic -IssueNumber <N>."
     }
 
     if ($selectedModes.Count -gt 1) {
@@ -2787,6 +3063,10 @@ try {
 
     if ($ApprovalStateDiagnostic -and $IssueNumber -lt 1) {
         throw "ApprovalStateDiagnostic requires -IssueNumber <N>."
+    }
+
+    if ($CloseIssueOnce -and $IssueNumber -lt 1) {
+        throw "CloseIssueOnce requires -IssueNumber <N> and scans only that issue."
     }
 
     if ($DryRun) {
@@ -2821,6 +3101,9 @@ try {
     }
     elseif ($PushOnce) {
         Invoke-PushOnce
+    }
+    elseif ($CloseIssueOnce) {
+        Invoke-CloseIssueOnce
     }
     else {
         Invoke-ApprovalStateDiagnostic

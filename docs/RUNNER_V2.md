@@ -290,6 +290,64 @@ Safety boundaries:
 - no approval chaining
 - no daemon, scheduler, or watcher
 
+## CloseIssueOnce rail
+
+`CloseIssueOnce` closes one selected open issue after an explicit, state-bound approval marker on that same issue.
+
+Use:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -CloseIssueOnce -IssueNumber <N>
+```
+
+`-IssueNumber <N>` is mandatory. If it is missing, the command stops before reading GitHub Issues. This mode scans only the selected issue; it does not broad-scan open issues.
+
+The approval comment format is:
+
+```text
+RUNNER-V2-APPROVE protocol=v2.approval.1 action=close-issue-approved-once issue=<N> repo=HarryWhite-TW/local-ai-workbench target=<N> targetstate=OPEN branch=master localhead=<sha> remote=origin upstream=origin/master remotehead=<sha> pushed=<sha> expires=<UTC_BASIC>
+```
+
+`CloseIssueOnce` requires exactly one current `action=close-issue-approved-once` marker on the selected issue. The marker `issue` and `target` must both equal the selected `-IssueNumber`, `targetstate` must be `OPEN`, and the selected issue must still be open at execution time.
+
+The local / remote state must prove the approved work is already pushed:
+
+- clean working tree
+- no staged files
+- current branch matches `branch`
+- local `HEAD` matches `localhead`
+- remote exists and matches `remote`
+- upstream matches `upstream`
+- read-only `git ls-remote` remote HEAD matches `remotehead`
+- local `HEAD` equals remote HEAD
+- `pushed` equals local `HEAD`
+- `pushed` equals remote HEAD
+
+If validation passes, `CloseIssueOnce` runs exactly one close operation for the selected issue:
+
+```powershell
+gh issue close <N> --repo HarryWhite-TW/local-ai-workbench
+```
+
+It then reads the selected issue again and reports the selected issue number, previous issue state, final issue state, local HEAD, remote HEAD, pushed commit SHA, and final git status.
+
+Safety boundaries:
+
+- CloseIssueOnce only
+- explicit selected issue only
+- no broad open-issue scan
+- no labels
+- no PR creation
+- no merge
+- no push
+- no commit
+- no staging
+- no multi-issue close
+- no cross-issue close
+- no approval chaining
+- no auto close after push
+- no reuse of push, commit, or ReviewBundle approval markers
+
 ## External-agent boundary
 
 External agents are optional workflow executor adapters only.
