@@ -250,6 +250,46 @@ Safety boundaries:
 - no approval chaining
 - no reuse of commit approval markers as push approval markers
 
+## PushOnce rail
+
+`PushOnce` is the write-capable counterpart of `PushDryRun`. It validates one current `action=push-approved-once` marker, re-runs the same push safety checks immediately before the push, executes exactly one narrow non-force push, and reports the pushed commit plus the remote result.
+
+Use:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -PushOnce
+```
+
+The approval comment format is:
+
+```text
+RUNNER-V2-APPROVE protocol=v2.approval.1 action=push-approved-once issue=<N> repo=HarryWhite-TW/local-ai-workbench branch=<branch> localhead=<local-head-sha> remote=<remote-name> upstream=<remote-tracking-branch> remotehead=<remote-branch-head-sha> commit=<approved-commit-sha> ahead=1 commitfiles=<sha256> expires=<UTC_BASIC>
+```
+
+`PushOnce` requires the same state-bound validations as `PushDryRun`: clean working tree, no staged files, marker branch and local HEAD match, approved commit equals local HEAD, expected remote and upstream, expected remote URL, `git ls-remote` remote head equals marker `remotehead`, ahead count is exactly `1`, behind count is `0`, exactly one local commit is ahead, and the committed file-list fingerprint matches `commitfiles`.
+
+After validation, `PushOnce` runs one command shaped as:
+
+```powershell
+git push origin HEAD:master
+```
+
+using the marker-approved remote and branch values. It then checks the remote branch HEAD with `git ls-remote` and requires it to equal the pushed commit.
+
+Safety boundaries:
+
+- PushOnce only
+- exactly one current `push-approved-once` marker
+- one approved commit only
+- no reuse of `push-dryrun-approved` markers
+- no reuse of commit approval markers
+- no issue close
+- no label edit
+- no PR creation
+- no merge or force push
+- no approval chaining
+- no daemon, scheduler, or watcher
+
 ## External-agent boundary
 
 External agents are optional workflow executor adapters only.

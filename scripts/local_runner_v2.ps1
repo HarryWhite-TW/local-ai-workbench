@@ -29,6 +29,9 @@ token, creating at most one local docs-only commit.
 In -PushDryRun mode it validates one current action=push-dryrun-approved
 approval against the current one-commit-ahead state, reports the planned push
 target, and exits without running git push.
+In -PushOnce mode it validates one current action=push-approved-once approval
+against the same one-commit-ahead state, runs exactly one narrow git push, and
+reports the pushed commit and remote result.
 
 .EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun
@@ -61,6 +64,9 @@ target, and exits without running git push.
 .\scripts\local_runner_v2.ps1 -PushDryRun
 
 .EXAMPLE
+.\scripts\local_runner_v2.ps1 -PushOnce
+
+.EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun -Repo "HarryWhite-TW/local-ai-workbench" -MaxIssues 20
 #>
 
@@ -75,6 +81,7 @@ param(
     [switch]$ApprovalNextCommitDryRun,
     [switch]$ApprovalNextCommitOnce,
     [switch]$PushDryRun,
+    [switch]$PushOnce,
     [switch]$ApprovalStateDiagnostic,
     [int]$IssueNumber = 0,
     [ValidateNotNullOrEmpty()]
@@ -108,6 +115,7 @@ $ApprovalOnceSupportedAction = "run-reviewbundle"
 $ApprovalNextDryRunSupportedAction = "run-reviewbundle"
 $ApprovalNextCommitSupportedAction = "commit-approved-docs-only"
 $PushDryRunSupportedAction = "push-dryrun-approved"
+$PushOnceSupportedAction = "push-approved-once"
 $ApprovalBaseRequiredFields = @(
     "protocol",
     "action",
@@ -142,6 +150,7 @@ $ApprovalNextWatchSafetyBoundary = "ApprovalNextWatch is a bounded foreground po
 $ApprovalNextCommitDryRunNoWriteGuarantee = "ApprovalNextCommitDryRun validates one current action=commit-approved-docs-only approval only. It does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 $ApprovalNextCommitOnceSafetyBoundary = "ApprovalNextCommitOnce validates one current action=commit-approved-docs-only approval, then delegates once to runner v1 CommitApproved with a non-interactive state-bound token. It creates at most one local docs-only commit and does not push, close issues, edit labels, create PRs, merge, force push, call Codex, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 $PushDryRunNoWriteGuarantee = "PushDryRun validates one current action=push-dryrun-approved approval only. It does not run git push, call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
+$PushOnceSafetyBoundary = "PushOnce validates one current action=push-approved-once approval, re-runs PushDryRun-equivalent checks immediately before push, executes exactly one narrow non-force git push for the approved HEAD, and does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -820,6 +829,46 @@ function Assert-ApprovalRequiredFields {
     }
 }
 
+function Invoke-WriteCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [string]$Action
+    )
+
+    $stdoutFile = New-TemporaryFile
+    $stderrFile = New-TemporaryFile
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $FilePath @Arguments 1> $stdoutFile.FullName 2> $stderrFile.FullName
+        $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+        $stdout = Get-Content -LiteralPath $stdoutFile.FullName -Raw -ErrorAction SilentlyContinue
+        $stderr = Get-Content -LiteralPath $stderrFile.FullName -Raw -ErrorAction SilentlyContinue
+    }
+    catch {
+        return [pscustomobject]@{
+            ExitCode = 1
+            Stdout = ""
+            Stderr = "$Action failed: $($_.Exception.Message)"
+        }
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        Remove-Item -LiteralPath $stdoutFile.FullName -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stderrFile.FullName -Force -ErrorAction SilentlyContinue
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Stdout = if ($null -eq $stdout) { "" } else { $stdout.Trim() }
+        Stderr = if ($null -eq $stderr) { "" } else { $stderr.Trim() }
+    }
+}
+
 function ConvertTo-ApprovalExpiryUtc {
     param(
         [Parameter(Mandatory = $true)]
@@ -1040,19 +1089,21 @@ function Get-PushDryRunState {
         [Parameter(Mandatory = $true)]
         [hashtable]$Fields,
         [Parameter(Mandatory = $true)]
-        [int]$IssueNumber
+        [int]$IssueNumber,
+        [string]$ExpectedAction = $PushDryRunSupportedAction,
+        [string]$ModeName = "PushDryRun"
     )
 
-    Assert-ApprovalRequiredFields -Fields $Fields -RequiredFields $PushDryRunRequiredFields -Context "PushDryRun"
+    Assert-ApprovalRequiredFields -Fields $Fields -RequiredFields $PushDryRunRequiredFields -Context $ModeName
     Assert-ApprovalFieldEquals -Fields $Fields -Name "protocol" -Expected $ApprovalProtocol
-    Assert-ApprovalFieldEquals -Fields $Fields -Name "action" -Expected $PushDryRunSupportedAction
+    Assert-ApprovalFieldEquals -Fields $Fields -Name "action" -Expected $ExpectedAction
     Assert-ApprovalFieldEquals -Fields $Fields -Name "issue" -Expected ([string]$IssueNumber)
     Assert-ApprovalFieldEquals -Fields $Fields -Name "repo" -Expected $ExpectedApprovalRepo
 
     $cleanResult = Assert-CleanRepo
     $staged = Get-GitOutput -GitArgs @("diff", "--cached", "--name-only") -Action "git diff --cached --name-only"
     if (-not [string]::IsNullOrWhiteSpace($staged)) {
-        throw "Staged files exist; PushDryRun requires no staged files:`n$staged"
+        throw "Staged files exist; $ModeName requires no staged files:`n$staged"
     }
 
     $branch = Get-CurrentBranch
@@ -1084,13 +1135,13 @@ function Get-PushDryRunState {
     $aheadBehind = Get-AheadBehindState -Upstream $upstream
     $markerAhead = [int]([string]$Fields["ahead"])
     if ($markerAhead -ne 1) {
-        throw "PushDryRun requires marker ahead=1. Found ahead=$markerAhead."
+        throw "$ModeName requires marker ahead=1. Found ahead=$markerAhead."
     }
     if ($aheadBehind.Ahead -ne $markerAhead) {
         throw "Ahead count mismatch. Marker ahead=$markerAhead; local ahead=$($aheadBehind.Ahead)."
     }
     if ($aheadBehind.Ahead -ne 1) {
-        throw "PushDryRun requires exactly one local commit ahead. Found ahead=$($aheadBehind.Ahead)."
+        throw "$ModeName requires exactly one local commit ahead. Found ahead=$($aheadBehind.Ahead)."
     }
     if ($aheadBehind.Behind -ne 0) {
         throw "Branch is diverged or remote is ahead. Behind count is $($aheadBehind.Behind)."
@@ -1099,7 +1150,7 @@ function Get-PushDryRunState {
     $aheadLog = Get-GitOutput -GitArgs @("log", "--format=%H", "$upstream..HEAD") -Action "git log --format=%H $upstream..HEAD"
     $aheadCommits = @($aheadLog -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($aheadCommits.Count -ne 1) {
-        throw "PushDryRun requires exactly one unpushed commit. Found $($aheadCommits.Count)."
+        throw "$ModeName requires exactly one unpushed commit. Found $($aheadCommits.Count)."
     }
     if (-not [string]::Equals($aheadCommits[0], $commit, [System.StringComparison]::Ordinal)) {
         throw "Unapproved commits are included. Only approved commit '$commit' may be ahead; found '$($aheadCommits[0])'."
@@ -1495,7 +1546,8 @@ function Find-PushDryRunSelections {
         [datetime]$NowUtc,
         [switch]$StopOnReadFailure,
         [switch]$StopOnMarkerFailure,
-        [string]$ModeName = "PushDryRun"
+        [string]$ModeName = "PushDryRun",
+        [string]$ExpectedAction = $PushDryRunSupportedAction
     )
 
     $issues = if ($IssueNumber -gt 0) {
@@ -1547,25 +1599,25 @@ function Find-PushDryRunSelections {
                 }
 
                 $action = [string]$parsed.Fields["action"]
-                if (-not [string]::Equals($action, $PushDryRunSupportedAction, [System.StringComparison]::Ordinal)) {
-                    if ($action -in @($ApprovalDryRunSupportedAction, $ApprovalOnceSupportedAction, $ApprovalNextDryRunSupportedAction, $ApprovalNextCommitSupportedAction)) {
+                if (-not [string]::Equals($action, $ExpectedAction, [System.StringComparison]::Ordinal)) {
+                    if ($action -in @($ApprovalDryRunSupportedAction, $ApprovalOnceSupportedAction, $ApprovalNextDryRunSupportedAction, $ApprovalNextCommitSupportedAction, $PushDryRunSupportedAction, $PushOnceSupportedAction)) {
                         $skippedMarkers += [pscustomobject]@{
                             IssueNumber = $issueNumber
                             IssueTitle = $issueTitle
-                            Reason = "Ignored current non-push approval action '$action'. $ModeName selects only action=$PushDryRunSupportedAction."
+                            Reason = "Ignored current non-matching approval action '$action'. $ModeName selects only action=$ExpectedAction."
                         }
                     }
                     else {
                         $unsupportedMarkers += [pscustomobject]@{
                             IssueNumber = $issueNumber
                             IssueTitle = $issueTitle
-                            Reason = "Unsupported approval action '$action'. $ModeName supports only action=$PushDryRunSupportedAction."
+                            Reason = "Unsupported approval action '$action'. $ModeName supports only action=$ExpectedAction."
                         }
                     }
                     continue
                 }
 
-                $state = Get-PushDryRunState -Fields $parsed.Fields -IssueNumber $issueNumber
+                $state = Get-PushDryRunState -Fields $parsed.Fields -IssueNumber $issueNumber -ExpectedAction $ExpectedAction -ModeName $ModeName
                 if ($parsed.ExpiresUtc -le $NowUtc) {
                     throw "Approval marker expired at $($parsed.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")); current UTC time is $($NowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
                 }
@@ -1995,12 +2047,13 @@ function Get-UniquePushDryRunSelection {
         [Parameter(Mandatory = $true)]
         [object]$ScanResult,
         [Parameter(Mandatory = $true)]
-        [string]$ModeName
+        [string]$ModeName,
+        [string]$ExpectedAction = $PushDryRunSupportedAction
     )
 
     $validSelections = @($ScanResult.ValidSelections)
     if ($validSelections.Count -eq 0) {
-        throw "$ModeName requires exactly one current valid action=$PushDryRunSupportedAction approval. No matching approval was found."
+        throw "$ModeName requires exactly one current valid action=$ExpectedAction approval. No matching approval was found."
     }
 
     if ($validSelections.Count -gt 1) {
@@ -2015,10 +2068,15 @@ function Get-UniquePushDryRunSelection {
     return $validSelections[0]
 }
 
-function Write-PushDryRunSelectionSummary {
+function Write-PushSelectionSummary {
     param(
         [Parameter(Mandatory = $true)]
-        [object]$Selection
+        [object]$Selection,
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+        [Parameter(Mandatory = $true)]
+        [string]$SafetyBoundary,
+        [bool]$NoPushStatement = $true
     )
 
     $selected = $Selection.Selected
@@ -2029,13 +2087,13 @@ function Write-PushDryRunSelectionSummary {
     $action = [string]$selected.Fields["action"]
 
     Write-Host ""
-    Write-Host "Selected push-dryrun approval"
+    Write-Host "Selected $Label approval"
     Write-Host "Issue: #$($Selection.IssueNumber)"
     Write-Host "Title: $($Selection.IssueTitle)"
     Write-Host "Approval comment id: $commentId"
     Write-Host "Approval comment author: $commentAuthor"
     Write-Host "Approval comment created_at: $commentCreatedAt"
-    Write-Host "Selected push-dryrun marker: $($selected.Marker.Line)"
+    Write-Host "Selected $Label marker: $($selected.Marker.Line)"
     Write-Host "Parsed action: $action"
     Write-Host "Branch: $($state.Branch)"
     Write-Host "Local HEAD: $($state.LocalHead)"
@@ -2050,8 +2108,10 @@ function Write-PushDryRunSelectionSummary {
     Write-Host "Commitfiles fingerprint: $($state.CommitFilesFingerprint)"
     Write-Host "Planned push target: $($state.PlannedPushTarget)"
     Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
-    Write-Host "No-push statement: no push was performed."
-    Write-Host "Safety boundary: $PushDryRunNoWriteGuarantee"
+    if ($NoPushStatement) {
+        Write-Host "No-push statement: no push was performed."
+    }
+    Write-Host "Safety boundary: $SafetyBoundary"
     Write-Host ""
 }
 
@@ -2071,10 +2131,76 @@ function Invoke-PushDryRun {
     Write-Host "No-write guarantee: $PushDryRunNoWriteGuarantee"
 
     Write-PushDryRunScanMessages -ScanResult $scanResult -ModeName "PushDryRun"
-    $selection = Get-UniquePushDryRunSelection -ScanResult $scanResult -ModeName "PushDryRun"
+    $selection = Get-UniquePushDryRunSelection -ScanResult $scanResult -ModeName "PushDryRun" -ExpectedAction $PushDryRunSupportedAction
 
-    Write-PushDryRunSelectionSummary -Selection $selection
+    Write-PushSelectionSummary -Selection $selection -Label "push-dryrun" -SafetyBoundary $PushDryRunNoWriteGuarantee -NoPushStatement $true
     Write-Host "Planned action: PushDryRun validated the planned push target only. No git push was executed."
+    Write-FinalGitStatus
+}
+
+function Invoke-GitPushOnce {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Remote,
+        [Parameter(Mandatory = $true)]
+        [string]$Branch
+    )
+
+    $pushRefspec = "HEAD:$Branch"
+    return Invoke-WriteCommand -FilePath "git" -Arguments @("-C", $RepoRoot, "push", $Remote, $pushRefspec) -Action "git push $Remote $pushRefspec"
+}
+
+function Invoke-PushOnce {
+    if (-not [string]::Equals($Repo, $ExpectedApprovalRepo, [System.StringComparison]::Ordinal)) {
+        throw "PushOnce supports only repo=$ExpectedApprovalRepo for this push-once slice."
+    }
+    if ($IssueNumber -le 0) {
+        throw "PushOnce requires -IssueNumber <N> and scans only that issue."
+    }
+
+    Assert-RepoRoot
+    $nowUtc = [System.DateTime]::UtcNow
+    $scanResult = Find-PushDryRunSelections -NowUtc $nowUtc -ModeName "PushOnce" -ExpectedAction $PushOnceSupportedAction -StopOnReadFailure -StopOnMarkerFailure
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: PushOnce"
+    Write-Host "Approval search: bounded open issues, exact RUNNER-V2-APPROVE action=push-approved-once validation"
+    Write-Host "Issues scanned: $($scanResult.IssuesScanned)"
+
+    Write-PushDryRunScanMessages -ScanResult $scanResult -ModeName "PushOnce"
+    $selection = Get-UniquePushDryRunSelection -ScanResult $scanResult -ModeName "PushOnce" -ExpectedAction $PushOnceSupportedAction
+
+    Write-PushSelectionSummary -Selection $selection -Label "push-once" -SafetyBoundary $PushOnceSafetyBoundary -NoPushStatement $false
+
+    $state = $selection.State
+    Write-Host "Executing push command: git push $($state.Remote) HEAD:$($state.Branch)"
+    $pushResult = Invoke-GitPushOnce -Remote ([string]$state.Remote) -Branch ([string]$state.Branch)
+    if ($pushResult.ExitCode -ne 0) {
+        $details = (($pushResult.Stdout, $pushResult.Stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join [Environment]::NewLine
+        throw "git push failed with exit code $($pushResult.ExitCode): $details"
+    }
+
+    $remoteHeadAfterPush = Get-RemoteBranchHead -Remote ([string]$state.Remote) -BranchName ([string]$state.Branch)
+    if (-not [string]::Equals($remoteHeadAfterPush, [string]$state.ApprovedCommit, [System.StringComparison]::Ordinal)) {
+        throw "Post-push remote HEAD mismatch. Expected remote $($state.Remote)/$($state.Branch) to point to $($state.ApprovedCommit), found $remoteHeadAfterPush."
+    }
+
+    $null = Assert-CleanRepo
+
+    Write-Host ""
+    Write-Host "PushOnce result"
+    Write-Host "Pushed commit: $($state.ApprovedCommit)"
+    Write-Host "Remote target: $($state.Remote) HEAD:$($state.Branch)"
+    Write-Host "Remote HEAD after push: $remoteHeadAfterPush"
+    if (-not [string]::IsNullOrWhiteSpace($pushResult.Stdout)) {
+        Write-Host "git push stdout:"
+        Write-Host $pushResult.Stdout
+    }
+    if (-not [string]::IsNullOrWhiteSpace($pushResult.Stderr)) {
+        Write-Host "git push stderr:"
+        Write-Host $pushResult.Stderr
+    }
+    Write-Host "Post-push statement: exactly one git push command was executed; no issue close, label, PR, merge, force push, or approval chaining was performed."
     Write-FinalGitStatus
 }
 
@@ -2636,12 +2762,15 @@ try {
     if ($PushDryRun) {
         $selectedModes += "PushDryRun"
     }
+    if ($PushOnce) {
+        $selectedModes += "PushOnce"
+    }
     if ($ApprovalStateDiagnostic) {
         $selectedModes += "ApprovalStateDiagnostic"
     }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, .\scripts\local_runner_v2.ps1 -ApprovalNextWatch, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce, .\scripts\local_runner_v2.ps1 -PushDryRun, or .\scripts\local_runner_v2.ps1 -ApprovalStateDiagnostic -IssueNumber <N>."
+        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, .\scripts\local_runner_v2.ps1 -ApprovalNextWatch, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce, .\scripts\local_runner_v2.ps1 -PushDryRun, .\scripts\local_runner_v2.ps1 -PushOnce, or .\scripts\local_runner_v2.ps1 -ApprovalStateDiagnostic -IssueNumber <N>."
     }
 
     if ($selectedModes.Count -gt 1) {
@@ -2689,6 +2818,9 @@ try {
     }
     elseif ($PushDryRun) {
         Invoke-PushDryRun
+    }
+    elseif ($PushOnce) {
+        Invoke-PushOnce
     }
     else {
         Invoke-ApprovalStateDiagnostic
