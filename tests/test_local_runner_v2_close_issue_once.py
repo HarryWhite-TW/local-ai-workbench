@@ -3,6 +3,8 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNER = REPO_ROOT / "scripts" / "local_runner_v2.ps1"
@@ -17,7 +19,8 @@ def _runner_core() -> str:
 
 def _powershell() -> str:
     shell = shutil.which("pwsh") or shutil.which("powershell")
-    assert shell is not None, "PowerShell is required for local_runner_v2 tests"
+    if shell is None:
+        pytest.skip("PowerShell is required for local_runner_v2 tests")
     return shell
 
 
@@ -45,15 +48,25 @@ def run_close_issue_once_script(tmp_path: Path, body: str) -> subprocess.Complet
             $Repo = "HarryWhite-TW/local-ai-workbench"
 
             function New-TestMarker {
-                param([Parameter(Mandatory = $true)][string]$Line)
-                return [pscustomobject]@{
-                    Line = $Line
-                    Comment = [pscustomobject]@{
+                param(
+                    [Parameter(Mandatory = $true)][string]$Line,
+                    [string]$Body,
+                    [object]$Comment
+                )
+                if ([string]::IsNullOrEmpty($Body)) {
+                    $Body = $Line
+                }
+                if ($null -eq $Comment) {
+                    $Comment = [pscustomobject]@{
                         id = "comment-1"
                         author = [pscustomobject]@{ login = "tester" }
                         createdAt = "2026-05-16T00:00:00Z"
-                        body = $Line
+                        body = $Body
                     }
+                }
+                return [pscustomobject]@{
+                    Line = $Line
+                    Comment = $Comment
                     CommentIndex = 1
                     LineNumber = 1
                 }
@@ -144,6 +157,63 @@ def test_historical_malformed_non_close_marker_is_skipped_with_valid_close(tmp_p
         $selection = Get-ValidatedCloseIssueOnceSelection -IssueNumber 74 -NowUtc ([datetime]"2026-05-16T00:00:00Z")
         if ($selection.Selected.Marker.Line -ne (New-CloseMarkerLine)) { throw "Wrong marker selected" }
         if (@($selection.SkippedNonCloseMarkers).Count -ne 1) { throw "Expected one skipped non-close marker" }
+        if ($script:CloseCalls -ne 0) { throw "Selection must not close issues" }
+        """,
+    )
+    assert_success(result)
+
+
+def test_historical_close_marker_example_inside_code_block_is_skipped_with_valid_close(tmp_path):
+    result = run_close_issue_once_script(
+        tmp_path,
+        """
+        $example = "RUNNER-V2-APPROVE protocol=v2.approval.1 action=close-issue-approved-once issue=77 repo=HarryWhite-TW/local-ai-workbench target=77 targetstate=OPEN branch=master localhead=<HEAD> remote=origin upstream=origin/master remotehead=<HEAD> pushed=<HEAD> expires=<UTC_BASIC>"
+        $body = '```text' + "`n" + $example + "`n" + '```'
+        $script:Markers = @(
+            (New-TestMarker $example -Body $body),
+            (New-TestMarker (New-CloseMarkerLine))
+        )
+        $selection = Get-ValidatedCloseIssueOnceSelection -IssueNumber 74 -NowUtc ([datetime]"2026-05-16T00:00:00Z")
+        if ($selection.Selected.Marker.Line -ne (New-CloseMarkerLine)) { throw "Wrong marker selected" }
+        if (@($selection.SkippedIneligibleMarkers).Count -ne 1) { throw "Expected one skipped ineligible marker" }
+        if (@($selection.SkippedNonCloseMarkers).Count -ne 0) { throw "Expected no skipped non-close markers" }
+        if ($script:CloseCalls -ne 0) { throw "Selection must not close issues" }
+        """,
+    )
+    assert_success(result)
+
+
+def test_historical_close_marker_example_inside_longer_comment_is_skipped_with_valid_close(tmp_path):
+    result = run_close_issue_once_script(
+        tmp_path,
+        """
+        $example = "RUNNER-V2-APPROVE protocol=v2.approval.1 action=close-issue-approved-once issue=77 repo=HarryWhite-TW/local-ai-workbench target=77 targetstate=OPEN branch=master localhead=<HEAD> remote=origin upstream=origin/master remotehead=<HEAD> pushed=<HEAD> expires=<UTC_BASIC>"
+        $script:Markers = @(
+            (New-TestMarker $example -Body "Design note:`n$example`nEnd note."),
+            (New-TestMarker (New-CloseMarkerLine))
+        )
+        $selection = Get-ValidatedCloseIssueOnceSelection -IssueNumber 74 -NowUtc ([datetime]"2026-05-16T00:00:00Z")
+        if ($selection.Selected.Marker.Line -ne (New-CloseMarkerLine)) { throw "Wrong marker selected" }
+        if (@($selection.SkippedIneligibleMarkers).Count -ne 1) { throw "Expected one skipped ineligible marker" }
+        if ($script:CloseCalls -ne 0) { throw "Selection must not close issues" }
+        """,
+    )
+    assert_success(result)
+
+
+def test_historical_close_marker_example_from_issue_body_is_skipped_with_valid_close(tmp_path):
+    result = run_close_issue_once_script(
+        tmp_path,
+        """
+        $example = "RUNNER-V2-APPROVE protocol=v2.approval.1 action=close-issue-approved-once issue=77 repo=HarryWhite-TW/local-ai-workbench target=77 targetstate=OPEN branch=master localhead=<HEAD> remote=origin upstream=origin/master remotehead=<HEAD> pushed=<HEAD> expires=<UTC_BASIC>"
+        $script:Markers = @(
+            (New-TestMarker $example -Comment $null -Body $null),
+            (New-TestMarker (New-CloseMarkerLine))
+        )
+        $script:Markers[0].Comment = $null
+        $selection = Get-ValidatedCloseIssueOnceSelection -IssueNumber 74 -NowUtc ([datetime]"2026-05-16T00:00:00Z")
+        if ($selection.Selected.Marker.Line -ne (New-CloseMarkerLine)) { throw "Wrong marker selected" }
+        if (@($selection.SkippedIneligibleMarkers).Count -ne 1) { throw "Expected one skipped ineligible marker" }
         if ($script:CloseCalls -ne 0) { throw "Selection must not close issues" }
         """,
     )

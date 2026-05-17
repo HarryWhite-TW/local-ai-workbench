@@ -1455,6 +1455,36 @@ function ConvertTo-ParsedApprovalMarker {
     }
 }
 
+function Test-CloseIssueOnceLiveMarkerEligibility {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Marker
+    )
+
+    if ($null -eq $Marker.Comment) {
+        return [pscustomobject]@{
+            IsEligible = $false
+            Reason = "Skipped marker-like content because it is not from a standalone issue comment."
+        }
+    }
+
+    $body = Get-ObjectPropertyText -Object $Marker.Comment -PropertyName "body"
+    $trimmedBody = $body.Trim()
+    $markerLine = [string]$Marker.Line
+
+    if (-not [string]::Equals($trimmedBody, $markerLine, [System.StringComparison]::Ordinal)) {
+        return [pscustomobject]@{
+            IsEligible = $false
+            Reason = "Skipped marker-like content because the comment body is not exactly one standalone approval marker line."
+        }
+    }
+
+    return [pscustomobject]@{
+        IsEligible = $true
+        Reason = ""
+    }
+}
+
 function Find-ApprovalNextDryRunSelections {
     param(
         [Parameter(Mandatory = $true)]
@@ -2204,9 +2234,19 @@ function Get-ValidatedCloseIssueOnceSelection {
 
     $currentCloseMarkers = @()
     $expiredCloseMarkers = @()
+    $skippedIneligibleMarkers = @()
     $skippedNonCloseMarkers = @()
 
     foreach ($marker in $markers) {
+        $eligibility = Test-CloseIssueOnceLiveMarkerEligibility -Marker $marker
+        if (-not $eligibility.IsEligible) {
+            $skippedIneligibleMarkers += [pscustomobject]@{
+                Marker = $marker
+                Reason = $eligibility.Reason
+            }
+            continue
+        }
+
         $actionToken = Get-ApprovalMarkerActionToken -MarkerLine ([string]$marker.Line)
         if (-not [string]::Equals($actionToken, $CloseIssueOnceSupportedAction, [System.StringComparison]::Ordinal)) {
             $skipReason = if ([string]::IsNullOrWhiteSpace($actionToken)) {
@@ -2263,6 +2303,7 @@ function Get-ValidatedCloseIssueOnceSelection {
         Selected = $selected
         State = $state
         NowUtc = $NowUtc
+        SkippedIneligibleMarkers = @($skippedIneligibleMarkers)
         SkippedNonCloseMarkers = @($skippedNonCloseMarkers)
     }
 }
@@ -2298,6 +2339,9 @@ function Write-CloseIssueOnceSelectionSummary {
     Write-Host "Remote HEAD: $($state.RemoteHead)"
     Write-Host "Pushed commit: $($state.Pushed)"
     Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
+    foreach ($skippedMarker in @($Selection.SkippedIneligibleMarkers)) {
+        Write-Host "Skipped approval marker on issue #$($Selection.IssueNumber): $($skippedMarker.Reason)"
+    }
     foreach ($skippedMarker in @($Selection.SkippedNonCloseMarkers)) {
         Write-Host "Skipped approval marker on issue #$($Selection.IssueNumber): $($skippedMarker.Reason)"
     }
