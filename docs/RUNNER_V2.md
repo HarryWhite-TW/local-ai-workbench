@@ -143,6 +143,62 @@ Runner posts LAWBRUNNER-RESULT protocol=lawb.runner_result.v1.
 ChatGPT reads the result and reviews.
 ```
 
+## Local dispatcher v1 manual PollOnce
+
+`local_dispatcher_v1.ps1` is the first manual consumer for `CHATGPT-DISPATCH protocol=lawb.dispatch.v1`.
+
+Use:
+
+```powershell
+.\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N>
+```
+
+`-IssueNumber <N>` is mandatory. PollOnce reads only that selected issue by default; it does not scan open issues broadly and it does not run as a watcher, daemon, scheduler, or background loop.
+
+For this slice, the only implemented dispatch action is:
+
+```text
+maybe-status-check
+```
+
+`run-reviewbundle` and `read-final-audit` remain reserved in this slice and fail closed. Commit, push, close, commit-approval, push-approval, and close-approval action names are explicitly forbidden as dispatch actions.
+
+PollOnce requires exactly one current standalone GitHub issue comment whose body is the `CHATGPT-DISPATCH` marker line. It fails closed when there are zero marker comments, duplicate current marker comments, malformed marker fields, expired markers, repo mismatch, issue mismatch, branch mismatch, HEAD mismatch, reserved actions, unsupported actions, or forbidden commit / push / close actions.
+
+PollOnce emits a stdout result block after a successful allowed action:
+
+```text
+LAWBRUNNER-RESULT protocol=lawb.runner_result.v1
+```
+
+The JSON object immediately after that line uses the same runner result summary v1 shape documented above. `maybe-status-check` is read-only and reports local git status in the validation summary; a dirty working tree is reported as a warning, not modified.
+
+Posting the result back to GitHub is explicit opt-in:
+
+```powershell
+.\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
+```
+
+When `-PostResultComment` is supplied, the dispatcher may post exactly one issue comment containing the `LAWBRUNNER-RESULT protocol=lawb.runner_result.v1` marker followed immediately by parseable JSON. It may post only after exactly one current valid dispatch marker is selected on the same explicit issue, the selected action is allowed in dispatch v1, the allowed action completes successfully, and the target result-comment issue is the same explicit `-IssueNumber`.
+
+Failure states remain stdout-only. The dispatcher must not post a GitHub result comment for zero valid dispatch markers, duplicate current valid markers, expired markers, malformed markers, wrong repo, wrong branch, wrong HEAD, unsupported action, commit action, push action, or close action.
+
+Safety boundaries:
+
+- no background watcher
+- no broad issue scan by default
+- no Codex auto-run
+- no runner v1 ReviewBundle handoff in this slice
+- no staging
+- no commit
+- no push
+- no issue close
+- no label edit
+- no PR creation
+- no merge or force push
+- no approval chaining
+- no consumption of `RUNNER-V2-APPROVE` or `LRV1-APPROVE` markers
+
 ## v2A design goal
 
 v2A starts as:
