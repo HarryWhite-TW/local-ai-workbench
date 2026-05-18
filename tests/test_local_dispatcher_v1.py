@@ -152,6 +152,34 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
     )
 
 
+def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
+    script = tmp_path / "dispatcher_v1_core_test.ps1"
+    script.write_text(
+        _dispatcher_core()
+        + textwrap.dedent(
+            f"""
+
+            $Repo = "HarryWhite-TW/local-ai-workbench"
+            $IssueNumber = 83
+            $PostResultComment = $false
+            $script:ForbiddenCalls = @()
+            function git {{ $script:ForbiddenCalls += "git" }}
+            function gh {{ $script:ForbiddenCalls += "gh" }}
+            """
+        )
+        + "\n"
+        + textwrap.dedent(body),
+        encoding="utf-8",
+    )
+    return subprocess.run(
+        [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+
 def assert_success(result: subprocess.CompletedProcess) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -175,6 +203,10 @@ def extract_posted_body(stdout: str) -> str:
     prefix = "POSTED_BODY_BASE64="
     encoded = next(line[len(prefix) :] for line in stdout.splitlines() if line.startswith(prefix))
     return bytes.fromhex(encoded).decode("utf-8")
+
+
+def extract_value(stdout: str, prefix: str) -> str:
+    return next(line[len(prefix) :] for line in stdout.splitlines() if line.startswith(prefix))
 
 
 def run_case(tmp_path: Path, setup: str, post: bool = False) -> subprocess.CompletedProcess:
@@ -252,6 +284,70 @@ def test_valid_maybe_status_check_with_post_result_comment_posts_exactly_one_par
     assert posted_summary["issue"] == 83
     assert posted_summary["selected_issue"] == 83
     assert posted_summary == stdout_summary
+
+
+def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        """
+        function Invoke-WriteCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            $script:CapturedFilePath = $FilePath
+            $script:CapturedArguments = @($Arguments)
+            $bodyFileIndex = [Array]::IndexOf($script:CapturedArguments, "--body-file")
+            if ($bodyFileIndex -ge 0) {
+                $script:CapturedBodyFile = $script:CapturedArguments[$bodyFileIndex + 1]
+                $script:BodyFileExistedDuringPost = Test-Path -LiteralPath $script:CapturedBodyFile
+                $script:BodyFileBytes = [System.IO.File]::ReadAllBytes($script:CapturedBodyFile)
+                $script:BodyFileText = [System.Text.Encoding]::UTF8.GetString($script:BodyFileBytes)
+            }
+            return [pscustomobject]@{ ExitCode = 0; Stdout = "posted"; Stderr = "" }
+        }
+
+        $summaryJson = New-RunnerResultSummaryJson `
+            -Issue 83 `
+            -Action "maybe-status-check" `
+            -Result "success" `
+            -Branch "master" `
+            -Head "1111111111111111111111111111111111111111" `
+            -SelectedIssue 83
+        $body = "$RunnerResultMarker`n$summaryJson"
+        $null = Publish-RunnerResultComment -IssueNumber 83 -Body $body
+
+        Write-Host "CAPTURED_FILE_PATH=$script:CapturedFilePath"
+        Write-Host "CAPTURED_ARGUMENTS=$($script:CapturedArguments -join '|')"
+        Write-Host "BODY_FILE_EXISTED_DURING_POST=$script:BodyFileExistedDuringPost"
+        Write-Host "BODY_FILE_EXISTS_AFTER_POST=$(Test-Path -LiteralPath $script:CapturedBodyFile)"
+        Write-Host "BODY_FILE_BYTE_PREFIX=$([System.BitConverter]::ToString($script:BodyFileBytes[0..2]).Replace('-', '').ToLowerInvariant())"
+        $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($script:BodyFileText)
+        Write-Host "BODY_FILE_TEXT_BASE64=$([System.BitConverter]::ToString($bodyBytes).Replace('-', '').ToLowerInvariant())"
+        Write-Host "FORBIDDEN_CALLS=$(@($script:ForbiddenCalls).Count)"
+        """,
+    )
+    assert_success(result)
+    assert "CAPTURED_FILE_PATH=gh" in result.stdout
+    captured_arguments = extract_value(result.stdout, "CAPTURED_ARGUMENTS=").split("|")
+    assert captured_arguments[:5] == ["issue", "comment", "83", "--repo", "HarryWhite-TW/local-ai-workbench"]
+    assert "--body-file" in captured_arguments
+    assert "--body" not in captured_arguments
+    assert "--check" not in captured_arguments
+    assert "edit" not in captured_arguments
+    assert "delete" not in captured_arguments
+    assert "label" not in captured_arguments
+    assert "close" not in captured_arguments
+    assert "push" not in captured_arguments
+    assert "commit" not in captured_arguments
+    assert "BODY_FILE_EXISTED_DURING_POST=True" in result.stdout
+    assert "BODY_FILE_EXISTS_AFTER_POST=False" in result.stdout
+    assert "BODY_FILE_BYTE_PREFIX=4c4157" in result.stdout
+    assert "FORBIDDEN_CALLS=0" in result.stdout
+
+    posted_body = bytes.fromhex(extract_value(result.stdout, "BODY_FILE_TEXT_BASE64=")).decode("utf-8")
+    assert posted_body.startswith(MARKER + "\n")
+    posted_summary = json.loads(posted_body.split("\n", 1)[1])
+    assert posted_summary["validations"]["git_diff_check"]["summary"] == (
+        "Dispatcher maybe-status-check did not run git diff --check."
+    )
 
 
 @pytest.mark.parametrize(

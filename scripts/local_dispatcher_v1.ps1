@@ -699,9 +699,17 @@ function Publish-RunnerResultComment {
         [string]$Body
     )
 
-    $result = Invoke-WriteCommand -FilePath "gh" -Arguments @("issue", "comment", "$IssueNumber", "--repo", $Repo, "--body", $Body) -Action "gh issue comment"
-    Require-Success -Result $result -Action "gh issue comment"
-    return $result
+    $bodyFile = New-TemporaryFile
+    try {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
+        [System.IO.File]::WriteAllText($bodyFile.FullName, $Body, $utf8NoBom)
+        $result = Invoke-WriteCommand -FilePath "gh" -Arguments @("issue", "comment", "$IssueNumber", "--repo", $Repo, "--body-file", $bodyFile.FullName) -Action "gh issue comment"
+        Require-Success -Result $result -Action "gh issue comment"
+        return $result
+    }
+    finally {
+        Remove-Item -LiteralPath $bodyFile.FullName -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Write-FinalGitStatus {
