@@ -147,6 +147,8 @@ ChatGPT reads the result and reviews.
 
 `local_dispatcher_v1.ps1` is the first manual consumer for `CHATGPT-DISPATCH protocol=lawb.dispatch.v1`.
 
+For the user-facing daily operating procedure, see [Lv4.5 Operating SOP](LV45_OPERATING_SOP.md).
+
 Use:
 
 ```powershell
