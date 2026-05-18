@@ -107,6 +107,8 @@ $ErrorActionPreference = "Stop"
 $RunnerName = "local-runner-v2"
 $RunnerVersion = "v2A-runonce-reviewbundle"
 $ExpectedApprovalRepo = "HarryWhite-TW/local-ai-workbench"
+$RunnerResultProtocol = "lawb.runner_result.v1"
+$RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
 $RequiredMarkers = @(
     "Runner marker: runner-v2-reviewbundle-ready",
@@ -356,6 +358,159 @@ function Format-Block {
     }
 
     return $Text.TrimEnd()
+}
+
+function Convert-FileTextToArray {
+    param(
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text) -or $Text.Trim() -eq "(none)") {
+        return @()
+    }
+
+    return @($Text -split "\r?\n" | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_) -and $_.Trim() -ne "(none)"
+    } | ForEach-Object { $_.Trim() } | Sort-Object -Unique)
+}
+
+function New-RunnerValidationResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("passed", "failed", "not_run", "warning", "reported")]
+        [string]$Status,
+        [Parameter(Mandatory = $true)]
+        [string]$Summary
+    )
+
+    return [ordered]@{
+        status = $Status
+        summary = $Summary
+    }
+}
+
+function New-RunnerResultSummaryJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Issue,
+        [Parameter(Mandatory = $true)]
+        [string]$Action,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("success", "failure")]
+        [string]$Result,
+        [Parameter(Mandatory = $true)]
+        [string]$Branch,
+        [Parameter(Mandatory = $true)]
+        [string]$Head,
+        [Parameter(Mandatory = $true)]
+        [int]$SelectedIssue,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$ReviewId = $null,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$DiffFingerprint = $null,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$FilesFingerprint = $null,
+        [AllowEmptyString()]
+        [string]$ChangedFilesText = "",
+        [hashtable]$ValidationOverrides = @{},
+        [hashtable]$SafetyOverrides = @{},
+        [string]$NextRecommendedAction = "chatgpt_review"
+    )
+
+    $validations = [ordered]@{
+        git_status_clean = (New-RunnerValidationResult -Status "reported" -Summary "See human-readable runner output for final git status.")
+        pytest = (New-RunnerValidationResult -Status "not_run" -Summary "This runner action did not run pytest.")
+        git_diff_check = (New-RunnerValidationResult -Status "not_run" -Summary "This runner action did not run git diff --check.")
+    }
+    foreach ($key in $ValidationOverrides.Keys) {
+        $validations[$key] = $ValidationOverrides[$key]
+    }
+
+    $safety = [ordered]@{
+        no_stage = $true
+        no_commit = $true
+        no_push = $true
+        no_issue_close = $true
+        no_label = $true
+        no_pr = $true
+        no_merge = $true
+        no_approval_chaining = $true
+    }
+    foreach ($key in $SafetyOverrides.Keys) {
+        $safety[$key] = [bool]$SafetyOverrides[$key]
+    }
+
+    $summary = [ordered]@{
+        schema = $RunnerResultProtocol
+        repo = $Repo
+        issue = $Issue
+        action = $Action
+        result = $Result
+        branch = $Branch
+        head = $Head
+        selected_issue = $SelectedIssue
+        review_id = if ([string]::IsNullOrWhiteSpace($ReviewId)) { $null } else { $ReviewId }
+        diff_fingerprint = if ([string]::IsNullOrWhiteSpace($DiffFingerprint)) { $null } else { $DiffFingerprint }
+        files_fingerprint = if ([string]::IsNullOrWhiteSpace($FilesFingerprint)) { $null } else { $FilesFingerprint }
+        changed_files = @(Convert-FileTextToArray -Text $ChangedFilesText)
+        validations = $validations
+        safety = $safety
+        next_recommended_action = $NextRecommendedAction
+    }
+
+    return ($summary | ConvertTo-Json -Depth 8)
+}
+
+function Write-RunnerResultSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Issue,
+        [Parameter(Mandatory = $true)]
+        [string]$Action,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("success", "failure")]
+        [string]$Result,
+        [Parameter(Mandatory = $true)]
+        [string]$Branch,
+        [Parameter(Mandatory = $true)]
+        [string]$Head,
+        [Parameter(Mandatory = $true)]
+        [int]$SelectedIssue,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$ReviewId = $null,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$DiffFingerprint = $null,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$FilesFingerprint = $null,
+        [AllowEmptyString()]
+        [string]$ChangedFilesText = "",
+        [hashtable]$ValidationOverrides = @{},
+        [hashtable]$SafetyOverrides = @{},
+        [string]$NextRecommendedAction = "chatgpt_review"
+    )
+
+    Write-Host $RunnerResultMarker
+    Write-Host (New-RunnerResultSummaryJson `
+        -Issue $Issue `
+        -Action $Action `
+        -Result $Result `
+        -Branch $Branch `
+        -Head $Head `
+        -SelectedIssue $SelectedIssue `
+        -ReviewId $ReviewId `
+        -DiffFingerprint $DiffFingerprint `
+        -FilesFingerprint $FilesFingerprint `
+        -ChangedFilesText $ChangedFilesText `
+        -ValidationOverrides $ValidationOverrides `
+        -SafetyOverrides $SafetyOverrides `
+        -NextRecommendedAction $NextRecommendedAction)
 }
 
 function Get-StatusLines {
@@ -1956,6 +2111,14 @@ function Invoke-ApprovalNextOnce {
     Write-Host "Runner v1 exit code: $runnerExitCode"
     Write-Host "Next step: notify ChatGPT that issue #$($selection.IssueNumber) ReviewBundle was posted."
     Write-FinalGitStatus
+    Write-RunnerResultSummary `
+        -Issue ([int]$selection.IssueNumber) `
+        -Action "run-reviewbundle" `
+        -Result $(if ($runnerExitCode -eq 0) { "success" } else { "failure" }) `
+        -Branch ([string]$selection.Branch) `
+        -Head ([string]$selection.Head) `
+        -SelectedIssue ([int]$selection.IssueNumber) `
+        -ValidationOverrides @{ git_status_clean = (New-RunnerValidationResult -Status "reported" -Summary "See runner v1 ReviewBundle final git status output.") }
 
     if ($runnerExitCode -ne 0) {
         Write-Host "Failure: runner v1 ReviewBundle failed with exit code $runnerExitCode."
@@ -2130,6 +2293,18 @@ function Invoke-ApprovalNextCommitDryRun {
     Write-ApprovalNextCommitSelectionSummary -Selection $selection -SafetyBoundary $ApprovalNextCommitDryRunNoWriteGuarantee
     Write-Host "Planned action: Would delegate to runner v1 CommitApproved for issue #$($selection.IssueNumber) with a state-bound approval token. No files will be staged and no commit will be created in dry-run mode."
     Write-FinalGitStatus
+    Write-RunnerResultSummary `
+        -Issue ([int]$selection.IssueNumber) `
+        -Action "commit-approved-dryrun" `
+        -Result "success" `
+        -Branch ([string]$selection.State.Branch) `
+        -Head ([string]$selection.State.Head) `
+        -SelectedIssue ([int]$selection.IssueNumber) `
+        -ReviewId ([string]$selection.State.ReviewId) `
+        -DiffFingerprint ([string]$selection.State.DiffFingerprint) `
+        -FilesFingerprint ([string]$selection.State.FilesFingerprint) `
+        -ChangedFilesText ([string]$selection.State.ModifiedFilesText) `
+        -ValidationOverrides @{ git_status_clean = (New-RunnerValidationResult -Status "reported" -Summary "ApprovalNextCommitDryRun validated the current docs-only local change state; see human-readable output.") }
 }
 
 function Invoke-ApprovalNextCommitOnce {
@@ -2156,6 +2331,19 @@ function Invoke-ApprovalNextCommitOnce {
     Write-Host "Runner v1 exit code: $runnerExitCode"
     Write-Host "Next step: review the local commit and final GitHub issue comment before any separate push approval."
     Write-FinalGitStatus
+    Write-RunnerResultSummary `
+        -Issue ([int]$selection.IssueNumber) `
+        -Action "commit-approved-once" `
+        -Result $(if ($runnerExitCode -eq 0) { "success" } else { "failure" }) `
+        -Branch ([string]$selection.State.Branch) `
+        -Head ([string]$selection.State.Head) `
+        -SelectedIssue ([int]$selection.IssueNumber) `
+        -ReviewId ([string]$selection.State.ReviewId) `
+        -DiffFingerprint ([string]$selection.State.DiffFingerprint) `
+        -FilesFingerprint ([string]$selection.State.FilesFingerprint) `
+        -ChangedFilesText ([string]$selection.State.ModifiedFilesText) `
+        -ValidationOverrides @{ git_status_clean = (New-RunnerValidationResult -Status "reported" -Summary "See runner v1 CommitApproved final status output.") } `
+        -SafetyOverrides @{ no_commit = $false }
 
     if ($runnerExitCode -ne 0) {
         Write-Host "Failure: runner v1 CommitApproved failed with exit code $runnerExitCode."
@@ -2426,6 +2614,15 @@ function Invoke-PushDryRun {
     Write-PushSelectionSummary -Selection $selection -Label "push-dryrun" -SafetyBoundary $PushDryRunNoWriteGuarantee -NoPushStatement $true
     Write-Host "Planned action: PushDryRun validated the planned push target only. No git push was executed."
     Write-FinalGitStatus
+    Write-RunnerResultSummary `
+        -Issue ([int]$selection.IssueNumber) `
+        -Action "push-dryrun" `
+        -Result "success" `
+        -Branch ([string]$selection.State.Branch) `
+        -Head ([string]$selection.State.LocalHead) `
+        -SelectedIssue ([int]$selection.IssueNumber) `
+        -ChangedFilesText ([string]$selection.State.CommittedFilesText) `
+        -ValidationOverrides @{ git_status_clean = (New-RunnerValidationResult -Status "passed" -Summary "PushDryRun requires and verified a clean working tree.") }
 }
 
 function Invoke-GitPushOnce {
@@ -2492,6 +2689,16 @@ function Invoke-PushOnce {
     }
     Write-Host "Post-push statement: exactly one git push command was executed; no issue close, label, PR, merge, force push, or approval chaining was performed."
     Write-FinalGitStatus
+    Write-RunnerResultSummary `
+        -Issue ([int]$selection.IssueNumber) `
+        -Action "push-once" `
+        -Result "success" `
+        -Branch ([string]$state.Branch) `
+        -Head ([string]$state.ApprovedCommit) `
+        -SelectedIssue ([int]$selection.IssueNumber) `
+        -ChangedFilesText ([string]$state.CommittedFilesText) `
+        -ValidationOverrides @{ git_status_clean = (New-RunnerValidationResult -Status "passed" -Summary "PushOnce verified a clean working tree after push.") } `
+        -SafetyOverrides @{ no_push = $false }
 }
 
 function Invoke-CloseIssueOnce {
@@ -2550,6 +2757,16 @@ function Invoke-CloseIssueOnce {
     }
     Write-Host "Post-close statement: exactly one selected issue was closed; no labels, PRs, merges, pushes, commits, staging, or approval chaining were performed."
     Write-FinalGitStatus
+    Write-RunnerResultSummary `
+        -Issue $IssueNumber `
+        -Action "close-issue-once" `
+        -Result "success" `
+        -Branch ([string]$selection.State.Branch) `
+        -Head ([string]$selection.State.LocalHead) `
+        -SelectedIssue $IssueNumber `
+        -ValidationOverrides @{ git_status_clean = (New-RunnerValidationResult -Status "passed" -Summary "CloseIssueOnce verified a clean working tree after close.") } `
+        -SafetyOverrides @{ no_issue_close = $false } `
+        -NextRecommendedAction "done"
 }
 
 function Invoke-ApprovalNextWatch {
@@ -2639,6 +2856,14 @@ function Invoke-ApprovalNextWatch {
             Write-Host "Runner v1 exit code: $runnerExitCode"
             Write-Host "Next step: notify ChatGPT that issue #$($selection.IssueNumber) ReviewBundle was posted."
             Write-FinalGitStatus
+            Write-RunnerResultSummary `
+                -Issue ([int]$selection.IssueNumber) `
+                -Action "run-reviewbundle" `
+                -Result $(if ($runnerExitCode -eq 0) { "success" } else { "failure" }) `
+                -Branch ([string]$selection.Branch) `
+                -Head ([string]$selection.Head) `
+                -SelectedIssue ([int]$selection.IssueNumber) `
+                -ValidationOverrides @{ git_status_clean = (New-RunnerValidationResult -Status "reported" -Summary "See runner v1 ReviewBundle final git status output.") }
             exit $runnerExitCode
         }
 
@@ -2753,6 +2978,14 @@ function Invoke-ApprovalOnce {
     Write-Host "Runner v1 exit code: $runnerExitCode"
     Write-Host "Next step: notify ChatGPT that issue #$IssueNumber ReviewBundle was posted."
     Write-FinalGitStatus
+    Write-RunnerResultSummary `
+        -Issue $IssueNumber `
+        -Action "run-reviewbundle" `
+        -Result $(if ($runnerExitCode -eq 0) { "success" } else { "failure" }) `
+        -Branch $branch `
+        -Head $head `
+        -SelectedIssue $IssueNumber `
+        -ValidationOverrides @{ git_status_clean = (New-RunnerValidationResult -Status "reported" -Summary "See runner v1 ReviewBundle final git status output.") }
 
     if ($runnerExitCode -ne 0) {
         Write-Host "Failure: runner v1 ReviewBundle failed with exit code $runnerExitCode."
@@ -3071,6 +3304,14 @@ function Invoke-RunOnce {
     Write-Host "Runner v1 exit code: $runnerExitCode"
     Write-Host "Next step: notify ChatGPT that issue #$issueNumber ReviewBundle was posted."
     Write-FinalGitStatus
+    Write-RunnerResultSummary `
+        -Issue $issueNumber `
+        -Action "run-reviewbundle" `
+        -Result $(if ($runnerExitCode -eq 0) { "success" } else { "failure" }) `
+        -Branch (Get-CurrentBranch) `
+        -Head (Get-CurrentHead) `
+        -SelectedIssue $issueNumber `
+        -ValidationOverrides @{ git_status_clean = (New-RunnerValidationResult -Status "reported" -Summary "See runner v1 ReviewBundle final git status output.") }
 
     if ($runnerExitCode -ne 0) {
         Write-Host "Failure: runner v1 ReviewBundle failed with exit code $runnerExitCode."

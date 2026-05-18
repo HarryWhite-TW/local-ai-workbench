@@ -17,6 +17,58 @@ The current workflow still requires the user to relay several manual steps:
 
 Runner v2 should reduce that relay burden without taking over approval, commit, push, close, label, PR, or merge decisions.
 
+## Runner result summary v1
+
+Runner result comments and practical runner action output include a machine-readable summary block for ChatGPT or tooling.
+
+The block starts with this exact marker line, followed immediately by a parseable JSON object. Consumers should not need to parse Markdown fences to recover the JSON.
+
+```text
+LAWBRUNNER-RESULT protocol=lawb.runner_result.v1
+```
+
+The JSON schema is stable for `lawb.runner_result.v1`:
+
+```json
+{
+  "schema": "lawb.runner_result.v1",
+  "repo": "HarryWhite-TW/local-ai-workbench",
+  "issue": 81,
+  "action": "run-reviewbundle",
+  "result": "success",
+  "branch": "master",
+  "head": "<sha>",
+  "selected_issue": 81,
+  "review_id": "<review-id-or-null>",
+  "diff_fingerprint": "<diff-fingerprint-or-null>",
+  "files_fingerprint": "<files-fingerprint-or-null>",
+  "changed_files": [],
+  "validations": {
+    "git_status_clean": {
+      "status": "passed",
+      "summary": "Final git status is clean."
+    }
+  },
+  "safety": {
+    "no_stage": true,
+    "no_commit": true,
+    "no_push": true,
+    "no_issue_close": true,
+    "no_label": true,
+    "no_pr": true,
+    "no_merge": true,
+    "no_approval_chaining": true
+  },
+  "next_recommended_action": "chatgpt_review"
+}
+```
+
+Required top-level fields are `schema`, `repo`, `issue`, `action`, `result`, `branch`, `head`, `selected_issue`, `review_id`, `diff_fingerprint`, `files_fingerprint`, `changed_files`, `validations`, `safety`, and `next_recommended_action`.
+
+`schema` must be exactly `lawb.runner_result.v1`. `changed_files` is always an array. Each `validations` entry is an object with `status` and `summary`; allowed statuses are `passed`, `failed`, `not_run`, `warning`, and `reported`. Use `reported` when the runner is relaying a result from human-readable output instead of independently verifying it. Safety flags are booleans.
+
+Current emitted actions include `run-reviewbundle`, `commit-approved-dryrun`, `commit-approved-once`, `push-dryrun`, `push-once`, and `close-issue-once`. The summary preserves existing human-readable output and does not change approval marker semantics.
+
 ## v2A design goal
 
 v2A starts as:

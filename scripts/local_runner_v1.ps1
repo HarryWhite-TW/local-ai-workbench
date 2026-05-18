@@ -36,6 +36,8 @@ $MaxCodexStdoutChars = 9000
 $MaxStderrPreviewChars = 1200
 $MaxStderrPreviewLines = 8
 $MaxGitOutputChars = 5000
+$RunnerResultProtocol = "lawb.runner_result.v1"
+$RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $script:CommitApprovedLocalCommitCreated = "unknown"
 $script:CommitApprovedCommitSha = ""
 
@@ -210,6 +212,107 @@ function Get-ModifiedFilesFromStatus {
     }
 
     return (($paths | Sort-Object -Unique) -join [Environment]::NewLine)
+}
+
+function Convert-FileTextToArray {
+    param(
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text) -or $Text.Trim() -eq "(none)") {
+        return @()
+    }
+
+    return @($Text -split "\r?\n" | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_) -and $_.Trim() -ne "(none)"
+    } | ForEach-Object { $_.Trim() } | Sort-Object -Unique)
+}
+
+function New-RunnerValidationResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("passed", "failed", "not_run", "warning", "reported")]
+        [string]$Status,
+        [Parameter(Mandatory = $true)]
+        [string]$Summary
+    )
+
+    return [ordered]@{
+        status = $Status
+        summary = $Summary
+    }
+}
+
+function New-RunnerResultSummaryJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$IssueNumberText,
+        [Parameter(Mandatory = $true)]
+        [string]$Action,
+        [Parameter(Mandatory = $true)]
+        [string]$Result,
+        [Parameter(Mandatory = $true)]
+        [string]$Branch,
+        [Parameter(Mandatory = $true)]
+        [string]$Head,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$ReviewId,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$DiffFingerprint,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$FilesFingerprint,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$ChangedFilesText,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$FinalStatus,
+        [Parameter(Mandatory = $true)]
+        [string]$CodexExitCode
+    )
+
+    $issueValue = [int]$IssueNumberText
+    $changedFiles = @(Convert-FileTextToArray -Text $ChangedFilesText)
+    $finalClean = [string]::IsNullOrWhiteSpace($FinalStatus) -or $FinalStatus.Trim() -eq "(clean)"
+    $codexStatus = if ($CodexExitCode -eq "0") { "passed" } elseif ($CodexExitCode -like "not run*") { "not_run" } else { "failed" }
+
+    $summary = [ordered]@{
+        schema = $RunnerResultProtocol
+        repo = $Repo
+        issue = $issueValue
+        action = $Action
+        result = $Result
+        branch = $Branch
+        head = $Head
+        selected_issue = $issueValue
+        review_id = if ([string]::IsNullOrWhiteSpace($ReviewId)) { $null } else { $ReviewId }
+        diff_fingerprint = if ([string]::IsNullOrWhiteSpace($DiffFingerprint)) { $null } else { $DiffFingerprint }
+        files_fingerprint = if ([string]::IsNullOrWhiteSpace($FilesFingerprint)) { $null } else { $FilesFingerprint }
+        changed_files = $changedFiles
+        validations = [ordered]@{
+            git_status_clean = (New-RunnerValidationResult -Status $(if ($finalClean) { "passed" } else { "warning" }) -Summary $(if ($finalClean) { "Final git status is clean." } else { "Final git status reports local changes for review." }))
+            codex = (New-RunnerValidationResult -Status $codexStatus -Summary "Codex exit code: $CodexExitCode")
+            pytest = (New-RunnerValidationResult -Status "reported" -Summary "See Codex final report for test commands and results.")
+            git_diff_check = (New-RunnerValidationResult -Status "reported" -Summary "See Codex final report for git diff --check result if run.")
+        }
+        safety = [ordered]@{
+            no_stage = $true
+            no_commit = $true
+            no_push = $true
+            no_issue_close = $true
+            no_label = $true
+            no_pr = $true
+            no_merge = $true
+            no_approval_chaining = $true
+        }
+        next_recommended_action = "chatgpt_review"
+    }
+
+    return ($summary | ConvertTo-Json -Depth 8)
 }
 
 function Get-StatusLines {
@@ -659,9 +762,27 @@ function New-ReviewBundleComment {
     $displayFinalStatus = Format-Block -Text (Truncate-Text -Text $FinalStatus -MaxChars $MaxGitOutputChars -Label "final git status") -EmptyText "(clean)"
     $displayModifiedFiles = Format-Block -Text (Truncate-Text -Text $ModifiedFiles -MaxChars $MaxGitOutputChars -Label "modified files") -EmptyText "(none)"
     $displayFinalReport = Format-Block -Text $CodexFinalReport -EmptyText "(no Codex stdout captured)"
+    $runnerResult = if ($CodexExitCode -eq "0") { "success" } else { "failure" }
+    $runnerResultJson = New-RunnerResultSummaryJson `
+        -IssueNumberText $IssueNumberText `
+        -Action "run-reviewbundle" `
+        -Result $runnerResult `
+        -Branch $Branch `
+        -Head $HeadAfter `
+        -ReviewId $ReviewId `
+        -DiffFingerprint $DiffFingerprint `
+        -FilesFingerprint $FilesFingerprint `
+        -ChangedFilesText $ModifiedFiles `
+        -FinalStatus $FinalStatus `
+        -CodexExitCode $CodexExitCode
 
     return @"
 ## local-runner-v1 review bundle
+
+### Machine-readable runner result
+
+$RunnerResultMarker
+$runnerResultJson
 
 ### Run metadata
 
