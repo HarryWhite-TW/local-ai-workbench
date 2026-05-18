@@ -69,6 +69,80 @@ Required top-level fields are `schema`, `repo`, `issue`, `action`, `result`, `br
 
 Current emitted actions include `run-reviewbundle`, `commit-approved-dryrun`, `commit-approved-once`, `push-dryrun`, `push-once`, and `close-issue-once`. The summary preserves existing human-readable output and does not change approval marker semantics.
 
+## CHATGPT-DISPATCH marker spec v1
+
+`CHATGPT-DISPATCH` is a request marker that ChatGPT may post for a future local dispatcher to consume. It asks a local runner to perform one narrow runner action, but it does not authorize approval-gated work.
+
+This section is design/spec-only. It does not implement a dispatcher, background watcher, Codex auto-run, automatic commit, automatic push, issue close, approval chaining, or any change to existing `PushOnce` or `CloseIssueOnce` approval semantics.
+
+The v1 marker is a single ASCII line:
+
+```text
+CHATGPT-DISPATCH protocol=lawb.dispatch.v1 action=<action> issue=<N> repo=HarryWhite-TW/local-ai-workbench branch=<branch> head=<sha> expires=<UTC_BASIC> requested_by=<actor> request_id=<id>
+```
+
+Required fields:
+
+- `protocol`: must be exactly `lawb.dispatch.v1`.
+- `action`: must be one of the supported v1 action names.
+- `issue`: the explicit GitHub issue number in decimal form.
+- `repo`: the explicit owner/name repo, currently `HarryWhite-TW/local-ai-workbench`.
+- `branch`: the explicit branch name the request is bound to.
+- `head`: the exact local Git `HEAD` SHA the request is bound to.
+- `expires`: UTC basic timestamp in `yyyyMMddTHHmmssZ` form.
+- `requested_by`: the GitHub or ChatGPT-visible actor that requested the dispatch.
+- `request_id`: a caller-generated unique id for deduplication and audit correlation.
+
+Optional fields:
+
+- `mode`: a future dispatcher mode hint, such as `review-bundle-only`.
+- `expected_state`: a concise expected state hint, such as `clean`.
+- `reason`: a short human-readable reason. Consumers must treat it as descriptive only.
+
+Supported v1 actions:
+
+- `run-reviewbundle`: request one review-bundle generation for the explicit issue.
+- `read-final-audit`: request a read-only final audit/report for the explicit issue.
+- `maybe-status-check`: request a read-only status check to decide whether action is needed.
+
+`CHATGPT-DISPATCH` v1 does not support `commit`, `push`, `close`, `commit-approved-once`, `push-approved-once`, `close-issue-approved-once`, or any action that directly or indirectly stages files, creates commits, pushes refs, closes issues, edits labels, creates PRs, merges, or force pushes. Commit, `PushOnce`, and `CloseIssueOnce` remain separate user-approved workflows.
+
+Required safety behavior for any future consumer:
+
+- scan only the selected explicit issue by default; do not broadly scan open issues unless a later spec explicitly adds that mode
+- require explicit `issue`, `repo`, `branch`, `head`, and `expires`
+- require the marker issue scope to match the issue being processed
+- require local repo, branch, and current `HEAD` to match the marker
+- require the marker to be unexpired at validation and immediately before execution
+- fail closed on malformed markers, unknown fields, missing fields, duplicate fields, unsupported actions, repo mismatch, branch mismatch, issue mismatch, `HEAD` mismatch, expired markers, or read failures
+- fail closed if more than one current `CHATGPT-DISPATCH protocol=lawb.dispatch.v1` marker exists for the same issue
+- never choose between duplicate current markers, even if their fields are otherwise valid
+- never reinterpret `CHATGPT-DISPATCH` as an approval marker
+- never chain from a dispatch marker into an approval-gated action
+- leave all approval-gated actions blocked until a separate valid `RUNNER-V2-APPROVE` marker or local user approval flow is supplied under that action's own rules
+
+Duplicate handling is intentionally strict. A current marker means a syntactically valid, unexpired `CHATGPT-DISPATCH protocol=lawb.dispatch.v1` line on the selected issue. If zero current markers exist, the dispatcher must do nothing. If exactly one current marker exists, it may continue validation. If two or more current markers exist, including markers with different `request_id` values, it must stop without running any action.
+
+Expired markers are non-current for action selection, but malformed or duplicate current markers are stop conditions. A consumer should report the stop reason in human-readable output and, when it posts machine-readable output, use `LAWBRUNNER-RESULT protocol=lawb.runner_result.v1`.
+
+Relationship to existing markers:
+
+- `CHATGPT-DISPATCH` requests a runner action.
+- `RUNNER-V2-APPROVE` authorizes an approval-gated runner action under its own state-bound approval rules.
+- `LRV1-APPROVE` authorizes runner v1 local commit mode under its own prompt/token rules.
+- `LAWBRUNNER-RESULT` reports machine-readable runner results.
+
+Expected future workflow:
+
+```text
+User asks ChatGPT to dispatch #N.
+ChatGPT posts one CHATGPT-DISPATCH protocol=lawb.dispatch.v1 marker on issue #N.
+Future local dispatcher validates the marker against issue, repo, branch, HEAD, and expiry.
+Future local dispatcher runs only the supported requested action.
+Runner posts LAWBRUNNER-RESULT protocol=lawb.runner_result.v1.
+ChatGPT reads the result and reviews.
+```
+
 ## v2A design goal
 
 v2A starts as:
