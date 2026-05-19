@@ -10,6 +10,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DISPATCHER = REPO_ROOT / "scripts" / "local_dispatcher_v1.ps1"
 MARKER = "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1"
+DRY_RUN_MARKER = "LAWBRUNNER-DRYRUN protocol=lawb.dispatch_dry_run.v1"
 HEAD = "1111111111111111111111111111111111111111"
 VALID_LINE = (
     "CHATGPT-DISPATCH protocol=lawb.dispatch.v1 action=maybe-status-check "
@@ -41,11 +42,13 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
 
             $Repo = "HarryWhite-TW/local-ai-workbench"
             $IssueNumber = 83
+            $IssueNumbers = @()
             $PostResultComment = $false
             $script:Branch = "master"
             $script:Head = "{HEAD}"
             $script:GitStatus = ""
             $script:Markers = @()
+            $script:IssueMarkers = @{{}}
             $script:PostCalls = 0
             $script:PostedIssue = 0
             $script:PostedBody = ""
@@ -115,10 +118,15 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             }}
             function Invoke-ReadOnlyCommand {{
                 param([string]$FilePath, [string[]]$Arguments, [string]$Action)
-                $comments = @($script:Markers | ForEach-Object {{ $_.Comment }})
+                $requestedIssue = [int]$Arguments[2]
+                $sourceMarkers = $script:Markers
+                if ($script:IssueMarkers.ContainsKey($requestedIssue)) {{
+                    $sourceMarkers = @($script:IssueMarkers[$requestedIssue])
+                }}
+                $comments = @($sourceMarkers | ForEach-Object {{ $_.Comment }})
                 $payload = [pscustomobject]@{{
-                    number = $IssueNumber
-                    title = "Issue $IssueNumber"
+                    number = $requestedIssue
+                    title = "Issue $requestedIssue"
                     state = "OPEN"
                     comments = @($comments)
                 }} | ConvertTo-Json -Depth 8
@@ -161,6 +169,7 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
 
             $Repo = "HarryWhite-TW/local-ai-workbench"
             $IssueNumber = 83
+            $IssueNumbers = @()
             $PostResultComment = $false
             $script:ForbiddenCalls = @()
             function git {{ $script:ForbiddenCalls += "git" }}
@@ -185,8 +194,12 @@ def assert_success(result: subprocess.CompletedProcess) -> None:
 
 
 def extract_summary(stdout: str) -> dict:
+    return extract_summary_after(stdout, MARKER)
+
+
+def extract_summary_after(stdout: str, marker: str) -> dict:
     lines = stdout.splitlines()
-    marker_index = lines.index(MARKER)
+    marker_index = lines.index(marker)
     json_lines = []
     depth = 0
     started = False
@@ -229,6 +242,24 @@ def run_case(tmp_path: Path, setup: str, post: bool = False) -> subprocess.Compl
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($script:PostedBody)
             Write-Host "POSTED_BODY_BASE64=$([System.BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant())"
         }}
+        Write-Host "FORBIDDEN_CALLS=$(@($script:ForbiddenCalls).Count)"
+        """,
+    )
+
+
+def run_dry_case(tmp_path: Path, setup: str) -> subprocess.CompletedProcess:
+    return run_dispatcher_script(
+        tmp_path,
+        f"""
+        {setup}
+        try {{
+            Invoke-DryRunBoundedPoll
+            Write-Host "CASE_RESULT=success"
+        }} catch {{
+            Write-Host "CASE_RESULT=failure"
+            Write-Host "CASE_ERROR=$($_.Exception.Message)"
+        }}
+        Write-Host "POST_CALLS=$script:PostCalls"
         Write-Host "FORBIDDEN_CALLS=$(@($script:ForbiddenCalls).Count)"
         """,
     )
@@ -510,6 +541,166 @@ def test_post_result_comment_failure_is_reported_after_stdout_summary(tmp_path):
     assert "CASE_RESULT=failure" in result.stdout
     assert "mock post failed" in result.stdout
     assert "POST_CALLS=1" in result.stdout
+
+
+def test_dry_run_single_issue_reports_would_happen_without_action_or_post(tmp_path):
+    result = run_dry_case(
+        tmp_path,
+        """
+        $IssueNumber = 83
+        $script:Markers = @((New-TestMarker (New-DispatchLine)))
+        function Invoke-MaybeStatusCheck {
+            throw "dry-run must not execute maybe-status-check"
+        }
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+    assert "FORBIDDEN_CALLS=0" in result.stdout
+    assert DRY_RUN_MARKER in result.stdout
+
+    summary = extract_summary_after(result.stdout, DRY_RUN_MARKER)
+    assert summary["schema"] == "lawb.dispatch_dry_run.v1"
+    assert summary["poll_mode"] == "dry_run_bounded"
+    assert summary["result"] == "success"
+    assert summary["issues"] == [83]
+    assert summary["decisions"][0]["decision"] == "accepted"
+    assert summary["decisions"][0]["action"] == "maybe-status-check"
+    assert summary["decisions"][0]["request_id"] == "req-83"
+    assert summary["decisions"][0]["would_execute_dispatch_action"] is False
+    assert summary["safety"]["no_result_comment"] is True
+
+
+def test_dry_run_bounded_issue_list_accepts_up_to_three_explicit_issues(tmp_path):
+    result = run_dry_case(
+        tmp_path,
+        """
+        $IssueNumber = 0
+        $IssueNumbers = @(83, 84, 85)
+        $script:IssueMarkers[83] = @((New-TestMarker (New-DispatchLine -Issue "83" -RequestId "req-83")))
+        $script:IssueMarkers[84] = @((New-TestMarker (New-DispatchLine -Issue "84" -RequestId "req-84")))
+        $script:IssueMarkers[85] = @((New-TestMarker (New-DispatchLine -Issue "85" -RequestId "req-85")))
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    summary = extract_summary_after(result.stdout, DRY_RUN_MARKER)
+    assert summary["issues"] == [83, 84, 85]
+    assert [decision["decision"] for decision in summary["decisions"]] == ["accepted", "accepted", "accepted"]
+    assert [decision["request_id"] for decision in summary["decisions"]] == ["req-83", "req-84", "req-85"]
+
+
+def test_dry_run_rejects_too_many_issues_before_reading_github(tmp_path):
+    result = run_dry_case(
+        tmp_path,
+        """
+        $IssueNumber = 0
+        $IssueNumbers = @(83, 84, 85, 86)
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "at most 3 explicit issues" in result.stdout
+    assert DRY_RUN_MARKER not in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+    assert "FORBIDDEN_CALLS=0" in result.stdout
+
+
+def test_dry_run_reports_rejected_issue_and_fails_closed_without_posting(tmp_path):
+    result = run_dry_case(
+        tmp_path,
+        """
+        $IssueNumber = 83
+        $script:Markers = @((New-TestMarker (New-DispatchLine -Action "push")))
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "DryRunBoundedPoll failed closed" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+
+    summary = extract_summary_after(result.stdout, DRY_RUN_MARKER)
+    assert summary["result"] == "failure"
+    assert summary["decisions"][0]["decision"] == "rejected"
+    assert "Forbidden dispatch action 'push'" in summary["decisions"][0]["reason"]
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected"),
+    [
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine)), (New-TestMarker (New-DispatchLine -RequestId "req-84") -Id "comment-2"))',
+            "Ambiguous dispatch markers",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -Expires "20200101T000000Z")))',
+            "Latest marker expired",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -RepoValue "Other/repo")))',
+            "field 'repo' mismatch",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -Branch "feature")))',
+            "field 'branch' mismatch",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -Head "2222222222222222222222222222222222222222")))',
+            "field 'head' mismatch",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -Issue "84")))',
+            "field 'issue' mismatch",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "unknown-action")))',
+            "Unsupported dispatch action",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker "CHATGPT-DISPATCH protocol=lawb.dispatch.v1 action=maybe-status-check issue=83 repo=HarryWhite-TW/local-ai-workbench branch=master head=1111111111111111111111111111111111111111 expires=20990101T000000Z requested_by=chatgpt"))',
+            "Missing required dispatch marker field 'request_id'",
+        ),
+    ],
+)
+def test_dry_run_marker_validation_failures_are_reported_without_posting(tmp_path, setup, expected):
+    result = run_dry_case(tmp_path, f"$IssueNumber = 83; {setup}")
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+    summary = extract_summary_after(result.stdout, DRY_RUN_MARKER)
+    assert summary["result"] == "failure"
+    assert summary["decisions"][0]["decision"] == "rejected"
+    assert expected in summary["decisions"][0]["reason"]
+
+
+def test_dry_run_existing_matching_result_fails_closed_as_already_handled(tmp_path):
+    result = run_dry_case(
+        tmp_path,
+        """
+        $IssueNumber = 83
+        $line = New-DispatchLine
+        $resultJson = @{
+            schema = "lawb.runner_result.v1"
+            repo = "HarryWhite-TW/local-ai-workbench"
+            issue = 83
+            action = "maybe-status-check"
+            branch = $script:Branch
+            head = $script:Head
+            request_id = "req-83"
+        } | ConvertTo-Json
+        $resultBody = "$RunnerResultMarker`n$resultJson"
+        $script:Markers = @(
+            (New-TestMarker $line),
+            (New-TestMarker -Line $RunnerResultMarker -Body $resultBody -Id "result-1")
+        )
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    summary = extract_summary_after(result.stdout, DRY_RUN_MARKER)
+    assert summary["decisions"][0]["decision"] == "rejected"
+    assert "Matching LAWBRUNNER-RESULT already exists" in summary["decisions"][0]["reason"]
 
 
 def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):

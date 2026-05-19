@@ -20,8 +20,10 @@ issue close, labels, PRs, merges, force push, or approval chaining.
 
 param(
     [switch]$PollOnce,
+    [switch]$DryRunBoundedPoll,
     [switch]$PostResultComment,
     [int]$IssueNumber = 0,
+    [int[]]$IssueNumbers = @(),
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench"
 )
@@ -36,7 +38,10 @@ $DispatchMarkerPrefix = "CHATGPT-DISPATCH"
 $DispatchProtocol = "lawb.dispatch.v1"
 $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
+$DryRunProtocol = "lawb.dispatch_dry_run.v1"
+$DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
+$MaxDryRunIssuesPerRun = 3
 $AllowedDispatchActions = @("maybe-status-check")
 $ReservedDispatchActions = @("run-reviewbundle", "read-final-audit")
 $ForbiddenDispatchActions = @(
@@ -64,6 +69,7 @@ $DispatchRequiredFields = @(
 )
 $DispatchKnownFields = @($DispatchRequiredFields + "mode", "expected_state", "reason" | Sort-Object -Unique)
 $PollOnceSafetyBoundary = "PollOnce reads only the explicit issue and supports only maybe-status-check. It does not run Codex, run runner v1, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
+$DryRunSafetyBoundary = "DryRunBoundedPoll reads only the explicit issue scope, validates marker selection, prints local decisions, and does not execute dispatch actions, post claim comments, post result comments, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -233,6 +239,15 @@ function Get-CommentAuthorLogin {
     return Get-ObjectPropertyText -Object $authorProperty.Value -PropertyName "login"
 }
 
+function Get-CommentBodyText {
+    param(
+        [Parameter(Mandatory = $false)]
+        [object]$Comment
+    )
+
+    return Get-ObjectPropertyText -Object $Comment -PropertyName "body"
+}
+
 function Get-GitOutput {
     param(
         [Parameter(Mandatory = $true)]
@@ -368,6 +383,74 @@ function New-RunnerResultSummaryJson {
         validations = $validations
         safety = $safety
         next_recommended_action = $NextRecommendedAction
+    }
+
+    return ($summary | ConvertTo-Json -Depth 8)
+}
+
+function New-DryRunIssueDecision {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Issue,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("accepted", "rejected")]
+        [string]$Decision,
+        [Parameter(Mandatory = $true)]
+        [string]$Reason,
+        [string]$Action = $null,
+        [string]$RequestId = $null,
+        [string]$Branch = $null,
+        [string]$Head = $null
+    )
+
+    return [ordered]@{
+        issue = $Issue
+        decision = $Decision
+        reason = $Reason
+        action = $Action
+        request_id = $RequestId
+        branch = $Branch
+        head = $Head
+        would_execute_dispatch_action = $false
+        would_post_claim_comment = $false
+        would_post_result_comment = $false
+    }
+}
+
+function New-DryRunSummaryJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Issues,
+        [Parameter(Mandatory = $true)]
+        [object[]]$Decisions,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("success", "failure")]
+        [string]$Result
+    )
+
+    $summary = [ordered]@{
+        schema = $DryRunProtocol
+        repo = $Repo
+        poll_mode = "dry_run_bounded"
+        result = $Result
+        max_issues_per_run = $MaxDryRunIssuesPerRun
+        issues = @($Issues)
+        decisions = @($Decisions)
+        safety = [ordered]@{
+            dry_run_only = $true
+            no_dispatch_action_execution = $true
+            no_claim_comment = $true
+            no_result_comment = $true
+            no_stage = $true
+            no_commit = $true
+            no_push = $true
+            no_issue_close = $true
+            no_label = $true
+            no_pr = $true
+            no_merge = $true
+            no_approval_chaining = $true
+        }
+        next_recommended_action = "human_review"
     }
 
     return ($summary | ConvertTo-Json -Depth 8)
@@ -594,10 +677,11 @@ function Get-IssueDispatchMarkerReadResult {
     }
 
     $markers = @()
+    $runnerResults = @()
     $commentIndex = 0
     foreach ($comment in $comments) {
         $commentIndex += 1
-        $body = Get-ObjectPropertyText -Object $comment -PropertyName "body"
+        $body = Get-CommentBodyText -Comment $comment
         $trimmedBody = $body.Trim()
         $lines = @($body -split "\r?\n")
         $lineNumber = 0
@@ -615,6 +699,16 @@ function Get-IssueDispatchMarkerReadResult {
                     LineNumber = $lineNumber
                 }
             }
+
+            if ($line.StartsWith($RunnerResultMarker, [System.StringComparison]::Ordinal)) {
+                $runnerResults += [pscustomobject]@{
+                    Line = $line
+                    Body = $body
+                    Comment = $comment
+                    CommentIndex = $commentIndex
+                    LineNumber = $lineNumber
+                }
+            }
         }
     }
 
@@ -623,7 +717,57 @@ function Get-IssueDispatchMarkerReadResult {
         Title = $issueTitle
         IssueState = $issueState
         Markers = @($markers)
+        RunnerResults = @($runnerResults)
     }
+}
+
+function Test-MatchingRunnerResultExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ReadResult,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Fields
+    )
+
+    foreach ($runnerResult in @($ReadResult.RunnerResults)) {
+        $body = [string]$runnerResult.Body
+        $markerIndex = $body.IndexOf($RunnerResultMarker, [System.StringComparison]::Ordinal)
+        if ($markerIndex -lt 0) {
+            continue
+        }
+
+        $jsonText = $body.Substring($markerIndex + $RunnerResultMarker.Length).Trim()
+        if ([string]::IsNullOrWhiteSpace($jsonText)) {
+            continue
+        }
+
+        try {
+            $summary = $jsonText | ConvertFrom-Json
+        }
+        catch {
+            continue
+        }
+
+        $summaryIssue = Get-ObjectPropertyText -Object $summary -PropertyName "issue"
+        $summaryAction = Get-ObjectPropertyText -Object $summary -PropertyName "action"
+        $summaryRepo = Get-ObjectPropertyText -Object $summary -PropertyName "repo"
+        $summaryBranch = Get-ObjectPropertyText -Object $summary -PropertyName "branch"
+        $summaryHead = Get-ObjectPropertyText -Object $summary -PropertyName "head"
+        $summaryRequestId = Get-ObjectPropertyText -Object $summary -PropertyName "request_id"
+
+        if (
+            [string]::Equals($summaryIssue, [string]$Fields["issue"], [System.StringComparison]::Ordinal) -and
+            [string]::Equals($summaryAction, [string]$Fields["action"], [System.StringComparison]::Ordinal) -and
+            [string]::Equals($summaryRepo, [string]$Fields["repo"], [System.StringComparison]::Ordinal) -and
+            [string]::Equals($summaryBranch, [string]$Fields["branch"], [System.StringComparison]::Ordinal) -and
+            [string]::Equals($summaryHead, [string]$Fields["head"], [System.StringComparison]::Ordinal) -and
+            [string]::Equals($summaryRequestId, [string]$Fields["request_id"], [System.StringComparison]::Ordinal)
+        ) {
+            return $true
+        }
+    }
+
+    return $false
 }
 
 function Get-ValidatedDispatchSelection {
@@ -786,14 +930,107 @@ function Invoke-PollOnce {
     }
 }
 
+function Get-DryRunIssueScope {
+    $scope = @()
+    if ($IssueNumber -gt 0) {
+        $scope += $IssueNumber
+    }
+
+    foreach ($issue in @($IssueNumbers)) {
+        if ($issue -gt 0) {
+            $scope += $issue
+        }
+        else {
+            throw "DryRunBoundedPoll issue numbers must be positive integers."
+        }
+    }
+
+    if ($scope.Count -eq 0) {
+        throw "DryRunBoundedPoll requires explicit issue scope via -IssueNumber <N> or -IssueNumbers <N>[,<M>,<K>]."
+    }
+
+    $unique = @($scope | Select-Object -Unique)
+    if ($unique.Count -ne $scope.Count) {
+        throw "DryRunBoundedPoll issue scope contains duplicate issue numbers."
+    }
+
+    if ($unique.Count -gt $MaxDryRunIssuesPerRun) {
+        throw "DryRunBoundedPoll supports at most $MaxDryRunIssuesPerRun explicit issues per run."
+    }
+
+    return [int[]]$unique
+}
+
+function Invoke-DryRunBoundedPoll {
+    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
+        throw "DryRunBoundedPoll supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
+    }
+
+    Assert-RepoRoot
+    $scope = @(Get-DryRunIssueScope)
+    $decisions = @()
+
+    Write-Host "$DispatcherName $DispatcherVersion"
+    Write-Host "Mode: DryRunBoundedPoll"
+    Write-Host "Issue scope: $($scope -join ', ')"
+    Write-Host "Max issues per run: $MaxDryRunIssuesPerRun"
+    Write-Host "Safety boundary: $DryRunSafetyBoundary"
+    Write-Host ""
+
+    foreach ($issue in $scope) {
+        try {
+            $selection = Get-ValidatedDispatchSelection -IssueNumber $issue
+            $fields = $selection.Selected.Fields
+
+            if (Test-MatchingRunnerResultExists -ReadResult $selection.ReadResult -Fields $fields) {
+                throw "Matching LAWBRUNNER-RESULT already exists for issue #$issue request_id=$($fields["request_id"])."
+            }
+
+            $action = [string]$fields["action"]
+            $requestId = [string]$fields["request_id"]
+            $reason = "Exactly one current dispatch marker would be accepted. Dry-run did not execute action '$action' and did not post claim or result comments."
+            Write-Host "Issue #${issue}: accepted dry-run decision for action '$action' request_id=$requestId."
+            $decisions += New-DryRunIssueDecision `
+                -Issue $issue `
+                -Decision "accepted" `
+                -Reason $reason `
+                -Action $action `
+                -RequestId $requestId `
+                -Branch $selection.Branch `
+                -Head $selection.Head
+        }
+        catch {
+            $reason = $_.Exception.Message
+            Write-Host "Issue #${issue}: rejected dry-run decision. $reason"
+            $decisions += New-DryRunIssueDecision `
+                -Issue $issue `
+                -Decision "rejected" `
+                -Reason $reason
+        }
+    }
+
+    $rejectedCount = @($decisions | Where-Object { $_["decision"] -eq "rejected" }).Count
+    $result = if ($rejectedCount -eq 0) { "success" } else { "failure" }
+
+    Write-Host $DryRunMarker
+    Write-Host (New-DryRunSummaryJson -Issues $scope -Decisions $decisions -Result $result)
+
+    if ($rejectedCount -gt 0) {
+        throw "DryRunBoundedPoll failed closed for $rejectedCount issue(s)."
+    }
+}
+
 try {
     $selectedModes = @()
     if ($PollOnce) {
         $selectedModes += "PollOnce"
     }
+    if ($DryRunBoundedPoll) {
+        $selectedModes += "DryRunBoundedPoll"
+    }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> [-PostResultComment]."
+        throw "Missing mode. Use: .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> [-PostResultComment] or .\scripts\local_dispatcher_v1.ps1 -DryRunBoundedPoll -IssueNumber <N>."
     }
 
     if ($selectedModes.Count -gt 1) {
@@ -804,7 +1041,16 @@ try {
         throw "-PostResultComment is valid only with -PollOnce."
     }
 
-    Invoke-PollOnce
+    if ($PollOnce -and @($IssueNumbers).Count -gt 0) {
+        throw "-IssueNumbers is valid only with -DryRunBoundedPoll."
+    }
+
+    if ($DryRunBoundedPoll) {
+        Invoke-DryRunBoundedPoll
+    }
+    else {
+        Invoke-PollOnce
+    }
 }
 catch {
     Write-Error $_.Exception.Message
