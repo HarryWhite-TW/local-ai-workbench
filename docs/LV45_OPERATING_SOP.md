@@ -213,6 +213,8 @@ Do not replace these labels with question marks. The required codepoints are:
 
 Lv5 / background watcher behavior is intentionally deferred.
 
+For the proposed bounded, foreground polling design after the Lv5-lite trial, see [Lv5-Safe Bounded Polling Design](LV5_SAFE_DESIGN.md). That document is design-only and does not change the current Lv4.5 operating authority.
+
 Do not treat Lv4.5 as permission to add:
 
 - always-on polling
@@ -232,4 +234,3 @@ review-bundle
 ```
 
 This SOP is review-bundle capable for docs-only Lv4.5 operating procedure documentation. It does not authorize stage, commit, push, issue close, labels, PRs, merges, force push, `PushOnce`, `CloseIssueOnce`, dispatcher `PollOnce`, approval chaining, background watcher implementation, always-on polling, runner code changes, dispatcher code changes, test changes, or feature implementation.
-
