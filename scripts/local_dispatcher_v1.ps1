@@ -21,6 +21,7 @@ issue close, labels, PRs, merges, force push, or approval chaining.
 param(
     [switch]$PollOnce,
     [switch]$DryRunBoundedPoll,
+    [switch]$BoundedPoll,
     [switch]$PostResultComment,
     [int]$IssueNumber = 0,
     [int[]]$IssueNumbers = @(),
@@ -42,6 +43,7 @@ $DryRunProtocol = "lawb.dispatch_dry_run.v1"
 $DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
 $MaxDryRunIssuesPerRun = 3
+$MaxBoundedPollIssuesPerRun = 3
 $AllowedDispatchActions = @("maybe-status-check")
 $ReservedDispatchActions = @("run-reviewbundle", "read-final-audit")
 $ForbiddenDispatchActions = @(
@@ -70,6 +72,7 @@ $DispatchRequiredFields = @(
 $DispatchKnownFields = @($DispatchRequiredFields + "mode", "expected_state", "reason" | Sort-Object -Unique)
 $PollOnceSafetyBoundary = "PollOnce reads only the explicit issue and supports only maybe-status-check. It does not run Codex, run runner v1, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 $DryRunSafetyBoundary = "DryRunBoundedPoll reads only the explicit issue scope, validates marker selection, prints local decisions, and does not execute dispatch actions, post claim comments, post result comments, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
+$BoundedPollSafetyBoundary = "BoundedPoll reads only the explicit issue scope, supports only maybe-status-check, executes at most one action per accepted dispatch, and does not run Codex, run runner v1, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -340,6 +343,8 @@ function New-RunnerResultSummaryJson {
         [int]$SelectedIssue,
         [hashtable]$ValidationOverrides = @{},
         [hashtable]$SafetyOverrides = @{},
+        [string]$RequestId = $null,
+        [string]$PollMode = $null,
         [string]$NextRecommendedAction = "chatgpt_review"
     )
 
@@ -376,6 +381,8 @@ function New-RunnerResultSummaryJson {
         branch = $Branch
         head = $Head
         selected_issue = $SelectedIssue
+        request_id = $RequestId
+        poll_mode = $PollMode
         review_id = $null
         diff_fingerprint = $null
         files_fingerprint = $null
@@ -473,6 +480,8 @@ function Write-RunnerResultSummary {
         [int]$SelectedIssue,
         [hashtable]$ValidationOverrides = @{},
         [hashtable]$SafetyOverrides = @{},
+        [string]$RequestId = $null,
+        [string]$PollMode = $null,
         [string]$NextRecommendedAction = "chatgpt_review"
     )
 
@@ -486,6 +495,8 @@ function Write-RunnerResultSummary {
         -SelectedIssue $SelectedIssue `
         -ValidationOverrides $ValidationOverrides `
         -SafetyOverrides $SafetyOverrides `
+        -RequestId $RequestId `
+        -PollMode $PollMode `
         -NextRecommendedAction $NextRecommendedAction)
 }
 
@@ -867,32 +878,35 @@ function Write-FinalGitStatus {
     }
 }
 
-function Invoke-PollOnce {
-    if ($IssueNumber -lt 1) {
-        throw "PollOnce requires -IssueNumber <N> and scans only that issue."
-    }
+function Invoke-AcceptedDispatchAction {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Selection,
+        [Parameter(Mandatory = $true)]
+        [int]$Issue,
+        [Parameter(Mandatory = $true)]
+        [string]$ModeName,
+        [Parameter(Mandatory = $true)]
+        [string]$SafetyBoundary
+    )
 
-    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
-        throw "PollOnce supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
-    }
-
-    Assert-RepoRoot
-    $selection = Get-ValidatedDispatchSelection -IssueNumber $IssueNumber
     $selected = $selection.Selected
     $fields = $selected.Fields
     $action = [string]$fields["action"]
+    $requestId = [string]$fields["request_id"]
 
     Write-Host "$DispatcherName $DispatcherVersion"
-    Write-Host "Mode: PollOnce"
-    Write-Host "Issue number: #$IssueNumber"
+    Write-Host "Mode: $ModeName"
+    Write-Host "Issue number: #$Issue"
     Write-Host "Issue state: $($selection.ReadResult.IssueState)"
     Write-Host "Dispatch comment id: $(Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "id")"
     Write-Host "Dispatch comment author: $(Get-CommentAuthorLogin -Comment $selected.Marker.Comment)"
     Write-Host "Parsed action: $action"
+    Write-Host "Request id: $requestId"
     Write-Host "Branch: $($selection.Branch)"
     Write-Host "HEAD: $($selection.Head)"
     Write-Host "Expiry status: current until $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))"
-    Write-Host "Safety boundary: $PollOnceSafetyBoundary"
+    Write-Host "Safety boundary: $SafetyBoundary"
     Write-Host ""
 
     if (-not [string]::Equals($action, "maybe-status-check", [System.StringComparison]::Ordinal)) {
@@ -913,24 +927,47 @@ function Invoke-PollOnce {
         git_status_clean = (New-RunnerValidationResult -Status $(if ($actionResult.StatusSummary -eq "clean") { "passed" } else { "warning" }) -Summary "maybe-status-check observed git status: $($actionResult.StatusSummary).")
     }
     $summaryJson = New-RunnerResultSummaryJson `
-        -Issue $IssueNumber `
+        -Issue $Issue `
         -Action $action `
         -Result "success" `
         -Branch $selection.Branch `
         -Head $selection.Head `
-        -SelectedIssue $IssueNumber `
-        -ValidationOverrides $validationOverrides
+        -SelectedIssue $Issue `
+        -ValidationOverrides $validationOverrides `
+        -RequestId $requestId `
+        -PollMode $ModeName
 
     Write-Host $RunnerResultMarker
     Write-Host $summaryJson
 
     if ($PostResultComment) {
-        Publish-RunnerResultComment -IssueNumber $IssueNumber -Body "$RunnerResultMarker`n$summaryJson" | Out-Null
-        Write-Host "Posted one LAWBRUNNER-RESULT comment to issue #$IssueNumber."
+        Publish-RunnerResultComment -IssueNumber $Issue -Body "$RunnerResultMarker`n$summaryJson" | Out-Null
+        Write-Host "Posted one LAWBRUNNER-RESULT comment to issue #$Issue."
     }
 }
 
-function Get-DryRunIssueScope {
+function Invoke-PollOnce {
+    if ($IssueNumber -lt 1) {
+        throw "PollOnce requires -IssueNumber <N> and scans only that issue."
+    }
+
+    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
+        throw "PollOnce supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
+    }
+
+    Assert-RepoRoot
+    $selection = Get-ValidatedDispatchSelection -IssueNumber $IssueNumber
+    Invoke-AcceptedDispatchAction -Selection $selection -Issue $IssueNumber -ModeName "PollOnce" -SafetyBoundary $PollOnceSafetyBoundary
+}
+
+function Get-ExplicitIssueScope {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ModeName,
+        [Parameter(Mandatory = $true)]
+        [int]$MaxIssuesPerRun
+    )
+
     $scope = @()
     if ($IssueNumber -gt 0) {
         $scope += $IssueNumber
@@ -941,24 +978,28 @@ function Get-DryRunIssueScope {
             $scope += $issue
         }
         else {
-            throw "DryRunBoundedPoll issue numbers must be positive integers."
+            throw "$ModeName issue numbers must be positive integers."
         }
     }
 
     if ($scope.Count -eq 0) {
-        throw "DryRunBoundedPoll requires explicit issue scope via -IssueNumber <N> or -IssueNumbers <N>[,<M>,<K>]."
+        throw "$ModeName requires explicit issue scope via -IssueNumber <N> or -IssueNumbers <N>[,<M>,<K>]."
     }
 
     $unique = @($scope | Select-Object -Unique)
     if ($unique.Count -ne $scope.Count) {
-        throw "DryRunBoundedPoll issue scope contains duplicate issue numbers."
+        throw "$ModeName issue scope contains duplicate issue numbers."
     }
 
-    if ($unique.Count -gt $MaxDryRunIssuesPerRun) {
-        throw "DryRunBoundedPoll supports at most $MaxDryRunIssuesPerRun explicit issues per run."
+    if ($unique.Count -gt $MaxIssuesPerRun) {
+        throw "$ModeName supports at most $MaxIssuesPerRun explicit issues per run."
     }
 
     return [int[]]$unique
+}
+
+function Get-DryRunIssueScope {
+    return Get-ExplicitIssueScope -ModeName "DryRunBoundedPoll" -MaxIssuesPerRun $MaxDryRunIssuesPerRun
 }
 
 function Invoke-DryRunBoundedPoll {
@@ -1020,6 +1061,65 @@ function Invoke-DryRunBoundedPoll {
     }
 }
 
+function Get-BoundedPollIssueScope {
+    return Get-ExplicitIssueScope -ModeName "BoundedPoll" -MaxIssuesPerRun $MaxBoundedPollIssuesPerRun
+}
+
+function Invoke-BoundedPoll {
+    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
+        throw "BoundedPoll supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
+    }
+
+    Assert-RepoRoot
+    $scope = @(Get-BoundedPollIssueScope)
+    $acceptedSelections = @()
+    $rejections = @()
+
+    Write-Host "$DispatcherName $DispatcherVersion"
+    Write-Host "Mode: BoundedPoll"
+    Write-Host "Issue scope: $($scope -join ', ')"
+    Write-Host "Max issues per run: $MaxBoundedPollIssuesPerRun"
+    Write-Host "Safety boundary: $BoundedPollSafetyBoundary"
+    Write-Host ""
+
+    foreach ($issue in $scope) {
+        try {
+            $selection = Get-ValidatedDispatchSelection -IssueNumber $issue
+            $fields = $selection.Selected.Fields
+
+            if (Test-MatchingRunnerResultExists -ReadResult $selection.ReadResult -Fields $fields) {
+                throw "Matching LAWBRUNNER-RESULT already exists for issue #$issue request_id=$($fields["request_id"])."
+            }
+
+            $acceptedSelections += [pscustomobject]@{
+                Issue = $issue
+                Selection = $selection
+            }
+            Write-Host "Issue #${issue}: accepted bounded-poll selection for action '$($fields["action"])' request_id=$($fields["request_id"])."
+        }
+        catch {
+            $reason = $_.Exception.Message
+            Write-Host "Issue #${issue}: rejected bounded-poll selection. $reason"
+            $rejections += [pscustomobject]@{
+                Issue = $issue
+                Reason = $reason
+            }
+        }
+    }
+
+    if (@($rejections).Count -gt 0) {
+        throw "BoundedPoll failed closed before action execution for $(@($rejections).Count) issue(s)."
+    }
+
+    foreach ($accepted in $acceptedSelections) {
+        Invoke-AcceptedDispatchAction `
+            -Selection $accepted.Selection `
+            -Issue ([int]$accepted.Issue) `
+            -ModeName "BoundedPoll" `
+            -SafetyBoundary $BoundedPollSafetyBoundary
+    }
+}
+
 try {
     $selectedModes = @()
     if ($PollOnce) {
@@ -1028,25 +1128,31 @@ try {
     if ($DryRunBoundedPoll) {
         $selectedModes += "DryRunBoundedPoll"
     }
+    if ($BoundedPoll) {
+        $selectedModes += "BoundedPoll"
+    }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> [-PostResultComment] or .\scripts\local_dispatcher_v1.ps1 -DryRunBoundedPoll -IssueNumber <N>."
+        throw "Missing mode. Use: .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> [-PostResultComment], .\scripts\local_dispatcher_v1.ps1 -DryRunBoundedPoll -IssueNumber <N>, or .\scripts\local_dispatcher_v1.ps1 -BoundedPoll -IssueNumber <N> [-PostResultComment]."
     }
 
     if ($selectedModes.Count -gt 1) {
         throw "Choose exactly one mode. Supplied modes: $($selectedModes -join ', ')."
     }
 
-    if ($PostResultComment -and -not $PollOnce) {
-        throw "-PostResultComment is valid only with -PollOnce."
+    if ($PostResultComment -and -not ($PollOnce -or $BoundedPoll)) {
+        throw "-PostResultComment is valid only with -PollOnce or -BoundedPoll."
     }
 
     if ($PollOnce -and @($IssueNumbers).Count -gt 0) {
-        throw "-IssueNumbers is valid only with -DryRunBoundedPoll."
+        throw "-IssueNumbers is valid only with -DryRunBoundedPoll or -BoundedPoll."
     }
 
     if ($DryRunBoundedPoll) {
         Invoke-DryRunBoundedPoll
+    }
+    elseif ($BoundedPoll) {
+        Invoke-BoundedPoll
     }
     else {
         Invoke-PollOnce

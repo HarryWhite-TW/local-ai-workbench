@@ -265,6 +265,31 @@ def run_dry_case(tmp_path: Path, setup: str) -> subprocess.CompletedProcess:
     )
 
 
+def run_bounded_case(tmp_path: Path, setup: str, post: bool = False) -> subprocess.CompletedProcess:
+    post_value = "$true" if post else "$false"
+    return run_dispatcher_script(
+        tmp_path,
+        f"""
+        {setup}
+        $PostResultComment = {post_value}
+        try {{
+            Invoke-BoundedPoll
+            Write-Host "CASE_RESULT=success"
+        }} catch {{
+            Write-Host "CASE_RESULT=failure"
+            Write-Host "CASE_ERROR=$($_.Exception.Message)"
+        }}
+        Write-Host "POST_CALLS=$script:PostCalls"
+        Write-Host "POSTED_ISSUE=$script:PostedIssue"
+        if (-not [string]::IsNullOrEmpty($script:PostedBody)) {{
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($script:PostedBody)
+            Write-Host "POSTED_BODY_BASE64=$([System.BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant())"
+        }}
+        Write-Host "FORBIDDEN_CALLS=$(@($script:ForbiddenCalls).Count)"
+        """,
+    )
+
+
 def test_missing_issue_number_fails_closed_without_posting(tmp_path):
     result = run_case(
         tmp_path,
@@ -701,6 +726,128 @@ def test_dry_run_existing_matching_result_fails_closed_as_already_handled(tmp_pa
     summary = extract_summary_after(result.stdout, DRY_RUN_MARKER)
     assert summary["decisions"][0]["decision"] == "rejected"
     assert "Matching LAWBRUNNER-RESULT already exists" in summary["decisions"][0]["reason"]
+
+
+def test_bounded_poll_single_issue_executes_maybe_status_check_and_posts_when_requested(tmp_path):
+    result = run_bounded_case(
+        tmp_path,
+        """
+        $IssueNumber = 83
+        $script:Markers = @((New-TestMarker (New-DispatchLine)))
+        """,
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "POST_CALLS=1" in result.stdout
+    assert "POSTED_ISSUE=83" in result.stdout
+    assert MARKER in result.stdout
+
+    summary = extract_summary(result.stdout)
+    assert summary["issue"] == 83
+    assert summary["selected_issue"] == 83
+    assert summary["action"] == "maybe-status-check"
+    assert summary["request_id"] == "req-83"
+    assert summary["poll_mode"] == "BoundedPoll"
+    assert summary["safety"]["no_push"] is True
+
+    posted_body = extract_posted_body(result.stdout)
+    assert posted_body.startswith(MARKER + "\n")
+    assert json.loads(posted_body.split("\n", 1)[1]) == summary
+
+
+def test_bounded_poll_issue_list_accepts_up_to_three_and_posts_one_result_per_issue(tmp_path):
+    result = run_bounded_case(
+        tmp_path,
+        """
+        $IssueNumber = 0
+        $IssueNumbers = @(83, 84, 85)
+        $script:IssueMarkers[83] = @((New-TestMarker (New-DispatchLine -Issue "83" -RequestId "req-83")))
+        $script:IssueMarkers[84] = @((New-TestMarker (New-DispatchLine -Issue "84" -RequestId "req-84")))
+        $script:IssueMarkers[85] = @((New-TestMarker (New-DispatchLine -Issue "85" -RequestId "req-85")))
+        """,
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "POST_CALLS=3" in result.stdout
+    assert result.stdout.count(MARKER) == 3
+    assert "Issue #83: accepted bounded-poll selection" in result.stdout
+    assert "Issue #84: accepted bounded-poll selection" in result.stdout
+    assert "Issue #85: accepted bounded-poll selection" in result.stdout
+
+
+def test_bounded_poll_rejects_too_many_issues_before_reading_github(tmp_path):
+    result = run_bounded_case(
+        tmp_path,
+        """
+        $IssueNumber = 0
+        $IssueNumbers = @(83, 84, 85, 86)
+        """,
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "at most 3 explicit issues" in result.stdout
+    assert MARKER not in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+    assert "FORBIDDEN_CALLS=0" in result.stdout
+
+
+def test_bounded_poll_existing_matching_result_fails_closed_before_action_or_post(tmp_path):
+    result = run_bounded_case(
+        tmp_path,
+        """
+        $IssueNumber = 83
+        $line = New-DispatchLine
+        $resultJson = @{
+            schema = "lawb.runner_result.v1"
+            repo = "HarryWhite-TW/local-ai-workbench"
+            issue = 83
+            action = "maybe-status-check"
+            branch = $script:Branch
+            head = $script:Head
+            request_id = "req-83"
+        } | ConvertTo-Json
+        $resultBody = "$RunnerResultMarker`n$resultJson"
+        $script:Markers = @(
+            (New-TestMarker $line),
+            (New-TestMarker -Line $RunnerResultMarker -Body $resultBody -Id "result-1")
+        )
+        function Invoke-MaybeStatusCheck {
+            throw "bounded poll must not execute already-handled dispatch"
+        }
+        """,
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Matching LAWBRUNNER-RESULT already exists" in result.stdout
+    assert "BoundedPoll failed closed before action execution" in result.stdout
+    assert MARKER not in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+
+
+def test_bounded_poll_marker_validation_failure_prevents_all_action_execution(tmp_path):
+    result = run_bounded_case(
+        tmp_path,
+        """
+        $IssueNumber = 0
+        $IssueNumbers = @(83, 84)
+        $script:IssueMarkers[83] = @((New-TestMarker (New-DispatchLine -Issue "83" -RequestId "req-83")))
+        $script:IssueMarkers[84] = @((New-TestMarker (New-DispatchLine -Issue "84" -RequestId "req-84" -Action "push")))
+        function Invoke-MaybeStatusCheck {
+            throw "bounded poll must not execute when any scoped issue is rejected"
+        }
+        """,
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Forbidden dispatch action 'push'" in result.stdout
+    assert "BoundedPoll failed closed before action execution" in result.stdout
+    assert MARKER not in result.stdout
+    assert "POST_CALLS=0" in result.stdout
 
 
 def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):
