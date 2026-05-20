@@ -6,7 +6,9 @@ Lv5-safe is the proposed next workflow after the successful Lv5-lite trial. It i
 
 The design keeps the repository aligned with the `Local Document Assistant Prototype` showcase: a localhost, single-user, personal-use document workbench with explicit review and approval boundaries. Lv5-safe may reduce manual checking, but it must not expand authority beyond the current safe dispatch contract.
 
-This document is design-only. It does not authorize runner code changes, dispatcher code changes, watcher implementation, background polling, automatic commit, automatic push, issue close, label edits, PR creation, merge, approval chaining, or test changes.
+This document is the Lv5-safe design and boundary record. It does not authorize runner code changes, dispatcher code changes, watcher implementation, background polling, automatic commit, automatic push, issue close, label edits, PR creation, merge, approval chaining, or test changes.
+
+For the operator-facing SOP after the completed #89 through #97 smoke path, see [Lv4.5 Operating SOP](LV45_OPERATING_SOP.md). That SOP documents the verified `-DryRunBoundedPoll`, single-issue `-BoundedPoll -IssueNumber`, duplicate/idempotency, and multi-issue `-BoundedPoll -IssueNumbers` usage.
 
 ## Baseline
 
@@ -410,11 +412,12 @@ The simplest emergency stop remains manual: do not run the poller. Lv5-safe has 
 
 Implementation should be split into small reviewable steps:
 
-1. Docs-only Lv5-safe design.
-2. Dry-run bounded poller that reads explicit issue scope and prints local decisions only.
-3. Real bounded poller for `maybe-status-check` with issue-bound claim and result comments.
-4. Run summary and local logs for operator review.
-5. Repeated smoke tests covering single issue, issue list, time window, duplicate marker, expiry, HEAD mismatch, existing result, and emergency stop.
+1. Docs-only Lv5-safe design. Completed in #89.
+2. Dry-run bounded poller that reads explicit issue scope and prints local decisions only. Completed and smoke-tested in #90 and #91.
+3. Real bounded poller for `maybe-status-check` with issue-bound result comments. Completed and smoke-tested for a single issue in #92 and #93.
+4. Duplicate/idempotency smoke covering existing matching `LAWBRUNNER-RESULT` by `request_id`. Completed in #94.
+5. Multi-issue bounded smoke covering explicit child issues. Completed in #95, #96, and #97.
+6. Optional future hardening, such as a negative smoke for more than three issues, time-window behavior, expiry, HEAD mismatch, existing result variants, and emergency stop.
 
 Each slice should have its own issue, review bundle, and verification notes. No slice should add commit, push, close, labels, PRs, merges, force-push, approval chaining, or background watcher behavior without separate explicit authorization.
 
@@ -454,5 +457,4 @@ These decisions should be made only when implementation is explicitly authorized
 - whether issue-level stop markers expire
 - whether failure results are posted for claimed dispatches that fail during execution
 
-Until those decisions are approved, Lv5-safe remains a design target, not active behavior.
-
+Until those decisions are approved, the optional future hardening items remain design targets, not active behavior.

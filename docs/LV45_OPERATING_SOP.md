@@ -43,6 +43,16 @@ Use this loop for normal Lv4.5 work:
 
 The user remains the operator. PollOnce is manually invoked each time and stops after one selected issue.
 
+## Workflow Level Selection
+
+Use the smallest workflow level that fits the task:
+
+- Lv4.5: one explicit issue, one foreground `PollOnce` run, and one allowed low-risk action. This remains the daily manual bridge when the operator wants maximum locality and no polling loop.
+- Lv5-lite: limited trial workflow for proving the marker/result contract around a repeatable operator action without adding broad automation authority.
+- Lv5-safe: bounded foreground polling over an explicit issue or explicit issue list. Use this only for verified bounded modes such as dry-run evaluation or `maybe-status-check` result reporting.
+
+All three levels keep commit, push, close, label, PR, merge, force-push, approval consumption, and approval chaining outside dispatcher authority.
+
 ## Supported Actions v1
 
 The currently safe Lv4.5 dispatch action is:
@@ -73,6 +83,63 @@ Run PollOnce and post a successful `LAWBRUNNER-RESULT` comment back to the same 
 ```
 
 Do not run dispatcher PollOnce for this SOP issue itself unless a separate issue explicitly authorizes that dispatcher action. For issue #86, the authorized work is docs-only ReviewBundle generation.
+
+## Lv5-Safe BoundedPoll Usage
+
+Lv5-safe BoundedPoll is a foreground, manually started, bounded dispatcher mode. It is not a background watcher and it does not expand the action allowlist beyond the verified safe dispatch contract.
+
+Use `-DryRunBoundedPoll` when the operator wants to validate marker selection and acceptance logic before any side effect:
+
+```powershell
+.\scripts\local_dispatcher_v1.ps1 -DryRunBoundedPoll -IssueNumber <N>
+```
+
+Dry-run behavior:
+
+- reads the `CHATGPT-DISPATCH` marker
+- makes an accepted or rejected decision
+- does not execute the dispatch action
+- does not post `LAWBRUNNER-RESULT`
+- does not commit, push, close, label, create a PR, merge, or consume approval
+
+Use `-BoundedPoll -IssueNumber` when one explicit issue should run the verified real bounded path:
+
+```powershell
+.\scripts\local_dispatcher_v1.ps1 -BoundedPoll -IssueNumber <N> -PostResultComment
+```
+
+Single-issue bounded behavior:
+
+- executes `maybe-status-check` only
+- posts one `LAWBRUNNER-RESULT` when `-PostResultComment` is supplied
+- keeps the issue open
+- does not commit, push, close, label, create a PR, merge, or consume approval
+
+Use `-BoundedPoll -IssueNumbers` when a small explicit issue list should be processed as one bounded foreground run:
+
+```powershell
+.\scripts\local_dispatcher_v1.ps1 -BoundedPoll -IssueNumbers <N>,<M>,<K> -PostResultComment
+```
+
+Multi-issue bounded behavior:
+
+- each issue is evaluated independently
+- each accepted child issue may receive exactly one issue-bound `LAWBRUNNER-RESULT`
+- one child issue does not authorize action on another child issue
+- BoundedPoll does not close child issues
+- close remains on the separate `CloseIssueOnce` approval rail
+
+The verified multi-issue smoke used `-IssueNumbers 96,97`. A negative smoke for more than three issues remains optional future hardening.
+
+## BoundedPoll Idempotency
+
+BoundedPoll is idempotent by request. If a matching `LAWBRUNNER-RESULT` already exists for the same `request_id`, the duplicate run fails closed:
+
+- it does not execute the action again
+- it does not post another result comment
+- it leaves commit, push, close, label, PR, merge, and approval state untouched
+
+Treat a duplicate/idempotency stop as successful safety behavior, not as a reason to retry with broader authority.
 
 ## Marker Examples
 
@@ -123,6 +190,19 @@ LAWBRUNNER-RESULT protocol=lawb.runner_result.v1
 
 The marker line is followed immediately by parseable JSON. Consumers should not need Markdown fence parsing to recover the result.
 
+Example `LAWBRUNNER-DRYRUN` interpretation:
+
+- accepted means the marker would be eligible for the real bounded path if the operator chooses to run it
+- rejected means the real bounded path must not be run until the marker issue is corrected
+- dry-run output is local validation evidence, not a GitHub audit comment and not an approval token
+
+Example `LAWBRUNNER-RESULT` interpretation:
+
+- `result = success` means the allowed action completed inside the bounded dispatcher contract
+- `request_id` identifies the accepted request for idempotency checks
+- `safety` records that no commit, push, close, label, PR, merge, or approval chaining occurred
+- `next_recommended_action = chatgpt_review` means a human or ChatGPT should review the result before any separate approval-gated step
+
 ## Success Criteria
 
 A successful Lv4.5 run has all of the following:
@@ -141,6 +221,24 @@ A successful Lv4.5 run has all of the following:
 - `next_recommended_action` present
 
 If the dispatcher prints a result locally but `-PostResultComment` was not supplied, the user should relay the relevant result to ChatGPT manually.
+
+A successful Lv5-safe dry-run has all of the following:
+
+- explicit issue scope
+- visible accepted or rejected decision
+- no dispatch action execution
+- no GitHub result comment
+- no commit, push, issue close, label edit, PR, merge, or approval chaining
+
+A successful Lv5-safe real bounded run has all of the following:
+
+- explicit issue scope or explicit issue list
+- only `maybe-status-check` executed
+- one `LAWBRUNNER-RESULT` per accepted request when `-PostResultComment` is supplied
+- duplicate matching `request_id` runs fail closed without action replay
+- issues remain open
+- repo remains clean
+- no commit, push, label edit, PR, merge, force-push, or approval chaining
 
 ## Failure Handling
 
@@ -187,6 +285,19 @@ Lv4.5 safety rules:
 
 The dispatcher result comment is an audit/reporting bridge. It is not an approval token.
 
+Lv5-safe adds these bounded polling rules:
+
+- every run is manually started in the foreground
+- every run has explicit issue scope through `-IssueNumber` or `-IssueNumbers`
+- dry-run must not execute actions or post result comments
+- real bounded mode is limited to `maybe-status-check`
+- result comments are issue-bound and request-bound
+- duplicate matching results must stop action replay
+- child issues remain open after bounded polling
+- `CloseIssueOnce` remains the close approval rail
+
+Commit, push, close, labels, PRs, merges, force-push, approval consumption, and approval chaining remain outside BoundedPoll because they are state-changing approval-gated operations. Keeping them separate preserves preview-before-approve review and prevents a status/result comment from becoming an implicit approval.
+
 ## Recommended Intelligence Setting
 
 Use the actual Codex intelligence labels as displayed in the UI:
@@ -211,11 +322,11 @@ Do not replace these labels with question marks. The required codepoints are:
 
 ## Boundaries Before Lv5
 
-Lv5 / background watcher behavior is intentionally deferred.
+Full Lv5 / background watcher behavior is intentionally deferred.
 
-For the proposed bounded, foreground polling design after the Lv5-lite trial, see [Lv5-Safe Bounded Polling Design](LV5_SAFE_DESIGN.md). That document is design-only and does not change the current Lv4.5 operating authority.
+For the bounded, foreground polling design after the Lv5-lite trial, see [Lv5-Safe Bounded Polling Design](LV5_SAFE_DESIGN.md). The design has now been exercised through the completed #89 through #97 smoke path for dry-run, single-issue, duplicate/idempotency, and two-child multi-issue behavior.
 
-Do not treat Lv4.5 as permission to add:
+Do not treat Lv4.5 or Lv5-safe BoundedPoll as permission to add:
 
 - always-on polling
 - background schedulers
@@ -226,6 +337,8 @@ Do not treat Lv4.5 as permission to add:
 - multi-step action chaining
 
 Lv4.5 is complete when the manual dispatch bridge can safely carry one bounded request, one bounded local action, and one structured result back to the same issue for review.
+
+Background watcher and always-on polling remain unimplemented because the verified need is bounded foreground review, not unattended automation. Adding a watcher would introduce lifecycle, retry, stop, scheduling, and approval-boundary questions that require separate explicit design approval.
 
 ## Runner Capability
 
