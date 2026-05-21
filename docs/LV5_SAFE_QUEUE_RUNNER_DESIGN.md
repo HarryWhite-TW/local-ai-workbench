@@ -14,7 +14,7 @@ Expected workflow:
 4. The queue stops when a task node is complete, an important decision appears, risk increases, quota or rate-limit occurs, or any abnormal state is detected.
 5. High-risk steps still require explicit user approval outside the queue.
 
-This document is design-only. It does not authorize Queue Runner implementation, runner code changes, dispatcher code changes, test changes, background watcher implementation, always-on polling, automatic commit, automatic push, issue close, label edits, PR creation, merge, approval chaining, or approval token consumption.
+This document now covers the implemented dry-run queue validator slice. That slice validates a local queue definition and emits a single review packet only. It does not authorize Queue Runner task execution, dispatcher code changes, background watcher implementation, always-on polling, automatic commit, automatic push, issue close, label edits, PR creation, merge, approval chaining, or approval token consumption.
 
 ## Relationship To Existing Rails
 
@@ -101,6 +101,7 @@ A queue definition should be explicit and bounded before execution starts.
 
 Recommended fields:
 
+- `schema`: currently `lawb.queue_definition.v1`
 - `queue_id`: operator-provided or generated id for the run
 - `repo`: expected owner/name, currently `HarryWhite-TW/local-ai-workbench`
 - `parent_issue`: GitHub issue that authorized the queue
@@ -122,6 +123,40 @@ Each task node should include:
 - `approved_changed_files`, when writes are allowed
 
 The queue must not infer extra tasks from natural language once execution begins. If the next needed step is not in the approved queue, the queue stops and reports that a new decision is required.
+
+## Implemented Dry-Run Validator
+
+The first implementation slice is a foreground, manually started dry-run validator:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -DryRunQueue -QueueFile <path>
+```
+
+The queue file is local JSON using `schema = "lawb.queue_definition.v1"`. The validator reads the explicit queue, validates required fields, repo, branch, `HEAD`, task count, risk levels, and supported dry-run planning actions, then emits one `QUEUE-RUNNER-RESULT` packet.
+
+Dry-run behavior:
+
+- does not execute task actions
+- does not run `PollOnce`
+- does not run `BoundedPoll`
+- does not run `PushOnce`
+- does not run `CloseIssueOnce`
+- does not run runner v1
+- does not call Codex
+- does not stage, commit, push, close issues, label, create PRs, merge, consume approvals, or chain approvals
+
+Supported dry-run planning actions are intentionally narrow:
+
+- `read-only-audit`
+- `git-status`
+- `marker-readback`
+- `dry-run-bounded-poll`
+- `maybe-status-check`
+- `runner-result-verification`
+- `final-read-only-audit`
+- `run-reviewbundle`
+
+Unsupported actions fail closed. High-risk task definitions are accepted as definitions, but they become stop gates in the dry-run plan with `risk_gate = "high_risk_user_approval"` and no execution.
 
 ## Stop Rules
 
@@ -186,7 +221,7 @@ Approval must be specific to the operation and current state. A queue approval d
 
 ## Queue Result Format
 
-Future implementations should emit a machine-readable result with this marker:
+Implementations emit a machine-readable result with this marker:
 
 ```text
 QUEUE-RUNNER-RESULT protocol=lawb.queue_runner_result.v1
@@ -205,13 +240,17 @@ Recommended shape:
   "branch": "master",
   "head": "<sha>",
   "result": "success | stopped | failed",
-  "completed_tasks": [
+  "planned_tasks": [
     {
       "task_id": "<task-id>",
+      "description": "<short-description>",
       "risk_level": "low",
-      "action": "<action>",
-      "result": "success",
-      "summary": "<short-summary>"
+      "allowed_action": "<action>",
+      "expected_inputs": [],
+      "expected_outputs": [],
+      "stop_after_completion": false,
+      "approved_changed_files": [],
+      "planned_result": "not_executed_dry_run"
     }
   ],
   "skipped_tasks": [
@@ -248,6 +287,7 @@ Recommended shape:
     "bounded_task_count": true,
     "bounded_runtime": true,
     "no_background_watcher": true,
+    "no_task_execution": true,
     "no_stage": true,
     "no_commit": true,
     "no_push": true,
@@ -287,8 +327,8 @@ Every Queue Runner design and future implementation slice must preserve these in
 Potential future work should be split into small reviewable issues:
 
 1. Docs-only Queue Runner design. This document.
-2. Dry-run queue validator that reads a local queue definition and prints the planned task sequence only.
-3. Queue result formatter that emits `QUEUE-RUNNER-RESULT` locally without executing tasks.
+2. Dry-run queue validator that reads a local queue definition and prints the planned task sequence only. Implemented as `-DryRunQueue -QueueFile <path>`.
+3. Queue result formatter that emits `QUEUE-RUNNER-RESULT` locally without executing tasks. Implemented with the dry-run validator.
 4. Low-risk queue execution for read-only audit and status checks only.
 5. Medium-risk ReviewBundle handoff that stops after producing the review artifact.
 

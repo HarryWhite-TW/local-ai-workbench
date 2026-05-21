@@ -141,6 +141,24 @@ BoundedPoll is idempotent by request. If a matching `LAWBRUNNER-RESULT` already 
 
 Treat a duplicate/idempotency stop as successful safety behavior, not as a reason to retry with broader authority.
 
+## Lv5-Safe Queue Dry-Run Usage
+
+The Queue Runner dry-run validator is a separate foreground planning check above BoundedPoll. It validates one explicit local queue definition and emits one compact review packet for ChatGPT or human inspection:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -DryRunQueue -QueueFile <path>
+```
+
+DryRunQueue does not execute queue tasks, run `PollOnce`, run `BoundedPoll`, run `PushOnce`, run `CloseIssueOnce`, run runner v1, call Codex, stage, commit, push, close issues, label, create PRs, merge, consume approvals, or chain approvals. A high-risk task in the queue is a stop gate, not an executable step.
+
+The emitted packet starts with:
+
+```text
+QUEUE-RUNNER-RESULT protocol=lawb.queue_runner_result.v1
+```
+
+The marker line is followed immediately by parseable JSON. The result is a review artifact only; it is not an approval token and must not trigger follow-on actions by itself.
+
 ## Marker Examples
 
 Example `CHATGPT-DISPATCH` marker:
