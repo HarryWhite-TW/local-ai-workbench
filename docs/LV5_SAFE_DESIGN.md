@@ -10,6 +10,8 @@ This document is the Lv5-safe design and boundary record. It does not authorize 
 
 For the operator-facing SOP after the completed #89 through #97 smoke path, see [Lv4.5 Operating SOP](LV45_OPERATING_SOP.md). That SOP documents the verified `-DryRunBoundedPoll`, single-issue `-BoundedPoll -IssueNumber`, duplicate/idempotency, and multi-issue `-BoundedPoll -IssueNumbers` usage.
 
+For the future workflow layer after completed BoundedPoll, see [Lv5-Safe Queue Runner Design](LV5_SAFE_QUEUE_RUNNER_DESIGN.md). That document is design-only and does not authorize queue execution, background watching, approval chaining, automatic commit, automatic push, or issue close.
+
 ## Baseline
 
 The current baseline is:
@@ -418,6 +420,7 @@ Implementation should be split into small reviewable steps:
 4. Duplicate/idempotency smoke covering existing matching `LAWBRUNNER-RESULT` by `request_id`. Completed in #94.
 5. Multi-issue bounded smoke covering explicit child issues. Completed in #95, #96, and #97.
 6. Optional future hardening, such as a negative smoke for more than three issues, time-window behavior, expiry, HEAD mismatch, existing result variants, and emergency stop.
+7. Future docs-only Queue Runner design for manually started bounded task queues after BoundedPoll. Tracked separately in [Lv5-Safe Queue Runner Design](LV5_SAFE_QUEUE_RUNNER_DESIGN.md).
 
 Each slice should have its own issue, review bundle, and verification notes. No slice should add commit, push, close, labels, PRs, merges, force-push, approval chaining, or background watcher behavior without separate explicit authorization.
 

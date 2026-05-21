@@ -326,6 +326,8 @@ Full Lv5 / background watcher behavior is intentionally deferred.
 
 For the bounded, foreground polling design after the Lv5-lite trial, see [Lv5-Safe Bounded Polling Design](LV5_SAFE_DESIGN.md). The design has now been exercised through the completed #89 through #97 smoke path for dry-run, single-issue, duplicate/idempotency, and two-child multi-issue behavior.
 
+For the future manually started queue layer after completed BoundedPoll, see [Lv5-Safe Queue Runner Design](LV5_SAFE_QUEUE_RUNNER_DESIGN.md). That design reduces repeated copy/paste across approved low-risk steps, but it still stops at risk gates and does not authorize queue execution, background watching, approval chaining, automatic commit, automatic push, or issue close.
+
 Do not treat Lv4.5 or Lv5-safe BoundedPoll as permission to add:
 
 - always-on polling
