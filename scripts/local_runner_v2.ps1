@@ -38,6 +38,10 @@ remote state, closes exactly that one issue, and reports the final state.
 In -DryRunQueue mode it reads one explicit local queue definition, validates the
 planned queue, emits a single QUEUE-RUNNER-RESULT packet, and exits without
 executing any queue task.
+In -RunQueue mode it reads one explicit local queue definition, validates the
+repo, branch, HEAD, dirty state, and task bounds, executes only approved
+low-risk read-only tasks in sequence, emits a single QUEUE-RUNNER-RESULT
+packet, and exits.
 
 .EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun
@@ -79,6 +83,9 @@ executing any queue task.
 .\scripts\local_runner_v2.ps1 -DryRunQueue -QueueFile .\queue.json
 
 .EXAMPLE
+.\scripts\local_runner_v2.ps1 -RunQueue -QueueFile .\queue.json
+
+.EXAMPLE
 .\scripts\local_runner_v2.ps1 -DryRun -Repo "HarryWhite-TW/local-ai-workbench" -MaxIssues 20
 #>
 
@@ -96,6 +103,7 @@ param(
     [switch]$PushOnce,
     [switch]$CloseIssueOnce,
     [switch]$DryRunQueue,
+    [switch]$RunQueue,
     [switch]$ApprovalStateDiagnostic,
     [int]$IssueNumber = 0,
     [string]$QueueFile = "",
@@ -184,15 +192,27 @@ $PushDryRunNoWriteGuarantee = "PushDryRun validates one current action=push-dryr
 $PushOnceSafetyBoundary = "PushOnce validates one current action=push-approved-once approval, re-runs PushDryRun-equivalent checks immediately before push, executes exactly one narrow non-force git push for the approved HEAD, and does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 $CloseIssueOnceSafetyBoundary = "CloseIssueOnce validates one current action=close-issue-approved-once approval on the explicitly selected issue, requires local HEAD, remote HEAD, and pushed to match the same approved commit, then closes exactly one selected open issue. It does not call Codex, run runner v1, modify files, stage files, commit, push, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 $DryRunQueueNoWriteGuarantee = "DryRunQueue validates one explicit local queue definition and emits one QUEUE-RUNNER-RESULT only. It does not execute queue tasks, run PollOnce, run BoundedPoll, run PushOnce, run CloseIssueOnce, call Codex, run runner v1, modify files, stage files, commit, push, close issues, edit labels, create PRs, merge, consume approvals, invoke external agents, run polling, run a daemon, or run a scheduler."
+$RunQueueSafetyBoundary = "RunQueue executes only explicitly listed low-risk read-only queue tasks. It does not run medium-risk or high-risk actions, run PollOnce, run BoundedPoll, run PushOnce, run CloseIssueOnce, call Codex, run runner v1, modify files, stage files, commit, push, close issues, edit labels, create PRs, merge, consume approvals, invoke external agents, run polling, run a daemon, or run a scheduler."
 $QueueSupportedActions = @(
     "read-only-audit",
     "git-status",
+    "branch-head-check",
+    "issue-state-check",
     "marker-readback",
     "dry-run-bounded-poll",
     "maybe-status-check",
     "runner-result-verification",
     "final-read-only-audit",
     "run-reviewbundle"
+)
+$QueueExecutableLowRiskActions = @(
+    "git-status",
+    "branch-head-check",
+    "issue-state-check",
+    "marker-readback",
+    "read-only-audit",
+    "runner-result-verification",
+    "final-read-only-audit"
 )
 
 function Invoke-ReadOnlyCommand {
@@ -606,22 +626,32 @@ function ConvertTo-QueueStringArray {
 }
 
 function New-QueueRunnerSafety {
-    return [ordered]@{
+    param(
+        [bool]$DryRun = $true
+    )
+
+    $safety = [ordered]@{
         foreground_manual_start = $true
         bounded_task_count = $true
         bounded_runtime = $true
         no_background_watcher = $true
-        no_task_execution = $true
-        no_stage = $true
-        no_commit = $true
-        no_push = $true
-        no_issue_close = $true
-        no_label = $true
-        no_pr = $true
-        no_merge = $true
-        no_approval_chaining = $true
-        no_approval_token_consumption = $true
     }
+
+    if ($DryRun) {
+        $safety["no_task_execution"] = $true
+    }
+
+    $safety["no_stage"] = $true
+    $safety["no_commit"] = $true
+    $safety["no_push"] = $true
+    $safety["no_issue_close"] = $true
+    $safety["no_label"] = $true
+    $safety["no_pr"] = $true
+    $safety["no_merge"] = $true
+    $safety["no_approval_chaining"] = $true
+    $safety["no_approval_token_consumption"] = $true
+
+    return $safety
 }
 
 function New-QueueValidationMap {
@@ -633,6 +663,7 @@ function New-QueueValidationMap {
         branch_match = (New-RunnerValidationResult -Status "not_run" -Summary "Branch was not validated yet.")
         head_match = (New-RunnerValidationResult -Status "not_run" -Summary "HEAD was not validated yet.")
         task_count = (New-RunnerValidationResult -Status "not_run" -Summary "Task count was not validated yet.")
+        git_status_scope = (New-RunnerValidationResult -Status "not_run" -Summary "Git dirty state was not validated yet.")
         task_schema = (New-RunnerValidationResult -Status "not_run" -Summary "Task schema was not validated yet.")
         actions_supported = (New-RunnerValidationResult -Status "not_run" -Summary "Task actions were not validated yet.")
         dry_run_no_execution = (New-RunnerValidationResult -Status "passed" -Summary "Dry-run validator does not execute task actions.")
@@ -654,7 +685,9 @@ function New-QueueRunnerResultJson {
         [Parameter(Mandatory = $true)]
         [ValidateSet("success", "stopped", "failed")]
         [string]$Result,
+        [bool]$DryRun = $true,
         [object[]]$PlannedTasks = @(),
+        [object[]]$CompletedTasks = @(),
         [object[]]$SkippedTasks = @(),
         [AllowNull()]
         [AllowEmptyString()]
@@ -680,8 +713,9 @@ function New-QueueRunnerResultJson {
         branch = if ([string]::IsNullOrWhiteSpace($Branch)) { $null } else { $Branch }
         head = if ([string]::IsNullOrWhiteSpace($Head)) { $null } else { $Head }
         result = $Result
-        dry_run = $true
+        dry_run = $DryRun
         planned_tasks = @($PlannedTasks)
+        completed_tasks = @($CompletedTasks)
         skipped_tasks = @($SkippedTasks)
         stopped_at_task = if ([string]::IsNullOrWhiteSpace($StoppedAtTask)) { $null } else { $StoppedAtTask }
         stop_reason = if ([string]::IsNullOrWhiteSpace($StopReason)) { $null } else { $StopReason }
@@ -689,7 +723,7 @@ function New-QueueRunnerResultJson {
         quota_or_rate_limit_detected = $QuotaOrRateLimitDetected
         changed_files = @($ChangedFiles)
         validations = $Validations
-        safety = (New-QueueRunnerSafety)
+        safety = (New-QueueRunnerSafety -DryRun $DryRun)
         next_recommended_action = $NextRecommendedAction
     }
 
@@ -741,6 +775,137 @@ function New-QueueSkippedTask {
     return [ordered]@{
         task_id = $taskId
         reason = $Reason
+    }
+}
+
+function New-QueueCompletedTask {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Task,
+        [Parameter(Mandatory = $true)]
+        [string]$Summary
+    )
+
+    return [ordered]@{
+        task_id = (Get-QueuePropertyText -Object $Task -PropertyName "task_id")
+        risk_level = (Get-QueuePropertyText -Object $Task -PropertyName "risk_level")
+        allowed_action = (Get-QueuePropertyText -Object $Task -PropertyName "allowed_action")
+        result = "completed"
+        summary = $Summary
+    }
+}
+
+function Test-QueueDirtyStateAllowed {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Queue,
+        [string[]]$ChangedFiles = @()
+    )
+
+    if ($ChangedFiles.Count -eq 0) {
+        return [pscustomobject]@{
+            Allowed = $true
+            Summary = "Git status is clean."
+        }
+    }
+
+    $allowDirtyText = Get-QueuePropertyText -Object $Queue -PropertyName "allow_dirty"
+    if ($allowDirtyText -eq "True" -or $allowDirtyText -eq "true") {
+        return [pscustomobject]@{
+            Allowed = $true
+            Summary = "Queue explicitly allowed dirty state with allow_dirty=true. Changed file(s): $($ChangedFiles -join ', ')."
+        }
+    }
+
+    $allowedDirtyFiles = @(ConvertTo-QueueStringArray -Value (Get-QueuePropertyValue -Object $Queue -PropertyName "allowed_dirty_files"))
+    if ($allowedDirtyFiles.Count -gt 0) {
+        $unexpected = @($ChangedFiles | Where-Object { $allowedDirtyFiles -notcontains $_ })
+        if ($unexpected.Count -eq 0) {
+            return [pscustomobject]@{
+                Allowed = $true
+                Summary = "Changed files matched allowed_dirty_files."
+            }
+        }
+
+        return [pscustomobject]@{
+            Allowed = $false
+            Summary = "Unexpected dirty file(s): $($unexpected -join ', '). Allowed dirty file(s): $($allowedDirtyFiles -join ', ')."
+        }
+    }
+
+    return [pscustomobject]@{
+        Allowed = $false
+        Summary = "Unexpected dirty state. Queue must set allow_dirty=true or list allowed_dirty_files before read-only execution."
+    }
+}
+
+function Get-IssueStateForQueue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber
+    )
+
+    $readResult = Get-IssueApprovalMarkerReadResult -IssueNumber $IssueNumber
+    return $readResult.IssueState
+}
+
+function Invoke-LowRiskQueueTask {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Task,
+        [Parameter(Mandatory = $true)]
+        [object]$Queue
+    )
+
+    $action = Get-QueuePropertyText -Object $Task -PropertyName "allowed_action"
+    switch ($action) {
+        "git-status" {
+            $status = Get-GitStatusShort
+            if ([string]::IsNullOrWhiteSpace($status)) {
+                return "git status --short is clean."
+            }
+            return "git status --short reported $(@(Get-StatusLines -Status $status).Count) line(s)."
+        }
+        "branch-head-check" {
+            $currentBranch = Get-CurrentBranch
+            $currentHead = Get-CurrentFullHead
+            $queueBranch = Get-QueuePropertyText -Object $Queue -PropertyName "branch"
+            $queueHead = Get-QueuePropertyText -Object $Queue -PropertyName "head"
+            if ($currentBranch -ne $queueBranch -or $currentHead -ne $queueHead) {
+                throw "branch-head-check mismatch: current branch/head $currentBranch/$currentHead did not match queue $queueBranch/$queueHead."
+            }
+            return "Current branch and HEAD match the queue definition."
+        }
+        "issue-state-check" {
+            $parentIssueText = Get-QueuePropertyText -Object $Queue -PropertyName "parent_issue"
+            $parentIssue = 0
+            if (-not [int]::TryParse($parentIssueText, [ref]$parentIssue) -or $parentIssue -lt 1) {
+                throw "issue-state-check requires a positive parent_issue."
+            }
+            $state = Get-IssueStateForQueue -IssueNumber $parentIssue
+            return "Issue #$parentIssue state is $state."
+        }
+        "marker-readback" {
+            return "Queue marker readback completed for queue_id=$(Get-QueuePropertyText -Object $Queue -PropertyName "queue_id")."
+        }
+        "read-only-audit" {
+            $status = Get-GitStatusShort
+            $paths = @(Get-StatusPaths -Status $status)
+            return "Read-only audit completed with $($paths.Count) changed file(s)."
+        }
+        "runner-result-verification" {
+            return "Runner result verification completed locally for queue_id=$(Get-QueuePropertyText -Object $Queue -PropertyName "queue_id")."
+        }
+        "final-read-only-audit" {
+            $status = Get-GitStatusShort
+            if ([string]::IsNullOrWhiteSpace($status)) {
+                return "Final read-only audit completed; git status is clean."
+            }
+            return "Final read-only audit completed; git status has $(@(Get-StatusLines -Status $status).Count) line(s)."
+        }
+        default {
+            throw "Unsupported low-risk queue action: $action"
+        }
     }
 }
 
@@ -973,6 +1138,285 @@ function Invoke-DryRunQueue {
         -Head $head `
         -Result $result `
         -PlannedTasks $plannedTasks `
+        -SkippedTasks $skippedTasks `
+        -StoppedAtTask $stoppedAtTask `
+        -StopReason $stopReason `
+        -RiskGate $riskGate `
+        -QuotaOrRateLimitDetected $false `
+        -ChangedFiles $changedFiles `
+        -Validations $validations)
+}
+
+function Invoke-RunQueue {
+    if ([string]::IsNullOrWhiteSpace($QueueFile)) {
+        throw "RunQueue requires -QueueFile <path>."
+    }
+
+    Assert-RepoRoot
+    $validations = New-QueueValidationMap
+    $validations["dry_run_no_execution"] = New-RunnerValidationResult -Status "not_run" -Summary "RunQueue executes approved low-risk read-only tasks."
+    $queue = $null
+    $queueId = ""
+    $parentIssue = $null
+    $queueRepo = $Repo
+    $branch = ""
+    $head = ""
+    $plannedTasks = @()
+    $completedTasks = @()
+    $skippedTasks = @()
+    $stoppedAtTask = $null
+    $stopReason = $null
+    $riskGate = "none"
+    $result = "success"
+    $changedFiles = @()
+
+    try {
+        $resolvedQueueFile = Resolve-Path -LiteralPath $QueueFile -ErrorAction Stop
+        $queueText = Get-Content -LiteralPath $resolvedQueueFile.ProviderPath -Raw -ErrorAction Stop
+        $validations["queue_file_readable"] = New-RunnerValidationResult -Status "passed" -Summary "Queue file was read from $($resolvedQueueFile.ProviderPath)."
+    }
+    catch {
+        $validations["queue_file_readable"] = New-RunnerValidationResult -Status "failed" -Summary "Queue file could not be read: $($_.Exception.Message)"
+        $validations["queue_json_parseable"] = New-RunnerValidationResult -Status "failed" -Summary "Queue JSON was not parsed because the file was unreadable."
+        Write-QueueRunnerResult -Json (New-QueueRunnerResultJson -QueueRepo $queueRepo -Result "failed" -DryRun $false -RiskGate $riskGate -StopReason "malformed_queue_definition" -ChangedFiles $changedFiles -Validations $validations)
+        return
+    }
+
+    try {
+        $queue = $queueText | ConvertFrom-Json -ErrorAction Stop
+        $validations["queue_json_parseable"] = New-RunnerValidationResult -Status "passed" -Summary "Queue file contained parseable JSON."
+    }
+    catch {
+        $validations["queue_json_parseable"] = New-RunnerValidationResult -Status "failed" -Summary "Queue file did not contain parseable JSON: $($_.Exception.Message)"
+        Write-QueueRunnerResult -Json (New-QueueRunnerResultJson -QueueRepo $queueRepo -Result "failed" -DryRun $false -RiskGate $riskGate -StopReason "malformed_queue_definition" -ChangedFiles $changedFiles -Validations $validations)
+        return
+    }
+
+    $queueId = Get-QueuePropertyText -Object $queue -PropertyName "queue_id"
+    $queueRepo = Get-QueuePropertyText -Object $queue -PropertyName "repo"
+    $branch = Get-QueuePropertyText -Object $queue -PropertyName "branch"
+    $head = Get-QueuePropertyText -Object $queue -PropertyName "head"
+    $parentIssueText = Get-QueuePropertyText -Object $queue -PropertyName "parent_issue"
+    if (-not [string]::IsNullOrWhiteSpace($parentIssueText)) {
+        $parsedParentIssue = 0
+        if ([int]::TryParse($parentIssueText, [ref]$parsedParentIssue)) {
+            $parentIssue = $parsedParentIssue
+        }
+    }
+
+    $requiredQueueFields = @("schema", "queue_id", "repo", "parent_issue", "branch", "head", "max_codex_tasks_per_batch", "max_runtime_minutes", "tasks")
+    $missingFields = @($requiredQueueFields | Where-Object {
+        if (-not (Test-QueuePropertyPresent -Object $queue -PropertyName $_)) { return $true }
+        $fieldValue = Get-QueuePropertyValue -Object $queue -PropertyName $_
+        if ($null -eq $fieldValue) { return $true }
+        if ($fieldValue -is [string] -and [string]::IsNullOrWhiteSpace($fieldValue)) { return $true }
+        return $false
+    })
+    if ($missingFields.Count -gt 0) {
+        $validations["required_fields"] = New-RunnerValidationResult -Status "failed" -Summary "Missing required queue field(s): $($missingFields -join ', ')."
+        Write-QueueRunnerResult -Json (New-QueueRunnerResultJson -QueueId $queueId -ParentIssue $parentIssue -QueueRepo $queueRepo -Branch $branch -Head $head -Result "failed" -DryRun $false -RiskGate $riskGate -StopReason "missing_required_field" -ChangedFiles $changedFiles -Validations $validations)
+        return
+    }
+    $validations["required_fields"] = New-RunnerValidationResult -Status "passed" -Summary "All required queue fields are present."
+
+    $queueSchema = Get-QueuePropertyText -Object $queue -PropertyName "schema"
+    if ($queueSchema -ne $QueueDefinitionProtocol) {
+        $validations["required_fields"] = New-RunnerValidationResult -Status "failed" -Summary "Queue schema must be $QueueDefinitionProtocol."
+        Write-QueueRunnerResult -Json (New-QueueRunnerResultJson -QueueId $queueId -ParentIssue $parentIssue -QueueRepo $queueRepo -Branch $branch -Head $head -Result "failed" -DryRun $false -RiskGate $riskGate -StopReason "malformed_queue_definition" -ChangedFiles $changedFiles -Validations $validations)
+        return
+    }
+
+    $currentBranch = Get-CurrentBranch
+    $currentHead = Get-CurrentFullHead
+    $statusText = Get-GitStatusShort
+    $changedFiles = @(Get-StatusLines -Status $statusText | ForEach-Object { Get-StatusPath -Line $_ } | Sort-Object -Unique)
+
+    if ($queueRepo -ne $ExpectedApprovalRepo) {
+        $validations["repo_match"] = New-RunnerValidationResult -Status "failed" -Summary "Queue repo '$queueRepo' did not match expected repo '$ExpectedApprovalRepo'."
+        $result = "failed"
+        $stopReason = "repo_branch_head_mismatch"
+    }
+    else {
+        $validations["repo_match"] = New-RunnerValidationResult -Status "passed" -Summary "Queue repo matched expected repo."
+    }
+
+    if ($branch -ne $currentBranch) {
+        $validations["branch_match"] = New-RunnerValidationResult -Status "failed" -Summary "Queue branch '$branch' did not match current branch '$currentBranch'."
+        $result = "failed"
+        $stopReason = "repo_branch_head_mismatch"
+    }
+    else {
+        $validations["branch_match"] = New-RunnerValidationResult -Status "passed" -Summary "Queue branch matched current branch."
+    }
+
+    if ($head -ne $currentHead) {
+        $validations["head_match"] = New-RunnerValidationResult -Status "failed" -Summary "Queue HEAD did not match current HEAD."
+        $result = "failed"
+        $stopReason = "repo_branch_head_mismatch"
+    }
+    else {
+        $validations["head_match"] = New-RunnerValidationResult -Status "passed" -Summary "Queue HEAD matched current HEAD."
+    }
+
+    $dirtyState = Test-QueueDirtyStateAllowed -Queue $queue -ChangedFiles $changedFiles
+    if ($dirtyState.Allowed) {
+        $validations["git_status_scope"] = New-RunnerValidationResult -Status "passed" -Summary $dirtyState.Summary
+    }
+    else {
+        $validations["git_status_scope"] = New-RunnerValidationResult -Status "failed" -Summary $dirtyState.Summary
+        $result = "failed"
+        if ($null -eq $stopReason) {
+            $stopReason = "unexpected_git_dirty_state"
+        }
+    }
+
+    $tasksValue = Get-QueuePropertyValue -Object $queue -PropertyName "tasks"
+    $tasks = @($tasksValue)
+    $maxTasks = 0
+    $maxRuntimeMinutes = 0
+    $maxTasksValid = [int]::TryParse((Get-QueuePropertyText -Object $queue -PropertyName "max_codex_tasks_per_batch"), [ref]$maxTasks)
+    $maxRuntimeValid = [int]::TryParse((Get-QueuePropertyText -Object $queue -PropertyName "max_runtime_minutes"), [ref]$maxRuntimeMinutes)
+
+    if (-not $maxTasksValid -or $maxTasks -lt 1 -or -not $maxRuntimeValid -or $maxRuntimeMinutes -lt 1) {
+        $validations["task_count"] = New-RunnerValidationResult -Status "failed" -Summary "max_codex_tasks_per_batch and max_runtime_minutes must both be positive integers."
+        $result = "failed"
+        if ($null -eq $stopReason) { $stopReason = "malformed_queue_definition" }
+    }
+    elseif ($tasks.Count -gt $maxTasks) {
+        $validations["task_count"] = New-RunnerValidationResult -Status "failed" -Summary "Queue has $($tasks.Count) task(s), exceeding max_codex_tasks_per_batch=$maxTasks."
+        $result = "failed"
+        if ($null -eq $stopReason) { $stopReason = "task_count_exceeds_max_codex_tasks_per_batch" }
+    }
+    else {
+        $validations["task_count"] = New-RunnerValidationResult -Status "passed" -Summary "Queue has $($tasks.Count) task(s), within max_codex_tasks_per_batch=$maxTasks."
+    }
+
+    $requiredTaskFields = @("task_id", "description", "risk_level", "allowed_action", "expected_inputs", "expected_outputs", "stop_after_completion")
+    $taskSchemaFailures = @()
+    $unsupportedActions = @()
+    $allowedRiskLevels = @("low", "medium", "high")
+    foreach ($task in $tasks) {
+        $taskId = Get-QueuePropertyText -Object $task -PropertyName "task_id"
+        if ([string]::IsNullOrWhiteSpace($taskId)) { $taskId = "(missing)" }
+        $missingTaskFields = @($requiredTaskFields | Where-Object { -not (Test-QueuePropertyPresent -Object $task -PropertyName $_) })
+        if ($missingTaskFields.Count -gt 0) {
+            $taskSchemaFailures += "$taskId missing $($missingTaskFields -join ', ')"
+            continue
+        }
+        $riskLevel = Get-QueuePropertyText -Object $task -PropertyName "risk_level"
+        if ($allowedRiskLevels -notcontains $riskLevel) {
+            $taskSchemaFailures += "$taskId has invalid risk_level '$riskLevel'"
+            continue
+        }
+        $allowedAction = Get-QueuePropertyText -Object $task -PropertyName "allowed_action"
+        if ($riskLevel -eq "low" -and $QueueExecutableLowRiskActions -notcontains $allowedAction) {
+            $unsupportedActions += "$taskId action '$allowedAction'"
+        }
+    }
+
+    if ($taskSchemaFailures.Count -gt 0) {
+        $validations["task_schema"] = New-RunnerValidationResult -Status "failed" -Summary "Task schema validation failed: $($taskSchemaFailures -join '; ')."
+        $result = "failed"
+        if ($null -eq $stopReason) { $stopReason = "malformed_queue_definition" }
+    }
+    else {
+        $validations["task_schema"] = New-RunnerValidationResult -Status "passed" -Summary "All task definitions include required fields and valid risk levels."
+    }
+
+    if ($unsupportedActions.Count -gt 0) {
+        $validations["actions_supported"] = New-RunnerValidationResult -Status "failed" -Summary "Unsupported low-risk queue action(s): $($unsupportedActions -join '; ')."
+        $result = "failed"
+        if ($null -eq $stopReason) { $stopReason = "unsupported_action" }
+    }
+    else {
+        $validations["actions_supported"] = New-RunnerValidationResult -Status "passed" -Summary "All executable low-risk queue actions are supported."
+    }
+
+    if ($result -eq "success") {
+        for ($index = 0; $index -lt $tasks.Count; $index++) {
+            $task = $tasks[$index]
+            $taskId = Get-QueuePropertyText -Object $task -PropertyName "task_id"
+            if ([string]::IsNullOrWhiteSpace($taskId)) { $taskId = "task_index_$index" }
+            $riskLevel = Get-QueuePropertyText -Object $task -PropertyName "risk_level"
+            $allowedAction = Get-QueuePropertyText -Object $task -PropertyName "allowed_action"
+
+            if ($riskLevel -eq "medium") {
+                $result = "stopped"
+                $stoppedAtTask = $taskId
+                $stopReason = "medium_risk_task_reached"
+                $riskGate = "medium_review"
+                $skippedTasks += (New-QueueSkippedTask -Task $task -Reason "medium_risk_stop_gate")
+                break
+            }
+
+            if ($riskLevel -eq "high") {
+                $result = "stopped"
+                $stoppedAtTask = $taskId
+                $stopReason = "high_risk_task_reached"
+                $riskGate = "high_risk_user_approval"
+                $skippedTasks += (New-QueueSkippedTask -Task $task -Reason "high_risk_stop_gate")
+                break
+            }
+
+            if ($QueueExecutableLowRiskActions -notcontains $allowedAction) {
+                $result = "failed"
+                $stoppedAtTask = $taskId
+                $stopReason = "unsupported_action"
+                $skippedTasks += (New-QueueSkippedTask -Task $task -Reason "unsupported_action")
+                break
+            }
+
+            try {
+                $summary = Invoke-LowRiskQueueTask -Task $task -Queue $queue
+                $completedTasks += (New-QueueCompletedTask -Task $task -Summary $summary)
+            }
+            catch {
+                $result = "failed"
+                $stoppedAtTask = $taskId
+                $stopReason = "read_only_task_failed"
+                $skippedTasks += (New-QueueSkippedTask -Task $task -Reason "read_only_task_failed")
+                $validations["actions_supported"] = New-RunnerValidationResult -Status "failed" -Summary "Read-only task '$taskId' failed: $($_.Exception.Message)"
+                break
+            }
+
+            if ([bool](Get-QueuePropertyValue -Object $task -PropertyName "stop_after_completion")) {
+                $result = "stopped"
+                $stoppedAtTask = $taskId
+                $stopReason = "stop_after_completion"
+                break
+            }
+        }
+    }
+    else {
+        for ($index = 0; $index -lt $tasks.Count; $index++) {
+            $task = $tasks[$index]
+            $taskId = Get-QueuePropertyText -Object $task -PropertyName "task_id"
+            if ([string]::IsNullOrWhiteSpace($taskId)) { $taskId = "task_index_$index" }
+            if ($null -eq $stoppedAtTask -and $stopReason -eq "unsupported_action") {
+                $allowedAction = Get-QueuePropertyText -Object $task -PropertyName "allowed_action"
+                if ($QueueExecutableLowRiskActions -notcontains $allowedAction) {
+                    $stoppedAtTask = $taskId
+                    $skippedTasks += (New-QueueSkippedTask -Task $task -Reason "unsupported_action")
+                    break
+                }
+            }
+        }
+    }
+
+    Write-Host "$RunnerName $RunnerVersion"
+    Write-Host "Mode: RunQueue"
+    Write-Host "Queue file: $QueueFile"
+    Write-Host "Safety boundary: $RunQueueSafetyBoundary"
+    Write-QueueRunnerResult -Json (New-QueueRunnerResultJson `
+        -QueueId $queueId `
+        -ParentIssue $parentIssue `
+        -QueueRepo $queueRepo `
+        -Branch $branch `
+        -Head $head `
+        -Result $result `
+        -DryRun $false `
+        -PlannedTasks $plannedTasks `
+        -CompletedTasks $completedTasks `
         -SkippedTasks $skippedTasks `
         -StoppedAtTask $stoppedAtTask `
         -StopReason $stopReason `
@@ -3829,12 +4273,15 @@ try {
     if ($DryRunQueue) {
         $selectedModes += "DryRunQueue"
     }
+    if ($RunQueue) {
+        $selectedModes += "RunQueue"
+    }
     if ($ApprovalStateDiagnostic) {
         $selectedModes += "ApprovalStateDiagnostic"
     }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, .\scripts\local_runner_v2.ps1 -ApprovalNextWatch, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce, .\scripts\local_runner_v2.ps1 -PushDryRun, .\scripts\local_runner_v2.ps1 -PushOnce, .\scripts\local_runner_v2.ps1 -CloseIssueOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -DryRunQueue -QueueFile <path>, or .\scripts\local_runner_v2.ps1 -ApprovalStateDiagnostic -IssueNumber <N>."
+        throw "Missing mode. Use: .\scripts\local_runner_v2.ps1 -DryRun, .\scripts\local_runner_v2.ps1 -RunOnce, .\scripts\local_runner_v2.ps1 -ApprovalDryRun -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -ApprovalNextDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextOnce, .\scripts\local_runner_v2.ps1 -ApprovalNextWatch, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitDryRun, .\scripts\local_runner_v2.ps1 -ApprovalNextCommitOnce, .\scripts\local_runner_v2.ps1 -PushDryRun, .\scripts\local_runner_v2.ps1 -PushOnce, .\scripts\local_runner_v2.ps1 -CloseIssueOnce -IssueNumber <N>, .\scripts\local_runner_v2.ps1 -DryRunQueue -QueueFile <path>, .\scripts\local_runner_v2.ps1 -RunQueue -QueueFile <path>, or .\scripts\local_runner_v2.ps1 -ApprovalStateDiagnostic -IssueNumber <N>."
     }
 
     if ($selectedModes.Count -gt 1) {
@@ -3859,6 +4306,10 @@ try {
 
     if ($DryRunQueue -and [string]::IsNullOrWhiteSpace($QueueFile)) {
         throw "DryRunQueue requires -QueueFile <path>."
+    }
+
+    if ($RunQueue -and [string]::IsNullOrWhiteSpace($QueueFile)) {
+        throw "RunQueue requires -QueueFile <path>."
     }
 
     if ($DryRun) {
@@ -3899,6 +4350,9 @@ try {
     }
     elseif ($DryRunQueue) {
         Invoke-DryRunQueue
+    }
+    elseif ($RunQueue) {
+        Invoke-RunQueue
     }
     else {
         Invoke-ApprovalStateDiagnostic

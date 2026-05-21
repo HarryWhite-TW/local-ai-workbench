@@ -159,6 +159,28 @@ QUEUE-RUNNER-RESULT protocol=lawb.queue_runner_result.v1
 
 The marker line is followed immediately by parseable JSON. The result is a review artifact only; it is not an approval token and must not trigger follow-on actions by itself.
 
+## Lv5-Safe Low-Risk Queue Usage
+
+The low-risk Queue Runner is a foreground, manually started execution mode for approved read-only tasks only:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -RunQueue -QueueFile <path>
+```
+
+Supported low-risk actions are:
+
+- `git-status`
+- `branch-head-check`
+- `issue-state-check`
+- `marker-readback`
+- `read-only-audit`
+- `runner-result-verification`
+- `final-read-only-audit`
+
+`RunQueue` validates the queue file, repo, branch, `HEAD`, task bounds, task schema, action allowlist, and git dirty state before executing low-risk tasks. If the repo is dirty, the queue stops unless the queue definition explicitly allows the current dirty state with `allow_dirty = true` or `allowed_dirty_files`.
+
+`RunQueue` stops before medium-risk and high-risk tasks. It emits one `QUEUE-RUNNER-RESULT` with `completed_tasks`, `skipped_tasks`, `stopped_at_task`, `stop_reason`, `risk_gate`, `validations`, `safety`, and `next_recommended_action`. It does not run `PollOnce`, `BoundedPoll`, `PushOnce`, `CloseIssueOnce`, runner v1, Codex, commit, push, issue close, labels, PRs, merges, approval consumption, or approval chaining.
+
 ## Marker Examples
 
 Example `CHATGPT-DISPATCH` marker:
@@ -344,7 +366,7 @@ Full Lv5 / background watcher behavior is intentionally deferred.
 
 For the bounded, foreground polling design after the Lv5-lite trial, see [Lv5-Safe Bounded Polling Design](LV5_SAFE_DESIGN.md). The design has now been exercised through the completed #89 through #97 smoke path for dry-run, single-issue, duplicate/idempotency, and two-child multi-issue behavior.
 
-For the future manually started queue layer after completed BoundedPoll, see [Lv5-Safe Queue Runner Design](LV5_SAFE_QUEUE_RUNNER_DESIGN.md). That design reduces repeated copy/paste across approved low-risk steps, but it still stops at risk gates and does not authorize queue execution, background watching, approval chaining, automatic commit, automatic push, or issue close.
+For the manually started queue layer after completed BoundedPoll, see [Lv5-Safe Queue Runner Design](LV5_SAFE_QUEUE_RUNNER_DESIGN.md). That design reduces repeated copy/paste across approved low-risk steps, but it still stops at risk gates and does not authorize medium-risk queue execution, high-risk queue execution, background watching, approval chaining, automatic commit, automatic push, or issue close.
 
 Do not treat Lv4.5 or Lv5-safe BoundedPoll as permission to add:
 

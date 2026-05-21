@@ -14,7 +14,7 @@ Expected workflow:
 4. The queue stops when a task node is complete, an important decision appears, risk increases, quota or rate-limit occurs, or any abnormal state is detected.
 5. High-risk steps still require explicit user approval outside the queue.
 
-This document now covers the implemented dry-run queue validator slice. That slice validates a local queue definition and emits a single review packet only. It does not authorize Queue Runner task execution, dispatcher code changes, background watcher implementation, always-on polling, automatic commit, automatic push, issue close, label edits, PR creation, merge, approval chaining, or approval token consumption.
+This document now covers the implemented dry-run queue validator slice and the low-risk read-only queue execution slice. These slices validate a local queue definition and emit a single review packet. The execution slice can run only explicitly approved low-risk read-only tasks. It does not authorize medium-risk ReviewBundle execution, high-risk operations, dispatcher code changes, background watcher implementation, always-on polling, automatic commit, automatic push, issue close, label edits, PR creation, merge, approval chaining, or approval token consumption.
 
 ## Relationship To Existing Rails
 
@@ -124,7 +124,7 @@ Each task node should include:
 
 The queue must not infer extra tasks from natural language once execution begins. If the next needed step is not in the approved queue, the queue stops and reports that a new decision is required.
 
-## Implemented Dry-Run Validator
+## Implemented Queue Modes
 
 The first implementation slice is a foreground, manually started dry-run validator:
 
@@ -157,6 +157,26 @@ Supported dry-run planning actions are intentionally narrow:
 - `run-reviewbundle`
 
 Unsupported actions fail closed. High-risk task definitions are accepted as definitions, but they become stop gates in the dry-run plan with `risk_gate = "high_risk_user_approval"` and no execution.
+
+The second implementation slice is foreground low-risk read-only execution:
+
+```powershell
+.\scripts\local_runner_v2.ps1 -RunQueue -QueueFile <path>
+```
+
+`RunQueue` uses the same explicit local queue file, then validates repo, branch, `HEAD`, bounded task count, runtime bound, task schema, supported low-risk actions, and git dirty state before running any task. If git status is dirty, the queue fails closed unless the queue definition explicitly sets `allow_dirty = true` or lists every changed path in `allowed_dirty_files`.
+
+Supported low-risk execution actions are intentionally narrow:
+
+- `git-status`
+- `branch-head-check`
+- `issue-state-check`
+- `marker-readback`
+- `read-only-audit`
+- `runner-result-verification`
+- `final-read-only-audit`
+
+`RunQueue` stops before medium-risk and high-risk tasks. It does not run `ReviewBundle`, `PollOnce`, `BoundedPoll`, `PushOnce`, `CloseIssueOnce`, runner v1, Codex, commit, push, issue close, labels, PRs, merges, approval consumption, or approval chaining.
 
 ## Stop Rules
 
@@ -240,6 +260,15 @@ Recommended shape:
   "branch": "master",
   "head": "<sha>",
   "result": "success | stopped | failed",
+  "completed_tasks": [
+    {
+      "task_id": "<task-id>",
+      "risk_level": "low",
+      "allowed_action": "<action>",
+      "result": "completed",
+      "summary": "<compact-read-only-result>"
+    }
+  ],
   "planned_tasks": [
     {
       "task_id": "<task-id>",
@@ -304,6 +333,8 @@ Recommended shape:
 
 Allowed validation statuses should match the existing runner result convention where practical: `passed`, `failed`, `not_run`, `warning`, and `reported`.
 
+The `no_task_execution` safety flag is present for dry-run results. Real low-risk `RunQueue` results omit that flag because approved read-only tasks did execute; the write-safety flags remain true.
+
 The queue result is an audit artifact. It is not an approval token and must not trigger follow-on actions by itself.
 
 ## Safety Invariants
@@ -329,7 +360,7 @@ Potential future work should be split into small reviewable issues:
 1. Docs-only Queue Runner design. This document.
 2. Dry-run queue validator that reads a local queue definition and prints the planned task sequence only. Implemented as `-DryRunQueue -QueueFile <path>`.
 3. Queue result formatter that emits `QUEUE-RUNNER-RESULT` locally without executing tasks. Implemented with the dry-run validator.
-4. Low-risk queue execution for read-only audit and status checks only.
+4. Low-risk queue execution for read-only audit and status checks only. Implemented as `-RunQueue -QueueFile <path>`.
 5. Medium-risk ReviewBundle handoff that stops after producing the review artifact.
 
 No slice should add commit, push, close, labels, PRs, merges, force-push, approval consumption, approval chaining, background watcher behavior, runner code modification, dispatcher code modification, or test modification unless that exact slice is explicitly approved.
@@ -348,7 +379,7 @@ These decisions require separate approval before implementation:
 - whether compact summary updates are local-only or GitHub-visible
 - exact behavior for partial success when one task completes and the next task stops
 
-Until those decisions are approved, the Queue Runner remains a design target only.
+Until those decisions are approved, the Queue Runner remains limited to local dry-run validation and low-risk read-only execution only.
 
 ## Runner Capability
 
@@ -356,4 +387,4 @@ Until those decisions are approved, the Queue Runner remains a design target onl
 review-bundle
 ```
 
-This design is review-bundle capable for docs-only Lv5-safe Queue Runner design documentation. It does not authorize stage, commit, push, issue close, labels, PRs, merges, force push, `PushOnce`, `CloseIssueOnce`, dispatcher `PollOnce`, `BoundedPoll`, approval chaining, background watcher implementation, always-on polling, queue execution, runner code changes, dispatcher code changes, test changes, or feature implementation.
+This design is review-bundle capable for Lv5-safe Queue Runner documentation and low-risk read-only queue execution review. It does not authorize stage, commit, push, issue close, labels, PRs, merges, force push, `PushOnce`, `CloseIssueOnce`, dispatcher `PollOnce`, `BoundedPoll`, medium-risk queue execution, high-risk queue execution, approval chaining, background watcher implementation, always-on polling, dispatcher code changes, or automatic external side effects.
