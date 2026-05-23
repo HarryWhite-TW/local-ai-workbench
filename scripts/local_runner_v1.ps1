@@ -36,6 +36,7 @@ $MaxCodexStdoutChars = 9000
 $MaxStderrPreviewChars = 1200
 $MaxStderrPreviewLines = 8
 $MaxGitOutputChars = 5000
+$ReviewBundleCodexTimeoutSeconds = 1200
 $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $script:CommitApprovedLocalCommitCreated = "unknown"
@@ -242,6 +243,239 @@ function New-RunnerValidationResult {
         status = $Status
         summary = $Summary
     }
+}
+
+function Format-CommandLineForDisplay {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Arguments
+    )
+
+    $parts = @($FilePath) + @($Arguments)
+    $displayParts = foreach ($part in $parts) {
+        if ($part -match "\s") {
+            '"' + ($part -replace '"', '\"') + '"'
+        }
+        else {
+            $part
+        }
+    }
+    return $displayParts -join " "
+}
+
+function ConvertTo-NativeArgumentString {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Arguments
+    )
+
+    $escaped = foreach ($argument in $Arguments) {
+        if ($argument -match '[\s"]') {
+            '"' + ($argument -replace '"', '\"') + '"'
+        }
+        else {
+            $argument
+        }
+    }
+    return $escaped -join " "
+}
+
+function Get-LastNonEmptyLine {
+    param(
+        [AllowNull()]
+        [string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ""
+    }
+
+    $lines = $Text -split "\r?\n"
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        $line = $lines[$i].Trim()
+        if (-not [string]::IsNullOrWhiteSpace($line)) {
+            if ($line.Length -gt 260) {
+                return $line.Substring(0, 260) + "..."
+            }
+            return $line
+        }
+    }
+
+    return ""
+}
+
+function Get-ProcessTreeIds {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ProcessId
+    )
+
+    $ids = @($ProcessId)
+    $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue)
+    foreach ($child in $children) {
+        $ids += Get-ProcessTreeIds -ProcessId ([int]$child.ProcessId)
+    }
+    return @($ids | Select-Object -Unique)
+}
+
+function Stop-ProcessTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ProcessId
+    )
+
+    $stopped = @()
+    $ids = @(Get-ProcessTreeIds -ProcessId $ProcessId | Sort-Object -Descending)
+    foreach ($id in $ids) {
+        $process = Get-Process -Id $id -ErrorAction SilentlyContinue
+        if ($null -eq $process) {
+            continue
+        }
+        try {
+            Stop-Process -Id $id -Force -ErrorAction Stop
+            $stopped += $id
+        }
+        catch {
+            Write-Warning "Could not stop timed-out child process ${id}: $($_.Exception.Message)"
+        }
+    }
+    return $stopped
+}
+
+function Invoke-CapturedNativeProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [string]$WorkingDirectory,
+        [AllowNull()]
+        [string]$StandardInput = "",
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)]
+        [string]$Action
+    )
+
+    $process = $null
+    $timedOut = $false
+    $stopAttempted = $false
+    $stoppedProcessIds = @()
+    $commandLine = Format-CommandLineForDisplay -FilePath $FilePath -Arguments $Arguments
+    $exitCode = 1
+    $stdoutTask = $null
+    $stderrTask = $null
+
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $FilePath
+        $startInfo.Arguments = ConvertTo-NativeArgumentString -Arguments $Arguments
+        $startInfo.WorkingDirectory = $WorkingDirectory
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardInput = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+
+        $null = $process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not [string]::IsNullOrEmpty($StandardInput)) {
+            $process.StandardInput.Write($StandardInput)
+        }
+        $process.StandardInput.Close()
+
+        $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $completed) {
+            $timedOut = $true
+            $stopAttempted = $true
+            $stoppedProcessIds = @(Stop-ProcessTree -ProcessId ([int]$process.Id))
+            $null = $process.WaitForExit(5000)
+            $exitCode = 124
+        }
+        else {
+            $process.WaitForExit()
+            $exitCode = [int]$process.ExitCode
+        }
+    }
+    catch {
+        $stdout = if ($null -eq $stdoutTask) { "" } else { $stdoutTask.Result }
+        $capturedStderr = if ($null -eq $stderrTask) { "" } else { $stderrTask.Result }
+        $stderr = "$Action failed: $($_.Exception.Message)`n$capturedStderr"
+        return [pscustomobject]@{
+            ExitCode = 1
+            Stdout = $stdout.TrimEnd()
+            Stderr = $stderr.TrimEnd()
+            TimedOut = $false
+            TimeoutSeconds = $TimeoutSeconds
+            CommandLine = $commandLine
+            LastStdoutLine = Get-LastNonEmptyLine -Text $stdout
+            LastStderrLine = Get-LastNonEmptyLine -Text $stderr
+            ProcessId = if ($null -eq $process) { $null } else { $process.Id }
+            StopAttempted = $stopAttempted
+            StoppedProcessIds = @($stoppedProcessIds)
+        }
+    }
+
+    $stdout = if ($null -eq $stdoutTask) { "" } else { $stdoutTask.Result }
+    $stderr = if ($null -eq $stderrTask) { "" } else { $stderrTask.Result }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Stdout = if ($null -eq $stdout) { "" } else { $stdout.TrimEnd() }
+        Stderr = if ($null -eq $stderr) { "" } else { $stderr.TrimEnd() }
+        TimedOut = $timedOut
+        TimeoutSeconds = $TimeoutSeconds
+        CommandLine = $commandLine
+        LastStdoutLine = Get-LastNonEmptyLine -Text $stdout
+        LastStderrLine = Get-LastNonEmptyLine -Text $stderr
+        ProcessId = if ($null -eq $process) { $null } else { $process.Id }
+        StopAttempted = $stopAttempted
+        StoppedProcessIds = @($stoppedProcessIds)
+    }
+}
+
+function New-ChildProcessReviewBundleSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Result,
+        [AllowNull()]
+        [string]$FinalStatus
+    )
+
+    $partialCandidateExists = (-not [string]::IsNullOrWhiteSpace($FinalStatus)).ToString().ToLowerInvariant()
+    $timedOut = ([bool]$Result.TimedOut).ToString().ToLowerInvariant()
+    $stopAttempted = ([bool]$Result.StopAttempted).ToString().ToLowerInvariant()
+    $stoppedIds = @($Result.StoppedProcessIds) -join ","
+    if ([string]::IsNullOrWhiteSpace($stoppedIds)) {
+        $stoppedIds = "none"
+    }
+
+    return @"
+child_process_command=$($Result.CommandLine)
+child_process_timeout_seconds=$($Result.TimeoutSeconds)
+child_process_timed_out=$timedOut
+child_process_exit_code=$($Result.ExitCode)
+last_stdout_line=$(Format-Block -Text $Result.LastStdoutLine -EmptyText "(none)")
+last_stderr_line=$(Format-Block -Text $Result.LastStderrLine -EmptyText "(none)")
+partial_candidate_exists=$partialCandidateExists
+stop_attempted=$stopAttempted
+stopped_process_ids=$stoppedIds
+fail_closed_on_timeout=$timedOut
+no_tests_after_timeout=$timedOut
+no_smoke_after_timeout=$timedOut
+no_commit_push_close_after_timeout=true
+"@
 }
 
 function New-RunnerResultSummaryJson {
@@ -750,6 +984,8 @@ function New-ReviewBundleComment {
         [string]$CodexFinalReport,
         [Parameter(Mandatory = $true)]
         [object]$StderrSummary,
+        [AllowEmptyString()]
+        [string]$ChildProcessSummary = "",
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
         [string]$FinalStatus
@@ -762,6 +998,7 @@ function New-ReviewBundleComment {
     $displayFinalStatus = Format-Block -Text (Truncate-Text -Text $FinalStatus -MaxChars $MaxGitOutputChars -Label "final git status") -EmptyText "(clean)"
     $displayModifiedFiles = Format-Block -Text (Truncate-Text -Text $ModifiedFiles -MaxChars $MaxGitOutputChars -Label "modified files") -EmptyText "(none)"
     $displayFinalReport = Format-Block -Text $CodexFinalReport -EmptyText "(no Codex stdout captured)"
+    $displayChildProcessSummary = Format-Block -Text $ChildProcessSummary -EmptyText "child_process_timed_out=false`nno_commit_push_close_after_timeout=true"
     $runnerResult = if ($CodexExitCode -eq "0") { "success" } else { "failure" }
     $runnerResultJson = New-RunnerResultSummaryJson `
         -IssueNumberText $IssueNumberText `
@@ -837,6 +1074,12 @@ $Fence
 
 $TextFence
 $CommandsSummary
+$Fence
+
+### Child process guard
+
+$TextFence
+$displayChildProcessSummary
 $Fence
 
 ### Codex final report
@@ -1315,6 +1558,7 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
 if ($null -eq (Get-Command codex -ErrorAction SilentlyContinue)) {
     throw "codex command was not found on PATH for this PowerShell session."
 }
+$codexCommand = Get-Command codex -ErrorAction Stop
 
 $issueBodyForPrompt = Truncate-Text -Text $issueBody -MaxChars $MaxIssueBodyChars -Label "issue body"
 
@@ -1335,15 +1579,13 @@ Issue body:
 $issueBodyForPrompt
 "@
 
-$codexResult = Invoke-Captured {
-    Push-Location -LiteralPath $RepoPath
-    try {
-        $prompt | codex --ask-for-approval never exec --sandbox workspace-write -C "." -
-    }
-    finally {
-        Pop-Location
-    }
-}
+$codexResult = Invoke-CapturedNativeProcess `
+    -FilePath $codexCommand.Source `
+    -Arguments @("--ask-for-approval", "never", "exec", "--sandbox", "workspace-write", "-C", ".", "-") `
+    -WorkingDirectory $RepoPath `
+    -StandardInput $prompt `
+    -TimeoutSeconds $ReviewBundleCodexTimeoutSeconds `
+    -Action "codex ReviewBundle candidate generation"
 
 $headAfter = Get-GitOutput -GitArgs @("rev-parse", "--short", "HEAD") -Action "git rev-parse --short HEAD"
 $finalStatus = Get-GitStatusShort
@@ -1353,6 +1595,10 @@ $modifiedFiles = Get-ModifiedFilesFromStatus -Status $finalStatus
 $codexFinalReport = Truncate-Text -Text $codexResult.Stdout -MaxChars $MaxCodexStdoutChars -Label "Codex final report"
 $stderrSummaryAfter = Get-StderrSummary -Text $codexResult.Stderr -ExitCode ([string]$codexResult.ExitCode)
 $commandsSummary = "Review the Codex final report below for commands and verification results reported by Codex. The runner also captured final git status, git diff --stat, and git diff --cached --stat. The runner did not run stage, commit, push, issue close, label edit, or PR commands."
+$childProcessSummary = New-ChildProcessReviewBundleSummary -Result $codexResult -FinalStatus $finalStatus
+if ($codexResult.TimedOut) {
+    $commandsSummary = "$commandsSummary Codex child process timed out after $($codexResult.TimeoutSeconds) second(s); runner stopped the child process tree when possible and did not continue into any higher-risk action."
+}
 $reviewId = ""
 $diffFingerprint = ""
 $filesFingerprint = ""
@@ -1388,6 +1634,7 @@ $comment = New-ReviewBundleComment `
     -CommandsSummary $commandsSummary `
     -CodexFinalReport $codexFinalReport `
     -StderrSummary $stderrSummaryAfter `
+    -ChildProcessSummary $childProcessSummary `
     -FinalStatus $finalStatus
 
 $commentResult = Post-IssueComment -Comment $comment
