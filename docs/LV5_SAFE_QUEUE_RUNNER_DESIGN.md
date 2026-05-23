@@ -14,7 +14,7 @@ Expected workflow:
 4. The queue stops when a task node is complete, an important decision appears, risk increases, quota or rate-limit occurs, or any abnormal state is detected.
 5. High-risk steps still require explicit user approval outside the queue.
 
-This document now covers the implemented dry-run queue validator slice and the low-risk read-only queue execution slice. These slices validate a local queue definition and emit a single review packet. The execution slice can run only explicitly approved low-risk read-only tasks. It does not authorize medium-risk ReviewBundle execution, high-risk operations, dispatcher code changes, background watcher implementation, always-on polling, automatic commit, automatic push, issue close, label edits, PR creation, merge, approval chaining, or approval token consumption.
+This document now covers the implemented dry-run queue validator slice, the low-risk read-only queue execution slice, and the medium-risk ReviewBundle handoff stop gate. These slices validate a local queue definition and emit a single review packet. The execution slice can run only explicitly approved low-risk read-only tasks before the official `run-reviewbundle-handoff` task is reached. It does not authorize high-risk operations, dispatcher code changes, background watcher implementation, always-on polling, automatic commit, automatic push, issue close, label edits, PR creation, merge, approval chaining, or approval token consumption.
 
 ## Relationship To Existing Rails
 
@@ -154,7 +154,7 @@ Supported dry-run planning actions are intentionally narrow:
 - `maybe-status-check`
 - `runner-result-verification`
 - `final-read-only-audit`
-- `run-reviewbundle`
+- `run-reviewbundle-handoff`
 
 Unsupported actions fail closed. High-risk task definitions are accepted as definitions, but they become stop gates in the dry-run plan with `risk_gate = "high_risk_user_approval"` and no execution.
 
@@ -164,7 +164,7 @@ The second implementation slice is foreground low-risk read-only execution:
 .\scripts\local_runner_v2.ps1 -RunQueue -QueueFile <path>
 ```
 
-`RunQueue` uses the same explicit local queue file, then validates repo, branch, `HEAD`, bounded task count, runtime bound, task schema, supported low-risk actions, and git dirty state before running any task. If git status is dirty, the queue fails closed unless the queue definition explicitly sets `allow_dirty = true` or lists every changed path in `allowed_dirty_files`.
+`RunQueue` uses the same explicit local queue file, then validates repo, branch, `HEAD`, bounded task count, runtime bound, task schema, supported actions, and git dirty state before running any task. If git status is dirty, the queue fails closed unless the queue definition explicitly sets `allow_dirty = true` or lists every changed path in `allowed_dirty_files`.
 
 Supported low-risk execution actions are intentionally narrow:
 
@@ -176,7 +176,9 @@ Supported low-risk execution actions are intentionally narrow:
 - `runner-result-verification`
 - `final-read-only-audit`
 
-`RunQueue` stops before medium-risk and high-risk tasks. It does not run `ReviewBundle`, `PollOnce`, `BoundedPoll`, `PushOnce`, `CloseIssueOnce`, runner v1, Codex, commit, push, issue close, labels, PRs, merges, approval consumption, or approval chaining.
+The only executable medium-risk queue action for this slice is `run-reviewbundle-handoff`. `RunQueue` executes preceding low-risk tasks, reports the handoff in `QUEUE-RUNNER-RESULT`, and stops immediately with `risk_gate = "medium_review_required"` and `next_recommended_action = "chatgpt_review"`. If ReviewBundle metadata is already available on the task, the packet reports it. If the candidate is dirty and metadata creation would require a clean-start ReviewBundle rail, the packet reports the metadata as blocked instead of bypassing that safety precondition.
+
+`RunQueue` does not run high-risk tasks after the handoff. It does not run `ReviewBundle` through runner v1, `PollOnce`, `BoundedPoll`, `PushOnce`, `CloseIssueOnce`, Codex, commit, push, issue close, labels, PRs, merges, approval consumption, or approval chaining.
 
 ## Stop Rules
 
@@ -290,9 +292,15 @@ Recommended shape:
   ],
   "stopped_at_task": "<task-id-or-null>",
   "stop_reason": "<reason-or-null>",
-  "risk_gate": "none | medium_review | high_risk_user_approval",
+  "risk_gate": "none | medium_review | medium_review_required | high_risk_user_approval",
   "quota_or_rate_limit_detected": false,
   "changed_files": [],
+  "review_id": "<review-id-or-null>",
+  "diff_fingerprint": "<fingerprint-or-null>",
+  "files_fingerprint": "<fingerprint-or-null>",
+  "reviewbundle_metadata_status": "available | blocked | unavailable | null",
+  "reviewbundle_metadata_block_reason": "<reason-or-null>",
+  "reviewbundle_handoff_task": null,
   "validations": {
     "repo_match": {
       "status": "passed",
@@ -333,7 +341,7 @@ Recommended shape:
 
 Allowed validation statuses should match the existing runner result convention where practical: `passed`, `failed`, `not_run`, `warning`, and `reported`.
 
-The `no_task_execution` safety flag is present for dry-run results. Real low-risk `RunQueue` results omit that flag because approved read-only tasks did execute; the write-safety flags remain true.
+The `no_task_execution` safety flag is present for dry-run results. Real `RunQueue` results omit that flag because approved read-only tasks may execute before a handoff or stop gate; the write-safety flags remain true.
 
 The queue result is an audit artifact. It is not an approval token and must not trigger follow-on actions by itself.
 
@@ -361,7 +369,7 @@ Potential future work should be split into small reviewable issues:
 2. Dry-run queue validator that reads a local queue definition and prints the planned task sequence only. Implemented as `-DryRunQueue -QueueFile <path>`.
 3. Queue result formatter that emits `QUEUE-RUNNER-RESULT` locally without executing tasks. Implemented with the dry-run validator.
 4. Low-risk queue execution for read-only audit and status checks only. Implemented as `-RunQueue -QueueFile <path>`.
-5. Medium-risk ReviewBundle handoff that stops after producing the review artifact.
+5. Medium-risk ReviewBundle handoff that accepts `run-reviewbundle-handoff`, reports the handoff, and stops before any high-risk task.
 
 No slice should add commit, push, close, labels, PRs, merges, force-push, approval consumption, approval chaining, background watcher behavior, runner code modification, dispatcher code modification, or test modification unless that exact slice is explicitly approved.
 
@@ -387,4 +395,4 @@ Until those decisions are approved, the Queue Runner remains limited to local dr
 review-bundle
 ```
 
-This design is review-bundle capable for Lv5-safe Queue Runner documentation and low-risk read-only queue execution review. It does not authorize stage, commit, push, issue close, labels, PRs, merges, force push, `PushOnce`, `CloseIssueOnce`, dispatcher `PollOnce`, `BoundedPoll`, medium-risk queue execution, high-risk queue execution, approval chaining, background watcher implementation, always-on polling, dispatcher code changes, or automatic external side effects.
+This design is review-bundle capable for Lv5-safe Queue Runner documentation, low-risk read-only queue execution review, and the explicit medium-risk `run-reviewbundle-handoff` stop gate. It does not authorize stage, commit, push, issue close, labels, PRs, merges, force push, `PushOnce`, `CloseIssueOnce`, dispatcher `PollOnce`, `BoundedPoll`, other medium-risk queue execution, high-risk queue execution, approval chaining, background watcher implementation, always-on polling, dispatcher code changes, or automatic external side effects.

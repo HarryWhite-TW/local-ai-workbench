@@ -192,7 +192,8 @@ $PushDryRunNoWriteGuarantee = "PushDryRun validates one current action=push-dryr
 $PushOnceSafetyBoundary = "PushOnce validates one current action=push-approved-once approval, re-runs PushDryRun-equivalent checks immediately before push, executes exactly one narrow non-force git push for the approved HEAD, and does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 $CloseIssueOnceSafetyBoundary = "CloseIssueOnce validates one current action=close-issue-approved-once approval on the explicitly selected issue, requires local HEAD, remote HEAD, and pushed to match the same approved commit, then closes exactly one selected open issue. It does not call Codex, run runner v1, modify files, stage files, commit, push, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or chain approvals."
 $DryRunQueueNoWriteGuarantee = "DryRunQueue validates one explicit local queue definition and emits one QUEUE-RUNNER-RESULT only. It does not execute queue tasks, run PollOnce, run BoundedPoll, run PushOnce, run CloseIssueOnce, call Codex, run runner v1, modify files, stage files, commit, push, close issues, edit labels, create PRs, merge, consume approvals, invoke external agents, run polling, run a daemon, or run a scheduler."
-$RunQueueSafetyBoundary = "RunQueue executes only explicitly listed low-risk read-only queue tasks. It does not run medium-risk or high-risk actions, run PollOnce, run BoundedPoll, run PushOnce, run CloseIssueOnce, call Codex, run runner v1, modify files, stage files, commit, push, close issues, edit labels, create PRs, merge, consume approvals, invoke external agents, run polling, run a daemon, or run a scheduler."
+$RunQueueSafetyBoundary = "RunQueue executes explicitly listed low-risk read-only queue tasks and may stop at the official medium-risk run-reviewbundle-handoff task after reporting the handoff. It does not run high-risk actions, run PollOnce, run BoundedPoll, run PushOnce, run CloseIssueOnce, call Codex, run runner v1, modify files, stage files, commit, push, close issues, edit labels, create PRs, merge, consume approvals, invoke external agents, run polling, run a daemon, or run a scheduler."
+$QueueReviewBundleHandoffAction = "run-reviewbundle-handoff"
 $QueueSupportedActions = @(
     "read-only-audit",
     "git-status",
@@ -203,7 +204,7 @@ $QueueSupportedActions = @(
     "maybe-status-check",
     "runner-result-verification",
     "final-read-only-audit",
-    "run-reviewbundle"
+    $QueueReviewBundleHandoffAction
 )
 $QueueExecutableLowRiskActions = @(
     "git-status",
@@ -696,10 +697,27 @@ function New-QueueRunnerResultJson {
         [AllowEmptyString()]
         [string]$StopReason = $null,
         [Parameter(Mandatory = $true)]
-        [ValidateSet("none", "medium_review", "high_risk_user_approval")]
+        [ValidateSet("none", "medium_review", "medium_review_required", "high_risk_user_approval")]
         [string]$RiskGate,
         [bool]$QuotaOrRateLimitDetected = $false,
         [string[]]$ChangedFiles = @(),
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$ReviewId = $null,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$DiffFingerprint = $null,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$FilesFingerprint = $null,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$ReviewBundleMetadataStatus = $null,
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$ReviewBundleMetadataBlockReason = $null,
+        [AllowNull()]
+        [object]$ReviewBundleHandoffTask = $null,
         [Parameter(Mandatory = $true)]
         [object]$Validations,
         [string]$NextRecommendedAction = "chatgpt_review"
@@ -722,6 +740,12 @@ function New-QueueRunnerResultJson {
         risk_gate = $RiskGate
         quota_or_rate_limit_detected = $QuotaOrRateLimitDetected
         changed_files = @($ChangedFiles)
+        review_id = if ([string]::IsNullOrWhiteSpace($ReviewId)) { $null } else { $ReviewId }
+        diff_fingerprint = if ([string]::IsNullOrWhiteSpace($DiffFingerprint)) { $null } else { $DiffFingerprint }
+        files_fingerprint = if ([string]::IsNullOrWhiteSpace($FilesFingerprint)) { $null } else { $FilesFingerprint }
+        reviewbundle_metadata_status = if ([string]::IsNullOrWhiteSpace($ReviewBundleMetadataStatus)) { $null } else { $ReviewBundleMetadataStatus }
+        reviewbundle_metadata_block_reason = if ([string]::IsNullOrWhiteSpace($ReviewBundleMetadataBlockReason)) { $null } else { $ReviewBundleMetadataBlockReason }
+        reviewbundle_handoff_task = $ReviewBundleHandoffTask
         validations = $Validations
         safety = (New-QueueRunnerSafety -DryRun $DryRun)
         next_recommended_action = $NextRecommendedAction
@@ -792,6 +816,21 @@ function New-QueueCompletedTask {
         allowed_action = (Get-QueuePropertyText -Object $Task -PropertyName "allowed_action")
         result = "completed"
         summary = $Summary
+    }
+}
+
+function New-QueueReviewBundleHandoffTask {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Task
+    )
+
+    return [ordered]@{
+        task_id = (Get-QueuePropertyText -Object $Task -PropertyName "task_id")
+        risk_level = (Get-QueuePropertyText -Object $Task -PropertyName "risk_level")
+        allowed_action = (Get-QueuePropertyText -Object $Task -PropertyName "allowed_action")
+        result = "handoff_reached"
+        summary = "ReviewBundle handoff reached; queue stopped for ChatGPT review before any high-risk task."
     }
 }
 
@@ -929,6 +968,12 @@ function Invoke-DryRunQueue {
     $riskGate = "none"
     $result = "success"
     $changedFiles = @()
+    $reviewId = $null
+    $diffFingerprint = $null
+    $filesFingerprint = $null
+    $reviewBundleMetadataStatus = $null
+    $reviewBundleMetadataBlockReason = $null
+    $reviewBundleHandoffTask = $null
 
     try {
         $resolvedQueueFile = Resolve-Path -LiteralPath $QueueFile -ErrorAction Stop
@@ -1169,6 +1214,12 @@ function Invoke-RunQueue {
     $riskGate = "none"
     $result = "success"
     $changedFiles = @()
+    $reviewId = $null
+    $diffFingerprint = $null
+    $filesFingerprint = $null
+    $reviewBundleMetadataStatus = $null
+    $reviewBundleMetadataBlockReason = $null
+    $reviewBundleHandoffTask = $null
 
     try {
         $resolvedQueueFile = Resolve-Path -LiteralPath $QueueFile -ErrorAction Stop
@@ -1312,6 +1363,9 @@ function Invoke-RunQueue {
         if ($riskLevel -eq "low" -and $QueueExecutableLowRiskActions -notcontains $allowedAction) {
             $unsupportedActions += "$taskId action '$allowedAction'"
         }
+        elseif ($riskLevel -eq "medium" -and $allowedAction -ne $QueueReviewBundleHandoffAction) {
+            $unsupportedActions += "$taskId action '$allowedAction'"
+        }
     }
 
     if ($taskSchemaFailures.Count -gt 0) {
@@ -1324,12 +1378,12 @@ function Invoke-RunQueue {
     }
 
     if ($unsupportedActions.Count -gt 0) {
-        $validations["actions_supported"] = New-RunnerValidationResult -Status "failed" -Summary "Unsupported low-risk queue action(s): $($unsupportedActions -join '; ')."
+        $validations["actions_supported"] = New-RunnerValidationResult -Status "failed" -Summary "Unsupported queue action(s): $($unsupportedActions -join '; ')."
         $result = "failed"
         if ($null -eq $stopReason) { $stopReason = "unsupported_action" }
     }
     else {
-        $validations["actions_supported"] = New-RunnerValidationResult -Status "passed" -Summary "All executable low-risk queue actions are supported."
+        $validations["actions_supported"] = New-RunnerValidationResult -Status "passed" -Summary "All executable low-risk queue actions and the official ReviewBundle handoff action are supported."
     }
 
     if ($result -eq "success") {
@@ -1341,11 +1395,32 @@ function Invoke-RunQueue {
             $allowedAction = Get-QueuePropertyText -Object $task -PropertyName "allowed_action"
 
             if ($riskLevel -eq "medium") {
-                $result = "stopped"
+                if ($allowedAction -eq $QueueReviewBundleHandoffAction) {
+                    $result = "stopped"
+                    $stoppedAtTask = $taskId
+                    $stopReason = "reviewbundle_handoff_completed"
+                    $riskGate = "medium_review_required"
+                    $reviewBundleHandoffTask = New-QueueReviewBundleHandoffTask -Task $task
+                    $reviewId = Get-QueuePropertyText -Object $task -PropertyName "review_id"
+                    $diffFingerprint = Get-QueuePropertyText -Object $task -PropertyName "diff_fingerprint"
+                    $filesFingerprint = Get-QueuePropertyText -Object $task -PropertyName "files_fingerprint"
+                    if (-not [string]::IsNullOrWhiteSpace($reviewId) -and -not [string]::IsNullOrWhiteSpace($diffFingerprint) -and -not [string]::IsNullOrWhiteSpace($filesFingerprint)) {
+                        $reviewBundleMetadataStatus = "available"
+                    }
+                    elseif ($changedFiles.Count -gt 0) {
+                        $reviewBundleMetadataStatus = "blocked"
+                        $reviewBundleMetadataBlockReason = "dirty_candidate_precondition"
+                    }
+                    else {
+                        $reviewBundleMetadataStatus = "unavailable"
+                    }
+                    break
+                }
+
+                $result = "failed"
                 $stoppedAtTask = $taskId
-                $stopReason = "medium_risk_task_reached"
-                $riskGate = "medium_review"
-                $skippedTasks += (New-QueueSkippedTask -Task $task -Reason "medium_risk_stop_gate")
+                $stopReason = "unsupported_action"
+                $skippedTasks += (New-QueueSkippedTask -Task $task -Reason "unsupported_action")
                 break
             }
 
@@ -1423,6 +1498,12 @@ function Invoke-RunQueue {
         -RiskGate $riskGate `
         -QuotaOrRateLimitDetected $false `
         -ChangedFiles $changedFiles `
+        -ReviewId $reviewId `
+        -DiffFingerprint $diffFingerprint `
+        -FilesFingerprint $filesFingerprint `
+        -ReviewBundleMetadataStatus $reviewBundleMetadataStatus `
+        -ReviewBundleMetadataBlockReason $reviewBundleMetadataBlockReason `
+        -ReviewBundleHandoffTask $reviewBundleHandoffTask `
         -Validations $validations)
 }
 

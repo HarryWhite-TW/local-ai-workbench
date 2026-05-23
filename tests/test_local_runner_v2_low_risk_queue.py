@@ -201,7 +201,7 @@ def test_valid_low_risk_queue_executes_read_only_tasks(tmp_path):
 
 
 def test_medium_risk_task_becomes_stop_gate(tmp_path):
-    queue = _base_queue(tasks=[_task("status", "git-status"), _task("review", "run-reviewbundle", "medium")])
+    queue = _base_queue(tasks=[_task("status", "git-status"), _task("review", "run-reviewbundle-handoff", "medium")])
 
     result = run_queue_script(tmp_path, json.dumps(queue))
     assert_success(result)
@@ -210,9 +210,10 @@ def test_medium_risk_task_becomes_stop_gate(tmp_path):
     assert packet["result"] == "stopped"
     assert [task["task_id"] for task in packet["completed_tasks"]] == ["status"]
     assert packet["stopped_at_task"] == "review"
-    assert packet["stop_reason"] == "medium_risk_task_reached"
-    assert packet["risk_gate"] == "medium_review"
-    assert packet["skipped_tasks"] == [{"task_id": "review", "reason": "medium_risk_stop_gate"}]
+    assert packet["stop_reason"] == "reviewbundle_handoff_completed"
+    assert packet["risk_gate"] == "medium_review_required"
+    assert packet["reviewbundle_handoff_task"]["allowed_action"] == "run-reviewbundle-handoff"
+    assert packet["skipped_tasks"] == []
 
 
 def test_high_risk_task_becomes_stop_gate(tmp_path):

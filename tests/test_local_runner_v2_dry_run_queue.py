@@ -167,6 +167,19 @@ def test_high_risk_task_becomes_stop_gate(tmp_path):
     assert packet["risk_gate"] == "high_risk_user_approval"
 
 
+def test_official_reviewbundle_handoff_action_is_supported_in_dry_run(tmp_path):
+    task = _base_queue()["tasks"][0]
+    queue = _base_queue(tasks=[{**task, "task_id": "review", "risk_level": "medium", "allowed_action": "run-reviewbundle-handoff"}])
+
+    result = run_dry_run_queue_script(tmp_path, json.dumps(queue))
+    assert_success(result)
+
+    packet = extract_packet(result.stdout)
+    assert packet["result"] == "success"
+    assert packet["planned_tasks"][0]["allowed_action"] == "run-reviewbundle-handoff"
+    assert packet["validations"]["actions_supported"]["status"] == "passed"
+
+
 def test_malformed_queue_fails_closed(tmp_path):
     result = run_dry_run_queue_script(tmp_path, "{ not-json")
     assert_success(result)
@@ -202,6 +215,20 @@ def test_unsupported_action_fails_closed(tmp_path):
     assert packet["stopped_at_task"] == "task-1"
     assert packet["stop_reason"] == "unsupported_action"
     assert packet["skipped_tasks"] == [{"task_id": "task-1", "reason": "unsupported_action"}]
+
+
+def test_legacy_run_reviewbundle_action_fails_closed_in_dry_run(tmp_path):
+    task = _base_queue()["tasks"][0]
+    queue = _base_queue(tasks=[{**task, "task_id": "review", "risk_level": "medium", "allowed_action": "run-reviewbundle"}])
+
+    result = run_dry_run_queue_script(tmp_path, json.dumps(queue))
+    assert_success(result)
+
+    packet = extract_packet(result.stdout)
+    assert packet["result"] == "failed"
+    assert packet["stopped_at_task"] == "review"
+    assert packet["stop_reason"] == "unsupported_action"
+    assert packet["validations"]["actions_supported"]["status"] == "failed"
 
 
 def test_dry_run_does_not_execute_runner_actions(tmp_path):
