@@ -345,6 +345,16 @@ The `no_task_execution` safety flag is present for dry-run results. Real `RunQue
 
 The queue result is an audit artifact. It is not an approval token and must not trigger follow-on actions by itself.
 
+## Operator Smoke Example
+
+The first operator-facing smoke is documented in `docs/QUEUE_RUNNER_OPERATOR_EXAMPLE.md` with a concrete queue definition in `docs/queue_runner_reviewbundle_handoff_queue.example.json`:
+
+```text
+DryRunQueue -> low-risk RunQueue -> run-reviewbundle-handoff stop -> ChatGPT / human review
+```
+
+The example is intentionally bounded and foreground-only. Operators copy the queue to a temporary local file, bind it to the current `HEAD`, dry-run it, then run the same queue. The run should complete only the low-risk read-only tasks before the handoff, stop at `run-reviewbundle-handoff`, and leave the high-risk task after the handoff unexecuted. The emitted `QUEUE-RUNNER-RESULT` is the Single Review Packet and does not authorize commit, push, close, labels, PRs, merge, approval token consumption, or approval chaining.
+
 ## Safety Invariants
 
 Every Queue Runner design and future implementation slice must preserve these invariants:

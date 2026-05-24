@@ -1,0 +1,52 @@
+{
+  "schema": "lawb.queue_definition.v1",
+  "queue_id": "operator-reviewbundle-handoff-smoke",
+  "repo": "HarryWhite-TW/local-ai-workbench",
+  "parent_issue": 104,
+  "branch": "master",
+  "head": "REPLACE_WITH_CURRENT_HEAD",
+  "max_codex_tasks_per_batch": 5,
+  "max_runtime_minutes": 10,
+  "tasks": [
+    {
+      "task_id": "status",
+      "description": "Read the current git status before handoff.",
+      "risk_level": "low",
+      "allowed_action": "git-status",
+      "expected_inputs": ["repo"],
+      "expected_outputs": ["status summary"],
+      "stop_after_completion": false,
+      "approved_changed_files": []
+    },
+    {
+      "task_id": "head-check",
+      "description": "Confirm the local branch and HEAD still match the queue definition.",
+      "risk_level": "low",
+      "allowed_action": "branch-head-check",
+      "expected_inputs": ["branch", "head"],
+      "expected_outputs": ["branch and HEAD match"],
+      "stop_after_completion": false,
+      "approved_changed_files": []
+    },
+    {
+      "task_id": "reviewbundle-handoff",
+      "description": "Stop at the official medium-risk ReviewBundle handoff for human review.",
+      "risk_level": "medium",
+      "allowed_action": "run-reviewbundle-handoff",
+      "expected_inputs": ["queue result", "current candidate"],
+      "expected_outputs": ["single review packet"],
+      "stop_after_completion": true,
+      "approved_changed_files": []
+    },
+    {
+      "task_id": "must-not-run-high-risk",
+      "description": "High-risk task intentionally placed after the handoff to prove the queue stops.",
+      "risk_level": "high",
+      "allowed_action": "git-status",
+      "expected_inputs": ["separate high-risk approval"],
+      "expected_outputs": ["none in this smoke"],
+      "stop_after_completion": true,
+      "approved_changed_files": []
+    }
+  ]
+}

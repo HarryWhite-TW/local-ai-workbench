@@ -186,6 +186,8 @@ The official medium-risk handoff action is:
 
 `RunQueue` executes low-risk tasks before the official handoff, reports the handoff in one `QUEUE-RUNNER-RESULT`, and stops immediately with `next_recommended_action = "chatgpt_review"`. It does not run high-risk tasks after the handoff. It does not run `PollOnce`, `BoundedPoll`, `PushOnce`, `CloseIssueOnce`, runner v1, Codex, commit, push, issue close, labels, PRs, merges, approval consumption, or approval chaining.
 
+For an operator-facing smoke path, use `docs/QUEUE_RUNNER_OPERATOR_EXAMPLE.md` with `docs/queue_runner_reviewbundle_handoff_queue.example.json`. The example demonstrates `DryRunQueue` validation followed by `RunQueue` execution of low-risk read-only checks, the official `run-reviewbundle-handoff` stop, and a high-risk task after the handoff that must not execute. Treat the emitted `QUEUE-RUNNER-RESULT` as the Single Review Packet for ChatGPT or human review, not as approval for commit, push, close, or any follow-on action.
+
 ## Marker Examples
 
 Example `CHATGPT-DISPATCH` marker:
