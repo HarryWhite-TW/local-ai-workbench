@@ -1,0 +1,38 @@
+{
+  "schema": "lawb.bridge_task_packet.v1",
+  "packet_id": "bridge-readback-smoke-107-task-001",
+  "repo": "HarryWhite-TW/local-ai-workbench",
+  "issue": 107,
+  "branch": "master",
+  "base_head": "REPLACE_WITH_CURRENT_HEAD",
+  "requested_by": "chatgpt",
+  "task_role": "core",
+  "manual_copy_paste_is_target": false,
+  "action": "bounded-dry-echo",
+  "command": {
+    "kind": "local-dry-action",
+    "description": "Echo a bounded readback smoke message without modifying files.",
+    "timeout_seconds": 30,
+    "message": "local relay readback smoke"
+  },
+  "writeback": {
+    "surface": "github_issue_comment",
+    "issue": 107,
+    "requires_explicit_post_result_comment": true
+  },
+  "expected_result_packet": "lawb.bridge_result_packet.v1",
+  "safety": {
+    "foreground_manual_start_only": true,
+    "no_background_watcher": true,
+    "no_always_on_polling": true,
+    "no_stage": true,
+    "no_commit": true,
+    "no_push": true,
+    "no_issue_close": true,
+    "no_label": true,
+    "no_pr": true,
+    "no_merge": true,
+    "no_approval_chaining": true,
+    "no_real_codex_code_modification": true
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schema": "lawb.bridge_result_packet.v1",
+  "packet_id": "bridge-readback-smoke-107-result-001",
+  "task_packet_id": "bridge-readback-smoke-107-task-001",
+  "repo": "HarryWhite-TW/local-ai-workbench",
+  "issue": 107,
+  "result": "success",
+  "action": "bounded-dry-echo",
+  "summary": "Local relay read the task packet, executed a harmless bounded dry action, and produced this result packet.",
+  "dry_action_output": "local relay readback smoke",
+  "writeback_surface": "github_issue_comment",
+  "chatgpt_readback_path": "ChatGPT reads BRIDGE-RESULT-PACKET from the GitHub issue comment.",
+  "remaining_user_actions": [
+    "User manually starts the foreground relay until a direct ChatGPT-triggered relay exists.",
+    "User makes key approval decisions through ChatGPT."
+  ],
+  "safety": {
+    "foreground_manual_start_only": true,
+    "no_background_watcher": true,
+    "no_always_on_polling": true,
+    "no_stage": true,
+    "no_commit": true,
+    "no_push": true,
+    "no_issue_close": true,
+    "no_label": true,
+    "no_pr": true,
+    "no_merge": true,
+    "no_approval_chaining": true,
+    "no_real_codex_code_modification": true
+  },
+  "next_recommended_action": "chatgpt_review"
+}
