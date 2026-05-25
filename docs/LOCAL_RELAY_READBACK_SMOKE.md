@@ -80,12 +80,51 @@ BRIDGE-RESULT-PACKET protocol=lawb.bridge_result_packet.v1
 
 The marker is followed by parseable JSON. The relay supports only the harmless `bounded-dry-echo` dry action in this slice. It does not call Codex, edit files, stage, commit, push, close issues, label, create PRs, merge, poll, watch, or chain approvals.
 
+## GitHub Task Packet Read
+
+The relay can also read exactly one task packet from one explicit GitHub issue:
+
+```powershell
+.\scripts\local_bridge_relay_smoke.ps1 -IssueNumber 109 -ReadTaskPacketFromGitHub
+```
+
+This command reads the issue body and comments with `gh issue view`, extracts exactly one current task packet, executes only `bounded-dry-echo`, and prints `BRIDGE-RESULT-PACKET` to stdout. It does not post a GitHub comment unless `-PostResultComment` is also passed.
+
+The task packet marker must be a line by itself:
+
+```text
+BRIDGE-TASK-PACKET protocol=lawb.bridge_task_packet.v1
+```
+
+The marker must be followed by JSON. The GitHub-read packet must validate:
+
+- exactly one packet exists on the selected issue
+- `schema = "lawb.bridge_task_packet.v1"`
+- `repo = "HarryWhite-TW/local-ai-workbench"`
+- `issue` equals the explicit `-IssueNumber`
+- `requested_by = "chatgpt"`
+- `task_role = "core"`
+- `manual_copy_paste_is_target = false`
+- `expires_utc` is current and formatted as `yyyyMMddTHHmmssZ`
+- `action = "bounded-dry-echo"`
+- `command.kind = "local-dry-action"`
+- `command.timeout_seconds <= 30`
+- required safety flags are present and true
+
+The relay fails closed for missing, duplicate, malformed, stale, schema-mismatched, repo-mismatched, issue-mismatched, unsupported, or unsafe packets. See `docs/bridge_task_packet.github_readback_smoke.example.json` and `docs/bridge_result_packet.github_readback_smoke.example.json` for the GitHub-read smoke packet examples.
+
 ## GitHub Result Writeback
 
 Writing the result packet back to GitHub is explicit and manually started:
 
 ```powershell
 .\scripts\local_bridge_relay_smoke.ps1 -TaskPacketFile .\docs\bridge_task_packet.readback_smoke.example.json -PostResultComment
+```
+
+For the GitHub-read smoke:
+
+```powershell
+.\scripts\local_bridge_relay_smoke.ps1 -IssueNumber 109 -ReadTaskPacketFromGitHub -PostResultComment
 ```
 
 This posts exactly the `BRIDGE-RESULT-PACKET` output to the bound issue as a comment. It is a medium-risk readback handoff, not an approval token for commit, push, close, or any follow-on action.
