@@ -1,0 +1,26 @@
+{
+  "schema": "lawb.bridge_result_packet.v1",
+  "packet_id": "bridge-probe-106-result-001",
+  "task_packet_id": "bridge-probe-106-task-001",
+  "repo": "HarryWhite-TW/local-ai-workbench",
+  "issue": 106,
+  "result": "partial",
+  "action": "bounded-dry-echo",
+  "summary": "Task packet read path and result packet shape are defined; relay implementation remains future work.",
+  "artifacts": [],
+  "remaining_user_actions": [
+    "User manually starts the foreground relay until a direct ChatGPT-triggered relay is implemented.",
+    "User makes key approval decisions through ChatGPT."
+  ],
+  "safety": {
+    "foreground_manual_start_only": true,
+    "no_background_watcher": true,
+    "no_always_on_polling": true,
+    "no_stage": true,
+    "no_commit": true,
+    "no_push": true,
+    "no_issue_close": true,
+    "no_approval_chaining": true
+  },
+  "next_recommended_action": "chatgpt_review"
+}
