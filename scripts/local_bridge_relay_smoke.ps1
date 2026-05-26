@@ -53,6 +53,78 @@ function Assert-SafetyFlag {
     Assert-True -Condition ([bool]$property.Value) -Message "Safety flag must be true: $Name"
 }
 
+function Assert-NoUnsafeCommandFields {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Command
+    )
+
+    $forbiddenFields = @(
+        "shell",
+        "args",
+        "script",
+        "command_text",
+        "powershell",
+        "bash",
+        "cmd",
+        "exec",
+        "path"
+    )
+
+    foreach ($field in $forbiddenFields) {
+        if ($null -ne $Command.PSObject.Properties[$field]) {
+            throw "Unsupported unsafe command field: $field"
+        }
+    }
+}
+
+function Invoke-GitReadOnly {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$GitArgs,
+        [Parameter(Mandatory = $true)]
+        [string]$Action
+    )
+
+    $output = & git @GitArgs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Action failed with exit code $LASTEXITCODE`: $($output -join "`n")"
+    }
+    return (($output | ForEach-Object { [string]$_ }) -join "`n").TrimEnd()
+}
+
+function Get-BoundedText {
+    param(
+        [AllowNull()]
+        [string]$Text,
+        [int]$MaxChars = 2000
+    )
+
+    if ($null -eq $Text) {
+        return ""
+    }
+    if ($Text.Length -le $MaxChars) {
+        return $Text
+    }
+    return $Text.Substring(0, $MaxChars) + "`n[truncated]"
+}
+
+function Invoke-LocalGitStatusSummary {
+    $statusShort = Invoke-GitReadOnly -GitArgs @("status", "--short") -Action "git status --short"
+    $branch = Invoke-GitReadOnly -GitArgs @("branch", "--show-current") -Action "git branch --show-current"
+    $head = Invoke-GitReadOnly -GitArgs @("rev-parse", "HEAD") -Action "git rev-parse HEAD"
+    $originMaster = Invoke-GitReadOnly -GitArgs @("rev-parse", "origin/master") -Action "git rev-parse origin/master"
+
+    return [ordered]@{
+        kind = "local-git-status-summary"
+        branch = $branch
+        head = $head
+        origin_master = $originMaster
+        git_status_short = Get-BoundedText -Text $statusShort
+        is_clean = [string]::IsNullOrWhiteSpace($statusShort)
+    }
+}
+
 function ConvertFrom-TaskPacketJson {
     param(
         [Parameter(Mandatory = $true)]
@@ -205,8 +277,7 @@ if ($ReadTaskPacketFromGitHub) {
 Assert-True -Condition ((Get-PropertyText -Object $task -Name "requested_by") -eq "chatgpt") -Message "Task packet must be requested_by=chatgpt."
 Assert-True -Condition ((Get-PropertyText -Object $task -Name "task_role") -eq "core") -Message "Task packet must be task_role=core."
 Assert-True -Condition ([bool]$task.manual_copy_paste_is_target -eq $false) -Message "Manual copy/paste must not be target workflow."
-Assert-True -Condition ((Get-PropertyText -Object $task -Name "action") -eq "bounded-dry-echo") -Message "Only bounded-dry-echo is supported by this smoke."
-Assert-True -Condition ((Get-PropertyText -Object $task.command -Name "kind") -eq "local-dry-action") -Message "Only local-dry-action is supported."
+Assert-NoUnsafeCommandFields -Command $task.command
 Assert-True -Condition ([int]$task.command.timeout_seconds -le 30) -Message "timeout_seconds must be <= 30."
 
 foreach ($flag in @(
@@ -226,9 +297,28 @@ foreach ($flag in @(
     Assert-SafetyFlag -Safety $task.safety -Name $flag
 }
 
-$message = Get-PropertyText -Object $task.command -Name "message"
-if ([string]::IsNullOrWhiteSpace($message)) {
-    $message = "local relay readback smoke"
+$action = Get-PropertyText -Object $task -Name "action"
+$commandKind = Get-PropertyText -Object $task.command -Name "kind"
+$summary = ""
+$dryActionOutput = $null
+$commandResult = $null
+
+if ($action -eq "bounded-dry-echo") {
+    Assert-True -Condition ($commandKind -eq "local-dry-action") -Message "bounded-dry-echo requires command.kind=local-dry-action."
+    $message = Get-PropertyText -Object $task.command -Name "message"
+    if ([string]::IsNullOrWhiteSpace($message)) {
+        $message = "local relay readback smoke"
+    }
+    $summary = "Local relay read the task packet, executed a harmless bounded dry action, and produced this result packet."
+    $dryActionOutput = $message
+}
+elseif ($action -eq "bounded-local-command") {
+    Assert-True -Condition ($commandKind -eq "local-git-status-summary") -Message "bounded-local-command supports only command.kind=local-git-status-summary."
+    $summary = "Local relay read the task packet, executed one allowlisted read-only git status summary command, and produced this result packet."
+    $commandResult = Invoke-LocalGitStatusSummary
+}
+else {
+    throw "Unsupported action: $action"
 }
 
 $result = [ordered]@{
@@ -239,8 +329,7 @@ $result = [ordered]@{
     issue = [int]$task.issue
     result = "success"
     action = [string]$task.action
-    summary = "Local relay read the task packet, executed a harmless bounded dry action, and produced this result packet."
-    dry_action_output = $message
+    summary = $summary
     writeback_surface = "github_issue_comment"
     chatgpt_readback_path = "ChatGPT reads BRIDGE-RESULT-PACKET from the GitHub issue comment."
     remaining_user_actions = @(
@@ -262,6 +351,13 @@ $result = [ordered]@{
         no_real_codex_code_modification = $true
     }
     next_recommended_action = "chatgpt_review"
+}
+
+if ($null -ne $dryActionOutput) {
+    $result["dry_action_output"] = $dryActionOutput
+}
+if ($null -ne $commandResult) {
+    $result["command_result"] = $commandResult
 }
 
 $resultJson = $result | ConvertTo-Json -Depth 8

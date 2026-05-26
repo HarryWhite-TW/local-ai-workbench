@@ -1,0 +1,39 @@
+{
+  "schema": "lawb.bridge_result_packet.v1",
+  "packet_id": "bridge-codex-command-smoke-110-task-001-result",
+  "task_packet_id": "bridge-codex-command-smoke-110-task-001",
+  "repo": "HarryWhite-TW/local-ai-workbench",
+  "issue": 110,
+  "result": "success",
+  "action": "bounded-local-command",
+  "summary": "Local relay read one task packet, executed one allowlisted read-only git status summary command, and produced this result packet.",
+  "writeback_surface": "github_issue_comment",
+  "chatgpt_readback_path": "ChatGPT reads BRIDGE-RESULT-PACKET from the GitHub issue comment.",
+  "remaining_user_actions": [
+    "User manually starts the foreground relay until a direct ChatGPT-triggered relay exists.",
+    "User makes key approval decisions through ChatGPT."
+  ],
+  "safety": {
+    "foreground_manual_start_only": true,
+    "no_background_watcher": true,
+    "no_always_on_polling": true,
+    "no_stage": true,
+    "no_commit": true,
+    "no_push": true,
+    "no_issue_close": true,
+    "no_label": true,
+    "no_pr": true,
+    "no_merge": true,
+    "no_approval_chaining": true,
+    "no_real_codex_code_modification": true
+  },
+  "next_recommended_action": "chatgpt_review",
+  "command_result": {
+    "kind": "local-git-status-summary",
+    "branch": "master",
+    "head": "0925f2188b4781a0c9d76d727b0b456e6fea8cea",
+    "origin_master": "0925f2188b4781a0c9d76d727b0b456e6fea8cea",
+    "git_status_short": "",
+    "is_clean": true
+  }
+}

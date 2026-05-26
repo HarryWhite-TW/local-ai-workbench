@@ -14,6 +14,8 @@ TASK_PACKET = REPO_ROOT / "docs" / "bridge_task_packet.readback_smoke.example.js
 RESULT_PACKET = REPO_ROOT / "docs" / "bridge_result_packet.readback_smoke.example.json"
 GITHUB_TASK_PACKET = REPO_ROOT / "docs" / "bridge_task_packet.github_readback_smoke.example.json"
 GITHUB_RESULT_PACKET = REPO_ROOT / "docs" / "bridge_result_packet.github_readback_smoke.example.json"
+CODEX_COMMAND_TASK_PACKET = REPO_ROOT / "docs" / "bridge_task_packet.codex_command_smoke.example.json"
+CODEX_COMMAND_RESULT_PACKET = REPO_ROOT / "docs" / "bridge_result_packet.codex_command_smoke.example.json"
 MARKER = "BRIDGE-RESULT-PACKET protocol=lawb.bridge_result_packet.v1"
 TASK_MARKER = "BRIDGE-TASK-PACKET protocol=lawb.bridge_task_packet.v1"
 
@@ -76,18 +78,66 @@ def _github_task_packet(**overrides) -> dict:
     return packet
 
 
+def _codex_command_task_packet(**overrides) -> dict:
+    packet = {
+        "schema": "lawb.bridge_task_packet.v1",
+        "packet_id": "bridge-codex-command-smoke-110-task-001",
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "issue": 110,
+        "branch": "master",
+        "base_head": "0925f2188b4781a0c9d76d727b0b456e6fea8cea",
+        "requested_by": "chatgpt",
+        "task_role": "core",
+        "manual_copy_paste_is_target": False,
+        "expires_utc": "20990101T000000Z",
+        "action": "bounded-local-command",
+        "command": {
+            "kind": "local-git-status-summary",
+            "description": "Read-only repository status summary.",
+            "timeout_seconds": 30,
+        },
+        "writeback": {
+            "surface": "github_issue_comment",
+            "issue": 110,
+            "requires_explicit_post_result_comment": True,
+        },
+        "expected_result_packet": "lawb.bridge_result_packet.v1",
+        "safety": {
+            "foreground_manual_start_only": True,
+            "no_background_watcher": True,
+            "no_always_on_polling": True,
+            "no_stage": True,
+            "no_commit": True,
+            "no_push": True,
+            "no_issue_close": True,
+            "no_label": True,
+            "no_pr": True,
+            "no_merge": True,
+            "no_approval_chaining": True,
+            "no_real_codex_code_modification": True,
+        },
+    }
+    packet.update(overrides)
+    return packet
+
+
 def _task_packet_text(packet: dict | str) -> str:
     if isinstance(packet, str):
         return TASK_MARKER + "\n" + packet
     return TASK_MARKER + "\n" + json.dumps(packet, indent=2)
 
 
-def _write_fake_gh(tmp_path: Path, issue_body: str, comments: list[str] | None = None) -> Path:
+def _write_fake_gh(
+    tmp_path: Path,
+    issue_body: str,
+    comments: list[str] | None = None,
+    issue_number: int = 109,
+) -> Path:
     payload = {
-        "number": 109,
+        "number": issue_number,
         "state": "OPEN",
         "title": "Local relay GitHub packet read and result writeback runtime verification",
-        "url": "https://github.com/HarryWhite-TW/local-ai-workbench/issues/109",
+        "url": f"https://github.com/HarryWhite-TW/local-ai-workbench/issues/{issue_number}",
         "body": issue_body,
         "comments": [{"body": body} for body in (comments or [])],
     }
@@ -99,11 +149,11 @@ def _write_fake_gh(tmp_path: Path, issue_body: str, comments: list[str] | None =
         "\n".join(
             [
                 "@echo off",
-                'if "%1"=="issue" if "%2"=="view" if "%3"=="109" (',
+                f'if "%1"=="issue" if "%2"=="view" if "%3"=="{issue_number}" (',
                 f'  type "{payload_file}"',
                 "  exit /b 0",
                 ")",
-                'if "%1"=="issue" if "%2"=="comment" if "%3"=="109" (',
+                f'if "%1"=="issue" if "%2"=="comment" if "%3"=="{issue_number}" (',
                 f'  echo comment>>"{record_file}"',
                 "  exit /b 0",
                 ")",
@@ -157,6 +207,8 @@ def test_readback_smoke_packets_are_parseable_and_safe():
     result = json.loads(RESULT_PACKET.read_text(encoding="utf-8"))
     github_task = json.loads(GITHUB_TASK_PACKET.read_text(encoding="utf-8"))
     github_result = json.loads(GITHUB_RESULT_PACKET.read_text(encoding="utf-8"))
+    codex_command_task = json.loads(CODEX_COMMAND_TASK_PACKET.read_text(encoding="utf-8"))
+    codex_command_result = json.loads(CODEX_COMMAND_RESULT_PACKET.read_text(encoding="utf-8"))
 
     assert task["schema"] == "lawb.bridge_task_packet.v1"
     assert task["issue"] == 107
@@ -182,8 +234,18 @@ def test_readback_smoke_packets_are_parseable_and_safe():
     assert github_task["writeback"]["requires_explicit_post_result_comment"] is True
     assert github_result["schema"] == "lawb.bridge_result_packet.v1"
     assert github_result["task_packet_id"] == github_task["packet_id"]
+    assert codex_command_task["schema"] == "lawb.bridge_task_packet.v1"
+    assert codex_command_task["issue"] == 110
+    assert codex_command_task["action"] == "bounded-local-command"
+    assert codex_command_task["command"]["kind"] == "local-git-status-summary"
+    assert "command_text" not in codex_command_task["command"]
+    assert "args" not in codex_command_task["command"]
+    assert codex_command_result["schema"] == "lawb.bridge_result_packet.v1"
+    assert codex_command_result["task_packet_id"] == codex_command_task["packet_id"]
+    assert codex_command_result["action"] == "bounded-local-command"
+    assert codex_command_result["command_result"]["kind"] == "local-git-status-summary"
 
-    for packet in (task, result):
+    for packet in (task, result, codex_command_task, codex_command_result):
         safety = packet["safety"]
         assert safety["foreground_manual_start_only"] is True
         assert safety["no_background_watcher"] is True
@@ -211,6 +273,112 @@ def test_local_bridge_relay_smoke_runs_harmless_dry_action_only():
     assert packet["writeback_surface"] == "github_issue_comment"
     assert packet["next_recommended_action"] == "chatgpt_review"
     assert all(packet["safety"].values())
+
+
+def test_local_git_status_summary_runs_allowlisted_read_only_command():
+    result = _run_relay(["-TaskPacketFile", str(CODEX_COMMAND_TASK_PACKET)])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    packet = _extract_packet(result.stdout)
+    command_result = packet["command_result"]
+
+    assert packet["schema"] == "lawb.bridge_result_packet.v1"
+    assert packet["task_packet_id"] == "bridge-codex-command-smoke-110-task-001"
+    assert packet["issue"] == 110
+    assert packet["result"] == "success"
+    assert packet["action"] == "bounded-local-command"
+    assert "dry_action_output" not in packet
+    assert command_result["kind"] == "local-git-status-summary"
+    assert command_result["branch"] == "master"
+    assert len(command_result["head"]) == 40
+    assert len(command_result["origin_master"]) == 40
+    assert isinstance(command_result["git_status_short"], str)
+    assert len(command_result["git_status_short"]) <= 2012
+    assert isinstance(command_result["is_clean"], bool)
+    assert packet["safety"]["no_real_codex_code_modification"] is True
+
+
+def test_github_issue_local_git_status_summary_no_post_default(tmp_path):
+    record_file = _write_fake_gh(
+        tmp_path,
+        _task_packet_text(_codex_command_task_packet()),
+        issue_number=110,
+    )
+    env = os.environ.copy()
+    env["PATH"] = str(tmp_path) + os.pathsep + env["PATH"]
+
+    result = _run_relay(["-IssueNumber", "110", "-ReadTaskPacketFromGitHub"], env=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    packet = _extract_packet(result.stdout)
+    assert packet["result"] == "success"
+    assert packet["action"] == "bounded-local-command"
+    assert packet["command_result"]["kind"] == "local-git-status-summary"
+    assert not record_file.exists()
+
+
+def test_unknown_command_kind_fails_closed(tmp_path):
+    task_file = tmp_path / "unknown-command.json"
+    task_file.write_text(
+        json.dumps(
+            _codex_command_task_packet(
+                command={
+                    "kind": "local-directory-listing",
+                    "description": "Unsupported command.",
+                    "timeout_seconds": 30,
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_relay(["-TaskPacketFile", str(task_file)])
+
+    assert result.returncode != 0
+    assert "local-git-status-summary" in (result.stdout + result.stderr)
+
+
+def test_unsafe_command_fields_fail_closed(tmp_path):
+    task_file = tmp_path / "unsafe-command.json"
+    task_file.write_text(
+        json.dumps(
+            _codex_command_task_packet(
+                command={
+                    "kind": "local-git-status-summary",
+                    "description": "Unsafe command shape.",
+                    "timeout_seconds": 30,
+                    "command_text": "git status --short",
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_relay(["-TaskPacketFile", str(task_file)])
+
+    assert result.returncode != 0
+    assert "Unsupported unsafe command field: command_text" in (result.stdout + result.stderr)
+
+
+def test_timeout_above_30_fails_closed(tmp_path):
+    task_file = tmp_path / "slow-command.json"
+    task_file.write_text(
+        json.dumps(
+            _codex_command_task_packet(
+                command={
+                    "kind": "local-git-status-summary",
+                    "description": "Timeout should be rejected.",
+                    "timeout_seconds": 31,
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_relay(["-TaskPacketFile", str(task_file)])
+
+    assert result.returncode != 0
+    assert "timeout_seconds must be <= 30" in (result.stdout + result.stderr)
 
 
 def test_github_issue_task_packet_read_no_post_default(tmp_path):

@@ -8,7 +8,7 @@ The target loop is:
 
 1. ChatGPT writes a bridge task packet to GitHub.
 2. A local foreground relay reads the task packet.
-3. The relay executes one harmless bounded dry action.
+3. The relay executes one harmless bounded dry action or one explicitly allowlisted bounded read-only local command.
 4. The relay emits a bridge result packet.
 5. The relay can write the result packet back to GitHub when explicitly requested.
 6. ChatGPT reads the result packet from GitHub.
@@ -35,6 +35,8 @@ foreground_manual_start_only=true
 harmless_dry_action_only=true
 github_result_writeback_defined=true
 chatgpt_readback_path_defined=true
+bounded_local_command_defined=true
+local_git_status_summary_only=true
 ```
 
 This issue does not implement background watching, always-on polling, automatic commit, automatic push, automatic close, approval chaining, high-risk Release Bundle behavior, or real Codex code modification through the relay.
@@ -112,6 +114,58 @@ The marker must be followed by JSON. The GitHub-read packet must validate:
 - required safety flags are present and true
 
 The relay fails closed for missing, duplicate, malformed, stale, schema-mismatched, repo-mismatched, issue-mismatched, unsupported, or unsafe packets. See `docs/bridge_task_packet.github_readback_smoke.example.json` and `docs/bridge_result_packet.github_readback_smoke.example.json` for the GitHub-read smoke packet examples.
+
+## Bounded Local Command Smoke
+
+The relay supports exactly one bounded local command kind for the #110 bridge slice:
+
+```text
+action=bounded-local-command
+command.kind=local-git-status-summary
+```
+
+The task packet may request:
+
+```json
+{
+  "action": "bounded-local-command",
+  "command": {
+    "kind": "local-git-status-summary",
+    "description": "Read-only repository status summary.",
+    "timeout_seconds": 30
+  }
+}
+```
+
+The relay does not execute shell text, user-provided arguments, scripts, paths, PowerShell, Bash, Cmd, or arbitrary commands from the task packet. For `local-git-status-summary`, it internally runs only hardcoded read-only git status commands:
+
+- `git status --short`
+- `git branch --show-current`
+- `git rev-parse HEAD`
+- `git rev-parse origin/master`
+
+The result packet includes a bounded `command_result` object:
+
+```json
+{
+  "kind": "local-git-status-summary",
+  "branch": "master",
+  "head": "<observed HEAD>",
+  "origin_master": "<observed origin/master>",
+  "git_status_short": "<bounded status text>",
+  "is_clean": true
+}
+```
+
+The relay rejects unknown command kinds, unsupported actions, unsafe command fields such as `shell`, `args`, `script`, `command_text`, `powershell`, `bash`, `cmd`, `exec`, or `path`, timeout values greater than 30 seconds, missing or false safety flags, and any packet requesting mutation, commit, push, close, labels, PRs, merges, watchers, polling, approval chaining, or real Codex code modification.
+
+Run the local command smoke without GitHub posting:
+
+```powershell
+.\scripts\local_bridge_relay_smoke.ps1 -TaskPacketFile .\docs\bridge_task_packet.codex_command_smoke.example.json
+```
+
+See `docs/bridge_task_packet.codex_command_smoke.example.json` and `docs/bridge_result_packet.codex_command_smoke.example.json` for the bounded command packet examples.
 
 ## GitHub Result Writeback
 

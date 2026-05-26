@@ -1,0 +1,38 @@
+{
+  "schema": "lawb.bridge_task_packet.v1",
+  "packet_id": "bridge-codex-command-smoke-110-task-001",
+  "repo": "HarryWhite-TW/local-ai-workbench",
+  "issue": 110,
+  "branch": "master",
+  "base_head": "0925f2188b4781a0c9d76d727b0b456e6fea8cea",
+  "requested_by": "chatgpt",
+  "task_role": "core",
+  "manual_copy_paste_is_target": false,
+  "expires_utc": "20990101T000000Z",
+  "action": "bounded-local-command",
+  "command": {
+    "kind": "local-git-status-summary",
+    "description": "Read-only repository status summary.",
+    "timeout_seconds": 30
+  },
+  "writeback": {
+    "surface": "github_issue_comment",
+    "issue": 110,
+    "requires_explicit_post_result_comment": true
+  },
+  "expected_result_packet": "lawb.bridge_result_packet.v1",
+  "safety": {
+    "foreground_manual_start_only": true,
+    "no_background_watcher": true,
+    "no_always_on_polling": true,
+    "no_stage": true,
+    "no_commit": true,
+    "no_push": true,
+    "no_issue_close": true,
+    "no_label": true,
+    "no_pr": true,
+    "no_merge": true,
+    "no_approval_chaining": true,
+    "no_real_codex_code_modification": true
+  }
+}
