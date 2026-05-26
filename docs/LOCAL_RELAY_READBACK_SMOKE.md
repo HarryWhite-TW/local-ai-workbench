@@ -8,7 +8,7 @@ The target loop is:
 
 1. ChatGPT writes a bridge task packet to GitHub.
 2. A local foreground relay reads the task packet.
-3. The relay executes one harmless bounded dry action or one explicitly allowlisted bounded read-only local command.
+3. The relay executes one harmless bounded dry action, one explicitly allowlisted bounded read-only local command, or one explicitly allowlisted read-only Codex-side capability probe.
 4. The relay emits a bridge result packet.
 5. The relay can write the result packet back to GitHub when explicitly requested.
 6. ChatGPT reads the result packet from GitHub.
@@ -37,6 +37,7 @@ github_result_writeback_defined=true
 chatgpt_readback_path_defined=true
 bounded_local_command_defined=true
 local_git_status_summary_only=true
+codex_side_capability_probe_defined=true
 ```
 
 This issue does not implement background watching, always-on polling, automatic commit, automatic push, automatic close, approval chaining, high-risk Release Bundle behavior, or real Codex code modification through the relay.
@@ -157,7 +158,7 @@ The result packet includes a bounded `command_result` object:
 }
 ```
 
-The relay rejects unknown command kinds, unsupported actions, unsafe command fields such as `shell`, `args`, `script`, `command_text`, `powershell`, `bash`, `cmd`, `exec`, or `path`, timeout values greater than 30 seconds, missing or false safety flags, and any packet requesting mutation, commit, push, close, labels, PRs, merges, watchers, polling, approval chaining, or real Codex code modification.
+The relay rejects unknown command kinds, unsupported actions, unsafe command fields such as `shell`, `args`, `script`, `command_text`, `powershell`, `bash`, `cmd`, `exec`, `path`, `prompt`, or `prompt_text`, timeout values greater than 30 seconds, missing or false safety flags, and any packet requesting mutation, commit, push, close, labels, PRs, merges, watchers, polling, approval chaining, arbitrary prompt execution, arbitrary shell execution, or real Codex code modification.
 
 Run the local command smoke without GitHub posting:
 
@@ -166,6 +167,63 @@ Run the local command smoke without GitHub posting:
 ```
 
 See `docs/bridge_task_packet.codex_command_smoke.example.json` and `docs/bridge_result_packet.codex_command_smoke.example.json` for the bounded command packet examples.
+
+## Codex-Side Capability Probe
+
+The relay supports exactly one Codex-side capability probe command kind for the #111 bridge slice:
+
+```text
+action=bounded-codex-capability-probe
+command.kind=codex-side-capability-probe
+```
+
+The task packet may request:
+
+```json
+{
+  "action": "bounded-codex-capability-probe",
+  "command": {
+    "kind": "codex-side-capability-probe",
+    "description": "Read-only Codex-side invocation surface probe.",
+    "timeout_seconds": 30
+  }
+}
+```
+
+This probe only detects whether a bounded Codex-side invocation surface is present. It does not send prompts to Codex, ask Codex to edit files, run arbitrary shell text, stage files, commit, push, close issues, label, create PRs, merge, watch, poll, or chain approvals.
+
+The current probe checks hardcoded read-only surfaces:
+
+- `Get-Command codex -CommandType Application`
+- `codex --version`
+
+If no allowlisted Codex-side executable is found, the relay action still succeeds and reports `codex_side_invocation_available=false` with `unavailable_reason=no_allowlisted_codex_surface_detected`. If a surface is found, the relay reports bounded evidence such as the executable path or version output.
+
+The result packet includes a bounded `command_result` object:
+
+```json
+{
+  "kind": "codex-side-capability-probe",
+  "codex_side_invocation_available": false,
+  "checked_surfaces": [
+    "Get-Command codex -CommandType Application",
+    "codex --version"
+  ],
+  "available_surface": null,
+  "evidence": null,
+  "unavailable_reason": "no_allowlisted_codex_surface_detected",
+  "mutating_action_attempted": false,
+  "arbitrary_shell_execution_used": false
+}
+```
+
+Run the capability probe without GitHub posting:
+
+```powershell
+.\scripts\local_bridge_relay_smoke.ps1 -TaskPacketFile .\docs\bridge_task_packet.codex_capability_probe.example.json
+```
+
+See `docs/bridge_task_packet.codex_capability_probe.example.json` and `docs/bridge_result_packet.codex_capability_probe.example.json` for the capability probe packet examples.
 
 ## GitHub Result Writeback
 

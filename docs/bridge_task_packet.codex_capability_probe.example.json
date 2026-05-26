@@ -1,0 +1,41 @@
+{
+  "schema": "lawb.bridge_task_packet.v1",
+  "packet_id": "bridge-codex-capability-probe-111-task-001",
+  "repo": "HarryWhite-TW/local-ai-workbench",
+  "issue": 111,
+  "branch": "master",
+  "base_head": "75db39d60f4d72a2b8274dd0549f2b87f3c3c182",
+  "requested_by": "chatgpt",
+  "task_role": "core",
+  "manual_copy_paste_is_target": false,
+  "expires_utc": "20990101T000000Z",
+  "action": "bounded-codex-capability-probe",
+  "command": {
+    "kind": "codex-side-capability-probe",
+    "description": "Read-only Codex-side invocation surface probe.",
+    "timeout_seconds": 30
+  },
+  "writeback": {
+    "surface": "github_issue_comment",
+    "issue": 111,
+    "requires_explicit_post_result_comment": true
+  },
+  "expected_result_packet": "lawb.bridge_result_packet.v1",
+  "safety": {
+    "foreground_manual_start_only": true,
+    "no_background_watcher": true,
+    "no_always_on_polling": true,
+    "no_stage": true,
+    "no_commit": true,
+    "no_push": true,
+    "no_issue_close": true,
+    "no_label": true,
+    "no_pr": true,
+    "no_merge": true,
+    "no_approval_chaining": true,
+    "no_real_codex_code_modification": true,
+    "no_arbitrary_shell_execution": true,
+    "no_arbitrary_prompt_execution": true,
+    "allowlisted_command_only": true
+  }
+}

@@ -68,7 +68,9 @@ function Assert-NoUnsafeCommandFields {
         "bash",
         "cmd",
         "exec",
-        "path"
+        "path",
+        "prompt",
+        "prompt_text"
     )
 
     foreach ($field in $forbiddenFields) {
@@ -122,6 +124,111 @@ function Invoke-LocalGitStatusSummary {
         origin_master = $originMaster
         git_status_short = Get-BoundedText -Text $statusShort
         is_clean = [string]::IsNullOrWhiteSpace($statusShort)
+    }
+}
+
+function Invoke-BoundedNativeReadOnly {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutSeconds
+    )
+
+    $process = $null
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $FilePath
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+        $startInfo.Arguments = ($Arguments -join " ")
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        $null = $process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $completed) {
+            try {
+                $process.Kill()
+            }
+            catch {
+            }
+            return [pscustomobject]@{
+                ExitCode = 124
+                Stdout = ""
+                Stderr = "Timed out after $TimeoutSeconds seconds."
+            }
+        }
+
+        $process.WaitForExit()
+        return [pscustomobject]@{
+            ExitCode = [int]$process.ExitCode
+            Stdout = if ($null -eq $stdoutTask.Result) { "" } else { $stdoutTask.Result.TrimEnd() }
+            Stderr = if ($null -eq $stderrTask.Result) { "" } else { $stderrTask.Result.TrimEnd() }
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            ExitCode = 1
+            Stdout = ""
+            Stderr = $_.Exception.Message
+        }
+    }
+    finally {
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+    }
+}
+
+function Invoke-CodexSideCapabilityProbe {
+    $checkedSurfaces = @(
+        "Get-Command codex -CommandType Application",
+        "codex --version"
+    )
+
+    $codexCommand = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $codexCommand -or [string]::IsNullOrWhiteSpace([string]$codexCommand.Source)) {
+        return [ordered]@{
+            kind = "codex-side-capability-probe"
+            codex_side_invocation_available = $false
+            checked_surfaces = $checkedSurfaces
+            available_surface = $null
+            evidence = $null
+            unavailable_reason = "no_allowlisted_codex_surface_detected"
+            mutating_action_attempted = $false
+            arbitrary_shell_execution_used = $false
+        }
+    }
+
+    $versionResult = Invoke-BoundedNativeReadOnly -FilePath ([string]$codexCommand.Source) -Arguments @("--version") -TimeoutSeconds 10
+    $evidenceParts = @()
+    if (-not [string]::IsNullOrWhiteSpace($versionResult.Stdout)) {
+        $evidenceParts += $versionResult.Stdout
+    }
+    if (-not [string]::IsNullOrWhiteSpace($versionResult.Stderr)) {
+        $evidenceParts += $versionResult.Stderr
+    }
+    $evidence = Get-BoundedText -Text (($evidenceParts -join "`n").Trim()) -MaxChars 1000
+    if ([string]::IsNullOrWhiteSpace($evidence)) {
+        $evidence = "codex --version exit_code=$($versionResult.ExitCode)"
+    }
+
+    return [ordered]@{
+        kind = "codex-side-capability-probe"
+        codex_side_invocation_available = $true
+        checked_surfaces = $checkedSurfaces
+        available_surface = Get-BoundedText -Text ([string]$codexCommand.Source) -MaxChars 500
+        evidence = $evidence
+        unavailable_reason = $null
+        mutating_action_attempted = $false
+        arbitrary_shell_execution_used = $false
     }
 }
 
@@ -316,6 +423,11 @@ elseif ($action -eq "bounded-local-command") {
     Assert-True -Condition ($commandKind -eq "local-git-status-summary") -Message "bounded-local-command supports only command.kind=local-git-status-summary."
     $summary = "Local relay read the task packet, executed one allowlisted read-only git status summary command, and produced this result packet."
     $commandResult = Invoke-LocalGitStatusSummary
+}
+elseif ($action -eq "bounded-codex-capability-probe") {
+    Assert-True -Condition ($commandKind -eq "codex-side-capability-probe") -Message "bounded-codex-capability-probe supports only command.kind=codex-side-capability-probe."
+    $summary = "Local relay read the task packet, executed one allowlisted read-only Codex-side capability probe, and produced this result packet."
+    $commandResult = Invoke-CodexSideCapabilityProbe
 }
 else {
     throw "Unsupported action: $action"

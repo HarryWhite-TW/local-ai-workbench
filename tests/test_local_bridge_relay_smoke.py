@@ -16,6 +16,8 @@ GITHUB_TASK_PACKET = REPO_ROOT / "docs" / "bridge_task_packet.github_readback_sm
 GITHUB_RESULT_PACKET = REPO_ROOT / "docs" / "bridge_result_packet.github_readback_smoke.example.json"
 CODEX_COMMAND_TASK_PACKET = REPO_ROOT / "docs" / "bridge_task_packet.codex_command_smoke.example.json"
 CODEX_COMMAND_RESULT_PACKET = REPO_ROOT / "docs" / "bridge_result_packet.codex_command_smoke.example.json"
+CODEX_CAPABILITY_TASK_PACKET = REPO_ROOT / "docs" / "bridge_task_packet.codex_capability_probe.example.json"
+CODEX_CAPABILITY_RESULT_PACKET = REPO_ROOT / "docs" / "bridge_result_packet.codex_capability_probe.example.json"
 MARKER = "BRIDGE-RESULT-PACKET protocol=lawb.bridge_result_packet.v1"
 TASK_MARKER = "BRIDGE-TASK-PACKET protocol=lawb.bridge_task_packet.v1"
 
@@ -121,6 +123,52 @@ def _codex_command_task_packet(**overrides) -> dict:
     return packet
 
 
+def _codex_capability_task_packet(**overrides) -> dict:
+    packet = {
+        "schema": "lawb.bridge_task_packet.v1",
+        "packet_id": "bridge-codex-capability-probe-111-task-001",
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "issue": 111,
+        "branch": "master",
+        "base_head": "75db39d60f4d72a2b8274dd0549f2b87f3c3c182",
+        "requested_by": "chatgpt",
+        "task_role": "core",
+        "manual_copy_paste_is_target": False,
+        "expires_utc": "20990101T000000Z",
+        "action": "bounded-codex-capability-probe",
+        "command": {
+            "kind": "codex-side-capability-probe",
+            "description": "Read-only Codex-side invocation surface probe.",
+            "timeout_seconds": 30,
+        },
+        "writeback": {
+            "surface": "github_issue_comment",
+            "issue": 111,
+            "requires_explicit_post_result_comment": True,
+        },
+        "expected_result_packet": "lawb.bridge_result_packet.v1",
+        "safety": {
+            "foreground_manual_start_only": True,
+            "no_background_watcher": True,
+            "no_always_on_polling": True,
+            "no_stage": True,
+            "no_commit": True,
+            "no_push": True,
+            "no_issue_close": True,
+            "no_label": True,
+            "no_pr": True,
+            "no_merge": True,
+            "no_approval_chaining": True,
+            "no_real_codex_code_modification": True,
+            "no_arbitrary_shell_execution": True,
+            "no_arbitrary_prompt_execution": True,
+            "allowlisted_command_only": True,
+        },
+    }
+    packet.update(overrides)
+    return packet
+
+
 def _task_packet_text(packet: dict | str) -> str:
     if isinstance(packet, str):
         return TASK_MARKER + "\n" + packet
@@ -209,6 +257,8 @@ def test_readback_smoke_packets_are_parseable_and_safe():
     github_result = json.loads(GITHUB_RESULT_PACKET.read_text(encoding="utf-8"))
     codex_command_task = json.loads(CODEX_COMMAND_TASK_PACKET.read_text(encoding="utf-8"))
     codex_command_result = json.loads(CODEX_COMMAND_RESULT_PACKET.read_text(encoding="utf-8"))
+    codex_capability_task = json.loads(CODEX_CAPABILITY_TASK_PACKET.read_text(encoding="utf-8"))
+    codex_capability_result = json.loads(CODEX_CAPABILITY_RESULT_PACKET.read_text(encoding="utf-8"))
 
     assert task["schema"] == "lawb.bridge_task_packet.v1"
     assert task["issue"] == 107
@@ -244,8 +294,21 @@ def test_readback_smoke_packets_are_parseable_and_safe():
     assert codex_command_result["task_packet_id"] == codex_command_task["packet_id"]
     assert codex_command_result["action"] == "bounded-local-command"
     assert codex_command_result["command_result"]["kind"] == "local-git-status-summary"
+    assert codex_capability_task["schema"] == "lawb.bridge_task_packet.v1"
+    assert codex_capability_task["issue"] == 111
+    assert codex_capability_task["action"] == "bounded-codex-capability-probe"
+    assert codex_capability_task["command"]["kind"] == "codex-side-capability-probe"
+    assert "command_text" not in codex_capability_task["command"]
+    assert "prompt" not in codex_capability_task["command"]
+    assert codex_capability_result["schema"] == "lawb.bridge_result_packet.v1"
+    assert codex_capability_result["task_packet_id"] == codex_capability_task["packet_id"]
+    assert codex_capability_result["action"] == "bounded-codex-capability-probe"
+    assert codex_capability_result["command_result"]["kind"] == "codex-side-capability-probe"
+    assert isinstance(codex_capability_result["command_result"]["codex_side_invocation_available"], bool)
+    assert codex_capability_result["command_result"]["mutating_action_attempted"] is False
+    assert codex_capability_result["command_result"]["arbitrary_shell_execution_used"] is False
 
-    for packet in (task, result, codex_command_task, codex_command_result):
+    for packet in (task, result, codex_command_task, codex_command_result, codex_capability_task, codex_capability_result):
         safety = packet["safety"]
         assert safety["foreground_manual_start_only"] is True
         assert safety["no_background_watcher"] is True
@@ -298,6 +361,52 @@ def test_local_git_status_summary_runs_allowlisted_read_only_command():
     assert packet["safety"]["no_real_codex_code_modification"] is True
 
 
+def test_codex_side_capability_probe_returns_bounded_result_packet():
+    result = _run_relay(["-TaskPacketFile", str(CODEX_CAPABILITY_TASK_PACKET)])
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    packet = _extract_packet(result.stdout)
+    command_result = packet["command_result"]
+
+    assert packet["schema"] == "lawb.bridge_result_packet.v1"
+    assert packet["task_packet_id"] == "bridge-codex-capability-probe-111-task-001"
+    assert packet["issue"] == 111
+    assert packet["result"] == "success"
+    assert packet["action"] == "bounded-codex-capability-probe"
+    assert command_result["kind"] == "codex-side-capability-probe"
+    assert isinstance(command_result["codex_side_invocation_available"], bool)
+    assert isinstance(command_result["checked_surfaces"], list)
+    assert "Get-Command codex -CommandType Application" in command_result["checked_surfaces"]
+    assert command_result["mutating_action_attempted"] is False
+    assert command_result["arbitrary_shell_execution_used"] is False
+    if command_result["evidence"] is not None:
+        assert len(command_result["evidence"]) <= 1012
+    if command_result["available_surface"] is not None:
+        assert len(command_result["available_surface"]) <= 500
+    assert packet["safety"]["no_real_codex_code_modification"] is True
+
+
+def test_codex_side_capability_probe_unavailable_reports_false_without_failing(tmp_path):
+    task_file = tmp_path / "codex-probe.json"
+    task_file.write_text(json.dumps(_codex_capability_task_packet()), encoding="utf-8")
+    env = os.environ.copy()
+    env["PATH"] = str(tmp_path)
+
+    result = _run_relay(["-TaskPacketFile", str(task_file)], env=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    packet = _extract_packet(result.stdout)
+    command_result = packet["command_result"]
+    assert packet["result"] == "success"
+    assert command_result["kind"] == "codex-side-capability-probe"
+    assert command_result["codex_side_invocation_available"] is False
+    assert command_result["available_surface"] is None
+    assert command_result["evidence"] is None
+    assert command_result["unavailable_reason"] == "no_allowlisted_codex_surface_detected"
+    assert command_result["mutating_action_attempted"] is False
+    assert command_result["arbitrary_shell_execution_used"] is False
+
+
 def test_github_issue_local_git_status_summary_no_post_default(tmp_path):
     record_file = _write_fake_gh(
         tmp_path,
@@ -314,6 +423,26 @@ def test_github_issue_local_git_status_summary_no_post_default(tmp_path):
     assert packet["result"] == "success"
     assert packet["action"] == "bounded-local-command"
     assert packet["command_result"]["kind"] == "local-git-status-summary"
+    assert not record_file.exists()
+
+
+def test_github_issue_codex_capability_probe_no_post_default(tmp_path):
+    record_file = _write_fake_gh(
+        tmp_path,
+        _task_packet_text(_codex_capability_task_packet()),
+        issue_number=111,
+    )
+    env = os.environ.copy()
+    env["PATH"] = str(tmp_path) + os.pathsep + env["PATH"]
+
+    result = _run_relay(["-IssueNumber", "111", "-ReadTaskPacketFromGitHub"], env=env)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    packet = _extract_packet(result.stdout)
+    assert packet["result"] == "success"
+    assert packet["action"] == "bounded-codex-capability-probe"
+    assert packet["command_result"]["kind"] == "codex-side-capability-probe"
+    assert isinstance(packet["command_result"]["codex_side_invocation_available"], bool)
     assert not record_file.exists()
 
 
@@ -358,6 +487,28 @@ def test_unsafe_command_fields_fail_closed(tmp_path):
 
     assert result.returncode != 0
     assert "Unsupported unsafe command field: command_text" in (result.stdout + result.stderr)
+
+
+def test_arbitrary_prompt_field_fails_closed(tmp_path):
+    task_file = tmp_path / "unsafe-prompt.json"
+    task_file.write_text(
+        json.dumps(
+            _codex_capability_task_packet(
+                command={
+                    "kind": "codex-side-capability-probe",
+                    "description": "Unsafe prompt shape.",
+                    "timeout_seconds": 30,
+                    "prompt": "Edit files.",
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_relay(["-TaskPacketFile", str(task_file)])
+
+    assert result.returncode != 0
+    assert "Unsupported unsafe command field: prompt" in (result.stdout + result.stderr)
 
 
 def test_timeout_above_30_fails_closed(tmp_path):
