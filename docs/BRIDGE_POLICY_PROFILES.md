@@ -464,3 +464,47 @@ Short prompts must not hide:
 ## Non-Weakening Statement
 
 This document changes no runtime behavior and no runner behavior. It packages repeated workflow rules into named policy and phase vocabulary. Existing safety rails are not weakened.
+
+## Lv4.5 Action State and Fail-Closed Rule
+
+Current active safe dispatch action for Lv4.5 is:
+
+- `maybe-status-check`
+
+Reserved / future dispatch action names are:
+
+- `run-reviewbundle`
+- `run-reviewbundle-handoff`
+- `read-final-audit`
+
+Reserved actions must fail closed until they are explicitly implemented, tested, documented, and approved.
+
+## Risk-Based Authority Model (Current Guardrail)
+
+Low-risk examples:
+
+- read-only audit
+- issue state check
+- git status check
+- marker readback
+- runner result verification
+- final read-only audit
+
+Medium-risk examples:
+
+- docs-only ReviewBundle
+- candidate diff
+- low-risk queue review
+- workflow document update
+
+High-risk examples:
+
+- local commit
+- push
+- issue close
+- label changes
+- PR creation
+- merge
+- approval consumption
+
+High-risk actions require a ChatGPT risk package and explicit user approval before the next phase. Commit, push, and close remain separate approval phases, with no approval chaining.

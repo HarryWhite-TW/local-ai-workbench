@@ -396,3 +396,37 @@ review-bundle
 ```
 
 This SOP is review-bundle capable for docs-only Lv4.5 operating procedure documentation. It does not authorize stage, commit, push, issue close, labels, PRs, merges, force push, `PushOnce`, `CloseIssueOnce`, dispatcher `PollOnce`, approval chaining, background watcher implementation, always-on polling, runner code changes, dispatcher code changes, test changes, or feature implementation.
+
+## Away Mode vs Home Mode Boundary
+
+Away Mode may be used for:
+
+- planning
+- issue drafting
+- GitHub issue review
+- docs-only planning
+- Codex Web candidate work when explicitly approved
+- ChatGPT review of GitHub-visible results
+
+Away Mode must not be used for:
+
+- local runner execution
+- PowerShell dispatcher smoke
+- `pytest`
+- local commit
+- push
+- issue close rail
+- tasks that depend on local working tree state
+
+Home Mode is required for:
+
+- local repo state audit
+- local runner / dispatcher smoke
+- `pytest`
+- ReviewBundle validation
+- CommitApproved phase
+- PushOnce phase
+- CloseIssueOnce phase
+- final audit rails
+
+This boundary preserves current Lv4.5 safety rails: no background watcher, no always-on polling, no unrestricted Codex execution, no automatic commit/push/close, no approval chaining, no broad issue scanning, no full Lv5 automation claim, and no user-facing CLI as the main interface.

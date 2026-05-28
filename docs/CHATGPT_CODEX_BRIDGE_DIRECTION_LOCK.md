@@ -108,3 +108,16 @@ The Bridge Feasibility Probe should test:
 5. ChatGPT can read the result without the user manually pasting Codex output.
 
 The probe must stay bounded, foreground/manual-start where required by current safety rules, and auditable. It must not implement a background watcher, automatic commit, automatic push, automatic close, approval chaining, or a high-risk Release Bundle.
+
+## Lv4.5 Current vs Lv5 Reserved Status Note
+
+Current implemented daily bridge is **Lv4.5**: foreground, explicit, issue-scoped, and manually started.
+
+Current implemented dispatch/result schema pair for Lv4.5 is:
+
+- `CHATGPT-DISPATCH protocol=lawb.dispatch.v1`
+- `LAWBRUNNER-RESULT protocol=lawb.runner_result.v1`
+
+`BRIDGE-TASK-PACKET` and `BRIDGE-RESULT-PACKET` remain a higher-level future bridge packet design layer. They must not be mixed with the current Lv4.5 dispatch path unless an explicit adapter is implemented, tested, documented, and approved.
+
+`Lv5-lite` and `Lv5-safe` remain bounded future / higher-level workflow terminology and must not weaken current safety boundaries.
