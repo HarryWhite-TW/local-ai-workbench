@@ -32,12 +32,12 @@ The workflow target is:
 
 ```text
 User
-??ChatGPT
-??GitHub Issue / Comment
-??Codex Web / Codex / local runner
-??GitHub result
-??ChatGPT review
-??User approval only for key high-risk decisions
+-> ChatGPT
+-> GitHub Issue / Comment
+-> Codex Web / Codex / local runner
+-> GitHub result
+-> ChatGPT review
+-> User approval only for key high-risk decisions
 ```
 
 The current target is not Lv5 full automation.
@@ -258,12 +258,12 @@ The target flow is:
 
 ```text
 ChatGPT
-??GitHub task packet
-??local runner
-??bounded local action
-??GitHub result packet
-??ChatGPT review
-??user approval for high-risk phases
+-> GitHub task packet
+-> local runner
+-> bounded local action
+-> GitHub result packet
+-> ChatGPT review
+-> user approval for high-risk phases
 ```
 
 Local Runner Bridge v0 should automate task handoff, not high-risk approval.
