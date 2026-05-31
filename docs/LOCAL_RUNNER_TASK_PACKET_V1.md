@@ -418,7 +418,7 @@ Example:
 ```yaml
 approval:
   required: true
-  phrase: "?孵? #125 commit"
+  phrase: "APPROVE #125 commit"
   scope: "local commit only"
 ```
 

@@ -215,7 +215,7 @@ forbidden_operations:
   - runtime_smoke
 approval:
   required: true
-  phrase: "?孵? #131 commit"
+  phrase: "APPROVE #131 commit"
   scope: "local commit only"
 payload:
   kind: command_plan
@@ -286,7 +286,7 @@ forbidden_operations:
   - runtime_smoke
 approval:
   required: true
-  phrase: "?孵? #132 push"
+  phrase: "APPROVE #132 push"
   scope: "push approved local commit only"
 payload:
   kind: command_plan
