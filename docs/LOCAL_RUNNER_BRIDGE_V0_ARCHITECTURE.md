@@ -32,6 +32,20 @@ This document does not authorize always-on polling.
 
 This document does not authorize Lv5 full automation.
 
+## Direction Lock Binding
+
+This architecture must be read together with `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`.
+
+The direction lock is the source of truth for bridge direction.
+
+Manual copy/paste is not the target workflow.
+
+The user-only-interfaces-with-ChatGPT goal remains active.
+
+ChatGPT-to-Codex dispatch and Codex-to-ChatGPT result readback remain the strategic target.
+
+Any manual foreground runner start described in this document is a transitional safety constraint and bridge gap, not the target end state.
+
 ## Strategic context
 
 Semi-automated Workflow v1 has validated the governance layer.
@@ -57,11 +71,11 @@ ChatGPT prepares a long prompt
 -> ChatGPT reviews
 ```
 
-The target Local Runner Bridge v0 handoff is:
+The transitional Local Runner Bridge v0 handoff is:
 
 ```text
 ChatGPT creates or references a GitHub task packet
--> user manually triggers local runner
+-> user may manually start foreground relay / runner while direct bridge trigger is unavailable
 -> local runner reads one explicit task packet
 -> local runner validates schema and policy
 -> local runner performs one bounded action
@@ -69,6 +83,14 @@ ChatGPT creates or references a GitHub task packet
 -> ChatGPT reviews GitHub-visible result
 -> user approves only high-risk phases
 ```
+
+This manual foreground start is transitional.
+
+It is a current safety and capability constraint.
+
+It must not be presented as the target end state.
+
+The target remains ChatGPT-centered dispatch and Codex-to-ChatGPT result readback through an auditable bridge.
 
 ## Non-goals
 
@@ -108,13 +130,13 @@ Local Runner Bridge v0 has five primary participants:
 
 Codex may still be used as a bounded execution assistant, but the bridge architecture must not depend on unrestricted Codex behavior.
 
-The core flow is:
+The core transitional v0 flow is:
 
 ```text
 User
 -> ChatGPT
 -> GitHub task packet
--> local runner manual trigger
+-> foreground relay / runner start, manual only while required by current safety constraints
 -> schema validation
 -> policy validation
 -> bounded local action
@@ -129,7 +151,9 @@ User
 
 The user is the final approval authority for high-risk phases.
 
-The user may manually trigger the local runner.
+The user may temporarily start the foreground relay / runner while direct bridge trigger is unavailable.
+
+This is a transitional bridge gap, not the target end state.
 
 The user must explicitly approve:
 
@@ -143,6 +167,10 @@ The user must explicitly approve:
 * future automation authority expansion
 
 The user should not need to manually copy long prompts after the bridge MVP is available.
+
+The user should also not need to manually copy long Codex results back into ChatGPT after result readback is available.
+
+The user should primarily make direction decisions and high-risk approval decisions through ChatGPT.
 
 The user may still provide short fallback reports when GitHub writeback or connector readback is unavailable.
 
@@ -233,15 +261,23 @@ The local repository state must be included in the result packet.
 
 ## Manual trigger only
 
-Local Runner Bridge v0 must be manually triggered.
+Local Runner Bridge v0 may require foreground manual start in the current transitional safety slice.
 
-The user should run one explicit command or start one explicit local action.
+When direct bridge trigger is unavailable, the user may run one explicit command or start one explicit local action.
+
+This is transitional and must remain visible as a bridge gap.
 
 No background watcher is allowed in v0.
 
 No always-on polling is allowed in v0.
 
 No scheduled execution is allowed in v0.
+
+Manual start is not the target workflow.
+
+Manual start must not be confused with manual copy/paste relay.
+
+The target direction remains ChatGPT dispatching task packets and reading result packets through the bridge.
 
 ## Single-task execution
 
@@ -529,12 +565,16 @@ The first meaningful success criterion is:
 
 ```text
 ChatGPT creates a GitHub task packet
--> user manually triggers runner
+-> user may manually start foreground relay / runner while direct bridge trigger is unavailable
 -> runner reads the task packet
 -> runner applies one docs-only candidate
 -> runner writes a GitHub result packet
 -> ChatGPT reviews without the user pasting a long prompt or long transcript
 ```
+
+This success criterion is transitional.
+
+The stronger bridge success criterion is no-copy / no-paste dispatch and result readback, where the user does not manually paste task text into Codex and does not manually paste Codex output back into ChatGPT.
 
 ## Security model
 
@@ -677,7 +717,9 @@ This document does not authorize:
 
 ## Current status
 
-Local Runner Bridge v0 architecture is defined as a bounded, manually triggered task handoff bridge.
+Local Runner Bridge v0 architecture is defined as a bounded transitional task handoff bridge aligned with the Direction Lock.
+
+Manual foreground start may remain a current safety constraint, but it is not the target end state.
 
 The next recommended step after #124 is #125 Local Runner Task Packet v1.
 
