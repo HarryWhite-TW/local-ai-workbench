@@ -1,6 +1,6 @@
-Local Runner Result Packet v1
+# Local Runner Result Packet v1
 
-Purpose
+## Purpose
 
 This document defines Local Runner Result Packet v1.
 
@@ -30,8 +30,9 @@ This document does not authorize always-on polling.
 
 This document does not authorize Lv5 full automation.
 
-Direction Lock Binding
+## Direction Lock Binding
 
+```text
 Direction Lock Binding
 plan_path=docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md
 plan_version=v1
@@ -40,11 +41,13 @@ primary_goal=chatgpt_dispatches_to_codex_and_reads_results_back
 issue_role=core
 manual_copy_paste_is_target=false
 must_emit_plan_read_audit=true
+```
 
-Relationship to bridge direction
+## Relationship to bridge direction
 
 Result Packet v1 supports the bridge target:
 
+```text
 User
 -> ChatGPT
 -> auditable task surface
@@ -53,6 +56,7 @@ User
 -> auditable result surface
 -> ChatGPT readback and review
 -> user key approval decisions through ChatGPT
+```
 
 The user should not be the long-form result relay.
 
@@ -62,7 +66,7 @@ Manual result relay is fallback.
 
 Result Packet v1 must make that fallback less necessary.
 
-Relationship to Task Packet v1
+## Relationship to Task Packet v1
 
 Task Packet v1 defines the structured input.
 
@@ -78,7 +82,7 @@ A successful result packet is evidence.
 
 A successful result packet is not approval for a later high-risk phase.
 
-Design goals
+## Design goals
 
 Result Packet v1 should make each execution result:
 
@@ -98,7 +102,7 @@ The packet should reduce manual result copy/paste.
 
 The packet should not reduce user approval for high-risk phases.
 
-Non-goals
+## Non-goals
 
 Result Packet v1 is not an approval token.
 
@@ -120,16 +124,18 @@ Result Packet v1 is not a replacement for user approval.
 
 Result Packet v1 does not authorize chained high-risk actions.
 
-Packet boundary markers
+## Packet boundary markers
 
 A result packet should be embedded in a GitHub issue, GitHub comment, local fallback output, or another approved result surface using clear boundary markers.
 
 Required outer markers:
 
+```text
 LOCAL-RUNNER-RESULT-PACKET-V1
 BEGIN_RESULT_PACKET
 ...
 END_RESULT_PACKET
+```
 
 The reader should only parse content between BEGIN_RESULT_PACKET and END_RESULT_PACKET.
 
@@ -139,12 +145,13 @@ The reader must reject a packet if boundary markers are missing or malformed.
 
 The reader must reject a packet if the protocol marker is missing.
 
-Recommended format
+## Recommended format
 
 Result Packet v1 should use YAML inside the packet boundary.
 
 Recommended structure:
 
+```yaml
 protocol: lawb.local_runner.result_packet.v1
 packet_id: string
 task_packet_id: string
@@ -211,6 +218,7 @@ remaining_bridge_gaps:
   - string
 next_recommended_action: string
 stop_condition_reached: boolean
+```
 
 The runner or relay should emit YAML strictly.
 
@@ -220,7 +228,7 @@ Missing required fields must fail result validation.
 
 Conflicting fields must fail result validation.
 
-Required fields
+## Required fields
 
 The following fields are required for every result packet:
 
@@ -271,7 +279,7 @@ The following fields are conditionally required:
 * failure.failed_check is required when result is failure due to a check failure.
 * remaining_bridge_gaps is required when manual foreground start or manual fallback relay remains involved.
 
-Protocol field
+## Protocol field
 
 The protocol field must be exactly:
 
@@ -283,7 +291,7 @@ Readers must reject missing protocols.
 
 Readers must reject future protocol versions unless explicitly supported.
 
-Packet ID field
+## Packet ID field
 
 packet_id identifies a single result packet.
 
@@ -297,7 +305,7 @@ result-127-reviewbundle-result-packet-schema
 
 The result packet should include packet_id in GitHub writeback comments and local fallback output.
 
-Task packet ID field
+## Task packet ID field
 
 task_packet_id identifies the task packet that caused this result.
 
@@ -307,7 +315,7 @@ The runner must not infer the task packet from natural language.
 
 If the task packet ID is unknown, the result must be failure or partial with a clear failure.reason.
 
-Logical issue field
+## Logical issue field
 
 logical_issue identifies the task number.
 
@@ -319,7 +327,7 @@ The logical issue must match the task packet.
 
 If logical_issue conflicts with the task packet, result validation must fail.
 
-Phase field
+## Phase field
 
 phase identifies the workflow phase.
 
@@ -337,7 +345,7 @@ The phase must match the task packet phase.
 
 A result packet phase must not authorize the next phase.
 
-Action type field
+## Action type field
 
 action_type identifies the action that was executed or attempted.
 
@@ -354,7 +362,7 @@ The action_type must match the task packet action_type.
 
 Unsupported action types must result in failure or blocked.
 
-Risk level field
+## Risk level field
 
 risk_level must be one of:
 
@@ -368,7 +376,7 @@ Risk level must not reduce required approval.
 
 If action_type and risk_level conflict, result validation must fail.
 
-Result field
+## Result field
 
 result must be one of:
 
@@ -392,7 +400,7 @@ partial means part of the task completed, but the result is incomplete and must 
 
 A partial result must include failure.reason and remaining_bridge_gaps when applicable.
 
-Repository and branch fields
+## Repository and branch fields
 
 repository must identify the expected repository in owner/name format.
 
@@ -402,7 +410,7 @@ The values must match the task packet and actual execution context.
 
 If repository or branch mismatch occurs, the result must be failure and no write action should occur.
 
-Head and origin_master fields
+## Head and origin_master fields
 
 head records the local HEAD observed after execution or audit.
 
@@ -416,7 +424,7 @@ For write actions, head should describe the state after the bounded action.
 
 If HEAD mismatch prevented execution, result must be blocked or failure.
 
-Executor object
+## Executor object
 
 executor identifies the component that produced the result.
 
@@ -431,7 +439,7 @@ executor.name should be human-readable.
 
 executor.version may be null until implementation versions exist.
 
-Task surface object
+## Task surface object
 
 task_surface identifies where the task packet was read from.
 
@@ -446,7 +454,7 @@ Task surface fields help ChatGPT verify that the task came from the approved tas
 
 If task surface is unknown, result should be partial or failure unless the action is explicitly local fallback.
 
-Result surface object
+## Result surface object
 
 result_surface identifies where the result packet was written.
 
@@ -464,7 +472,7 @@ local_stdout is allowed only as fallback when GitHub writeback fails or is not y
 
 The result must clearly label local_stdout as fallback.
 
-Changed files field
+## Changed files field
 
 changed_files lists repository files changed by the task.
 
@@ -476,7 +484,7 @@ For commit actions, changed_files must match committed files.
 
 If files outside allowed scope changed, result must be failure.
 
-State flags
+## State flags
 
 The following flags must be present:
 
@@ -498,7 +506,7 @@ For low-risk and medium-risk ReviewBundle work, all high-risk action flags shoul
 
 If any high-risk flag is true, the result must include evidence and approval information.
 
-Approval object
+## Approval object
 
 approval.required indicates whether approval was required for the action.
 
@@ -518,7 +526,7 @@ Push approval does not approve issue close.
 
 A result packet must not claim approval for a future phase.
 
-Evidence object
+## Evidence object
 
 evidence.summary must provide a short human-readable summary.
 
@@ -552,7 +560,7 @@ Artifacts may point to diff, file, commit, comment, or log evidence.
 
 Long logs should not be included unless needed for diagnosis.
 
-Failure object
+## Failure object
 
 failure.reason explains failure, blocked, stopped, or partial result.
 
@@ -562,7 +570,7 @@ failure.recoverable indicates whether the task can be retried after correction.
 
 For success, failure.reason should be null.
 
-Remaining bridge gaps
+## Remaining bridge gaps
 
 remaining_bridge_gaps lists remaining manual or technical bridge gaps.
 
@@ -579,7 +587,7 @@ This field keeps transitional limitations visible.
 
 It prevents fallback or transitional behavior from being mistaken for the target workflow.
 
-Next recommended action
+## Next recommended action
 
 next_recommended_action tells ChatGPT what should happen next.
 
@@ -596,7 +604,7 @@ This field is a recommendation only.
 
 It is not approval.
 
-Stop condition reached
+## Stop condition reached
 
 stop_condition_reached indicates whether the runner stopped at the intended boundary.
 
@@ -604,7 +612,7 @@ The result must be failure or partial if the runner continued beyond the stop co
 
 The runner must not infer the next task.
 
-GitHub writeback requirements
+## GitHub writeback requirements
 
 When GitHub writeback succeeds, the result packet should include:
 
@@ -620,7 +628,7 @@ Fallback output must include failure.reason or remaining_bridge_gaps.
 
 Fallback output must not be presented as target bridge success.
 
-Validation rules
+## Validation rules
 
 A result packet is valid only if:
 
@@ -648,7 +656,7 @@ A result packet is invalid if:
 * it reports success while forbidden operations occurred
 * it broadens authority beyond the task packet
 
-Security notes
+## Security notes
 
 Result Packet v1 is intentionally evidence-first.
 
@@ -668,7 +676,7 @@ The packet should not hide manual fallback.
 
 The packet should not hide transitional bridge gaps.
 
-MVP usage
+## MVP usage
 
 The first useful implementation should use Result Packet v1 for read-only audit.
 
@@ -678,18 +686,20 @@ The third useful implementation should use Result Packet v1 for docs-only apply 
 
 The first meaningful bridge milestone is:
 
+```text
 ChatGPT creates or writes task packet
 -> relay / runner reads task packet
 -> bounded action runs
 -> relay / runner writes result packet
 -> ChatGPT reads result packet
 -> user does not paste long Codex output
+```
 
 Manual foreground start may remain transitional in early slices.
 
 The result packet must keep that gap visible.
 
-Future compatibility
+## Future compatibility
 
 Result Packet v1 should preserve future compatibility for:
 
@@ -711,7 +721,7 @@ They are not authorized by Result Packet v1.
 
 Any Lv5 or beyond capability requires separate design, review, and explicit approval.
 
-Completion criteria
+## Completion criteria
 
 #127 is complete when this document defines:
 
@@ -752,7 +762,7 @@ Completion criteria
 
 #127 is not complete if it authorizes Lv5 full automation.
 
-Current status
+## Current status
 
 Local Runner Result Packet v1 is defined as a structured, restrictive, evidence-first result format.
 

@@ -1,6 +1,6 @@
-Local Runner Result Packet v1 Example
+# Local Runner Result Packet v1 Example
 
-Purpose
+## Purpose
 
 This file provides example Local Runner Result Packet v1 payloads.
 
@@ -20,8 +20,9 @@ These examples do not authorize background watcher behavior.
 
 These examples do not authorize Lv5 full automation.
 
-Example 1: read-only audit success
+## Example 1: read-only audit success
 
+```yaml
 LOCAL-RUNNER-RESULT-PACKET-V1
 BEGIN_RESULT_PACKET
 protocol: lawb.local_runner.result_packet.v1
@@ -102,9 +103,11 @@ remaining_bridge_gaps:
 next_recommended_action: chatgpt_review
 stop_condition_reached: true
 END_RESULT_PACKET
+```
 
-Example 2: docs-only candidate success
+## Example 2: docs-only candidate success
 
+```yaml
 LOCAL-RUNNER-RESULT-PACKET-V1
 BEGIN_RESULT_PACKET
 protocol: lawb.local_runner.result_packet.v1
@@ -183,9 +186,11 @@ remaining_bridge_gaps:
 next_recommended_action: chatgpt_review_then_commit_approval_package
 stop_condition_reached: true
 END_RESULT_PACKET
+```
 
-Example 3: blocked high-risk task without approval
+## Example 3: blocked high-risk task without approval
 
+```yaml
 LOCAL-RUNNER-RESULT-PACKET-V1
 BEGIN_RESULT_PACKET
 protocol: lawb.local_runner.result_packet.v1
@@ -260,9 +265,11 @@ remaining_bridge_gaps:
 next_recommended_action: chatgpt_review_then_request_commit_approval
 stop_condition_reached: true
 END_RESULT_PACKET
+```
 
-Example 4: GitHub writeback unavailable fallback
+## Example 4: GitHub writeback unavailable fallback
 
+```yaml
 LOCAL-RUNNER-RESULT-PACKET-V1
 BEGIN_RESULT_PACKET
 protocol: lawb.local_runner.result_packet.v1
@@ -334,8 +341,9 @@ remaining_bridge_gaps:
 next_recommended_action: chatgpt_review_with_fallback_report
 stop_condition_reached: true
 END_RESULT_PACKET
+```
 
-Safety notes
+## Safety notes
 
 These examples are schema examples.
 
