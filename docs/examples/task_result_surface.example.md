@@ -1,6 +1,6 @@
-Task and Result Surface v1 Example
+# Task and Result Surface v1 Example
 
-Purpose
+## Purpose
 
 This file provides examples for Task Surface and Result Surface v1.
 
@@ -24,8 +24,9 @@ These examples do not create real task surfaces.
 
 These examples do not create real result surfaces.
 
-Example 1: preferred task-specific GitHub surfaces
+## Example 1: preferred task-specific GitHub surfaces
 
+```yaml
 roadmap_anchor:
   role: roadmap_anchor
   kind: github_issue
@@ -59,6 +60,7 @@ result_surface:
   active_packet_count: 1
   fallback: false
   fallback_reason: null
+```
 
 This is the preferred v1 topology.
 
@@ -66,8 +68,9 @@ The roadmap anchor remains visible but does not contain the full task or result 
 
 The task and result surfaces are task-specific and short.
 
-Example 2: transitional #114 marker with canonical result pointer
+## Example 2: transitional #114 marker with canonical result pointer
 
+```yaml
 roadmap_anchor_marker:
   role: roadmap_anchor
   kind: github_comment
@@ -82,13 +85,15 @@ roadmap_anchor_marker:
   points_to:
     task_surface_url: "https://github.com/HarryWhite-TW/local-ai-workbench/issues/128#issuecomment-0000000001"
     result_surface_url: "https://github.com/HarryWhite-TW/local-ai-workbench/issues/128#issuecomment-0000000002"
+```
 
 This keeps #114 useful as a roadmap anchor.
 
 It avoids using #114 as the primary long-term result packet sink.
 
-Example 3: local file fallback during implementation
+## Example 3: local file fallback during implementation
 
+```yaml
 task_surface:
   role: task_surface
   kind: local_file
@@ -111,6 +116,7 @@ result_surface:
   active_packet_count: 1
   fallback: true
   fallback_reason: "github_result_surface_not_yet_available"
+```
 
 This is fallback.
 
@@ -118,8 +124,9 @@ It is not target bridge success.
 
 The result packet must include remaining_bridge_gaps.
 
-Example 4: invalid surface with multiple active packets
+## Example 4: invalid surface with multiple active packets
 
+```yaml
 result_surface:
   role: result_surface
   kind: github_comment
@@ -134,13 +141,15 @@ result_surface:
 validation:
   expected_result: failure
   failure_reason: "multiple_active_result_packets"
+```
 
 The reader must fail closed.
 
 A surface must not contain multiple active result packets.
 
-Example 5: invalid fallback without fallback reason
+## Example 5: invalid fallback without fallback reason
 
+```yaml
 result_surface:
   role: result_surface
   kind: local_stdout
@@ -155,13 +164,15 @@ result_surface:
 validation:
   expected_result: failure
   failure_reason: "fallback_reason_required"
+```
 
 Fallback must be explicit.
 
 Fallback must include a reason.
 
-Example 6: invalid roadmap issue as primary result sink
+## Example 6: invalid roadmap issue as primary result sink
 
+```yaml
 result_surface:
   role: result_surface
   kind: github_issue
@@ -176,12 +187,13 @@ result_surface:
 validation:
   expected_result: failure
   failure_reason: "roadmap_anchor_used_as_primary_result_surface_without_fallback_permission"
+```
 
 A long-lived roadmap issue should not be used as the primary result packet sink.
 
 If it is used during transition, it must be labeled fallback or pointer-only.
 
-Safety notes
+## Safety notes
 
 These examples are schema examples.
 

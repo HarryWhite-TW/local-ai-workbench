@@ -1,6 +1,6 @@
-Task and Result Surface v1
+# Task and Result Surface v1
 
-Purpose
+## Purpose
 
 This document defines Task Surface and Result Surface v1.
 
@@ -34,8 +34,9 @@ This document does not authorize broad issue scanning.
 
 This document does not authorize Lv5 full automation.
 
-Direction Lock Binding
+## Direction Lock Binding
 
+```text
 Direction Lock Binding
 plan_path=docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md
 plan_version=v1
@@ -46,11 +47,13 @@ primary_goal=chatgpt_dispatches_to_codex_and_reads_results_back
 issue_role=core
 manual_copy_paste_is_target=false
 must_emit_plan_read_audit=true
+```
 
-Relationship to the bridge
+## Relationship to the bridge
 
 The intended bridge direction is:
 
+```text
 User
 -> ChatGPT
 -> approved task surface
@@ -59,6 +62,7 @@ User
 -> approved result surface
 -> ChatGPT readback and review
 -> user key approval decisions through ChatGPT
+```
 
 The user should not be the long-form task relay.
 
@@ -72,7 +76,7 @@ Manual foreground start may remain transitional in early v0 slices.
 
 Manual foreground start must remain visible as a bridge gap.
 
-Relationship to Task Packet v1
+## Relationship to Task Packet v1
 
 Task Packet v1 defines structured task input.
 
@@ -88,7 +92,7 @@ Task Surface v1 does not broaden the authority granted by Task Packet v1.
 
 Task Surface v1 does not authorize execution by itself.
 
-Relationship to Result Packet v1
+## Relationship to Result Packet v1
 
 Result Packet v1 defines structured task output.
 
@@ -104,7 +108,7 @@ A successful result packet is evidence.
 
 A successful result packet is not approval for any later high-risk phase.
 
-Surface roles
+## Surface roles
 
 There are four bridge-facing surface roles:
 
@@ -115,7 +119,7 @@ There are four bridge-facing surface roles:
 
 These roles must not be confused.
 
-Roadmap anchor
+## Roadmap anchor
 
 A roadmap anchor is a long-lived planning issue or document.
 
@@ -133,7 +137,7 @@ The roadmap anchor may still receive short visible audit markers during transiti
 
 The roadmap anchor may still point to canonical task or result surfaces.
 
-Task surface
+## Task surface
 
 A task surface stores or references one active task packet.
 
@@ -151,7 +155,7 @@ A task surface should not contain unrelated discussion that can be mistaken for 
 
 A task surface should not be a large long-lived roadmap comment thread unless explicitly marked as fallback.
 
-Result surface
+## Result surface
 
 A result surface stores or references one active result packet.
 
@@ -169,7 +173,7 @@ A result surface should not contain unrelated discussion that can be mistaken fo
 
 A result surface should not be a large long-lived roadmap comment thread unless explicitly marked as fallback.
 
-Fallback surface
+## Fallback surface
 
 A fallback surface is used when the approved task or result surface is unavailable.
 
@@ -189,7 +193,7 @@ Fallback must include remaining_bridge_gaps.
 
 Fallback should be reduced by later approved bridge work.
 
-Surface kinds
+## Surface kinds
 
 Allowed task surface kinds in v1:
 
@@ -221,7 +225,7 @@ fallback_user_message is fallback only.
 
 unknown should usually make validation partial, blocked, or failure.
 
-Canonical URL rules
+## Canonical URL rules
 
 Each GitHub-backed surface should include a canonical URL.
 
@@ -235,12 +239,13 @@ For local stdout fallback, canonical URL should be null and fallback must be exp
 
 The canonical URL should be included in both task packet metadata and result packet metadata when available.
 
-Surface identifiers
+## Surface identifiers
 
 Each surface should provide stable identifiers.
 
 Recommended identifiers:
 
+```yaml
 surface:
   kind: github_comment
   url: "https://github.com/owner/repo/issues/123#issuecomment-123456789"
@@ -248,9 +253,11 @@ surface:
   comment_id: 123456789
   path: null
   sha: null
+```
 
 For local file surfaces:
 
+```yaml
 surface:
   kind: local_file
   url: null
@@ -258,8 +265,9 @@ surface:
   comment_id: null
   path: "docs/tasks/task-128.example.md"
   sha: "<optional_blob_or_commit_sha>"
+```
 
-Active packet rule
+## Active packet rule
 
 A surface must contain at most one active task packet or at most one active result packet.
 
@@ -273,12 +281,13 @@ For task packets, use Task Packet v1 boundary markers.
 
 For result packets, use Result Packet v1 boundary markers.
 
-Surface binding object
+## Surface binding object
 
 Task packets and result packets should reference surfaces using a surface binding object.
 
 Recommended shape:
 
+```yaml
 surface_binding:
   role: task_surface | result_surface | roadmap_anchor | fallback_surface
   kind: github_issue | github_comment | github_issue_body | local_file | local_stdout | fallback_user_message | unknown
@@ -290,12 +299,13 @@ surface_binding:
   active_packet_count: integer
   fallback: boolean
   fallback_reason: string | null
+```
 
 The reader must reject active_packet_count greater than 1.
 
 The reader must require fallback_reason when fallback is true.
 
-Task surface requirements
+## Task surface requirements
 
 A valid task surface must:
 
@@ -313,7 +323,7 @@ A valid task surface must:
 * preserve Direction Lock constraints
 * preserve approval gate constraints
 
-Result surface requirements
+## Result surface requirements
 
 A valid result surface must:
 
@@ -335,7 +345,7 @@ A valid result surface must:
 * avoid unrelated evidence outside the packet
 * preserve evidence-not-approval semantics
 
-Roadmap anchor usage rules
+## Roadmap anchor usage rules
 
 The roadmap anchor may be used for:
 
@@ -358,25 +368,29 @@ During transition, #114 may still receive short audit markers.
 
 When a dedicated task or result surface exists, #114 should point to it rather than duplicate full packet content.
 
-Preferred v1 topology
+## Preferred v1 topology
 
 Preferred v1 topology:
 
+```text
 #114 roadmap anchor
 -> task-specific task surface
 -> task-specific result surface
 -> #114 receives short pointer / marker only during transition
+```
 
 This preserves roadmap visibility while avoiding long-comment readback instability.
 
-Surface lifecycle
+## Surface lifecycle
 
 A surface lifecycle should follow:
 
+```text
 planned
 -> active
 -> consumed
 -> archived
+```
 
 A task surface becomes active when a task packet is published.
 
@@ -388,7 +402,7 @@ A result surface becomes consumed when ChatGPT reads and reviews the result pack
 
 Archived surfaces must not be treated as active.
 
-Readback priority
+## Readback priority
 
 ChatGPT should prefer readback in this order:
 
@@ -401,7 +415,7 @@ ChatGPT should prefer readback in this order:
 
 Fallback user-pasted result should be used only when bridge readback is unavailable.
 
-Writeback priority
+## Writeback priority
 
 Relay / runner should prefer writeback in this order:
 
@@ -415,7 +429,7 @@ The runner must not create new GitHub issues unless a future issue explicitly au
 
 The runner must not choose a broad issue or roadmap anchor as the primary result surface unless the task packet explicitly allows fallback.
 
-Failure rules
+## Failure rules
 
 Surface validation must fail closed when:
 
@@ -435,7 +449,7 @@ Surface validation must fail closed when:
 * high-risk action flags are missing
 * forbidden operations occurred
 
-Security rules
+## Security rules
 
 Surfaces must not include secret tokens.
 
@@ -455,7 +469,7 @@ Surfaces must not hide manual fallback.
 
 Surfaces must not hide transitional bridge gaps.
 
-Approval boundary
+## Approval boundary
 
 A task surface may contain an approval phrase only when the task packet explicitly requires and scopes it.
 
@@ -469,7 +483,7 @@ A result surface must not claim that push approval approves issue close.
 
 Approval chaining remains forbidden.
 
-Transitional behavior
+## Transitional behavior
 
 During transitional v0, the user may still paste task or result text when bridge readback is unavailable.
 
@@ -481,7 +495,7 @@ That behavior must be labeled transitional.
 
 Neither fallback copy/paste nor manual foreground start is the target bridge workflow.
 
-MVP usage
+## MVP usage
 
 The first useful use of this document is to stop treating #114 as the primary result packet sink.
 
@@ -491,7 +505,7 @@ The third useful use is to enable ChatGPT to read a short, task-specific result 
 
 The fourth useful use is to enable relay / runner task fetch from a canonical task surface.
 
-Future compatibility
+## Future compatibility
 
 Task and Result Surface v1 should preserve future compatibility for:
 
@@ -513,7 +527,7 @@ They are not authorized by this document.
 
 Any Lv5 or beyond capability requires separate design, review, and explicit approval.
 
-Completion criteria
+## Completion criteria
 
 #128 is complete when this document defines:
 
@@ -562,7 +576,7 @@ Completion criteria
 
 #128 is not complete if it authorizes Lv5 full automation.
 
-Current status
+## Current status
 
 Task and Result Surface v1 is defined as a restrictive, auditable, task-specific surface protocol.
 
