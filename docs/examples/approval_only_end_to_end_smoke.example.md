@@ -1,4 +1,4 @@
-Approval-only End-to-end Smoke Example
+# Approval-only End-to-end Smoke Example
 
 ## Purpose
 
