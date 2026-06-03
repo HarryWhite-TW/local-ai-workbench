@@ -46,11 +46,21 @@ def extract_task_packet(surface_text: str) -> dict:
     if not isinstance(surface_text, str):
         return _summary(result="blocked", errors=["surface_text_not_string"])
 
-    if PROTOCOL_MARKER not in surface_text:
+    lines = surface_text.splitlines()
+    protocol_lines = [
+        index for index, line in enumerate(lines) if line.strip() == PROTOCOL_MARKER
+    ]
+    if not protocol_lines:
         return _summary(result="blocked", errors=["protocol_marker_missing"])
 
-    begin_count = surface_text.count(BEGIN_MARKER)
-    end_count = surface_text.count(END_MARKER)
+    begin_lines = [
+        index for index, line in enumerate(lines) if line.strip() == BEGIN_MARKER
+    ]
+    end_lines = [
+        index for index, line in enumerate(lines) if line.strip() == END_MARKER
+    ]
+    begin_count = len(begin_lines)
+    end_count = len(end_lines)
     if begin_count == 0 and end_count == 0:
         return _summary(result="blocked", errors=["task_packet_boundary_markers_missing"])
     if begin_count == 0:
@@ -70,8 +80,8 @@ def extract_task_packet(surface_text: str) -> dict:
             active_task_packet_count=begin_count,
         )
 
-    begin_index = surface_text.find(BEGIN_MARKER)
-    end_index = surface_text.find(END_MARKER)
+    begin_index = begin_lines[0]
+    end_index = end_lines[0]
     if end_index <= begin_index:
         return _summary(
             result="blocked",
@@ -79,7 +89,7 @@ def extract_task_packet(surface_text: str) -> dict:
             active_task_packet_count=1,
         )
 
-    packet_text = surface_text[begin_index + len(BEGIN_MARKER) : end_index].strip()
+    packet_text = "\n".join(lines[begin_index + 1 : end_index]).strip()
     if not packet_text:
         return _summary(
             result="blocked",

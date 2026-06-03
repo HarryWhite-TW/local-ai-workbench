@@ -63,6 +63,20 @@ def test_valid_packet_returns_success_summary():
     assert summary["push_performed"] is False
 
 
+def test_embedded_boundary_marker_returns_blocked():
+    text = (
+        "LOCAL-RUNNER-TASK-PACKET-V1\n"
+        "prefix BEGIN_TASK_PACKET suffix\n"
+        f"{VALID_PACKET}"
+        "END_TASK_PACKET\n"
+    )
+
+    summary = extract_task_packet(text)
+
+    assert summary["result"] == "blocked"
+    assert "begin_task_packet_missing" in summary["errors"]
+
+
 def test_missing_or_non_string_surface_text_returns_blocked_summary():
     summary = extract_task_packet(None)
 
@@ -85,6 +99,20 @@ def test_multiple_active_task_packets_returns_blocked():
     assert summary["result"] == "blocked"
     assert summary["active_task_packet_count"] == 2
     assert "multiple_active_task_packets" in summary["errors"]
+
+
+def test_valid_boundary_markers_may_be_indented_standalone_lines():
+    text = (
+        "  LOCAL-RUNNER-TASK-PACKET-V1\n"
+        "  BEGIN_TASK_PACKET\n"
+        f"{VALID_PACKET}"
+        "  END_TASK_PACKET\n"
+    )
+
+    summary = extract_task_packet(text)
+
+    assert summary["result"] == "success"
+    assert summary["packet_text"] == VALID_PACKET.strip()
 
 
 def test_invalid_protocol_returns_blocked():
@@ -113,6 +141,72 @@ phase: read_only_validator_implementation_slice_reviewbundle
     assert "required_fields_missing" in summary["errors"]
     assert "approval.required" in summary["missing_fields"]
     assert "result_target.github_issue" in summary["missing_fields"]
+
+
+def test_unknown_top_level_field_returns_blocked():
+    packet = VALID_PACKET + "unexpected_authority: true\n"
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "unknown_top_level_fields" in summary["errors"]
+    assert summary["unknown_fields"] == ["unexpected_authority"]
+
+
+def test_unknown_nested_field_does_not_count_as_unknown_top_level_field():
+    packet = VALID_PACKET.replace(
+        "  required: false\n", "  required: false\n  reviewer: chatgpt\n"
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "success"
+    assert "unknown_top_level_fields" not in summary["errors"]
+
+
+def test_scalar_allowed_files_returns_blocked():
+    packet = VALID_PACKET.replace(
+        "allowed_files:\n  - src/local_runner_bridge/__init__.py\n",
+        "allowed_files: src/local_runner_bridge/__init__.py\n",
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "invalid_list_fields" in summary["errors"]
+    assert summary["invalid_list_fields"] == ["allowed_files"]
+
+
+def test_scalar_forbidden_operations_returns_blocked():
+    packet = VALID_PACKET.replace(
+        "forbidden_operations:\n  - commit\n",
+        "forbidden_operations: commit\n",
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "invalid_list_fields" in summary["errors"]
+    assert summary["invalid_list_fields"] == ["forbidden_operations"]
+
+
+def test_empty_list_blocks_return_blocked():
+    packet = VALID_PACKET.replace(
+        "allowed_files:\n  - src/local_runner_bridge/__init__.py\n",
+        "allowed_files:\n",
+    ).replace(
+        "forbidden_operations:\n  - commit\n",
+        "forbidden_operations:\n",
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "invalid_list_fields" in summary["errors"]
+    assert summary["invalid_list_fields"] == [
+        "allowed_files",
+        "forbidden_operations",
+    ]
 
 
 def test_expected_logical_issue_mismatch_returns_blocked():

@@ -33,6 +33,8 @@ REQUIRED_NESTED_FIELDS = (
     ("result_target", "marker"),
 )
 
+LIST_FIELDS = ("allowed_files", "forbidden_operations")
+
 
 def _base_summary() -> dict:
     return {
@@ -77,28 +79,46 @@ def _parse_scalar(value: str) -> Any:
 
 def _parse_line_oriented_packet(packet_text: str) -> dict:
     parsed: dict[str, Any] = {}
-    stack: list[tuple[int, dict[str, Any]]] = [(-1, parsed)]
+    stack: list[tuple[int, Any, dict[str, Any] | None, str | None]] = [
+        (-1, parsed, None, None)
+    ]
 
     for raw_line in packet_text.splitlines():
         stripped = raw_line.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("- "):
-            continue
-        if ":" not in stripped:
+        if not stripped or stripped.startswith("#"):
             continue
 
         indent = len(raw_line) - len(raw_line.lstrip(" "))
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+
+        if stripped.startswith("- "):
+            item = stripped[2:].strip()
+            current_indent, current_container, parent, parent_key = stack[-1]
+            if not isinstance(current_container, list):
+                if parent is None or parent_key is None:
+                    continue
+                current_container = []
+                parent[parent_key] = current_container
+                stack[-1] = (current_indent, current_container, parent, parent_key)
+            current_container.append(_parse_scalar(item))
+            continue
+
+        if ":" not in stripped:
+            continue
+
         key, value = stripped.split(":", 1)
         key = key.strip()
         value = value.strip()
 
-        while stack and indent <= stack[-1][0]:
-            stack.pop()
         parent = stack[-1][1]
+        if not isinstance(parent, dict):
+            continue
 
         if value == "":
             child: dict[str, Any] = {}
             parent[key] = child
-            stack.append((indent, child))
+            stack.append((indent, child, parent, key))
         else:
             parent[key] = _parse_scalar(value)
 
@@ -126,6 +146,14 @@ def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict
     missing_fields.extend(
         ".".join(path) for path in REQUIRED_NESTED_FIELDS if not _has_nested(parsed, path)
     )
+    unknown_fields = [
+        field for field in parsed if field not in set(REQUIRED_TOP_LEVEL_FIELDS)
+    ]
+    invalid_list_fields = [
+        field
+        for field in LIST_FIELDS
+        if field in parsed and (not isinstance(parsed[field], list) or not parsed[field])
+    ]
 
     protocol = parsed.get("protocol")
     summary["task_packet_protocol_valid"] = protocol == TASK_PACKET_PROTOCOL
@@ -139,6 +167,14 @@ def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict
         summary["missing_fields"] = missing_fields
     else:
         summary["required_fields_present"] = True
+
+    if unknown_fields:
+        summary["errors"].append("unknown_top_level_fields")
+        summary["unknown_fields"] = unknown_fields
+
+    if invalid_list_fields:
+        summary["errors"].append("invalid_list_fields")
+        summary["invalid_list_fields"] = invalid_list_fields
 
     logical_issue = parsed.get("logical_issue")
     phase = parsed.get("phase")
