@@ -122,6 +122,7 @@ def build_result_surface_from_explicit_reference(
     expected: dict | None = None,
     result_id: str | None = None,
     created_at: str | None = None,
+    github_token: str | None = None,
     http_get_json: Callable[[str, str | None], dict[str, Any]] | None = None,
 ) -> dict:
     """Return a Result Surface for exactly one explicit local or stubbed reference."""
@@ -159,9 +160,9 @@ def build_result_surface_from_explicit_reference(
                 source_task_reference={"kind": kind, "path": value},
             )
 
-    if kind in {"issue_url", "comment_url"} and http_get_json is None:
+    if kind in {"issue_url", "comment_url"} and not github_token:
         return _blocked_result_surface(
-            errors=["live_github_fetch_disabled_for_result_surface_adapter"],
+            errors=["github_token_required_for_live_fetch"],
             result_id=result_id,
             created_at=created_at,
             source_task_reference={"kind": kind, "reference": value},
@@ -170,6 +171,7 @@ def build_result_surface_from_explicit_reference(
     fetch_summary = run_explicit_task_surface_fetch(
         reference,
         expected=expected,
+        github_token=github_token,
         http_get_json=http_get_json,
     )
     return _result_surface_from_fetch_summary(
@@ -182,4 +184,3 @@ def build_result_surface_from_explicit_reference(
             else {"kind": kind, "reference": value}
         ),
     )
-

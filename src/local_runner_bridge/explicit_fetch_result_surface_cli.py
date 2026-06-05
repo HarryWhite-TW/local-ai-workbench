@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 from local_runner_bridge.explicit_fetch_result_surface import (
     build_result_surface_from_explicit_reference,
@@ -15,6 +16,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--local-text-file")
     parser.add_argument("--issue-url")
     parser.add_argument("--comment-url")
+    parser.add_argument("--github-token-env")
     return parser
 
 
@@ -44,7 +46,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result_surface, sort_keys=True))
         return 2
 
-    if len(_selected_inputs(args)) > 1:
+    selected = _selected_inputs(args)
+    if len(selected) > 1:
         result_surface = build_result_surface_from_explicit_reference(
             local_text_file=args.local_text_file,
             issue_url=args.issue_url,
@@ -53,10 +56,15 @@ def main(argv: list[str] | None = None) -> int:
             created_at="blocked",
         )
     else:
+        github_token = None
+        if args.github_token_env:
+            github_token = os.environ.get(args.github_token_env)
+
         result_surface = build_result_surface_from_explicit_reference(
             local_text_file=args.local_text_file,
             issue_url=args.issue_url,
             comment_url=args.comment_url,
+            github_token=github_token,
         )
 
     print(json.dumps(result_surface, sort_keys=True))
@@ -65,4 +73,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

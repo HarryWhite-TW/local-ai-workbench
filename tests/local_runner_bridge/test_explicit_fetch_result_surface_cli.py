@@ -90,7 +90,7 @@ def test_cli_does_not_call_live_github_for_issue_arg(capsys):
 
     assert result == 0
     assert result_surface["status"] == "blocked"
-    assert "live_github_fetch_disabled_for_result_surface_adapter" in result_surface[
+    assert "github_token_required_for_live_fetch" in result_surface[
         "blocked_reasons"
     ]
 
@@ -130,3 +130,92 @@ def test_cli_rejects_ambiguous_inputs(tmp_path, capsys):
     assert result_surface["status"] == "blocked"
     assert "multiple_inputs" in result_surface["blocked_reasons"]
 
+
+def test_cli_issue_url_with_github_token_env_uses_stubbed_fetch(
+    monkeypatch,
+    capsys,
+):
+    calls = []
+    monkeypatch.setenv("TASK_SURFACE_TOKEN", "ghp_TEST_SECRET_DO_NOT_LEAK")
+
+    def fake_build(**kwargs):
+        calls.append(kwargs)
+        return {
+            "result_surface_version": "lawb.local_result_surface.v0.draft",
+            "result_id": "result-cli-issue",
+            "source_task_reference": {"kind": "issue_url"},
+            "source_task_validation_result": {"result": "success"},
+            "operation_mode": "explicit_fetch_result_surface_review",
+            "status": "success",
+            "summary": "stubbed",
+            "files_changed": [],
+            "tests_run": [],
+            "safety_flags": {flag: False for flag in REQUIRED_SAFETY_FLAGS},
+            "blocked_reasons": [],
+            "requires_user_approval": True,
+            "next_recommended_step": "chatgpt_review",
+            "created_at": "2026-06-05T00:00:00Z",
+        }
+
+    monkeypatch.setattr(cli, "build_result_surface_from_explicit_reference", fake_build)
+
+    result = cli.main(
+        [
+            "--issue-url",
+            "https://github.com/HarryWhite-TW/local-ai-workbench/issues/163",
+            "--github-token-env",
+            "TASK_SURFACE_TOKEN",
+        ]
+    )
+    output = capsys.readouterr().out
+    result_surface = json.loads(output)
+
+    assert result == 0
+    assert result_surface["status"] == "success"
+    assert calls[0]["github_token"] == "ghp_TEST_SECRET_DO_NOT_LEAK"
+    assert "ghp_TEST_SECRET_DO_NOT_LEAK" not in output
+
+
+def test_cli_comment_url_with_github_token_env_uses_stubbed_fetch(
+    monkeypatch,
+    capsys,
+):
+    calls = []
+    monkeypatch.setenv("TASK_SURFACE_TOKEN", "ghp_TEST_SECRET_DO_NOT_LEAK")
+
+    def fake_build(**kwargs):
+        calls.append(kwargs)
+        return {
+            "result_surface_version": "lawb.local_result_surface.v0.draft",
+            "result_id": "result-cli-comment",
+            "source_task_reference": {"kind": "comment_url"},
+            "source_task_validation_result": {"result": "success"},
+            "operation_mode": "explicit_fetch_result_surface_review",
+            "status": "success",
+            "summary": "stubbed",
+            "files_changed": [],
+            "tests_run": [],
+            "safety_flags": {flag: False for flag in REQUIRED_SAFETY_FLAGS},
+            "blocked_reasons": [],
+            "requires_user_approval": True,
+            "next_recommended_step": "chatgpt_review",
+            "created_at": "2026-06-05T00:00:00Z",
+        }
+
+    monkeypatch.setattr(cli, "build_result_surface_from_explicit_reference", fake_build)
+
+    result = cli.main(
+        [
+            "--comment-url",
+            "https://github.com/HarryWhite-TW/local-ai-workbench/issues/163"
+            "#issuecomment-123",
+            "--github-token-env",
+            "TASK_SURFACE_TOKEN",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert json.loads(output)["status"] == "success"
+    assert calls[0]["github_token"] == "ghp_TEST_SECRET_DO_NOT_LEAK"
+    assert "ghp_TEST_SECRET_DO_NOT_LEAK" not in output

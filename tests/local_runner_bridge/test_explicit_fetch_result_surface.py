@@ -106,6 +106,7 @@ def test_explicit_issue_fetch_path_uses_stubbed_getter():
 
     result_surface = build_result_surface_from_explicit_reference(
         issue_url="https://github.com/HarryWhite-TW/local-ai-workbench/issues/163",
+        github_token="ghp_TEST_SECRET_DO_NOT_LEAK",
         http_get_json=fake_get_json,
         result_id="result-163-issue",
         created_at="2026-06-05T00:00:00Z",
@@ -115,9 +116,10 @@ def test_explicit_issue_fetch_path_uses_stubbed_getter():
     assert calls == [
         (
             "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/163",
-            None,
+            "ghp_TEST_SECRET_DO_NOT_LEAK",
         )
     ]
+    assert "ghp_TEST_SECRET_DO_NOT_LEAK" not in str(result_surface)
     assert_no_write_or_action(result_surface)
 
 
@@ -133,6 +135,7 @@ def test_explicit_comment_fetch_path_uses_stubbed_getter():
             "https://github.com/HarryWhite-TW/local-ai-workbench/issues/163"
             "#issuecomment-123"
         ),
+        github_token="ghp_TEST_SECRET_DO_NOT_LEAK",
         http_get_json=fake_get_json,
     )
 
@@ -141,9 +144,10 @@ def test_explicit_comment_fetch_path_uses_stubbed_getter():
         (
             "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/"
             "issues/comments/123",
-            None,
+            "ghp_TEST_SECRET_DO_NOT_LEAK",
         )
     ]
+    assert "ghp_TEST_SECRET_DO_NOT_LEAK" not in str(result_surface)
     assert_no_write_or_action(result_surface)
 
 
@@ -188,14 +192,57 @@ def test_broad_or_ambiguous_references_are_rejected():
     assert "multiple_inputs" in ambiguous["blocked_reasons"]
 
 
-def test_issue_reference_without_stub_fails_closed_without_live_fetch():
+def test_issue_reference_missing_token_fails_closed_without_live_fetch():
     result_surface = build_result_surface_from_explicit_reference(
         issue_url="https://github.com/HarryWhite-TW/local-ai-workbench/issues/163"
     )
 
     assert result_surface["status"] == "blocked"
-    assert "live_github_fetch_disabled_for_result_surface_adapter" in result_surface[
+    assert "github_token_required_for_live_fetch" in result_surface[
         "blocked_reasons"
     ]
     assert_no_write_or_action(result_surface)
 
+
+def test_issue_reference_with_token_can_use_existing_fetch_path(monkeypatch):
+    calls = []
+
+    def fake_fetch(reference, *, expected=None, repository=None, github_token=None, http_get_json=None):
+        calls.append((reference, github_token, http_get_json))
+        return {
+            "protocol": "lawb.local_runner.explicit_task_surface_fetch_summary.v1",
+            "result": "success",
+            "reference_type": "issue_url",
+            "bounded_read_performed": True,
+            "broad_issue_scan_performed": False,
+            "github_write_performed": False,
+            "result_packet_written": False,
+            "codex_side_action_executed": False,
+            "commit_triggered": False,
+            "push_triggered": False,
+            "pr_triggered": False,
+            "issue_closed": False,
+            "label_changed": False,
+            "errors": [],
+            "validation_summary": {"result": "success"},
+        }
+
+    monkeypatch.setattr(
+        "local_runner_bridge.explicit_fetch_result_surface.run_explicit_task_surface_fetch",
+        fake_fetch,
+    )
+
+    result_surface = build_result_surface_from_explicit_reference(
+        issue_url="https://github.com/HarryWhite-TW/local-ai-workbench/issues/163",
+        github_token="ghp_TEST_SECRET_DO_NOT_LEAK",
+    )
+
+    assert result_surface["status"] == "success"
+    assert calls == [
+        (
+            "https://github.com/HarryWhite-TW/local-ai-workbench/issues/163",
+            "ghp_TEST_SECRET_DO_NOT_LEAK",
+            None,
+        )
+    ]
+    assert "ghp_TEST_SECRET_DO_NOT_LEAK" not in str(result_surface)
