@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 RESULT_SURFACE_VERSION = "lawb.local_result_surface.v0.draft"
@@ -34,7 +34,7 @@ def _default_result_id() -> str:
 
 
 def _default_created_at() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def build_result_surface(

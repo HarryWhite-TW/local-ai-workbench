@@ -59,3 +59,10 @@ def test_deterministic_result_id_and_created_at_can_be_injected():
     assert surface["result_id"] == "result-deterministic"
     assert surface["created_at"] == "2026-06-05T00:00:00Z"
 
+
+def test_default_created_at_is_python310_compatible_utc_timestamp():
+    surface = build_result_surface()
+
+    assert surface["created_at"].endswith("Z")
+    assert "+00:00" not in surface["created_at"]
+

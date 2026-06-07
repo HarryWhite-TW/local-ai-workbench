@@ -89,6 +89,14 @@ def read_stdout_json(capsys):
     return json.loads(capsys.readouterr().out)
 
 
+def test_cli_help_exits_zero_and_prints_expected_argument(capsys):
+    result = cli.main(["--help"])
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "--contract-file" in output
+
+
 def test_cli_reads_one_local_json_file_and_prints_valid_json_summary(tmp_path, capsys):
     contract_path = write_contract(tmp_path)
 
@@ -112,6 +120,17 @@ def test_cli_does_not_write_files(tmp_path, capsys):
     assert result == 0
     assert summary["validation_result"] == "success"
     assert before == after == ["contract.json"]
+
+
+def test_cli_help_does_not_write_files(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+
+    result = cli.main(["--help"])
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "--contract-file" in output
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_cli_does_not_call_github(tmp_path, monkeypatch, capsys):

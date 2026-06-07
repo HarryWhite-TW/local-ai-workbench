@@ -1,4 +1,6 @@
 import json
+import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,6 +45,35 @@ def test_cli_does_not_write_files(tmp_path, monkeypatch, capsys):
     assert result == 0
     assert surface["safety_flags"]["github_write_performed"] is False
     assert list(tmp_path.iterdir()) == []
+
+
+def test_cli_sample_does_not_call_github(monkeypatch, capsys):
+    def fail_if_network(*args, **kwargs):
+        raise AssertionError("network call attempted")
+
+    monkeypatch.setattr(socket, "create_connection", fail_if_network)
+
+    result = cli.main(["--sample"])
+    surface = read_stdout_json(capsys)
+
+    assert result == 0
+    assert surface["safety_flags"]["github_write_performed"] is False
+
+
+def test_cli_sample_does_not_execute_tasks(monkeypatch, capsys):
+    def fail_if_subprocess(*args, **kwargs):
+        raise AssertionError("task execution attempted")
+
+    monkeypatch.setattr(subprocess, "run", fail_if_subprocess)
+
+    result = cli.main(["--sample"])
+    surface = read_stdout_json(capsys)
+
+    assert result == 0
+    assert surface["safety_flags"]["codex_side_action_executed"] is False
+    assert surface["safety_flags"]["runner_invoked"] is False
+    assert surface["safety_flags"]["dispatcher_invoked"] is False
+    assert surface["safety_flags"]["watcher_invoked"] is False
 
 
 def test_cli_sample_has_required_safety_flags_false(capsys):

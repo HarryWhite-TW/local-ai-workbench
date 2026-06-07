@@ -49,7 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     try:
         args = parser.parse_args(argv)
-    except SystemExit:
+    except SystemExit as error:
+        if error.code == 0:
+            return 0
         print(json.dumps(_blocked_summary("invalid_arguments"), sort_keys=True))
         return 2
 
