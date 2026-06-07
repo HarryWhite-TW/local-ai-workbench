@@ -157,33 +157,40 @@ This walkthrough stays local-first: one configured folder, manual scans, determi
 
 ## Safe Local CLI Demos
 
-These demos are safe local/readback demos. They do not require a GitHub token, do not call GitHub, and do not write Result Packets.
+These demos are safe local/readback demos for reviewer verification. They do not require a GitHub token, do not call GitHub, do not write GitHub comments, do not write Result Packets, and do not invoke runner, dispatcher, or watcher behavior.
 
-### Demo 1: Show The Writeback Boundary Validator Help
+#199 fixed the local CLI demo stability for Python 3.10-compatible usage. #200 only refreshes reviewer-facing demo commands; it does not add a new boundary layer. The project remains in normal project work mode after #197.
+
+### Demo 1: Emit A Sample Result Surface
 
 ```powershell
-$env:PYTHONPATH='src'
-python -m local_runner_bridge.writeback_implementation_boundary_cli --help
+$env:PYTHONPATH='src'; python -m local_runner_bridge.result_surface_cli --sample
 ```
 
-Expected shape: CLI help showing the local-only `--boundary-file` argument. Running the validator requires a local JSON file and prints validation summary JSON to stdout.
+Expected shape: one local-only sample Result Surface JSON object printed to stdout. This is readback evidence only and does not write files or external systems.
 
 ### Demo 2: Show The Writeback Target Contract Validator Help
 
 ```powershell
-$env:PYTHONPATH='src'
-python -m local_runner_bridge.writeback_target_contract_cli --help
+$env:PYTHONPATH='src'; python -m local_runner_bridge.writeback_target_contract_cli --help
 ```
 
 Expected shape: CLI help showing the local-only `--contract-file` argument. Running the validator requires a local JSON file and prints validation summary JSON to stdout.
 
-### Demo 3: Validate Local JSON Artifacts
+### Demo 3: Show The Writeback Boundary Validator Help
+
+```powershell
+$env:PYTHONPATH='src'; python -m local_runner_bridge.writeback_implementation_boundary_cli --help
+```
+
+Expected shape: CLI help showing the local-only `--boundary-file` argument. Running the validator requires a local JSON file and prints validation summary JSON to stdout.
+
+### Demo 4: Validate Local JSON Artifacts
 
 For a fuller local demo, create a temporary JSON file outside the repo and pass it to one of the local validators:
 
 ```powershell
-$env:PYTHONPATH='src'
-python -m local_runner_bridge.writeback_implementation_boundary_cli --boundary-file <path-to-local-boundary-json>
+$env:PYTHONPATH='src'; python -m local_runner_bridge.writeback_implementation_boundary_cli --boundary-file <path-to-local-boundary-json>
 ```
 
 Expected shape: one validation summary JSON object printed to stdout. The validator reads one local file only and does not execute tasks.

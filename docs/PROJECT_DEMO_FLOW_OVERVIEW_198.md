@@ -8,6 +8,8 @@ This document provides a concise reviewer-facing demo flow for the Local Documen
 
 This document is not a new boundary layer.
 
+#200 continues normal project work by refreshing reviewer-facing demo commands after #199 stabilized local CLI demo usage for Python 3.10-compatible environments.
+
 This document does not implement GitHub writeback, Result Packet write, runner, dispatcher, watcher, or automation behavior.
 
 ## 2. Current Project Positioning
@@ -33,10 +35,14 @@ A safe reviewer demo can use this order:
 6. Open one document detail view.
 7. Generate or inspect a deterministic summary artifact.
 8. Review the audit context in the UI.
-9. Run a local-only bridge CLI help command to show the validation/readback model.
+9. Run local-only bridge CLI commands to show the validation/readback model.
 10. Optionally validate a temporary local JSON artifact outside the repo.
 
 The demo does not require GitHub writeback.
+
+The demo does not call GitHub.
+
+The demo does not write GitHub comments.
 
 The demo does not require Result Packet write.
 
@@ -47,18 +53,15 @@ The demo does not require runner, dispatcher, watcher, or automation behavior.
 Safe local/readback examples:
 
 ```powershell
-$env:PYTHONPATH='src'
-python -m local_runner_bridge.writeback_implementation_boundary_cli --help
+$env:PYTHONPATH='src'; python -m local_runner_bridge.result_surface_cli --sample
 ```
 
 ```powershell
-$env:PYTHONPATH='src'
-python -m local_runner_bridge.writeback_target_contract_cli --help
+$env:PYTHONPATH='src'; python -m local_runner_bridge.writeback_target_contract_cli --help
 ```
 
 ```powershell
-$env:PYTHONPATH='src'
-python -m local_runner_bridge.writeback_implementation_boundary_cli --boundary-file <path-to-local-boundary-json>
+$env:PYTHONPATH='src'; python -m local_runner_bridge.writeback_implementation_boundary_cli --help
 ```
 
 Other committed local-only validators use local JSON files:
@@ -69,7 +72,7 @@ Other committed local-only validators use local JSON files:
 - `local_runner_bridge.readiness_gate_cli --readiness-file <local-json>`
 - `local_runner_bridge.writeback_implementation_boundary_cli --boundary-file <local-json>`
 
-These commands are for local validation/readback evidence. They are not GitHub writeback commands.
+These commands are for reviewer verification and local validation/readback evidence. They do not call GitHub, write GitHub comments, write Result Packets, invoke runner/dispatcher/watcher behavior, or add a new boundary layer.
 
 ## 5. What A Reviewer Can Verify
 
