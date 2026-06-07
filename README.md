@@ -1,59 +1,115 @@
 # Local Document Assistant Prototype
 
-This repository is a localhost, single-user, personal-use prototype for working with a local document collection. It is not the mainline of a formal product, not a SaaS system, and not a productization-first codebase.
+`local-ai-workbench` is the working repository for the **Local Document Assistant Prototype**: a localhost, single-user document workbench for scanning, searching, reviewing, and summarizing a local document collection.
 
-The GitHub repo name `local-ai-workbench` is the working repository name. The public showcase identity for this repo remains `Local Document Assistant Prototype`, presented as a local document workbench.
+The public showcase identity is a local document workbench, not a SaaS product and not a background automation platform. The project is intentionally small, inspectable, and local-first so a reviewer can understand exactly where data is read, where artifacts are produced, and where human approval boundaries sit.
+
+## What Problem This Solves
+
+Local document workflows often become a blurry mix of source files, generated summaries, agent suggestions, and accidental side effects. This repo explores a safer pattern:
+
+- keep source documents local
+- scan and review them through a localhost workbench
+- produce deterministic review artifacts
+- represent AI-assisted work as explicit task/result/readback surfaces
+- keep write-like actions behind preview, approval, and readiness gates
+- avoid uncontrolled writeback
+
+The app itself does not call an external AI service in the current baseline. The bridge utilities in `src/local_runner_bridge/` model a local-first AI workflow control layer around explicit inputs, validation dry-runs, stdout/readback artifacts, approval records, readiness gates, and implementation-boundary checks.
+
+## Current Project Status
 
 Current baseline:
+
 - `M1` through `M9` complete
 - `v1` complete
 - showcase UI workbench redesign complete
+- writeback safety/boundary chain complete enough as of #197
+- normal project work resumes at #198
 
-The app stays intentionally simple:
-- one configured root folder
-- manual scan into local SQLite
-- local deterministic processing only
-- no external LLM or background automation
+The #197 decision is important: **stop adding boundary layers**. Future work should return to visible project value such as README polish, demo documentation, architecture maps, onboarding notes, or test cleanup.
 
-![Local document workbench overview](docs/images/local-document-workbench-overview.png)
+## Core Value
 
-*Local document workbench on localhost: left for search and indexed documents, center for the selected document detail, right for the deterministic summary artifact and audit trail.*
+The current project value is a local-first workflow with explicit review boundaries:
 
-## Project Positioning
+- **Local document workbench:** manually scan one configured root folder into SQLite and review documents on localhost.
+- **Deterministic artifacts:** generate local single-document summary artifacts without external AI calls.
+- **Explicit task surfaces:** represent work as explicit local or fetched task references instead of broad issue scans.
+- **Validation dry-runs:** validate inputs and contracts before any later action is considered.
+- **Result/readback artifacts:** emit JSON review summaries to stdout for ChatGPT/human readback.
+- **Approval/readiness gates:** model approval and readiness as local validation records, not implicit permission.
+- **No uncontrolled writeback:** GitHub writeback, Result Packet write, runner/dispatcher/watcher behavior, and autonomous execution remain forbidden unless separately approved later.
 
-- Localhost only
-- Single-user and personal-use
-- Read-oriented workflow with explicit preview and approve boundaries
-- Simplest maintainable design that works for the current milestone history
+This is different from a normal automation script because success at one step does not automatically trigger the next side effect. Each layer emits reviewable evidence and keeps authority bounded.
 
-## Core Capabilities
+## What Is Implemented
+
+### Local Document Workbench
 
 - Configure one root folder through the web UI or API
 - Manually scan `md`, `txt`, `pdf`, and `docx` files into SQLite
 - List indexed documents and open document detail
-- Generate a deterministic single-document summary artifact
-- Search locally by keyword across title, relative path, and content
-- Review summary and audit information in the current workbench UI
+- Search locally by title, relative path, and extracted content
+- Generate deterministic single-document summary artifacts
+- Review summary and audit context in the current workbench UI
 
-## Current UI
+### Local Runner Bridge Utilities
 
-The current web app is a three-column local document workbench:
-- Header: root folder setup, data source, and scan status
-- Left column: search and document list
-- Center column: document detail
-- Right column: summary as the primary panel and audit as secondary context
+The `src/local_runner_bridge/` modules are local-only workflow control utilities. They include:
 
-This is not a chat-first interface.
+- Result Surface builder and sample stdout CLI
+- Task Surface to Result Surface conversion for local text files
+- explicit fetch to Result Surface adapter for local files and explicitly referenced GitHub issue/comment inputs
+- Writeback Target Contract validator
+- Writeback Dry-Run Preview builder
+- Approval Record validator
+- Readiness Gate validator
+- Writeback Implementation Boundary validator
 
-## Repository Layout
+These utilities produce JSON evidence and validation summaries. They do not execute tasks, write GitHub comments, update issue bodies, write Result Packets, create PRs, merge, close issues, change labels, or start watchers.
+
+## What Is Intentionally Not Implemented
+
+The following remain intentionally out of scope:
+
+- external LLM calls inside the app
+- OCR or scanned-PDF recognition
+- semantic search, embeddings, vector database, or FTS5
+- multi-folder background sync
+- watcher or scheduler behavior
+- automatic email sending
+- automatic modification of original source documents
+- GitHub writeback implementation
+- GitHub comment write
+- GitHub issue body update
+- Result Packet write implementation
+- Codex-side action execution
+- runner, dispatcher, or watcher behavior
+- broad issue scan or next/latest issue inference
+- autonomous execution
+- automatic commit or push
+- PR creation, merge, issue close, or label change
+- real write mode
+
+Future GitHub writeback is still not implemented and still requires a later explicit Strict Lane decision.
+
+## Architecture Overview
 
 - `api/`: FastAPI app, SQLite access, schemas, and route handlers
 - `web/`: React + TypeScript workbench UI built with Vite
 - `data/`: local runtime database area and local validation artifacts
-- `tests/`: API-focused tests plus placeholder directories for future expansion
-- `docs/`: lightweight project documentation and prompt placeholders
+- `src/local_runner_bridge/`: local-only bridge validators and stdout/readback CLIs
+- `tests/`: API and bridge utility tests
+- `docs/`: project documentation, decision notes, and demo/supporting docs
 - `AGENTS.md`: repo-level collaboration and scope guardrails
 - `PLANS.md`: project planning notes kept at repo root
+
+The main application logic stays in the Python API. The web app stays focused on display and user interaction. The bridge utilities stay local-only and evidence-oriented.
+
+![Local document workbench overview](docs/images/local-document-workbench-overview.png)
+
+*Local document workbench on localhost: left for search and indexed documents, center for the selected document detail, right for deterministic summary artifact and audit trail.*
 
 ## Local Setup
 
@@ -78,20 +134,6 @@ npm run dev
 
 The Vite dev server runs on `http://127.0.0.1:5173`.
 
-## Demo Walkthrough
-
-1. Start the API with `uvicorn api.app.main:app --reload`.
-2. Start the web app with `npm run dev` from `web/`.
-3. Open `http://127.0.0.1:5173` in a browser.
-4. In the workbench header, paste one existing local root folder path and save it.
-5. Run `Scan documents` to index supported `md`, `txt`, `pdf`, and `docx` files into local SQLite.
-6. Use keyword search in the left column to search indexed title, relative path, and extracted content.
-7. Select a document to read its extracted text in the center detail panel.
-8. Generate or view the deterministic single-document summary in the right panel.
-9. Inspect audit context in the right panel to see local root folder, scan, and summary events.
-
-The walkthrough stays local-first: it uses one configured folder, manual scans, deterministic processing, and localhost services only.
-
 ### Tests
 
 ```powershell
@@ -99,16 +141,118 @@ The walkthrough stays local-first: it uses one configured folder, manual scans, 
 python -m pytest tests\api -q -p no:cacheprovider
 ```
 
-## Basic Usage Path
+## Workbench Demo Walkthrough
 
-1. Start the API and web app locally.
-2. Configure the document root folder from the workbench header.
-3. Run a manual scan to index supported `md`, `txt`, `pdf`, and `docx` files into SQLite.
-4. Search indexed documents from the left pane.
-5. Select a document from the results or document list.
-6. Read document detail in the center pane.
-7. Generate or view the deterministic summary in the right pane.
-8. Review related audit context in the right pane.
+1. Start the API with `uvicorn api.app.main:app --reload`.
+2. Start the web app with `npm run dev` from `web/`.
+3. Open `http://127.0.0.1:5173` in a browser.
+4. In the workbench header, paste one existing local root folder path and save it.
+5. Run `Scan documents` to index supported `md`, `txt`, `pdf`, and `docx` files into local SQLite.
+6. Use keyword search in the left column to search indexed title, relative path, and extracted content.
+7. Select a document to read extracted text in the center detail panel.
+8. Generate or view the deterministic single-document summary in the right panel.
+9. Inspect audit context in the right panel to see local root folder, scan, and summary events.
+
+This walkthrough stays local-first: one configured folder, manual scans, deterministic processing, SQLite, and localhost services only.
+
+## Safe Local CLI Demos
+
+These demos are safe local/readback demos. They do not require a GitHub token, do not call GitHub, and do not write Result Packets.
+
+### Demo 1: Show The Writeback Boundary Validator Help
+
+```powershell
+$env:PYTHONPATH='src'
+python -m local_runner_bridge.writeback_implementation_boundary_cli --help
+```
+
+Expected shape: CLI help showing the local-only `--boundary-file` argument. Running the validator requires a local JSON file and prints validation summary JSON to stdout.
+
+### Demo 2: Show The Writeback Target Contract Validator Help
+
+```powershell
+$env:PYTHONPATH='src'
+python -m local_runner_bridge.writeback_target_contract_cli --help
+```
+
+Expected shape: CLI help showing the local-only `--contract-file` argument. Running the validator requires a local JSON file and prints validation summary JSON to stdout.
+
+### Demo 3: Validate Local JSON Artifacts
+
+For a fuller local demo, create a temporary JSON file outside the repo and pass it to one of the local validators:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m local_runner_bridge.writeback_implementation_boundary_cli --boundary-file <path-to-local-boundary-json>
+```
+
+Expected shape: one validation summary JSON object printed to stdout. The validator reads one local file only and does not execute tasks.
+
+## How To Read The Safety Chain
+
+A reviewer should read the safety chain as a sequence of local evidence checkpoints:
+
+```text
+explicit Task Surface
+-> authenticated read-only fetch
+-> validation dry-run
+-> Result Surface stdout/readback
+-> Writeback Target Contract validation
+-> local Dry-Run Preview
+-> Approval Record validation
+-> Readiness Gate validation
+-> Implementation Boundary validation
+```
+
+The chain proves that reviewable local evidence can be built and validated. It does not prove or authorize uncontrolled external writes.
+
+Key evidence:
+
+- #166 proved authenticated live fetch to Result Surface stdout/readback.
+- #172 implemented Writeback Target Contract validation.
+- #177 implemented local Dry-Run Preview builder.
+- #183 implemented Approval Record validation.
+- #189 implemented Readiness Gate validation.
+- #195 implemented Writeback Implementation Boundary validation.
+- #196 proved the committed boundary validator with local smoke evidence.
+- #197 recorded that the boundary chain is complete enough and should stop expanding.
+
+## Why This Is Not Just Automation
+
+Normal automation scripts often connect input success directly to side effects. This repo deliberately separates those concerns:
+
+- input references must be explicit
+- validation summaries are local/readback evidence
+- previews are dry-run only
+- approval records are validated artifacts, not hidden permission
+- readiness gates preserve `dry_run_only` and no-real-write flags
+- implementation-boundary validation keeps future writeback as a separate Strict Lane decision
+
+That makes the project useful as a public portfolio example of controlled AI-assisted workflow design, not just a script that does things after parsing input.
+
+## Notes For Reviewers
+
+- The app is local and deterministic in the current baseline.
+- The bridge utilities are local-only evidence tools unless explicitly run with an authenticated read-only fetch path.
+- The project intentionally avoids background schedulers and long-running automation.
+- Write-like actions remain preview-before-approve work.
+- The current #198 direction is normal project work, not more boundary layering.
+
+See [Project Demo Flow Overview (#198)](docs/PROJECT_DEMO_FLOW_OVERVIEW_198.md) for a concise reviewer-facing path through the app and bridge demos.
+
+## Next Practical Work
+
+Good next steps should prioritize visible project value:
+
+- tighten the README and screenshots for portfolio review
+- add a short architecture map
+- document one polished demo script for the local workbench
+- clean up old placeholder wording in docs
+- improve CLI usage examples for local-only bridge utilities
+- tidy API test coverage around preview, approve, and audit events
+- write a developer onboarding guide
+
+Avoid adding more writeback boundary layers by default.
 
 ## Non-Goals And Known Limits
 
@@ -131,11 +275,13 @@ python -m pytest tests\api -q -p no:cacheprovider
 This repo is designed to be worked on with human review and AI-assisted development, but the application itself does not call any external AI service.
 
 When collaborating through an agent workflow:
+
 - follow the repo-root guardrails in `AGENTS.md`
 - keep scope aligned with the active baseline instead of inventing new milestones
 - treat write-like actions as preview-before-approve work
+- do not treat validation success as approval for external side effects
 
 ## Notes
 
 - `data/app.db` is created automatically when the API starts.
-- Public-release prep should keep local private assets, walkthrough outputs, and validation databases out of version control.
+- Public-release prep should keep local private assets, walkthrough outputs, validation databases, and temporary smoke inputs out of version control.

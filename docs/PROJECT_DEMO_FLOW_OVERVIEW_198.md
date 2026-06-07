@@ -1,0 +1,128 @@
+# Project Demo Flow Overview (#198)
+
+## 1. Purpose
+
+This document provides a concise reviewer-facing demo flow for the Local Document Assistant Prototype after the #197 boundary-chain completion decision.
+
+#198 is normal project work.
+
+This document is not a new boundary layer.
+
+This document does not implement GitHub writeback, Result Packet write, runner, dispatcher, watcher, or automation behavior.
+
+## 2. Current Project Positioning
+
+The repo is a localhost, single-user, local document workbench.
+
+It has two useful reviewer angles:
+
+- the visible document workbench: configure one folder, scan local documents, search, inspect document detail, generate deterministic summary artifacts, and review audit context
+- the local workflow control layer: explicit task/result/readback surfaces, validation dry-runs, dry-run previews, approval records, readiness gates, and implementation-boundary validation
+
+The bridge utilities are evidence and review tools. They do not turn the repo into uncontrolled automation.
+
+## 3. Safe Local Demo Flow
+
+A safe reviewer demo can use this order:
+
+1. Start the API locally.
+2. Start the web UI locally.
+3. Configure one local root folder.
+4. Run a manual document scan.
+5. Search indexed documents.
+6. Open one document detail view.
+7. Generate or inspect a deterministic summary artifact.
+8. Review the audit context in the UI.
+9. Run a local-only bridge CLI help command to show the validation/readback model.
+10. Optionally validate a temporary local JSON artifact outside the repo.
+
+The demo does not require GitHub writeback.
+
+The demo does not require Result Packet write.
+
+The demo does not require runner, dispatcher, watcher, or automation behavior.
+
+## 4. Key CLI Entry Points
+
+Safe local/readback examples:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m local_runner_bridge.writeback_implementation_boundary_cli --help
+```
+
+```powershell
+$env:PYTHONPATH='src'
+python -m local_runner_bridge.writeback_target_contract_cli --help
+```
+
+```powershell
+$env:PYTHONPATH='src'
+python -m local_runner_bridge.writeback_implementation_boundary_cli --boundary-file <path-to-local-boundary-json>
+```
+
+Other committed local-only validators use local JSON files:
+
+- `local_runner_bridge.writeback_target_contract_cli --contract-file <local-json>`
+- `local_runner_bridge.writeback_dry_run_preview_cli --contract-file <local-json> --result-surface-file <local-json> --preview-content <text>`
+- `local_runner_bridge.approval_record_cli --approval-record-file <local-json>`
+- `local_runner_bridge.readiness_gate_cli --readiness-file <local-json>`
+- `local_runner_bridge.writeback_implementation_boundary_cli --boundary-file <local-json>`
+
+These commands are for local validation/readback evidence. They are not GitHub writeback commands.
+
+## 5. What A Reviewer Can Verify
+
+A reviewer can verify:
+
+- the app is positioned as a local document workbench
+- the API and web UI run on localhost
+- document scan is manual
+- summaries are deterministic local artifacts
+- bridge utilities emit JSON to stdout
+- local validators fail closed around missing or unsafe fields
+- the safety chain is documented without claiming real writeback
+- #197 says to stop adding boundary layers and return to normal project work
+
+## 6. What Remains Forbidden
+
+The following remain forbidden unless separately approved later:
+
+```text
+GitHub writeback implementation
+GitHub comment write
+GitHub issue body update
+Result Packet write implementation
+Codex-side action execution
+runner behavior
+dispatcher behavior
+watcher behavior
+broad issue scan
+next/latest issue inference
+autonomous execution
+automatic commit
+automatic push
+PR creation
+merge
+issue close
+label change
+approval chaining
+real write mode
+new boundary layer expansion
+```
+
+Future GitHub writeback is still not implemented and still requires a later explicit Strict Lane decision.
+
+## 7. Suggested Next Practical Tasks
+
+Recommended practical tasks after #198:
+
+- add a small architecture map for the local workbench and bridge utilities
+- create a short demo script for portfolio review
+- polish screenshot captions and README flow
+- add CLI usage examples for local-only bridge commands
+- clean up test coverage around preview, approve, and audit behavior
+- write a lightweight developer onboarding guide
+- document the issue workflow as a project-management example
+
+The next work should prioritize visible project value, not more boundary layering.
