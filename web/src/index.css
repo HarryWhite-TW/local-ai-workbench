@@ -543,3 +543,79 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+
+
+.obsidian-export-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(246, 250, 255, 0.96) 100%);
+}
+
+.export-guidance {
+  border: 1px solid #d8e5f2;
+  border-radius: 16px;
+  background: #f7fbff;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  color: #405a75;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.export-guidance strong {
+  display: block;
+  color: #18314b;
+  margin-bottom: 8px;
+}
+
+.export-guidance ol {
+  margin: 0 0 8px 18px;
+  padding: 0;
+}
+
+.export-guidance p {
+  margin: 0;
+}
+
+.export-folder-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.export-folder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.field-label {
+  color: #5b6f86;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.obsidian-preview-card {
+  margin-top: 14px;
+}
+
+.markdown-preview-details {
+  border: 1px solid #d9e3ef;
+  border-radius: 14px;
+  background: #fbfcfe;
+  padding: 12px;
+}
+
+.markdown-preview-details summary {
+  cursor: pointer;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.markdown-preview-details pre {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 12px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}

@@ -66,6 +66,14 @@ function getErrorDetail(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function getObsidianExportErrorDetail(error: unknown): string {
+  if (error instanceof ApiError && error.detail === "Export file already exists.") {
+    return "Export file already exists. Choose a different export folder, remove the existing Markdown file, or select another document before exporting again.";
+  }
+
+  return getErrorDetail(error, "The API did not return an error detail.");
+}
+
 export default function App() {
   const [rootFolder, setRootFolder] = useState<RootFolderStatusRecord | null>(null);
   const [documents, setDocuments] = useState<DocumentListItemRecord[]>([]);
@@ -364,12 +372,7 @@ export default function App() {
       setObsidianExportMessage(`Exported ${result.filename} (${result.bytes_written} bytes) to ${result.export_path}`);
       await loadAudit();
     } catch (exportError) {
-      setObsidianExportError(
-        `Could not export Obsidian Markdown. ${getErrorDetail(
-          exportError,
-          "The API did not return an error detail."
-        )}`
-      );
+      setObsidianExportError(`Could not export Obsidian Markdown. ${getObsidianExportErrorDetail(exportError)}`);
     } finally {
       setIsWritingObsidianExport(false);
     }
@@ -803,7 +806,7 @@ export default function App() {
                 <div>
                   <h2>Obsidian Export</h2>
                   <p className="muted compact">
-                    Preview a one-way Markdown note, then export it to an existing local Obsidian folder.
+                    Send the selected document summary to a local Markdown folder after previewing it.
                   </p>
                 </div>
                 <button
@@ -812,53 +815,69 @@ export default function App() {
                   disabled={!canPreviewObsidianMarkdown}
                   onClick={() => void handleLoadObsidianPreview()}
                 >
-                  {isLoadingObsidianPreview ? "Previewing..." : "Preview Markdown"}
+                  {isLoadingObsidianPreview ? "Previewing..." : obsidianPreview ? "Refresh preview" : "Preview Markdown"}
                 </button>
+              </div>
+
+              <div className="export-guidance">
+                <strong>Export flow</strong>
+                <ol>
+                  <li>Select a scanned document.</li>
+                  <li>Preview the generated Markdown.</li>
+                  <li>Paste an existing Obsidian destination folder.</li>
+                  <li>Export the Markdown file.</li>
+                </ol>
+                <p>
+                  Data source/root folder is where documents are scanned from. Export folder is where the generated
+                  Markdown note is written to.
+                </p>
               </div>
 
               {!selectedDocumentId ? (
                 <p className="empty-state">Select a document before previewing an Obsidian Markdown note.</p>
               ) : (
                 <>
-                  <form className="root-folder-form" onSubmit={(event) => void handleObsidianExportSubmit(event)}>
-                    <label htmlFor="obsidian-export-folder-input" className="sr-only">
-                      Obsidian export folder
+                  <form className="export-folder-form" onSubmit={(event) => void handleObsidianExportSubmit(event)}>
+                    <label htmlFor="obsidian-export-folder-input" className="field-label">
+                      Export folder destination
                     </label>
-                    <input
-                      id="obsidian-export-folder-input"
-                      type="text"
-                      className="root-folder-input"
-                      value={obsidianExportFolderInput}
-                      onChange={(event) => {
-                        setObsidianExportFolderInput(event.target.value);
-                        setObsidianExportMessage(null);
-                        setObsidianExportError(null);
-                      }}
-                      placeholder={"C:\\Users\\harry\\Documents\\Obsidian Vault\\Inbox"}
-                      disabled={isWritingObsidianExport}
-                    />
-                    <button type="submit" className="secondary-button" disabled={!canExportObsidianMarkdown}>
-                      {isWritingObsidianExport ? "Exporting..." : "Export Markdown"}
-                    </button>
+                    <div className="export-folder-row">
+                      <input
+                        id="obsidian-export-folder-input"
+                        type="text"
+                        className="root-folder-input"
+                        value={obsidianExportFolderInput}
+                        onChange={(event) => {
+                          setObsidianExportFolderInput(event.target.value);
+                          setObsidianExportMessage(null);
+                          setObsidianExportError(null);
+                        }}
+                        placeholder={"C:\\Users\\harry\\Documents\\Obsidian Vault\\Inbox"}
+                        disabled={isWritingObsidianExport}
+                      />
+                      <button type="submit" className="secondary-button" disabled={!canExportObsidianMarkdown}>
+                        {isWritingObsidianExport ? "Exporting..." : "Export Markdown"}
+                      </button>
+                    </div>
                   </form>
 
                   <p className="muted compact">
-                    Export requires an explicit preview first. The original source document is not modified.
+                    Export requires a preview first. Existing Markdown files are not overwritten.
                   </p>
 
                   {obsidianExportMessage ? <p className="inline-success">{obsidianExportMessage}</p> : null}
                   {obsidianExportError ? <p className="inline-error">{obsidianExportError}</p> : null}
 
                   {obsidianPreview ? (
-                    <div className="content-block summary-content-block">
+                    <div className="content-block obsidian-preview-card">
                       <div className="detail-row">
                         <span className="detail-label">Preview status</span>
                         <span>{obsidianPreview.has_summary ? "Summary included" : "No summary artifact yet"}</span>
                       </div>
-                      <div className="detail-row stacked">
-                        <span className="detail-label">Markdown preview</span>
+                      <details className="markdown-preview-details">
+                        <summary>Show Markdown preview</summary>
                         <pre>{obsidianPreview.markdown}</pre>
-                      </div>
+                      </details>
                     </div>
                   ) : (
                     <p className="empty-state">
