@@ -273,3 +273,131 @@ def test_post_obsidian_export_returns_404_when_document_is_missing(client, tmp_p
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Document not found."}
+
+def test_build_export_destination_status_detects_vault_root(tmp_path: Path):
+    from api.app.services.obsidian_export import build_export_destination_status
+
+    vault_root = tmp_path / "vault"
+    vault_root.mkdir()
+    (vault_root / ".obsidian").mkdir()
+
+    result = build_export_destination_status(str(vault_root))
+
+    assert result["exists"] is True
+    assert result["is_directory"] is True
+    assert result["can_export"] is True
+    assert result["destination_type"] == "obsidian_vault_root"
+    assert result["vault_root"] == str(vault_root.resolve())
+    assert result["obsidian_config_path"] == str((vault_root / ".obsidian").resolve())
+    assert result["human_status"] == "Obsidian vault detected."
+
+
+def test_build_export_destination_status_detects_folder_inside_vault(tmp_path: Path):
+    from api.app.services.obsidian_export import build_export_destination_status
+
+    vault_root = tmp_path / "vault"
+    inbox = vault_root / "Inbox"
+    inbox.mkdir(parents=True)
+    (vault_root / ".obsidian").mkdir()
+
+    result = build_export_destination_status(str(inbox))
+
+    assert result["exists"] is True
+    assert result["is_directory"] is True
+    assert result["can_export"] is True
+    assert result["destination_type"] == "inside_obsidian_vault"
+    assert result["vault_root"] == str(vault_root.resolve())
+    assert result["obsidian_config_path"] == str((vault_root / ".obsidian").resolve())
+    assert result["human_status"] == "This folder is inside an Obsidian vault."
+
+
+def test_build_export_destination_status_detects_plain_markdown_folder(tmp_path: Path):
+    from api.app.services.obsidian_export import build_export_destination_status
+
+    export_folder = tmp_path / "markdown"
+    export_folder.mkdir()
+
+    result = build_export_destination_status(str(export_folder))
+
+    assert result["exists"] is True
+    assert result["is_directory"] is True
+    assert result["can_export"] is True
+    assert result["destination_type"] == "plain_markdown_folder"
+    assert result["vault_root"] is None
+    assert result["obsidian_config_path"] is None
+    assert result["human_status"] == "This is a normal Markdown folder."
+
+
+def test_build_export_destination_status_detects_missing_folder(tmp_path: Path):
+    from api.app.services.obsidian_export import build_export_destination_status
+
+    missing_folder = tmp_path / "missing"
+
+    result = build_export_destination_status(str(missing_folder))
+
+    assert result["exists"] is False
+    assert result["is_directory"] is False
+    assert result["can_export"] is False
+    assert result["destination_type"] == "missing_folder"
+    assert result["vault_root"] is None
+    assert result["human_status"] == "This folder does not exist."
+
+
+def test_build_export_destination_status_detects_file_path(tmp_path: Path):
+    from api.app.services.obsidian_export import build_export_destination_status
+
+    file_path = tmp_path / "not-folder.md"
+    file_path.write_text("not a folder", encoding="utf-8")
+
+    result = build_export_destination_status(str(file_path))
+
+    assert result["exists"] is True
+    assert result["is_directory"] is False
+    assert result["can_export"] is False
+    assert result["destination_type"] == "not_directory"
+    assert result["vault_root"] is None
+    assert result["human_status"] == "This path is not a folder."
+
+
+def test_post_obsidian_export_folder_check_returns_human_and_developer_surfaces(client, tmp_path: Path):
+    vault_root = tmp_path / "vault"
+    inbox = vault_root / "Inbox"
+    inbox.mkdir(parents=True)
+    (vault_root / ".obsidian").mkdir()
+
+    response = client.post("/documents/obsidian-export-folder-check", json={"export_folder": str(inbox)})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exists"] is True
+    assert body["is_directory"] is True
+    assert body["can_export"] is True
+    assert body["destination_type"] == "inside_obsidian_vault"
+    assert body["human_status"] == "This folder is inside an Obsidian vault."
+    assert body["human_next_step"] == "You can export Markdown here. It should appear in the detected vault under this folder."
+    assert body["vault_root"] == str(vault_root.resolve())
+    assert body["obsidian_config_path"] == str((vault_root / ".obsidian").resolve())
+    assert body["checked_at"].endswith("Z")
+
+
+def test_post_obsidian_export_folder_check_allows_plain_markdown_folder(client, tmp_path: Path):
+    export_folder = tmp_path / "markdown"
+    export_folder.mkdir()
+
+    response = client.post("/documents/obsidian-export-folder-check", json={"export_folder": str(export_folder)})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["can_export"] is True
+    assert body["destination_type"] == "plain_markdown_folder"
+    assert body["human_status"] == "This is a normal Markdown folder."
+
+
+def test_post_obsidian_export_folder_check_marks_missing_folder_not_exportable(client, tmp_path: Path):
+    response = client.post("/documents/obsidian-export-folder-check", json={"export_folder": str(tmp_path / "missing")})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["can_export"] is False
+    assert body["destination_type"] == "missing_folder"
+    assert body["human_next_step"] == "Create the folder or choose another existing destination before exporting."

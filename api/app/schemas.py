@@ -10,6 +10,15 @@ ActionStatus = Literal["preview", "approved"]
 TaskType = Literal["find_documents", "summarize_selected_document", "extract_requirements"]
 TaskRunStatus = Literal["completed", "completed_with_warnings"]
 TaskResultKind = Literal["document_search_results", "summary_artifact", "requirements_list"]
+ObsidianExportDestinationType = Literal[
+    "obsidian_vault_root",
+    "inside_obsidian_vault",
+    "plain_markdown_folder",
+    "missing_folder",
+    "not_directory",
+]
+
+
 
 
 class ActionPreviewCreateRequest(BaseModel):
@@ -134,6 +143,25 @@ class ObsidianExportWriteResponse(BaseModel):
     filename: str
     bytes_written: int
     exported_at: str
+
+
+class ObsidianExportFolderCheckRequest(BaseModel):
+    export_folder: str = Field(min_length=1)
+
+
+class ObsidianExportFolderCheckResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    export_folder: str
+    exists: bool
+    is_directory: bool
+    can_export: bool
+    destination_type: ObsidianExportDestinationType
+    human_status: str
+    human_next_step: str
+    vault_root: str | None
+    obsidian_config_path: str | None
+    checked_at: str
 
 
 class TaskRunRequest(BaseModel):

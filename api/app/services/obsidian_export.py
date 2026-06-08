@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import sqlite3
@@ -48,6 +48,115 @@ class InvalidObsidianExportFolderError(Exception):
 
 class ObsidianExportFileExistsError(Exception):
     """Raised when the export target file already exists."""
+
+
+def find_obsidian_vault_root(export_folder: Path) -> Path | None:
+    current = export_folder
+    while True:
+        obsidian_config = current / ".obsidian"
+        if obsidian_config.exists() and obsidian_config.is_dir():
+            return current
+
+        parent = current.parent
+        if parent == current:
+            return None
+
+        current = parent
+
+
+def build_export_destination_status(raw_export_folder: str) -> dict[str, Any]:
+    export_folder_text = as_text(raw_export_folder)
+    checked_at = utc_now_iso()
+
+    if not export_folder_text:
+        return {
+            "export_folder": "",
+            "exists": False,
+            "is_directory": False,
+            "can_export": False,
+            "destination_type": "missing_folder",
+            "human_status": "Folder path is empty.",
+            "human_next_step": "Paste an existing folder path before exporting.",
+            "vault_root": None,
+            "obsidian_config_path": None,
+            "checked_at": checked_at,
+        }
+
+    export_folder = Path(export_folder_text).expanduser()
+
+    if not export_folder.exists():
+        return {
+            "export_folder": str(export_folder),
+            "exists": False,
+            "is_directory": False,
+            "can_export": False,
+            "destination_type": "missing_folder",
+            "human_status": "This folder does not exist.",
+            "human_next_step": "Create the folder or choose another existing destination before exporting.",
+            "vault_root": None,
+            "obsidian_config_path": None,
+            "checked_at": checked_at,
+        }
+
+    resolved_export_folder = export_folder.resolve()
+
+    if not resolved_export_folder.is_dir():
+        return {
+            "export_folder": str(resolved_export_folder),
+            "exists": True,
+            "is_directory": False,
+            "can_export": False,
+            "destination_type": "not_directory",
+            "human_status": "This path is not a folder.",
+            "human_next_step": "Choose an existing folder before exporting.",
+            "vault_root": None,
+            "obsidian_config_path": None,
+            "checked_at": checked_at,
+        }
+
+    vault_root = find_obsidian_vault_root(resolved_export_folder)
+
+    if vault_root is None:
+        return {
+            "export_folder": str(resolved_export_folder),
+            "exists": True,
+            "is_directory": True,
+            "can_export": True,
+            "destination_type": "plain_markdown_folder",
+            "human_status": "This is a normal Markdown folder.",
+            "human_next_step": "Export is allowed, but no Obsidian vault was detected.",
+            "vault_root": None,
+            "obsidian_config_path": None,
+            "checked_at": checked_at,
+        }
+
+    obsidian_config_path = vault_root / ".obsidian"
+    if vault_root == resolved_export_folder:
+        return {
+            "export_folder": str(resolved_export_folder),
+            "exists": True,
+            "is_directory": True,
+            "can_export": True,
+            "destination_type": "obsidian_vault_root",
+            "human_status": "Obsidian vault detected.",
+            "human_next_step": "Markdown exports written here should appear in this vault.",
+            "vault_root": str(vault_root),
+            "obsidian_config_path": str(obsidian_config_path),
+            "checked_at": checked_at,
+        }
+
+    return {
+        "export_folder": str(resolved_export_folder),
+        "exists": True,
+        "is_directory": True,
+        "can_export": True,
+        "destination_type": "inside_obsidian_vault",
+        "human_status": "This folder is inside an Obsidian vault.",
+        "human_next_step": "You can export Markdown here. It should appear in the detected vault under this folder.",
+        "vault_root": str(vault_root),
+        "obsidian_config_path": str(obsidian_config_path),
+        "checked_at": checked_at,
+    }
 
 
 def utc_now_iso() -> str:

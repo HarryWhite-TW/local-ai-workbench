@@ -4,6 +4,8 @@ from api.app.db import get_connection
 from api.app.schemas import (
     DocumentDetailResponse,
     DocumentListItemResponse,
+    ObsidianExportFolderCheckRequest,
+    ObsidianExportFolderCheckResponse,
     ObsidianExportPreviewResponse,
     ObsidianExportWriteRequest,
     ObsidianExportWriteResponse,
@@ -23,6 +25,7 @@ from api.app.services.obsidian_export import (
     InvalidObsidianExportFolderError,
     ObsidianExportApprovalRequiredError,
     ObsidianExportFileExistsError,
+    build_export_destination_status,
     build_obsidian_export_preview,
     write_obsidian_export,
 )
@@ -58,6 +61,14 @@ def get_documents() -> list[DocumentListItemResponse]:
 def get_document_search_results(q: str) -> list[DocumentSearchResultResponse]:
     with get_connection() as connection:
         return [DocumentSearchResultResponse(**result) for result in search_documents(connection, q)]
+
+
+@router.post("/obsidian-export-folder-check", response_model=ObsidianExportFolderCheckResponse)
+def post_obsidian_export_folder_check(
+    request: ObsidianExportFolderCheckRequest,
+) -> ObsidianExportFolderCheckResponse:
+    status_result = build_export_destination_status(request.export_folder)
+    return ObsidianExportFolderCheckResponse(**status_result)
 
 
 @router.post("/{document_id}/obsidian-export", response_model=ObsidianExportWriteResponse)
