@@ -1,8 +1,8 @@
-# Local Document Assistant Prototype
+# Local AI Workbench
 
-`local-ai-workbench` is the working repository for the **Local Document Assistant Prototype**: a localhost, single-user document workbench for scanning, searching, reviewing, and summarizing a local document collection.
+`local-ai-workbench` is the working repository for **Local AI Workbench**: a localhost, single-user document-to-knowledge workbench for scanning, searching, reviewing, summarizing, auditing, and exporting local document knowledge artifacts.
 
-The public showcase identity is a local document workbench, not a SaaS product and not a background automation platform. The project is intentionally small, inspectable, and local-first so a reviewer can understand exactly where data is read, where artifacts are produced, and where human approval boundaries sit.
+The public showcase identity is a local-first document-to-knowledge workbench, not a SaaS product and not a background automation platform. The project is intentionally small, inspectable, and local-first so a reviewer can understand exactly where data is read, where artifacts are produced, where Markdown exports are written, and where human approval boundaries sit.
 
 ## What Problem This Solves
 
@@ -11,6 +11,7 @@ Local document workflows often become a blurry mix of source files, generated su
 - keep source documents local
 - scan and review them through a localhost workbench
 - produce deterministic review artifacts
+- export Obsidian-ready Markdown notes after preview and approval
 - represent AI-assisted work as explicit task/result/readback surfaces
 - keep write-like actions behind preview, approval, and readiness gates
 - avoid uncontrolled writeback
@@ -26,6 +27,9 @@ Current baseline:
 - showcase UI workbench redesign complete
 - writeback safety/boundary chain complete enough as of #197
 - normal project work resumes at #198
+- product direction aligned as a Local Document-to-Knowledge Workbench at #204
+- Obsidian-ready Markdown Export MVP completed through #211
+- current roadmap recorded at #212
 
 The #197 decision is important: **stop adding boundary layers**. Future work should return to visible project value such as README polish, demo documentation, architecture maps, onboarding notes, or test cleanup.
 
@@ -33,8 +37,9 @@ The #197 decision is important: **stop adding boundary layers**. Future work sho
 
 The current project value is a local-first workflow with explicit review boundaries:
 
-- **Local document workbench:** manually scan one configured root folder into SQLite and review documents on localhost.
+- **Local document-to-knowledge workbench:** manually scan one configured root folder into SQLite and review documents on localhost.
 - **Deterministic artifacts:** generate local single-document summary artifacts without external AI calls.
+- **Obsidian-ready Markdown export:** preview and write generated Markdown notes to a user-selected local folder, such as an Obsidian Vault inbox.
 - **Explicit task surfaces:** represent work as explicit local or fetched task references instead of broad issue scans.
 - **Validation dry-runs:** validate inputs and contracts before any later action is considered.
 - **Result/readback artifacts:** emit JSON review summaries to stdout for ChatGPT/human readback.
@@ -53,6 +58,9 @@ This is different from a normal automation script because success at one step do
 - Search locally by title, relative path, and extracted content
 - Generate deterministic single-document summary artifacts
 - Review summary and audit context in the current workbench UI
+- Preview Obsidian-ready Markdown for the selected document
+- Export Markdown to a user-selected local destination folder after preview
+- Remember the last export folder in the browser for smoother repeat use
 
 ### Local Runner Bridge Utilities
 
@@ -80,6 +88,10 @@ The following remain intentionally out of scope:
 - watcher or scheduler behavior
 - automatic email sending
 - automatic modification of original source documents
+- Obsidian plugin behavior
+- Obsidian API integration
+- two-way Obsidian sync
+- vault-aware validation in the current baseline
 - GitHub writeback implementation
 - GitHub comment write
 - GitHub issue body update
@@ -151,9 +163,27 @@ python -m pytest tests\api -q -p no:cacheprovider
 6. Use keyword search in the left column to search indexed title, relative path, and extracted content.
 7. Select a document to read extracted text in the center detail panel.
 8. Generate or view the deterministic single-document summary in the right panel.
-9. Inspect audit context in the right panel to see local root folder, scan, and summary events.
+9. Use `Obsidian-ready Markdown Export` to preview the generated Markdown note.
+10. Paste an existing local destination folder, such as an Obsidian Vault inbox.
+11. Export the Markdown file after preview.
+12. Inspect audit context in the right panel to see root folder, scan, summary, and export events.
 
 This walkthrough stays local-first: one configured folder, manual scans, deterministic processing, SQLite, and localhost services only.
+
+
+### Obsidian-ready Markdown Export
+
+The export feature writes normal local Markdown files. It is designed to be Obsidian-ready, meaning the output can be placed in an Obsidian Vault or inbox folder and opened by Obsidian as a Markdown note.
+
+Current boundary:
+
+- supported: preview Markdown, export `.md` to a selected local folder, keep audit events
+- supported: using an Obsidian Vault folder as the destination
+- not implemented: Obsidian plugin
+- not implemented: Obsidian API integration
+- not implemented: vault-aware validation
+- not implemented: two-way sync or background watcher
+
 
 ## Safe Local CLI Demos
 
@@ -240,6 +270,7 @@ That makes the project useful as a public portfolio example of controlled AI-ass
 ## Notes For Reviewers
 
 - The app is local and deterministic in the current baseline.
+- Obsidian-ready export means local Markdown output, not an Obsidian plugin or sync engine.
 - The bridge utilities are local-only evidence tools unless explicitly run with an authenticated read-only fetch path.
 - The project intentionally avoids background schedulers and long-running automation.
 - Write-like actions remain preview-before-approve work.
@@ -251,7 +282,8 @@ See [Project Demo Flow Overview (#198)](docs/PROJECT_DEMO_FLOW_OVERVIEW_198.md) 
 
 Good next steps should prioritize visible project value:
 
-- tighten the README and screenshots for portfolio review
+- keep README and demo flow aligned with shipped product behavior
+- add vault-aware export validation only after the current Markdown export boundary is documented
 - add a short architecture map
 - document one polished demo script for the local workbench
 - clean up old placeholder wording in docs
