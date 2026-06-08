@@ -5,6 +5,8 @@ from api.app.schemas import (
     DocumentDetailResponse,
     DocumentListItemResponse,
     ObsidianExportPreviewResponse,
+    ObsidianExportWriteRequest,
+    ObsidianExportWriteResponse,
     DocumentSearchResultResponse,
     DocumentScanResponse,
     SummaryArtifactResponse,
@@ -17,7 +19,13 @@ from api.app.services.documents import (
     scan_documents,
     search_documents,
 )
-from api.app.services.obsidian_export import build_obsidian_export_preview
+from api.app.services.obsidian_export import (
+    InvalidObsidianExportFolderError,
+    ObsidianExportApprovalRequiredError,
+    ObsidianExportFileExistsError,
+    build_obsidian_export_preview,
+    write_obsidian_export,
+)
 from api.app.services.settings import InvalidRootFolderError
 from api.app.services.summary import (
     SummaryArtifactNotFoundError,
@@ -50,6 +58,30 @@ def get_documents() -> list[DocumentListItemResponse]:
 def get_document_search_results(q: str) -> list[DocumentSearchResultResponse]:
     with get_connection() as connection:
         return [DocumentSearchResultResponse(**result) for result in search_documents(connection, q)]
+
+
+@router.post("/{document_id}/obsidian-export", response_model=ObsidianExportWriteResponse)
+def post_document_obsidian_export(
+    document_id: str,
+    request: ObsidianExportWriteRequest,
+) -> ObsidianExportWriteResponse:
+    with get_connection() as connection:
+        try:
+            result = write_obsidian_export(
+                connection,
+                document_id,
+                export_folder=request.export_folder,
+                approved=request.approved,
+            )
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.") from exc
+        except ObsidianExportApprovalRequiredError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        except InvalidObsidianExportFolderError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except ObsidianExportFileExistsError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return ObsidianExportWriteResponse(**result)
 
 
 @router.get("/{document_id}/obsidian-preview", response_model=ObsidianExportPreviewResponse)

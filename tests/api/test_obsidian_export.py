@@ -161,3 +161,115 @@ def test_get_obsidian_preview_returns_404_when_document_is_missing(client):
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Document not found."}
+
+def test_post_obsidian_export_requires_explicit_approval(client, tmp_path: Path):
+    document_id = prepare_scanned_root(
+        client,
+        tmp_path,
+        "approval-required.md",
+        "This document should not be exported without explicit approval.",
+    )
+    export_folder = tmp_path / "obsidian"
+    export_folder.mkdir()
+
+    response = client.post(
+        f"/documents/{document_id}/obsidian-export",
+        json={"export_folder": str(export_folder), "approved": False},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Obsidian export requires approved=true after preview."}
+    assert list(export_folder.iterdir()) == []
+
+
+def test_post_obsidian_export_writes_markdown_file_after_approval(client, tmp_path: Path):
+    document_id = prepare_scanned_root(
+        client,
+        tmp_path,
+        "export-me.md",
+        "This document should be exported. It has useful local knowledge.",
+    )
+    summary_response = client.post(f"/documents/{document_id}/summary")
+    assert summary_response.status_code == 200
+    export_folder = tmp_path / "obsidian"
+    export_folder.mkdir()
+
+    response = client.post(
+        f"/documents/{document_id}/obsidian-export",
+        json={"export_folder": str(export_folder), "approved": True},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["document_id"] == document_id
+    assert body["has_summary"] is True
+    assert body["filename"].endswith(f"{document_id}.md")
+    assert body["bytes_written"] > 0
+
+    export_path = Path(body["export_path"])
+    assert export_path.exists()
+    assert export_path.parent == export_folder.resolve()
+
+    exported_text = export_path.read_text(encoding="utf-8")
+    assert 'source: "local-ai-workbench"' in exported_text
+    assert "This document should be exported." in exported_text
+    assert "It does not modify the original source document." in exported_text
+
+    audit_events = client.get("/audit").json()
+    assert audit_events[0]["event_type"] == "obsidian_export_written"
+    assert audit_events[0]["event_payload"]["document_id"] == document_id
+    assert audit_events[0]["event_payload"]["export_path"] == str(export_path)
+
+
+def test_post_obsidian_export_rejects_missing_export_folder(client, tmp_path: Path):
+    document_id = prepare_scanned_root(
+        client,
+        tmp_path,
+        "missing-folder.md",
+        "This document should not be exported to a missing folder.",
+    )
+
+    response = client.post(
+        f"/documents/{document_id}/obsidian-export",
+        json={"export_folder": str(tmp_path / "missing"), "approved": True},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Export folder does not exist."}
+
+
+def test_post_obsidian_export_refuses_to_overwrite_existing_file(client, tmp_path: Path):
+    document_id = prepare_scanned_root(
+        client,
+        tmp_path,
+        "no-overwrite.md",
+        "This document should only be exported once.",
+    )
+    export_folder = tmp_path / "obsidian"
+    export_folder.mkdir()
+
+    first_response = client.post(
+        f"/documents/{document_id}/obsidian-export",
+        json={"export_folder": str(export_folder), "approved": True},
+    )
+    second_response = client.post(
+        f"/documents/{document_id}/obsidian-export",
+        json={"export_folder": str(export_folder), "approved": True},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 409
+    assert second_response.json() == {"detail": "Export file already exists."}
+
+
+def test_post_obsidian_export_returns_404_when_document_is_missing(client, tmp_path: Path):
+    export_folder = tmp_path / "obsidian"
+    export_folder.mkdir()
+
+    response = client.post(
+        "/documents/doc_missing/obsidian-export",
+        json={"export_folder": str(export_folder), "approved": True},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Document not found."}

@@ -120,6 +120,22 @@ class ObsidianExportPreviewResponse(BaseModel):
     markdown: str
 
 
+class ObsidianExportWriteRequest(BaseModel):
+    export_folder: str = Field(min_length=1)
+    approved: bool = False
+
+
+class ObsidianExportWriteResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    has_summary: bool
+    export_path: str
+    filename: str
+    bytes_written: int
+    exported_at: str
+
+
 class TaskRunRequest(BaseModel):
     task_type: TaskType
     query: str | None = None
