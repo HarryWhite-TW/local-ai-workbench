@@ -7,10 +7,12 @@ import {
   getDocumentDetail,
   getDocumentSummary,
   getDocuments,
+  getObsidianExportPreview,
   getRootFolderStatus,
   scanDocuments,
   searchDocuments,
-  setRootFolder as saveRootFolder
+  setRootFolder as saveRootFolder,
+  writeObsidianExport
 } from "./api";
 import { AuditList } from "./components/AuditList";
 import type {
@@ -19,6 +21,7 @@ import type {
   DocumentListItemRecord,
   DocumentScanResult,
   DocumentSearchResultRecord,
+  ObsidianExportPreviewRecord,
   RootFolderStatusRecord,
   SummaryArtifactRecord
 } from "./types";
@@ -86,6 +89,12 @@ export default function App() {
   const [isSavingRootFolder, setIsSavingRootFolder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [obsidianPreview, setObsidianPreview] = useState<ObsidianExportPreviewRecord | null>(null);
+  const [obsidianExportFolderInput, setObsidianExportFolderInput] = useState("");
+  const [obsidianExportMessage, setObsidianExportMessage] = useState<string | null>(null);
+  const [obsidianExportError, setObsidianExportError] = useState<string | null>(null);
+  const [isLoadingObsidianPreview, setIsLoadingObsidianPreview] = useState(false);
+  const [isWritingObsidianExport, setIsWritingObsidianExport] = useState(false);
 
   async function loadAudit() {
     const nextAuditEvents = await getAuditEvents();
@@ -99,6 +108,9 @@ export default function App() {
     setSelectedDocument(null);
     setSummaryState("loading");
     setSummaryArtifact(null);
+    setObsidianPreview(null);
+    setObsidianExportMessage(null);
+    setObsidianExportError(null);
 
     try {
       const detail = await getDocumentDetail(documentId);
@@ -301,6 +313,68 @@ export default function App() {
     }
   }
 
+  async function handleLoadObsidianPreview() {
+    if (!selectedDocumentId) {
+      return;
+    }
+
+    setIsLoadingObsidianPreview(true);
+    setObsidianExportMessage(null);
+    setObsidianExportError(null);
+    try {
+      const preview = await getObsidianExportPreview(selectedDocumentId);
+      setObsidianPreview(preview);
+    } catch (previewError) {
+      setObsidianPreview(null);
+      setObsidianExportError(
+        `Could not build Obsidian Markdown preview. ${getErrorDetail(
+          previewError,
+          "The API did not return an error detail."
+        )}`
+      );
+    } finally {
+      setIsLoadingObsidianPreview(false);
+    }
+  }
+
+  async function handleObsidianExportSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedDocumentId) {
+      return;
+    }
+
+    const normalizedExportFolder = obsidianExportFolderInput.trim();
+    setObsidianExportMessage(null);
+    setObsidianExportError(null);
+
+    if (!obsidianPreview) {
+      setObsidianExportError("Preview the Obsidian Markdown before exporting.");
+      return;
+    }
+
+    if (!normalizedExportFolder) {
+      setObsidianExportError("Enter an existing local export folder before exporting.");
+      return;
+    }
+
+    setIsWritingObsidianExport(true);
+    try {
+      const result = await writeObsidianExport(selectedDocumentId, normalizedExportFolder, true);
+      setObsidianExportMessage(`Exported ${result.filename} (${result.bytes_written} bytes) to ${result.export_path}`);
+      await loadAudit();
+    } catch (exportError) {
+      setObsidianExportError(
+        `Could not export Obsidian Markdown. ${getErrorDetail(
+          exportError,
+          "The API did not return an error detail."
+        )}`
+      );
+    } finally {
+      setIsWritingObsidianExport(false);
+    }
+  }
+
   async function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSearchError(null);
@@ -362,6 +436,16 @@ export default function App() {
   const showSearchNoMatchState = hasRootFolder && hasDocuments && hasActiveSearch && !hasSearchResults;
   const showSearchResultState = hasRootFolder && hasDocuments && hasActiveSearch && hasSearchResults;
   const showSearchOutsideResultHint = showSearchResultState && Boolean(selectedDocumentId) && !selectedDocumentInSearchResults;
+  const normalizedObsidianExportFolder = obsidianExportFolderInput.trim();
+  const canPreviewObsidianMarkdown =
+    Boolean(selectedDocumentId) && !isLoadingDocument && !isLoadingObsidianPreview && !isWritingObsidianExport;
+  const canExportObsidianMarkdown =
+    Boolean(selectedDocumentId) &&
+    Boolean(obsidianPreview) &&
+    normalizedObsidianExportFolder.length > 0 &&
+    !isLoadingDocument &&
+    !isLoadingObsidianPreview &&
+    !isWritingObsidianExport;
 
   return (
     <main className="app-shell">
@@ -714,6 +798,77 @@ export default function App() {
                 </div>
               )}
             </section>
+            <section className="panel obsidian-export-panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Obsidian Export</h2>
+                  <p className="muted compact">
+                    Preview a one-way Markdown note, then export it to an existing local Obsidian folder.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!canPreviewObsidianMarkdown}
+                  onClick={() => void handleLoadObsidianPreview()}
+                >
+                  {isLoadingObsidianPreview ? "Previewing..." : "Preview Markdown"}
+                </button>
+              </div>
+
+              {!selectedDocumentId ? (
+                <p className="empty-state">Select a document before previewing an Obsidian Markdown note.</p>
+              ) : (
+                <>
+                  <form className="root-folder-form" onSubmit={(event) => void handleObsidianExportSubmit(event)}>
+                    <label htmlFor="obsidian-export-folder-input" className="sr-only">
+                      Obsidian export folder
+                    </label>
+                    <input
+                      id="obsidian-export-folder-input"
+                      type="text"
+                      className="root-folder-input"
+                      value={obsidianExportFolderInput}
+                      onChange={(event) => {
+                        setObsidianExportFolderInput(event.target.value);
+                        setObsidianExportMessage(null);
+                        setObsidianExportError(null);
+                      }}
+                      placeholder={"C:\\Users\\harry\\Documents\\Obsidian Vault\\Inbox"}
+                      disabled={isWritingObsidianExport}
+                    />
+                    <button type="submit" className="secondary-button" disabled={!canExportObsidianMarkdown}>
+                      {isWritingObsidianExport ? "Exporting..." : "Export Markdown"}
+                    </button>
+                  </form>
+
+                  <p className="muted compact">
+                    Export requires an explicit preview first. The original source document is not modified.
+                  </p>
+
+                  {obsidianExportMessage ? <p className="inline-success">{obsidianExportMessage}</p> : null}
+                  {obsidianExportError ? <p className="inline-error">{obsidianExportError}</p> : null}
+
+                  {obsidianPreview ? (
+                    <div className="content-block summary-content-block">
+                      <div className="detail-row">
+                        <span className="detail-label">Preview status</span>
+                        <span>{obsidianPreview.has_summary ? "Summary included" : "No summary artifact yet"}</span>
+                      </div>
+                      <div className="detail-row stacked">
+                        <span className="detail-label">Markdown preview</span>
+                        <pre>{obsidianPreview.markdown}</pre>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="empty-state">
+                      Preview Markdown to inspect the note before writing a local `.md` file.
+                    </p>
+                  )}
+                </>
+              )}
+            </section>
+
             <div className="audit-panel-wrap">
               <AuditList
                 events={auditEvents}

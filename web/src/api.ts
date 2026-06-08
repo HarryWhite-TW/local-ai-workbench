@@ -4,6 +4,8 @@ import type {
   DocumentListItemRecord,
   DocumentSearchResultRecord,
   DocumentScanResult,
+  ObsidianExportPreviewRecord,
+  ObsidianExportWriteResultRecord,
   RootFolderStatusRecord,
   SummaryArtifactRecord
 } from "./types";
@@ -85,4 +87,20 @@ export function generateDocumentSummary(documentId: string): Promise<SummaryArti
 
 export function getAuditEvents(): Promise<AuditEventRecord[]> {
   return request<AuditEventRecord[]>("/audit");
+}
+
+
+export function getObsidianExportPreview(documentId: string): Promise<ObsidianExportPreviewRecord> {
+  return request<ObsidianExportPreviewRecord>(`/documents/${documentId}/obsidian-preview`);
+}
+
+export function writeObsidianExport(
+  documentId: string,
+  exportFolder: string,
+  approved = true
+): Promise<ObsidianExportWriteResultRecord> {
+  return request<ObsidianExportWriteResultRecord>(`/documents/${documentId}/obsidian-export`, {
+    method: "POST",
+    body: JSON.stringify({ export_folder: exportFolder, approved })
+  });
 }

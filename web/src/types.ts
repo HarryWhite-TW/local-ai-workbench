@@ -67,3 +67,19 @@ export interface SummaryArtifactRecord {
   summary_text: string;
   created_at: string;
 }
+
+
+export interface ObsidianExportPreviewRecord {
+  document_id: string;
+  has_summary: boolean;
+  markdown: string;
+}
+
+export interface ObsidianExportWriteResultRecord {
+  document_id: string;
+  has_summary: boolean;
+  export_path: string;
+  filename: string;
+  bytes_written: number;
+  exported_at: string;
+}
