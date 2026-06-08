@@ -837,9 +837,9 @@ export default function App() {
             <section className="panel obsidian-export-panel">
               <div className="panel-header">
                 <div>
-                  <h2>Obsidian Export</h2>
+                  <h2>Obsidian-ready Markdown Export</h2>
                   <p className="muted compact">
-                    Send the selected document summary to a local Markdown folder after previewing it.
+                    Export the selected document summary as an Obsidian-ready local Markdown note after previewing it.
                   </p>
                 </div>
                 <button
@@ -857,11 +857,11 @@ export default function App() {
                 <ol>
                   <li>Select a scanned document.</li>
                   <li>Preview the generated Markdown.</li>
-                  <li>Paste an existing Obsidian destination folder.</li>
+                  <li>Paste an existing Markdown destination folder, such as an Obsidian Vault inbox.</li>
                   <li>Export the Markdown file.</li>
                 </ol>
                 <p>
-                  Data source/root folder is where documents are scanned from. Export folder is where the generated
+                  Data source/root folder is where documents are scanned from. Export folder is only where the generated
                   Markdown note is written to.
                 </p>
               </div>
