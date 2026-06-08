@@ -28,6 +28,30 @@ import type {
 
 type SummaryState = "idle" | "loading" | "empty" | "ready";
 
+const OBSIDIAN_EXPORT_FOLDER_STORAGE_KEY = "local-ai-workbench.obsidian-export-folder";
+
+function readStoredObsidianExportFolder(): string {
+  try {
+    return window.localStorage.getItem(OBSIDIAN_EXPORT_FOLDER_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredObsidianExportFolder(value: string): void {
+  try {
+    const normalizedValue = value.trim();
+    if (normalizedValue) {
+      window.localStorage.setItem(OBSIDIAN_EXPORT_FOLDER_STORAGE_KEY, normalizedValue);
+      return;
+    }
+
+    window.localStorage.removeItem(OBSIDIAN_EXPORT_FOLDER_STORAGE_KEY);
+  } catch {
+    // Ignore localStorage failures. Export still works with the current input value.
+  }
+}
+
 function getLatestScanResult(events: AuditEventRecord[]): DocumentScanResult | null {
   for (const event of events) {
     if (event.event_type !== "documents_scanned") {
@@ -98,7 +122,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [obsidianPreview, setObsidianPreview] = useState<ObsidianExportPreviewRecord | null>(null);
-  const [obsidianExportFolderInput, setObsidianExportFolderInput] = useState("");
+  const [obsidianExportFolderInput, setObsidianExportFolderInput] = useState(readStoredObsidianExportFolder);
   const [obsidianExportMessage, setObsidianExportMessage] = useState<string | null>(null);
   const [obsidianExportError, setObsidianExportError] = useState<string | null>(null);
   const [isLoadingObsidianPreview, setIsLoadingObsidianPreview] = useState(false);
@@ -321,6 +345,13 @@ export default function App() {
     }
   }
 
+  function handleObsidianExportFolderChange(nextExportFolder: string) {
+    setObsidianExportFolderInput(nextExportFolder);
+    writeStoredObsidianExportFolder(nextExportFolder);
+    setObsidianExportMessage(null);
+    setObsidianExportError(null);
+  }
+
   async function handleLoadObsidianPreview() {
     if (!selectedDocumentId) {
       return;
@@ -369,6 +400,8 @@ export default function App() {
     setIsWritingObsidianExport(true);
     try {
       const result = await writeObsidianExport(selectedDocumentId, normalizedExportFolder, true);
+      writeStoredObsidianExportFolder(normalizedExportFolder);
+      setObsidianExportFolderInput(normalizedExportFolder);
       setObsidianExportMessage(`Exported ${result.filename} (${result.bytes_written} bytes) to ${result.export_path}`);
       await loadAudit();
     } catch (exportError) {
@@ -847,11 +880,7 @@ export default function App() {
                         type="text"
                         className="root-folder-input"
                         value={obsidianExportFolderInput}
-                        onChange={(event) => {
-                          setObsidianExportFolderInput(event.target.value);
-                          setObsidianExportMessage(null);
-                          setObsidianExportError(null);
-                        }}
+                        onChange={(event) => handleObsidianExportFolderChange(event.target.value)}
                         placeholder={"C:\\Users\\harry\\Documents\\Obsidian Vault\\Inbox"}
                         disabled={isWritingObsidianExport}
                       />
