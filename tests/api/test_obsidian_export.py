@@ -1,5 +1,7 @@
 ﻿from __future__ import annotations
 
+from pathlib import Path
+
 from api.app.services.obsidian_export import build_obsidian_document_summary_markdown
 
 
@@ -26,6 +28,18 @@ def sample_summary() -> dict[str, object]:
         "summary_text": "This is the deterministic summary.",
         "created_at": "2026-06-08T10:02:00Z",
     }
+
+
+def prepare_scanned_root(client, tmp_path: Path, filename: str, content: str) -> str:
+    root = tmp_path / "documents"
+    root.mkdir()
+    (root / filename).write_text(content, encoding="utf-8")
+    put_response = client.put("/settings/root-folder", json={"root_folder": str(root)})
+    assert put_response.status_code == 200
+    scan_response = client.post("/documents/scan")
+    assert scan_response.status_code == 200
+    documents = client.get("/documents").json()
+    return documents[0]["id"]
 
 
 def test_build_obsidian_markdown_contains_frontmatter_and_summary():
@@ -102,3 +116,48 @@ def test_build_obsidian_markdown_quotes_frontmatter_values():
 
     assert 'title: "Demo \\"Quoted\\" Note"' in markdown
     assert '# Demo "Quoted" Note' in markdown
+
+
+def test_get_obsidian_preview_returns_markdown_for_document_with_summary(client, tmp_path: Path):
+    document_id = prepare_scanned_root(
+        client,
+        tmp_path,
+        "demo.md",
+        "This document should be summarized. It has useful local knowledge.",
+    )
+    summary_response = client.post(f"/documents/{document_id}/summary")
+    assert summary_response.status_code == 200
+
+    response = client.get(f"/documents/{document_id}/obsidian-preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["document_id"] == document_id
+    assert body["has_summary"] is True
+    assert "# demo" in body["markdown"]
+    assert "This document should be summarized." in body["markdown"]
+    assert "summary_generated" in body["markdown"]
+
+
+def test_get_obsidian_preview_returns_markdown_without_summary(client, tmp_path: Path):
+    document_id = prepare_scanned_root(
+        client,
+        tmp_path,
+        "no-summary.txt",
+        "This document has no generated summary yet.",
+    )
+
+    response = client.get(f"/documents/{document_id}/obsidian-preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["document_id"] == document_id
+    assert body["has_summary"] is False
+    assert "No summary artifact provided." in body["markdown"]
+
+
+def test_get_obsidian_preview_returns_404_when_document_is_missing(client):
+    response = client.get("/documents/doc_missing/obsidian-preview")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Document not found."}

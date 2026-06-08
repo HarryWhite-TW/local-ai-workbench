@@ -112,6 +112,14 @@ class SummaryArtifactResponse(BaseModel):
     created_at: str
 
 
+class ObsidianExportPreviewResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    has_summary: bool
+    markdown: str
+
+
 class TaskRunRequest(BaseModel):
     task_type: TaskType
     query: str | None = None

@@ -1,7 +1,12 @@
 ﻿from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
+
+from api.app.services.audit import list_audit_events
+from api.app.services.documents import get_document
+from api.app.services.summary import SummaryArtifactNotFoundError, get_latest_summary_artifact
 
 
 def utc_now_iso() -> str:
@@ -62,6 +67,25 @@ def build_audit_section(audit_events: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def select_document_audit_events(
+    audit_events: Sequence[Mapping[str, Any]],
+    *,
+    document_id: str,
+    summary_id: str | None = None,
+) -> list[Mapping[str, Any]]:
+    selected = []
+    for event in audit_events:
+        payload = event.get("event_payload")
+        if not isinstance(payload, Mapping):
+            continue
+        if payload.get("document_id") == document_id:
+            selected.append(event)
+            continue
+        if summary_id and payload.get("artifact_id") == summary_id:
+            selected.append(event)
+    return selected
+
+
 def build_obsidian_document_summary_markdown(
     document: Mapping[str, Any],
     summary_artifact: Mapping[str, Any] | None = None,
@@ -116,3 +140,32 @@ def build_obsidian_document_summary_markdown(
     ]
 
     return "\n".join(sections).strip() + "\n"
+
+
+def build_obsidian_export_preview(connection: sqlite3.Connection, document_id: str) -> dict[str, Any]:
+    document = get_document(connection, document_id)
+
+    try:
+        summary_artifact = get_latest_summary_artifact(connection, document_id)
+        has_summary = True
+    except SummaryArtifactNotFoundError:
+        summary_artifact = None
+        has_summary = False
+
+    summary_id = as_text(summary_artifact.get("id")) if summary_artifact else None
+    audit_events = select_document_audit_events(
+        list_audit_events(connection),
+        document_id=document_id,
+        summary_id=summary_id,
+    )
+    markdown = build_obsidian_document_summary_markdown(
+        document,
+        summary_artifact,
+        audit_events=audit_events,
+    )
+
+    return {
+        "document_id": document_id,
+        "has_summary": has_summary,
+        "markdown": markdown,
+    }
