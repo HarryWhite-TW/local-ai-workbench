@@ -29,7 +29,8 @@ Current baseline:
 - normal project work resumes at #198
 - product direction aligned as a Local Document-to-Knowledge Workbench at #204
 - Obsidian-ready Markdown Export MVP completed through #211
-- current roadmap recorded at #212
+- export destination intelligence completed through #216
+- current roadmap recorded at #212 and refreshed after #216
 
 The #197 decision is important: **stop adding boundary layers**. Future work should return to visible project value such as README polish, demo documentation, architecture maps, onboarding notes, or test cleanup.
 
@@ -59,7 +60,9 @@ This is different from a normal automation script because success at one step do
 - Generate deterministic single-document summary artifacts
 - Review summary and audit context in the current workbench UI
 - Preview Obsidian-ready Markdown for the selected document
-- Export Markdown to a user-selected local destination folder after preview
+- Check whether the export destination is an Obsidian Vault root, inside an Obsidian Vault, a normal Markdown folder, or not exportable
+- Show human-readable destination status with developer-readable destination details
+- Export Markdown to a user-selected local destination folder after preview and destination check
 - Remember the last export folder in the browser for smoother repeat use
 
 ### Local Runner Bridge Utilities
@@ -91,7 +94,6 @@ The following remain intentionally out of scope:
 - Obsidian plugin behavior
 - Obsidian API integration
 - two-way Obsidian sync
-- vault-aware validation in the current baseline
 - GitHub writeback implementation
 - GitHub comment write
 - GitHub issue body update
@@ -165,8 +167,9 @@ python -m pytest tests\api -q -p no:cacheprovider
 8. Generate or view the deterministic single-document summary in the right panel.
 9. Use `Obsidian-ready Markdown Export` to preview the generated Markdown note.
 10. Paste an existing local destination folder, such as an Obsidian Vault inbox.
-11. Export the Markdown file after preview.
-12. Inspect audit context in the right panel to see root folder, scan, summary, and export events.
+11. Run `Check destination` to see whether the folder is an Obsidian Vault root, inside a vault, a normal Markdown folder, or not exportable.
+12. Export the Markdown file after preview and destination check.
+13. Inspect audit context in the right panel to see root folder, scan, summary, destination-aware export, and export events.
 
 This walkthrough stays local-first: one configured folder, manual scans, deterministic processing, SQLite, and localhost services only.
 
@@ -177,11 +180,11 @@ The export feature writes normal local Markdown files. It is designed to be Obsi
 
 Current boundary:
 
-- supported: preview Markdown, export `.md` to a selected local folder, keep audit events
-- supported: using an Obsidian Vault folder as the destination
+- supported: preview Markdown, check export destination status, export `.md` to a selected local folder, keep audit events
+- supported: detecting Obsidian Vault root folders, folders inside an Obsidian Vault, normal Markdown folders, missing folders, and non-folder paths
+- supported: using an Obsidian Vault folder or inbox folder as the destination
 - not implemented: Obsidian plugin
 - not implemented: Obsidian API integration
-- not implemented: vault-aware validation
 - not implemented: two-way sync or background watcher
 
 
