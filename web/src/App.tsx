@@ -24,6 +24,7 @@ import type {
   DocumentSearchResultRecord,
   ObsidianExportFolderCheckRecord,
   ObsidianExportPreviewRecord,
+  ObsidianExportWriteResultRecord,
   RootFolderStatusRecord,
   SummaryArtifactRecord
 } from "./types";
@@ -129,6 +130,10 @@ function getDestinationStatusTone(status: ObsidianExportFolderCheckRecord): "rea
   return "ready";
 }
 
+function formatBytes(byteCount: number): string {
+  return `${new Intl.NumberFormat().format(byteCount)} bytes`;
+}
+
 export default function App() {
   const [rootFolder, setRootFolder] = useState<RootFolderStatusRecord | null>(null);
   const [documents, setDocuments] = useState<DocumentListItemRecord[]>([]);
@@ -156,6 +161,8 @@ export default function App() {
   const [obsidianExportFolderInput, setObsidianExportFolderInput] = useState(readStoredObsidianExportFolder);
   const [obsidianExportMessage, setObsidianExportMessage] = useState<string | null>(null);
   const [obsidianExportError, setObsidianExportError] = useState<string | null>(null);
+  const [obsidianExportResult, setObsidianExportResult] = useState<ObsidianExportWriteResultRecord | null>(null);
+  const [copiedExportPath, setCopiedExportPath] = useState(false);
   const [obsidianDestinationStatus, setObsidianDestinationStatus] =
     useState<ObsidianExportFolderCheckRecord | null>(null);
   const [obsidianDestinationError, setObsidianDestinationError] = useState<string | null>(null);
@@ -178,6 +185,8 @@ export default function App() {
     setObsidianPreview(null);
     setObsidianExportMessage(null);
     setObsidianExportError(null);
+    setObsidianExportResult(null);
+    setCopiedExportPath(false);
 
     try {
       const detail = await getDocumentDetail(documentId);
@@ -387,6 +396,8 @@ export default function App() {
     setObsidianDestinationError(null);
     setObsidianExportMessage(null);
     setObsidianExportError(null);
+    setObsidianExportResult(null);
+    setCopiedExportPath(false);
   }
 
   async function loadObsidianDestinationStatus(exportFolder: string): Promise<ObsidianExportFolderCheckRecord | null> {
@@ -432,6 +443,8 @@ export default function App() {
     setIsLoadingObsidianPreview(true);
     setObsidianExportMessage(null);
     setObsidianExportError(null);
+    setObsidianExportResult(null);
+    setCopiedExportPath(false);
     try {
       const preview = await getObsidianExportPreview(selectedDocumentId);
       setObsidianPreview(preview);
@@ -480,17 +493,34 @@ export default function App() {
       return;
     }
 
+    setObsidianExportResult(null);
+    setCopiedExportPath(false);
     setIsWritingObsidianExport(true);
     try {
       const result = await writeObsidianExport(selectedDocumentId, normalizedExportFolder, true);
       writeStoredObsidianExportFolder(normalizedExportFolder);
       setObsidianExportFolderInput(normalizedExportFolder);
-      setObsidianExportMessage(`Exported ${result.filename} (${result.bytes_written} bytes) to ${result.export_path}`);
+      setObsidianExportResult(result);
+      setCopiedExportPath(false);
+      setObsidianExportMessage("Markdown export completed. Review the export result below.");
       await loadAudit();
     } catch (exportError) {
       setObsidianExportError(`Could not export Obsidian Markdown. ${getObsidianExportErrorDetail(exportError)}`);
     } finally {
       setIsWritingObsidianExport(false);
+    }
+  }
+
+  async function handleCopyObsidianExportPath() {
+    if (!obsidianExportResult) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(obsidianExportResult.export_path);
+      setCopiedExportPath(true);
+    } catch {
+      setObsidianExportError("Could not copy the export path. Select the path field and copy it manually.");
     }
   }
 
@@ -945,6 +975,7 @@ export default function App() {
                   <li>Select a scanned document.</li>
                   <li>Preview the generated Markdown.</li>
                   <li>Paste an existing Markdown destination folder, such as an Obsidian Vault inbox.</li>
+                  <li>Check the destination type and export readiness.</li>
                   <li>Export the Markdown file.</li>
                 </ol>
                 <p>
@@ -1029,6 +1060,52 @@ export default function App() {
 
                   {obsidianExportMessage ? <p className="inline-success">{obsidianExportMessage}</p> : null}
                   {obsidianExportError ? <p className="inline-error">{obsidianExportError}</p> : null}
+
+                  {obsidianExportResult ? (
+                    <div className="export-result-card">
+                      <div className="export-result-header">
+                        <div>
+                          <span className="destination-status-label">Export result</span>
+                          <strong>Markdown file written</strong>
+                        </div>
+                        <span className="export-result-badge">Local file</span>
+                      </div>
+
+                      <dl className="export-result-grid">
+                        <dt>filename</dt>
+                        <dd>{obsidianExportResult.filename}</dd>
+                        <dt>bytes_written</dt>
+                        <dd>{formatBytes(obsidianExportResult.bytes_written)}</dd>
+                        <dt>exported_at</dt>
+                        <dd>{obsidianExportResult.exported_at}</dd>
+                        <dt>summary_included</dt>
+                        <dd>{obsidianExportResult.has_summary ? "yes" : "no"}</dd>
+                      </dl>
+
+                      <div className="export-path-block">
+                        <label htmlFor="obsidian-export-path-result" className="destination-status-label">
+                          export_path
+                        </label>
+                        <div className="export-path-row">
+                          <input
+                            id="obsidian-export-path-result"
+                            type="text"
+                            className="export-path-input"
+                            value={obsidianExportResult.export_path}
+                            readOnly
+                            onFocus={(event) => event.currentTarget.select()}
+                          />
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => void handleCopyObsidianExportPath()}
+                          >
+                            {copiedExportPath ? "Copied" : "Copy path"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {obsidianPreview ? (
                     <div className="content-block obsidian-preview-card">
