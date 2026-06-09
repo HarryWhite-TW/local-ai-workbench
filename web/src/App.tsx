@@ -30,6 +30,7 @@ import type {
 } from "./types";
 
 type SummaryState = "idle" | "loading" | "empty" | "ready";
+type AssistantPanelTab = "summary" | "export" | "audit";
 
 const OBSIDIAN_EXPORT_FOLDER_STORAGE_KEY = "local-ai-workbench.obsidian-export-folder";
 
@@ -169,6 +170,7 @@ export default function App() {
   const [isLoadingObsidianPreview, setIsLoadingObsidianPreview] = useState(false);
   const [isWritingObsidianExport, setIsWritingObsidianExport] = useState(false);
   const [isCheckingObsidianDestination, setIsCheckingObsidianDestination] = useState(false);
+  const [activeAssistantTab, setActiveAssistantTab] = useState<AssistantPanelTab>("summary");
 
   async function loadAudit() {
     const nextAuditEvents = await getAuditEvents();
@@ -370,6 +372,7 @@ export default function App() {
       return;
     }
 
+    setActiveAssistantTab("summary");
     setIsGeneratingSummary(true);
     setError(null);
     try {
@@ -431,6 +434,7 @@ export default function App() {
   }
 
   async function handleCheckObsidianDestination() {
+    setActiveAssistantTab("export");
     const normalizedExportFolder = obsidianExportFolderInput.trim();
     await loadObsidianDestinationStatus(normalizedExportFolder);
   }
@@ -440,6 +444,7 @@ export default function App() {
       return;
     }
 
+    setActiveAssistantTab("export");
     setIsLoadingObsidianPreview(true);
     setObsidianExportMessage(null);
     setObsidianExportError(null);
@@ -898,7 +903,25 @@ export default function App() {
           </section>
 
           <aside className="right-column panel-stack">
-            <section className="panel summary-panel">
+            <section className="panel assistant-tabs-panel">
+              <div className="assistant-tab-list" role="tablist" aria-label="Assistant panel">
+                {(["summary", "export", "audit"] as AssistantPanelTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    className={`assistant-tab ${activeAssistantTab === tab ? "active" : ""}`}
+                    aria-selected={activeAssistantTab === tab}
+                    onClick={() => setActiveAssistantTab(tab)}
+                  >
+                    {tab === "summary" ? "Summary" : tab === "export" ? "Export" : "Audit"}
+                  </button>
+                ))}
+              </div>
+              <p className="muted compact">Switch task focus without losing the selected document context.</p>
+            </section>
+
+            {activeAssistantTab === "summary" ? (
+              <section className="panel summary-panel">
               <div className="panel-header">
                 <div>
                   <h2>Summary</h2>
@@ -951,7 +974,10 @@ export default function App() {
                 </div>
               )}
             </section>
-            <section className="panel obsidian-export-panel">
+              ) : null}
+
+              {activeAssistantTab === "export" ? (
+                <section className="panel obsidian-export-panel">
               <div className="panel-header">
                 <div>
                   <h2>Obsidian-ready Markdown Export</h2>
@@ -1126,13 +1152,16 @@ export default function App() {
                 </>
               )}
             </section>
+              ) : null}
 
-            <div className="audit-panel-wrap">
-              <AuditList
-                events={auditEvents}
-                emptyMessage="Audit events will appear after saving a root folder, scanning documents, or generating a summary."
-              />
-            </div>
+              {activeAssistantTab === "audit" ? (
+                <div className="audit-panel-wrap">
+                  <AuditList
+                    events={auditEvents}
+                    emptyMessage="Audit events will appear after saving a root folder, scanning documents, or generating a summary."
+                  />
+                </div>
+              ) : null}
           </aside>
         </div>
       )}

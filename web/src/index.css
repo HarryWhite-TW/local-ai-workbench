@@ -160,7 +160,7 @@ pre {
 
 .workspace-layout {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1.65fr) 360px;
+  grid-template-columns: 300px minmax(420px, 1fr) 430px;
   gap: 18px;
   align-items: start;
 }
@@ -169,6 +169,51 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+
+.assistant-tabs-panel {
+  padding: 14px;
+}
+
+.assistant-tab-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.assistant-tab {
+  border: 1px solid #d8e3ee;
+  border-radius: 999px;
+  background: #f7fbff;
+  color: #405a75;
+  padding: 10px 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.assistant-tab:hover {
+  border-color: #93b4df;
+  color: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+.assistant-tab.active {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #ffffff;
+  box-shadow: 0 10px 22px rgba(29, 78, 216, 0.22);
+}
+
+.right-column .summary-panel,
+.right-column .obsidian-export-panel,
+.right-column .audit-panel-wrap {
+  min-height: 360px;
 }
 
 .panel-header {
@@ -798,6 +843,12 @@ pre {
 
 @media (max-width: 980px) {
   .export-path-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1180px) {
+  .workspace-layout {
     grid-template-columns: 1fr;
   }
 }
