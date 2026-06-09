@@ -69,6 +69,27 @@ export interface SummaryArtifactRecord {
 }
 
 
+
+export type ObsidianExportDestinationType =
+  | "obsidian_vault_root"
+  | "inside_obsidian_vault"
+  | "plain_markdown_folder"
+  | "missing_folder"
+  | "not_directory";
+
+export interface ObsidianExportFolderCheckRecord {
+  export_folder: string;
+  exists: boolean;
+  is_directory: boolean;
+  can_export: boolean;
+  destination_type: ObsidianExportDestinationType;
+  human_status: string;
+  human_next_step: string;
+  vault_root: string | null;
+  obsidian_config_path: string | null;
+  checked_at: string;
+}
+
 export interface ObsidianExportPreviewRecord {
   document_id: string;
   has_summary: boolean;

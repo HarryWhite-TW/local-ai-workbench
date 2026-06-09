@@ -4,6 +4,7 @@ import type {
   DocumentListItemRecord,
   DocumentSearchResultRecord,
   DocumentScanResult,
+  ObsidianExportFolderCheckRecord,
   ObsidianExportPreviewRecord,
   ObsidianExportWriteResultRecord,
   RootFolderStatusRecord,
@@ -102,5 +103,13 @@ export function writeObsidianExport(
   return request<ObsidianExportWriteResultRecord>(`/documents/${documentId}/obsidian-export`, {
     method: "POST",
     body: JSON.stringify({ export_folder: exportFolder, approved })
+  });
+}
+
+
+export function checkObsidianExportFolder(exportFolder: string): Promise<ObsidianExportFolderCheckRecord> {
+  return request<ObsidianExportFolderCheckRecord>("/documents/obsidian-export-folder-check", {
+    method: "POST",
+    body: JSON.stringify({ export_folder: exportFolder })
   });
 }

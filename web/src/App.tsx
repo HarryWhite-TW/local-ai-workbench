@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import {
   ApiError,
+  checkObsidianExportFolder,
   generateDocumentSummary,
   getAuditEvents,
   getDocumentDetail,
@@ -21,6 +22,7 @@ import type {
   DocumentListItemRecord,
   DocumentScanResult,
   DocumentSearchResultRecord,
+  ObsidianExportFolderCheckRecord,
   ObsidianExportPreviewRecord,
   RootFolderStatusRecord,
   SummaryArtifactRecord
@@ -98,6 +100,35 @@ function getObsidianExportErrorDetail(error: unknown): string {
   return getErrorDetail(error, "The API did not return an error detail.");
 }
 
+function getDestinationTypeLabel(status: ObsidianExportFolderCheckRecord): string {
+  switch (status.destination_type) {
+    case "obsidian_vault_root":
+      return "Obsidian vault root";
+    case "inside_obsidian_vault":
+      return "Inside Obsidian vault";
+    case "plain_markdown_folder":
+      return "Normal Markdown folder";
+    case "missing_folder":
+      return "Folder not found";
+    case "not_directory":
+      return "Not a folder";
+    default:
+      return "Unknown destination";
+  }
+}
+
+function getDestinationStatusTone(status: ObsidianExportFolderCheckRecord): "ready" | "warning" | "blocked" {
+  if (!status.can_export) {
+    return "blocked";
+  }
+
+  if (status.destination_type === "plain_markdown_folder") {
+    return "warning";
+  }
+
+  return "ready";
+}
+
 export default function App() {
   const [rootFolder, setRootFolder] = useState<RootFolderStatusRecord | null>(null);
   const [documents, setDocuments] = useState<DocumentListItemRecord[]>([]);
@@ -125,8 +156,12 @@ export default function App() {
   const [obsidianExportFolderInput, setObsidianExportFolderInput] = useState(readStoredObsidianExportFolder);
   const [obsidianExportMessage, setObsidianExportMessage] = useState<string | null>(null);
   const [obsidianExportError, setObsidianExportError] = useState<string | null>(null);
+  const [obsidianDestinationStatus, setObsidianDestinationStatus] =
+    useState<ObsidianExportFolderCheckRecord | null>(null);
+  const [obsidianDestinationError, setObsidianDestinationError] = useState<string | null>(null);
   const [isLoadingObsidianPreview, setIsLoadingObsidianPreview] = useState(false);
   const [isWritingObsidianExport, setIsWritingObsidianExport] = useState(false);
+  const [isCheckingObsidianDestination, setIsCheckingObsidianDestination] = useState(false);
 
   async function loadAudit() {
     const nextAuditEvents = await getAuditEvents();
@@ -348,8 +383,45 @@ export default function App() {
   function handleObsidianExportFolderChange(nextExportFolder: string) {
     setObsidianExportFolderInput(nextExportFolder);
     writeStoredObsidianExportFolder(nextExportFolder);
+    setObsidianDestinationStatus(null);
+    setObsidianDestinationError(null);
     setObsidianExportMessage(null);
     setObsidianExportError(null);
+  }
+
+  async function loadObsidianDestinationStatus(exportFolder: string): Promise<ObsidianExportFolderCheckRecord | null> {
+    if (!exportFolder) {
+      setObsidianDestinationStatus(null);
+      setObsidianDestinationError("Enter an export folder before checking the destination.");
+      return null;
+    }
+
+    setIsCheckingObsidianDestination(true);
+    setObsidianDestinationError(null);
+    setObsidianExportMessage(null);
+    setObsidianExportError(null);
+
+    try {
+      const nextStatus = await checkObsidianExportFolder(exportFolder);
+      setObsidianDestinationStatus(nextStatus);
+      return nextStatus;
+    } catch (destinationError) {
+      setObsidianDestinationStatus(null);
+      setObsidianDestinationError(
+        `Could not check export destination. ${getErrorDetail(
+          destinationError,
+          "The API did not return an error detail."
+        )}`
+      );
+      return null;
+    } finally {
+      setIsCheckingObsidianDestination(false);
+    }
+  }
+
+  async function handleCheckObsidianDestination() {
+    const normalizedExportFolder = obsidianExportFolderInput.trim();
+    await loadObsidianDestinationStatus(normalizedExportFolder);
   }
 
   async function handleLoadObsidianPreview() {
@@ -394,6 +466,17 @@ export default function App() {
 
     if (!normalizedExportFolder) {
       setObsidianExportError("Enter an existing local export folder before exporting.");
+      return;
+    }
+
+    const destinationStatus = obsidianDestinationStatus ?? (await loadObsidianDestinationStatus(normalizedExportFolder));
+
+    if (!destinationStatus) {
+      return;
+    }
+
+    if (!destinationStatus.can_export) {
+      setObsidianExportError(`${destinationStatus.human_status} ${destinationStatus.human_next_step}`);
       return;
     }
 
@@ -475,12 +558,16 @@ export default function App() {
   const normalizedObsidianExportFolder = obsidianExportFolderInput.trim();
   const canPreviewObsidianMarkdown =
     Boolean(selectedDocumentId) && !isLoadingDocument && !isLoadingObsidianPreview && !isWritingObsidianExport;
+  const canCheckObsidianDestination =
+    normalizedObsidianExportFolder.length > 0 && !isCheckingObsidianDestination && !isWritingObsidianExport;
   const canExportObsidianMarkdown =
     Boolean(selectedDocumentId) &&
     Boolean(obsidianPreview) &&
+    Boolean(obsidianDestinationStatus?.can_export) &&
     normalizedObsidianExportFolder.length > 0 &&
     !isLoadingDocument &&
     !isLoadingObsidianPreview &&
+    !isCheckingObsidianDestination &&
     !isWritingObsidianExport;
 
   return (
@@ -882,8 +969,16 @@ export default function App() {
                         value={obsidianExportFolderInput}
                         onChange={(event) => handleObsidianExportFolderChange(event.target.value)}
                         placeholder={"C:\\Users\\harry\\Documents\\Obsidian Vault\\Inbox"}
-                        disabled={isWritingObsidianExport}
+                        disabled={isWritingObsidianExport || isCheckingObsidianDestination}
                       />
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={!canCheckObsidianDestination}
+                        onClick={() => void handleCheckObsidianDestination()}
+                      >
+                        {isCheckingObsidianDestination ? "Checking..." : "Check destination"}
+                      </button>
                       <button type="submit" className="secondary-button" disabled={!canExportObsidianMarkdown}>
                         {isWritingObsidianExport ? "Exporting..." : "Export Markdown"}
                       </button>
@@ -891,8 +986,46 @@ export default function App() {
                   </form>
 
                   <p className="muted compact">
-                    Export requires a preview first. Existing Markdown files are not overwritten.
+                    Export requires a preview and a usable destination check first. Existing Markdown files are not overwritten.
                   </p>
+
+                  {obsidianDestinationError ? <p className="inline-error">{obsidianDestinationError}</p> : null}
+
+                  {obsidianDestinationStatus ? (
+                    <div className={`destination-status-card ${getDestinationStatusTone(obsidianDestinationStatus)}`}>
+                      <div>
+                        <span className="destination-status-label">Destination status</span>
+                        <strong>{getDestinationTypeLabel(obsidianDestinationStatus)}</strong>
+                        <p>{obsidianDestinationStatus.human_status}</p>
+                        <p>{obsidianDestinationStatus.human_next_step}</p>
+                      </div>
+                      <details className="destination-details">
+                        <summary>Show destination details</summary>
+                        <dl className="destination-details-grid">
+                          <dt>destination_type</dt>
+                          <dd>{obsidianDestinationStatus.destination_type}</dd>
+                          <dt>export_folder</dt>
+                          <dd>{obsidianDestinationStatus.export_folder}</dd>
+                          <dt>vault_root</dt>
+                          <dd>{obsidianDestinationStatus.vault_root ?? "not detected"}</dd>
+                          <dt>obsidian_config_path</dt>
+                          <dd>{obsidianDestinationStatus.obsidian_config_path ?? "not detected"}</dd>
+                          <dt>exists</dt>
+                          <dd>{String(obsidianDestinationStatus.exists)}</dd>
+                          <dt>is_directory</dt>
+                          <dd>{String(obsidianDestinationStatus.is_directory)}</dd>
+                          <dt>can_export</dt>
+                          <dd>{String(obsidianDestinationStatus.can_export)}</dd>
+                          <dt>checked_at</dt>
+                          <dd>{obsidianDestinationStatus.checked_at}</dd>
+                        </dl>
+                      </details>
+                    </div>
+                  ) : (
+                    <p className="empty-state destination-empty">
+                      Check the destination to see whether it is an Obsidian vault, inside a vault, or a normal Markdown folder.
+                    </p>
+                  )}
 
                   {obsidianExportMessage ? <p className="inline-success">{obsidianExportMessage}</p> : null}
                   {obsidianExportError ? <p className="inline-error">{obsidianExportError}</p> : null}
