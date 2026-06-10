@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { deriveGuidedFlowState, getGuidedDocumentId } from "./guidedFlow";
 
 import {
   ApiError,
@@ -604,6 +605,27 @@ export default function App() {
     !isLoadingObsidianPreview &&
     !isCheckingObsidianDestination &&
     !isWritingObsidianExport;
+
+  const guidedFlow = deriveGuidedFlowState({
+    hasRootFolder,
+    hasCompletedScan,
+    documentCount: documents.length,
+    selectedDocumentId,
+    selectedDocumentLoaded: Boolean(selectedDocument),
+    summaryDocumentId: getGuidedDocumentId(summaryArtifact),
+    previewDocumentId: getGuidedDocumentId(obsidianPreview),
+    destinationCanExport: Boolean(obsidianDestinationStatus?.can_export),
+    exportResultDocumentId: getGuidedDocumentId(obsidianExportResult),
+    isLoading,
+    isScanning,
+    isLoadingDocument,
+    isGeneratingSummary,
+    isLoadingPreview: isLoadingObsidianPreview,
+    isCheckingDestination: isCheckingObsidianDestination,
+    isWritingExport: isWritingObsidianExport
+  });
+
+  void guidedFlow;
 
   return (
     <main className="app-shell">
