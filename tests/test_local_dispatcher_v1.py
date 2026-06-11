@@ -53,6 +53,13 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $script:PostedIssue = 0
             $script:PostedBody = ""
             $script:ForbiddenCalls = @()
+            $script:RunnerCalls = 0
+            $script:RunnerFilePath = ""
+            $script:RunnerArguments = @()
+            $script:RunnerStdout = "runner v1 review bundle ok"
+            $script:RunnerStderr = ""
+            $script:RunnerExitCode = 0
+            Set-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1") -Value "# runner stub" -Encoding UTF8
 
             function New-TestComment {{
                 param(
@@ -142,6 +149,17 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                 $script:PostedIssue = $IssueNumber
                 $script:PostedBody = $Body
                 return [pscustomobject]@{{ ExitCode = 0; Stdout = "posted"; Stderr = "" }}
+            }}
+            function Invoke-WriteCommand {{
+                param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+                $script:RunnerCalls += 1
+                $script:RunnerFilePath = $FilePath
+                $script:RunnerArguments = @($Arguments)
+                return [pscustomobject]@{{
+                    ExitCode = $script:RunnerExitCode
+                    Stdout = $script:RunnerStdout
+                    Stderr = $script:RunnerStderr
+                }}
             }}
             function git {{ $script:ForbiddenCalls += "git" }}
             function gh {{ $script:ForbiddenCalls += "gh" }}
@@ -238,6 +256,9 @@ def run_case(tmp_path: Path, setup: str, post: bool = False) -> subprocess.Compl
         }}
         Write-Host "POST_CALLS=$script:PostCalls"
         Write-Host "POSTED_ISSUE=$script:PostedIssue"
+        Write-Host "RUNNER_CALLS=$script:RunnerCalls"
+        Write-Host "RUNNER_FILE=$script:RunnerFilePath"
+        Write-Host "RUNNER_ARGS=$($script:RunnerArguments -join '|')"
         if (-not [string]::IsNullOrEmpty($script:PostedBody)) {{
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($script:PostedBody)
             Write-Host "POSTED_BODY_BASE64=$([System.BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant())"
@@ -319,6 +340,42 @@ def test_valid_maybe_status_check_succeeds_without_posting_by_default(tmp_path):
     assert summary["issue"] == 83
     assert summary["selected_issue"] == 83
     assert summary["result"] == "success"
+    assert "RUNNER_CALLS=0" in result.stdout
+
+
+def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
+    result = run_case(
+        tmp_path,
+        '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-rb-83")))',
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "RUNNER_CALLS=1" in result.stdout
+    assert "RUNNER_ARGS=-IssueNumber|83|-Mode|ReviewBundle" in result.stdout
+    assert "local_runner_v1.ps1" in result.stdout
+    assert "runner v1 review bundle ok" in result.stdout
+
+    summary = extract_summary(result.stdout)
+    assert summary["action"] == "run-reviewbundle"
+    assert summary["issue"] == 83
+    assert summary["selected_issue"] == 83
+    assert summary["request_id"] == "req-rb-83"
+    assert summary["result"] == "success"
+    assert summary["validations"]["git_status_clean"]["status"] == "passed"
+    assert summary["safety"]["no_commit"] is True
+
+
+def test_run_reviewbundle_fails_closed_when_repo_is_dirty_before_runner(tmp_path):
+    result = run_case(
+        tmp_path,
+        '$script:GitStatus = " M docs/RUNNER_V2.md"; $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle")))',
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "run-reviewbundle requires a clean repo before dispatch" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
 
 
 def test_valid_maybe_status_check_with_post_result_comment_posts_exactly_one_parseable_result(tmp_path):
@@ -402,7 +459,7 @@ def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_pat
     assert posted_body.startswith(MARKER + "\n")
     posted_summary = json.loads(posted_body.split("\n", 1)[1])
     assert posted_summary["validations"]["git_diff_check"]["summary"] == (
-        "Dispatcher maybe-status-check did not run git diff --check."
+        "Dispatcher action 'maybe-status-check' did not independently run git diff --check."
     )
 
 
@@ -437,10 +494,6 @@ def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_pat
         (
             '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "unknown-action")))',
             "Unsupported dispatch action",
-        ),
-        (
-            '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle")))',
-            "Reserved dispatch action",
         ),
         (
             '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "read-final-audit")))',
@@ -595,6 +648,27 @@ def test_dry_run_single_issue_reports_would_happen_without_action_or_post(tmp_pa
     assert summary["decisions"][0]["request_id"] == "req-83"
     assert summary["decisions"][0]["would_execute_dispatch_action"] is False
     assert summary["safety"]["no_result_comment"] is True
+
+
+def test_dry_run_accepts_run_reviewbundle_without_delegating_to_runner(tmp_path):
+    result = run_dry_case(
+        tmp_path,
+        """
+        $IssueNumber = 83
+        $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-rb-83")))
+        function Invoke-ReviewBundle {
+            throw "dry-run must not execute runner v1 ReviewBundle"
+        }
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+    summary = extract_summary_after(result.stdout, DRY_RUN_MARKER)
+    assert summary["result"] == "success"
+    assert summary["decisions"][0]["action"] == "run-reviewbundle"
+    assert summary["decisions"][0]["request_id"] == "req-rb-83"
+    assert summary["decisions"][0]["would_execute_dispatch_action"] is False
 
 
 def test_dry_run_bounded_issue_list_accepts_up_to_three_explicit_issues(tmp_path):
