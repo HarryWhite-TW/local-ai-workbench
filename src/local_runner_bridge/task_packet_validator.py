@@ -6,7 +6,10 @@ from typing import Any
 
 SLICE_NAME = "read_only_task_surface_resolver_and_packet_validator"
 SUMMARY_PROTOCOL = "lawb.local_runner.task_surface_validation_summary.v1"
-TASK_PACKET_PROTOCOL = "lawb.local_runner.task_packet.v1"
+TASK_PACKET_PROTOCOL_V1 = "lawb.local_runner.task_packet.v1"
+TASK_PACKET_PROTOCOL_V1_1 = "lawb.local_runner.task_packet.v1.1"
+TASK_PACKET_PROTOCOL = TASK_PACKET_PROTOCOL_V1
+ACCEPTED_TASK_PACKET_PROTOCOLS = {TASK_PACKET_PROTOCOL_V1, TASK_PACKET_PROTOCOL_V1_1}
 
 REQUIRED_TOP_LEVEL_FIELDS = (
     "protocol",
@@ -26,6 +29,17 @@ REQUIRED_TOP_LEVEL_FIELDS = (
     "stop_condition",
 )
 
+V1_1_REQUIRED_TOP_LEVEL_FIELDS = (
+    "task_mode",
+    "objective",
+    "max_allowed_files",
+    "context_scope",
+    "repair_attempt_limit",
+    "verification_command_policy",
+    "verification_commands",
+    "scope_expansion_allowed",
+)
+
 REQUIRED_NESTED_FIELDS = (
     ("approval", "required"),
     ("payload", "kind"),
@@ -34,6 +48,15 @@ REQUIRED_NESTED_FIELDS = (
 )
 
 LIST_FIELDS = ("allowed_files", "forbidden_operations")
+V1_1_LIST_FIELDS = (*LIST_FIELDS, "context_scope", "verification_commands")
+V1_1_NON_EMPTY_LIST_FIELDS = (*LIST_FIELDS, "context_scope")
+V1_1_TASK_MODES = {"PLAN_ONLY", "PATCH_ONLY", "VERIFY_ONLY", "DOCS_ONLY"}
+V1_1_REPAIR_ATTEMPT_LIMITS = {0, 1}
+V1_1_VERIFICATION_COMMAND_POLICIES = {
+    "explicit_only",
+    "not_required",
+    "forbidden",
+}
 
 
 def _base_summary() -> dict:
@@ -61,6 +84,8 @@ def _base_summary() -> dict:
 
 def _parse_scalar(value: str) -> Any:
     value = value.strip()
+    if value == "[]":
+        return []
     if value in {"true", "True"}:
         return True
     if value in {"false", "False"}:
@@ -130,8 +155,58 @@ def _has_nested(parsed: dict, path: tuple[str, str]) -> bool:
     return isinstance(parsed.get(parent), dict) and child in parsed[parent]
 
 
+def _is_integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_v1_1_discipline(parsed: dict, summary: dict) -> None:
+    task_mode = parsed.get("task_mode")
+    objective = parsed.get("objective")
+    max_allowed_files = parsed.get("max_allowed_files")
+    allowed_files = parsed.get("allowed_files")
+    context_scope = parsed.get("context_scope")
+    repair_attempt_limit = parsed.get("repair_attempt_limit")
+    verification_command_policy = parsed.get("verification_command_policy")
+    verification_commands = parsed.get("verification_commands")
+    scope_expansion_allowed = parsed.get("scope_expansion_allowed")
+
+    if task_mode not in V1_1_TASK_MODES:
+        summary["errors"].append("invalid_task_mode")
+
+    if not isinstance(objective, str) or not objective.strip():
+        summary["errors"].append("invalid_objective")
+
+    if not _is_integer(max_allowed_files) or max_allowed_files <= 0:
+        summary["errors"].append("invalid_max_allowed_files")
+    elif isinstance(allowed_files, list) and len(allowed_files) > max_allowed_files:
+        summary["errors"].append("allowed_files_exceed_max_allowed_files")
+
+    if not isinstance(context_scope, list) or not context_scope:
+        summary["errors"].append("invalid_context_scope")
+
+    if (
+        not _is_integer(repair_attempt_limit)
+        or repair_attempt_limit not in V1_1_REPAIR_ATTEMPT_LIMITS
+    ):
+        summary["errors"].append("invalid_repair_attempt_limit")
+
+    if verification_command_policy not in V1_1_VERIFICATION_COMMAND_POLICIES:
+        summary["errors"].append("invalid_verification_command_policy")
+
+    if not isinstance(verification_commands, list):
+        summary["errors"].append("invalid_verification_commands")
+    elif (
+        verification_command_policy == "explicit_only"
+        and not verification_commands
+    ):
+        summary["errors"].append("verification_commands_required")
+
+    if scope_expansion_allowed is not False:
+        summary["errors"].append("scope_expansion_allowed_must_be_false")
+
+
 def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict:
-    """Validate extracted Task Packet v1 content without executing anything."""
+    """Validate extracted Task Packet content without executing anything."""
     summary = _base_summary()
     expected = expected or {}
 
@@ -140,26 +215,37 @@ def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict
         return summary
 
     parsed = _parse_line_oriented_packet(packet_text)
-    missing_fields = [
-        field for field in REQUIRED_TOP_LEVEL_FIELDS if field not in parsed
-    ]
+    protocol = parsed.get("protocol")
+    required_top_level_fields = list(REQUIRED_TOP_LEVEL_FIELDS)
+    if protocol == TASK_PACKET_PROTOCOL_V1_1:
+        required_top_level_fields.extend(V1_1_REQUIRED_TOP_LEVEL_FIELDS)
+
+    missing_fields = [field for field in required_top_level_fields if field not in parsed]
     missing_fields.extend(
         ".".join(path) for path in REQUIRED_NESTED_FIELDS if not _has_nested(parsed, path)
     )
-    unknown_fields = [
-        field for field in parsed if field not in set(REQUIRED_TOP_LEVEL_FIELDS)
-    ]
+    known_top_level_fields = set(required_top_level_fields)
+    unknown_fields = [field for field in parsed if field not in known_top_level_fields]
+    list_fields = V1_1_LIST_FIELDS if protocol == TASK_PACKET_PROTOCOL_V1_1 else LIST_FIELDS
+    non_empty_list_fields = (
+        V1_1_NON_EMPTY_LIST_FIELDS
+        if protocol == TASK_PACKET_PROTOCOL_V1_1
+        else LIST_FIELDS
+    )
     invalid_list_fields = [
         field
-        for field in LIST_FIELDS
-        if field in parsed and (not isinstance(parsed[field], list) or not parsed[field])
+        for field in list_fields
+        if field in parsed
+        and (
+            not isinstance(parsed[field], list)
+            or (field in non_empty_list_fields and not parsed[field])
+        )
     ]
 
-    protocol = parsed.get("protocol")
-    summary["task_packet_protocol_valid"] = protocol == TASK_PACKET_PROTOCOL
+    summary["task_packet_protocol_valid"] = protocol in ACCEPTED_TASK_PACKET_PROTOCOLS
     if protocol is None:
         summary["errors"].append("protocol_missing")
-    elif protocol != TASK_PACKET_PROTOCOL:
+    elif protocol not in ACCEPTED_TASK_PACKET_PROTOCOLS:
         summary["errors"].append("invalid_task_packet_protocol")
 
     if missing_fields:
@@ -175,6 +261,9 @@ def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict
     if invalid_list_fields:
         summary["errors"].append("invalid_list_fields")
         summary["invalid_list_fields"] = invalid_list_fields
+
+    if protocol == TASK_PACKET_PROTOCOL_V1_1:
+        _validate_v1_1_discipline(parsed, summary)
 
     logical_issue = parsed.get("logical_issue")
     phase = parsed.get("phase")
