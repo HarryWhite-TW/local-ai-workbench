@@ -366,6 +366,35 @@ def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
     assert summary["safety"]["no_commit"] is True
 
 
+def test_run_reviewbundle_runner_failure_posts_dispatcher_failure_result(tmp_path):
+    result = run_case(
+        tmp_path,
+        '$script:RunnerExitCode = 1; $script:RunnerStdout = "runner bundle posted"; $script:RunnerStderr = "runner failed"; $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-rb-fail-83")))',
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "Action result: failure" in result.stdout
+    assert "RUNNER_CALLS=1" in result.stdout
+    assert "POST_CALLS=1" in result.stdout
+
+    summary = extract_summary(result.stdout)
+    assert summary["action"] == "run-reviewbundle"
+    assert summary["result"] == "failure"
+    assert summary["request_id"] == "req-rb-fail-83"
+    assert summary["validations"]["git_status_clean"]["status"] == "passed"
+    assert summary["validations"]["runner_v1"]["status"] == "failed"
+    assert "exit code: 1" in summary["validations"]["runner_v1"]["summary"]
+    assert summary["safety"]["no_commit"] is True
+    assert summary["safety"]["no_push"] is True
+    assert summary["safety"]["no_issue_close"] is True
+
+    posted_body = extract_posted_body(result.stdout)
+    posted_summary = extract_summary_after(posted_body, MARKER)
+    assert posted_summary["result"] == "failure"
+    assert posted_summary["request_id"] == "req-rb-fail-83"
+
+
 def test_run_reviewbundle_fails_closed_when_repo_is_dirty_before_runner(tmp_path):
     result = run_case(
         tmp_path,

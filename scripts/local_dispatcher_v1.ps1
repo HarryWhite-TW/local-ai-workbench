@@ -868,13 +868,15 @@ function Invoke-ReviewBundle {
         -FilePath $runnerScript `
         -Arguments @("$Issue", "ReviewBundle") `
         -Action "local_runner_v1.ps1 ReviewBundle"
-    Require-Success -Result $runnerResult -Action "local_runner_v1.ps1 ReviewBundle"
+
+    $result = if ($runnerResult.ExitCode -eq 0) { "success" } else { "failure" }
 
     return [pscustomobject]@{
         Action = "run-reviewbundle"
-        Result = "success"
+        Result = $result
         Status = $status
         StatusSummary = "clean"
+        RunnerExitCode = $runnerResult.ExitCode
         Stdout = $runnerResult.Stdout
         Stderr = $runnerResult.Stderr
     }
@@ -980,10 +982,17 @@ function Invoke-AcceptedDispatchAction {
         dispatch_marker = (New-RunnerValidationResult -Status "passed" -Summary "Exactly one current CHATGPT-DISPATCH marker matched issue, repo, branch, HEAD, expiry, and allowed action.")
         git_status_clean = (New-RunnerValidationResult -Status $(if ($actionResult.StatusSummary -eq "clean") { "passed" } else { "warning" }) -Summary $gitStatusValidationSummary)
     }
+
+    if ([string]::Equals($action, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+        $runnerExitCode = if ($null -eq $actionResult.RunnerExitCode) { "unknown" } else { [string]$actionResult.RunnerExitCode }
+        $runnerValidationStatus = if ([string]::Equals($actionResult.Result, "success", [System.StringComparison]::Ordinal)) { "passed" } else { "failed" }
+        $validationOverrides["runner_v1"] = New-RunnerValidationResult -Status $runnerValidationStatus -Summary "runner v1 invocation attempted; exit code: $runnerExitCode."
+    }
+
     $summaryJson = New-RunnerResultSummaryJson `
         -Issue $Issue `
         -Action $action `
-        -Result "success" `
+        -Result $actionResult.Result `
         -Branch $selection.Branch `
         -Head $selection.Head `
         -SelectedIssue $Issue `
