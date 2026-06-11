@@ -351,7 +351,8 @@ def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
     assert_success(result)
     assert "CASE_RESULT=success" in result.stdout
     assert "RUNNER_CALLS=1" in result.stdout
-    assert "RUNNER_ARGS=-IssueNumber|83|-Mode|ReviewBundle" in result.stdout
+    assert "RUNNER_ARGS=83|ReviewBundle" in result.stdout
+    assert "RUNNER_ARGS=-IssueNumber|83|-Mode|ReviewBundle" not in result.stdout
     assert "local_runner_v1.ps1" in result.stdout
     assert "runner v1 review bundle ok" in result.stdout
 

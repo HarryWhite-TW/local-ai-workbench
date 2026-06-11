@@ -866,7 +866,7 @@ function Invoke-ReviewBundle {
 
     $runnerResult = Invoke-WriteCommand `
         -FilePath $runnerScript `
-        -Arguments @("-IssueNumber", "$Issue", "-Mode", "ReviewBundle") `
+        -Arguments @("$Issue", "ReviewBundle") `
         -Action "local_runner_v1.ps1 ReviewBundle"
     Require-Success -Result $runnerResult -Action "local_runner_v1.ps1 ReviewBundle"
 
