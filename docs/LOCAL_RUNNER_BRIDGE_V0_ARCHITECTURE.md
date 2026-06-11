@@ -492,6 +492,29 @@ The runner must reject task packets with conflicting fields.
 
 The runner must reject task packets that request non-allowlisted actions.
 
+## Task Packet v1.1 Discipline Fields
+
+Task Packet v1.1 should make the Codex task discipline in `AGENTS.md` available as verifiable task packet fields.
+
+This is a validation and readback discipline update only.
+
+Task Packet v1.1 does not add runner, dispatcher, watcher, background automation, commit, push, GitHub writeback, PR creation, merge, issue close, or label change authority.
+
+Task Packet v1 compatibility should be preserved unless a later task explicitly approves a breaking migration.
+
+The minimal new fields are:
+
+* `task_mode` limits whether the task is plan-only, patch-only, verify-only, or docs-only.
+* `objective` keeps the task to one explicit goal.
+* `max_allowed_files` keeps the task small and reviewable.
+* `context_scope` prevents broad repository exploration.
+* `repair_attempt_limit` prevents endless self-repair loops.
+* `verification_command_policy` explains whether verification is explicit, not required, or forbidden for the task mode.
+* `verification_commands` records the exact commands allowed or expected.
+* `scope_expansion_allowed` must default to false.
+
+The next small follow-up tasks should be validator structural support, focused validator tests, and README alignment.
+
 ## Result Packet relationship
 
 #126 should define Local Runner Result Packet v1.
