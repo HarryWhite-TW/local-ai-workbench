@@ -16,7 +16,7 @@ Local document workflows often become a blurry mix of source files, generated su
 - keep write-like actions behind preview, approval, and readiness gates
 - avoid uncontrolled writeback
 
-The app itself does not call an external AI service in the current baseline. The bridge utilities in `src/local_runner_bridge/` model a local-first AI workflow control layer around explicit inputs, validation dry-runs, stdout/readback artifacts, approval records, readiness gates, and implementation-boundary checks.
+The product application itself does not call an external AI service in the current baseline. Development workflow tooling in this repo includes local-first bridge utilities, validation dry-runs, stdout/readback artifacts, approval records, readiness gates, dispatcher/runner smokes, and implementation-boundary checks.
 
 ## Current Project Status
 
@@ -32,7 +32,22 @@ Current baseline:
 - export destination intelligence completed through #216
 - current roadmap recorded at #212 and refreshed after #216
 
-The #197 decision is important: **stop adding boundary layers**. Future work should return to visible project value such as README polish, demo documentation, architecture maps, onboarding notes, or test cleanup.
+The #197 decision is important: **stop adding safety/writeback boundary layers**. Bridge Operator v0 is an approved development-workflow trigger/usability integration, not another product writeback boundary, and it does not expand high-risk authority. Future work should return to visible project value such as README polish, demo documentation, architecture maps, onboarding notes, or test cleanup.
+
+## Product Runtime
+
+The public product runtime is the localhost, single-user Local Document-to-Knowledge Workbench. It is the reviewer-facing app experience: scan local documents, index them in SQLite, search them locally, generate deterministic single-document summaries, preview Obsidian-ready Markdown, check export destination status, and export Markdown after preview and destination checks.
+
+The product application itself does not autonomously:
+
+- invoke external AI
+- watch GitHub
+- commit
+- push
+- close issues
+- edit labels
+- create or merge PRs
+- modify original source documents
 
 ## Core Value
 
@@ -45,7 +60,7 @@ The current project value is a local-first workflow with explicit review boundar
 - **Validation dry-runs:** validate inputs and contracts before any later action is considered.
 - **Result/readback artifacts:** emit JSON review summaries to stdout for ChatGPT/human readback.
 - **Approval/readiness gates:** model approval and readiness as local validation records, not implicit permission.
-- **No uncontrolled writeback:** GitHub writeback, Result Packet write, runner/dispatcher/watcher behavior, and autonomous execution remain forbidden unless separately approved later.
+- **No uncontrolled product-runtime writeback:** automatic product-runtime GitHub watching, autonomous commit/push/close/label/PR/merge behavior, and original-source-document modification remain out of scope.
 
 This is different from a normal automation script because success at one step does not automatically trigger the next side effect. Each layer emits reviewable evidence and keeps authority bounded.
 
@@ -65,7 +80,9 @@ This is different from a normal automation script because success at one step do
 - Export Markdown to a user-selected local destination folder after preview and destination check
 - Remember the last export folder in the browser for smoother repeat use
 
-### Local Runner Bridge Utilities
+### Development Workflow Tooling
+
+Development workflow tooling is separate from the product runtime. It exists as portfolio engineering evidence for a bounded ChatGPT-to-Codex bridge and must not be confused with the Local Document-to-Knowledge Workbench app.
 
 The `src/local_runner_bridge/` modules are local-only workflow control utilities. They include:
 
@@ -78,7 +95,24 @@ The `src/local_runner_bridge/` modules are local-only workflow control utilities
 - Readiness Gate validator
 - Writeback Implementation Boundary validator
 
-These utilities produce JSON evidence and validation summaries. They do not execute tasks, write GitHub comments, update issue bodies, write Result Packets, create PRs, merge, close issues, change labels, or start watchers.
+These utilities produce JSON evidence and validation summaries. The verified Lv4.5 bridge baseline also includes PowerShell runner/dispatcher tooling:
+
+- ChatGPT writes an explicit GitHub dispatch request.
+- Dispatcher v1 validates one issue-scoped request.
+- Supported `PollOnce` actions are `maybe-status-check` and `run-reviewbundle`.
+- Runner v1 can invoke Codex through a bounded ReviewBundle flow.
+- `LAWBRUNNER-RESULT` can be posted to GitHub for ChatGPT review.
+- Windows npm `codex.cmd` compatibility is verified.
+- GitHub CLI resolution through PATH, Program Files, and portable fallback is verified.
+- Commit, push, issue close, label edit, PR creation, merge, and approval chaining remain separate user-approved actions.
+
+Manual `PollOnce` is the verified Lv4.5 baseline and future recovery path:
+
+```powershell
+.\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
+```
+
+Manual `PollOnce` is not the final target experience. Bridge Operator v0 is the approved future development-workflow direction: Phase B first, Phase C ChatGPT App / MCP later after Phase B is stable. Bridge Operator is not product runtime and is not yet implemented.
 
 ## What Is Intentionally Not Implemented
 
@@ -88,25 +122,25 @@ The following remain intentionally out of scope:
 - OCR or scanned-PDF recognition
 - semantic search, embeddings, vector database, or FTS5
 - multi-folder background sync
-- watcher or scheduler behavior
+- watcher or scheduler behavior inside the product application runtime
 - automatic email sending
 - automatic modification of original source documents
 - Obsidian plugin behavior
 - Obsidian API integration
 - two-way Obsidian sync
-- GitHub writeback implementation
-- GitHub comment write
-- GitHub issue body update
-- Result Packet write implementation
-- Codex-side action execution
-- runner, dispatcher, or watcher behavior
+- GitHub writeback implementation inside the product application runtime
+- GitHub comment write inside the product application runtime
+- GitHub issue body update inside the product application runtime
+- Result Packet write implementation inside the product application runtime
+- Codex-side action execution inside the product application runtime
+- runner, dispatcher, Bridge Operator, or watcher behavior inside the product application runtime
 - broad issue scan or next/latest issue inference
 - autonomous execution
 - automatic commit or push
 - PR creation, merge, issue close, or label change
 - real write mode
 
-Future GitHub writeback is still not implemented and still requires a later explicit Strict Lane decision.
+Future product-runtime GitHub writeback is still not implemented and still requires a later explicit Strict Lane decision. Development workflow result comments are limited to the verified runner/dispatcher bridge contract described above.
 
 ## Architecture Overview
 
