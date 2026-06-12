@@ -347,6 +347,95 @@ function Resolve-CodexCommand {
     }
 }
 
+function Get-GitHubCliCandidatePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Command
+    )
+
+    foreach ($propertyName in @("Source", "Path", "Definition")) {
+        $property = $Command.PSObject.Properties[$propertyName]
+        if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            return [string]$property.Value
+        }
+    }
+
+    return ""
+}
+
+function Resolve-GitHubCliCommand {
+    param(
+        [object[]]$Commands = $null,
+        [string[]]$ExtraCandidatePaths = $null,
+        [string]$DefaultPath = "C:\Program Files\GitHub CLI\gh.exe",
+        [string]$PortablePath = ""
+    )
+
+    $candidatePaths = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($DefaultPath) -and (Test-Path -LiteralPath $DefaultPath)) {
+        $candidatePaths += $DefaultPath
+    }
+
+    if ($null -eq $Commands) {
+        $Commands = @(Get-Command gh -All -ErrorAction SilentlyContinue)
+    }
+
+    foreach ($command in @($Commands)) {
+        $path = Get-GitHubCliCandidatePath -Command $command
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $candidatePaths += $path
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PortablePath)) {
+        $PortablePath = Join-Path $env:USERPROFILE "tools\gh-portable\bin\gh.exe"
+    }
+
+    $candidatePaths += $PortablePath
+
+    if ($null -ne $ExtraCandidatePaths) {
+        $candidatePaths += $ExtraCandidatePaths
+    }
+
+    $normalized = @()
+    foreach ($path in $candidatePaths) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+        if ($extension -eq ".ps1") {
+            continue
+        }
+
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+
+        $normalized += [pscustomobject]@{
+            Source = $path
+            Extension = $extension
+        }
+    }
+
+    if (@($normalized).Count -eq 0) {
+        throw "GitHub CLI was not found. Checked fixed Program Files path, PATH candidates, and portable user tools path."
+    }
+
+    $selected = @($normalized | Where-Object { $_.Extension -eq ".exe" } | Select-Object -First 1)
+    if ($selected.Count -eq 0) {
+        $selected = @($normalized | Where-Object { $_.Extension -eq ".cmd" } | Select-Object -First 1)
+    }
+    if ($selected.Count -eq 0) {
+        $selected = @($normalized | Select-Object -First 1)
+    }
+
+    return [string]$selected[0].Source
+}
+
 function ConvertTo-NativeArgumentString {
     param(
         [Parameter(Mandatory = $true)]
@@ -1494,9 +1583,7 @@ if ($Mode -eq "ApprovalStateDiagnostic") {
     exit 0
 }
 
-if (-not (Test-Path -LiteralPath $Gh)) {
-    throw "GitHub CLI was not found at expected path: $Gh"
-}
+$Gh = Resolve-GitHubCliCommand
 
 if ($Mode -eq "CommitApproved") {
     try {

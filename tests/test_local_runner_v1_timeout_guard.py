@@ -45,6 +45,96 @@ def assert_success(result: subprocess.CompletedProcess) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_resolve_github_cli_command_uses_portable_path_when_program_files_missing(tmp_path):
+    portable = tmp_path / "tools" / "gh-portable" / "bin" / "gh.exe"
+    portable.parent.mkdir(parents=True)
+    portable.write_text("fake gh", encoding="utf-8")
+
+    missing_default = tmp_path / "missing-program-files-gh.exe"
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $resolved = Resolve-GitHubCliCommand `
+            -Commands @() `
+            -DefaultPath "{missing_default.as_posix()}" `
+            -PortablePath "{portable.as_posix()}" `
+            -ExtraCandidatePaths @()
+
+        $actual = [System.IO.Path]::GetFullPath($resolved)
+        $expected = [System.IO.Path]::GetFullPath("{portable.as_posix()}")
+        if ($actual -ne $expected) {{
+            throw "Expected portable gh path $expected, got $actual"
+        }}
+        """,
+    )
+    assert_success(result)
+
+
+def test_resolve_github_cli_command_prefers_get_command_over_portable_path(tmp_path):
+    command_gh = tmp_path / "path-gh" / "gh.exe"
+    command_gh.parent.mkdir(parents=True)
+    command_gh.write_text("fake gh from path", encoding="utf-8")
+
+    portable = tmp_path / "tools" / "gh-portable" / "bin" / "gh.exe"
+    portable.parent.mkdir(parents=True)
+    portable.write_text("fake portable gh", encoding="utf-8")
+
+    missing_default = tmp_path / "missing-program-files-gh.exe"
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $commands = @(
+            [pscustomobject]@{{ CommandType = "Application"; Source = "{command_gh.as_posix()}"; Definition = "{command_gh.as_posix()}" }}
+        )
+
+        $resolved = Resolve-GitHubCliCommand `
+            -Commands $commands `
+            -DefaultPath "{missing_default.as_posix()}" `
+            -PortablePath "{portable.as_posix()}" `
+            -ExtraCandidatePaths @()
+
+        $actual = [System.IO.Path]::GetFullPath($resolved)
+        $expected = [System.IO.Path]::GetFullPath("{command_gh.as_posix()}")
+        if ($actual -ne $expected) {{
+            throw "Expected PATH gh path $expected, got $actual"
+        }}
+        """,
+    )
+    assert_success(result)
+
+
+def test_resolve_github_cli_command_rejects_missing_candidates(tmp_path):
+    missing_default = tmp_path / "missing-program-files-gh.exe"
+    missing_portable = tmp_path / "tools" / "gh-portable" / "bin" / "gh.exe"
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $failed = $false
+        try {{
+            Resolve-GitHubCliCommand `
+                -Commands @() `
+                -DefaultPath "{missing_default.as_posix()}" `
+                -PortablePath "{missing_portable.as_posix()}" `
+                -ExtraCandidatePaths @() | Out-Null
+        }}
+        catch {{
+            $failed = $true
+            if ($_.Exception.Message -notmatch "GitHub CLI was not found") {{
+                throw "Unexpected error message: $($_.Exception.Message)"
+            }}
+        }}
+
+        if (-not $failed) {{
+            throw "Expected Resolve-GitHubCliCommand to fail when no candidates exist."
+        }}
+        """,
+    )
+    assert_success(result)
+
+
 def test_resolve_codex_command_prefers_cmd_over_ps1(tmp_path):
     result = run_timeout_guard_script(
         tmp_path,
