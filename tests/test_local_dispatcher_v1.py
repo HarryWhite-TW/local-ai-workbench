@@ -111,7 +111,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             }}
 
             function Assert-RepoRoot {{}}
-            function Assert-GhAvailable {{}}
+            function Resolve-GhPath {{ return "gh" }}
             function Get-CurrentBranch {{ return $script:Branch }}
             function Get-CurrentFullHead {{ return $script:Head }}
             function Get-GitStatusShort {{ return $script:GitStatus }}
@@ -491,6 +491,141 @@ def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_pat
     assert posted_summary["validations"]["git_diff_check"]["summary"] == (
         "Dispatcher action 'maybe-status-check' did not independently run git diff --check."
     )
+
+
+def test_resolve_gh_path_prefers_path_command_before_fallback(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return [pscustomobject]@{ Source = "C:\Tools\gh.exe" }
+        }
+
+        Write-Host "GH_PATH=$(Resolve-GhPath)"
+        """,
+    )
+    assert_success(result)
+    assert r"GH_PATH=C:\Tools\gh.exe" in result.stdout
+
+
+def test_resolve_gh_path_uses_fallback_when_path_command_missing(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+
+        Write-Host "GH_PATH=$(Resolve-GhPath)"
+        """,
+    )
+    assert_success(result)
+    assert f"GH_PATH={tmp_path / 'fallback-gh.exe'}" in result.stdout
+
+
+
+def test_resolve_gh_path_uses_portable_fallback_when_path_and_program_files_missing(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-program-files-gh.exe"
+        $GhCliPortableFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "portable-gh.exe"
+        New-Item -ItemType File -Path $GhCliPortableFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+
+        Write-Host "GH_PATH=$(Resolve-GhPath)"
+        """,
+    )
+    assert_success(result)
+    assert f"GH_PATH={tmp_path / 'portable-gh.exe'}" in result.stdout
+
+def test_resolve_gh_path_fails_closed_when_missing_from_path_and_fallback(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-gh.exe"
+        $GhCliPortableFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-portable-gh.exe"
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+
+        try {
+            $null = Resolve-GhPath
+            Write-Host "CASE_RESULT=success"
+        } catch {
+            Write-Host "CASE_RESULT=failure"
+            Write-Host "CASE_ERROR=$($_.Exception.Message)"
+        }
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Tried PATH command 'gh'" in result.stdout
+    assert "missing-gh.exe" in result.stdout
+
+
+def test_issue_read_uses_resolved_fallback_gh_path(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+        function Invoke-ReadOnlyCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            $script:CapturedFilePath = $FilePath
+            $payload = [pscustomobject]@{
+                number = 83
+                title = "Issue 83"
+                state = "OPEN"
+                comments = @()
+            } | ConvertTo-Json -Depth 8
+            return [pscustomobject]@{ ExitCode = 0; Stdout = $payload; Stderr = "" }
+        }
+
+        $null = Get-IssueDispatchMarkerReadResult -IssueNumber 83
+        Write-Host "CAPTURED_FILE_PATH=$script:CapturedFilePath"
+        """,
+    )
+    assert_success(result)
+    assert f"CAPTURED_FILE_PATH={tmp_path / 'fallback-gh.exe'}" in result.stdout
+
+
+def test_publish_runner_result_comment_uses_resolved_fallback_gh_path(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+        function Invoke-WriteCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            $script:CapturedFilePath = $FilePath
+            return [pscustomobject]@{ ExitCode = 0; Stdout = "posted"; Stderr = "" }
+        }
+
+        $null = Publish-RunnerResultComment -IssueNumber 83 -Body "result"
+        Write-Host "CAPTURED_FILE_PATH=$script:CapturedFilePath"
+        """,
+    )
+    assert_success(result)
+    assert f"CAPTURED_FILE_PATH={tmp_path / 'fallback-gh.exe'}" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -973,4 +1108,5 @@ def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):
         timeout=30,
     )
     assert result.returncode != 0
-    assert "Missing mode" in (result.stdout + result.stderr)
+    compact_output = "".join((result.stdout + result.stderr).split())
+    assert "Missingmode" in compact_output

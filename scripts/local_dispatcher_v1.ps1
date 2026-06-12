@@ -42,6 +42,8 @@ $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $DryRunProtocol = "lawb.dispatch_dry_run.v1"
 $DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
+$GhCliFallbackPath = "C:\Program Files\GitHub CLI\gh.exe"
+$GhCliPortableFallbackPath = Join-Path $env:USERPROFILE "tools\gh-portable\bin\gh.exe"
 $MaxDryRunIssuesPerRun = 3
 $MaxBoundedPollIssuesPerRun = 3
 $AllowedDispatchActions = @("maybe-status-check", "run-reviewbundle")
@@ -287,11 +289,35 @@ function Assert-RepoRoot {
     }
 }
 
-function Assert-GhAvailable {
+function Resolve-GhPath {
     $command = Get-Command "gh" -ErrorAction SilentlyContinue
-    if ($null -eq $command) {
-        throw "GitHub CLI 'gh' is required to read the selected issue."
+    if ($null -ne $command) {
+        $source = Get-ObjectPropertyText -Object $command -PropertyName "Source"
+        if (-not [string]::IsNullOrWhiteSpace($source)) {
+            return $source
+        }
+
+        $path = Get-ObjectPropertyText -Object $command -PropertyName "Path"
+        if (-not [string]::IsNullOrWhiteSpace($path)) {
+            return $path
+        }
+
+        return $command.Name
     }
+
+    $fallbackPaths = @($GhCliFallbackPath, $GhCliPortableFallbackPath)
+    foreach ($fallbackPath in $fallbackPaths) {
+        if ([string]::IsNullOrWhiteSpace($fallbackPath)) {
+            continue
+        }
+
+        if (Test-Path -LiteralPath $fallbackPath -PathType Leaf) {
+            return $fallbackPath
+        }
+    }
+
+    $fallbackSummary = ($fallbackPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "', '"
+    throw "GitHub CLI 'gh' is required to read the selected issue. Tried PATH command 'gh' and fallback paths '$fallbackSummary'."
 }
 
 function Get-CurrentBranch {
@@ -654,7 +680,7 @@ function Get-IssueDispatchMarkerReadResult {
         [int]$IssueNumber
     )
 
-    Assert-GhAvailable
+    $ghPath = Resolve-GhPath
 
     $ghArgs = @(
         "issue",
@@ -665,7 +691,7 @@ function Get-IssueDispatchMarkerReadResult {
         "--json",
         "number,title,state,comments"
     )
-    $result = Invoke-ReadOnlyCommand -FilePath "gh" -Arguments $ghArgs -Action "gh issue view"
+    $result = Invoke-ReadOnlyCommand -FilePath $ghPath -Arguments $ghArgs -Action "gh issue view"
     Require-Success -Result $result -Action "gh issue view"
 
     if ([string]::IsNullOrWhiteSpace($result.Stdout)) {
@@ -894,7 +920,8 @@ function Publish-RunnerResultComment {
     try {
         $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
         [System.IO.File]::WriteAllText($bodyFile.FullName, $Body, $utf8NoBom)
-        $result = Invoke-WriteCommand -FilePath "gh" -Arguments @("issue", "comment", "$IssueNumber", "--repo", $Repo, "--body-file", $bodyFile.FullName) -Action "gh issue comment"
+        $ghPath = Resolve-GhPath
+        $result = Invoke-WriteCommand -FilePath $ghPath -Arguments @("issue", "comment", "$IssueNumber", "--repo", $Repo, "--body-file", $bodyFile.FullName) -Action "gh issue comment"
         Require-Success -Result $result -Action "gh issue comment"
         return $result
     }
