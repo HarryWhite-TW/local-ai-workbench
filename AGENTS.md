@@ -1,9 +1,9 @@
 # AGENTS.md
 
 ## Project Positioning
-- The canonical showcase identity for this repo is `Local Document Assistant Prototype`, presented as a local document workbench.
-- This repo is a localhost, single-user, personal-use prototype.
-- This repo is also intended as a public portfolio engineering project for a local-first document assistant prototype centered on the local document workbench showcase.
+- The canonical showcase identity for this repo is `Local Document-to-Knowledge Workbench`, presented as a local document-to-knowledge workbench.
+- This repo is a localhost, single-user, personal-use local-first workbench prototype.
+- This repo is also intended as a public portfolio engineering project for a local-first document-to-knowledge workbench centered on the local document workbench showcase.
 - Do not change the project's positioning, target audience, or showcase storyline unless the user explicitly asks.
 
 ## Non-Goals

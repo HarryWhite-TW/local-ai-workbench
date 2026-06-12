@@ -301,15 +301,18 @@ VERIFIED / DOCUMENTATION:
 
 - B0-1 complete
 - B0-2 complete
-- B0-3 current task
+- B0-3 complete
+- B0-4A complete
+- B0-4B current task
 
 REMAINING B0 WORK:
 
 - B0-4 remains:
-  - global consistency verification
   - completed/superseded Issue cleanup
   - PR readiness
   - PR into `master` after approval
+
+This patch does not authorize Issue cleanup or PR creation. Manual `PollOnce` remains the verified current baseline and future recovery path, not the final daily UX.
 
 SEPARATE APPROVAL:
 

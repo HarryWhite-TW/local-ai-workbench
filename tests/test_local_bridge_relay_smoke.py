@@ -29,6 +29,10 @@ def _powershell() -> str:
     return shell
 
 
+def _git(*args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=REPO_ROOT, text=True).strip()
+
+
 def _extract_packet(stdout: str) -> dict:
     lines = stdout.splitlines()
     marker_index = lines.index(MARKER)
@@ -352,7 +356,7 @@ def test_local_git_status_summary_runs_allowlisted_read_only_command():
     assert packet["action"] == "bounded-local-command"
     assert "dry_action_output" not in packet
     assert command_result["kind"] == "local-git-status-summary"
-    assert command_result["branch"] == "master"
+    assert command_result["branch"] == _git("branch", "--show-current")
     assert len(command_result["head"]) == 40
     assert len(command_result["origin_master"]) == 40
     assert isinstance(command_result["git_status_short"], str)
