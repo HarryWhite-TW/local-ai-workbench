@@ -4,7 +4,9 @@
 
 This document defines the architecture for Local Runner Bridge v0.
 
-Local Runner Bridge v0 is the next phase after Semi-automated Workflow v1 proof report.
+Read this document as historical architecture evidence, not the current Bridge Operator specification.
+
+Local Runner Bridge v0 was designed as the next phase after the Semi-automated Workflow v1 proof report.
 
 The purpose is to reduce manual copy and paste between ChatGPT, GitHub, Codex, and the local machine.
 
@@ -32,11 +34,24 @@ This document does not authorize always-on polling.
 
 This document does not authorize Lv5 full automation.
 
+## Current Status Note
+
+This document is preserved as historical architecture evidence for the bounded bridge direction. Since it was written, the bounded feasibility baseline has been completed: Dispatcher v1 can process explicit issue-scoped `CHATGPT-DISPATCH` requests, Runner v1 can invoke Codex through bounded ReviewBundle execution, `LAWBRUNNER-RESULT` writeback has been verified, and ChatGPT readback has been verified. The remaining UX gap is the per-task manual trigger.
+
+Current terminology:
+
+* Local Runner Bridge v0 = historical bounded bridge architecture.
+* Lv4.5 = current verified manual operational baseline.
+* Bridge Operator Phase B = approved next development-workflow direction, not implemented.
+* Phase C MCP / ChatGPT App integration = deferred until Phase B is stable.
+
 ## Direction Lock Binding
 
-This architecture must be read together with `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`.
+This architecture must be read together with `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md` v1.1.
 
 The direction lock is the source of truth for bridge direction.
+
+Future Bridge Operator work is governed by `docs/BRIDGE_OPERATOR_V0_SPEC.md` v0.1.
 
 Manual copy/paste is not the target workflow.
 
@@ -267,11 +282,13 @@ When direct bridge trigger is unavailable, the user may run one explicit command
 
 This is transitional and must remain visible as a bridge gap.
 
-No background watcher is allowed in v0.
+No background watcher is allowed in Local Runner Bridge v0.
 
-No always-on polling is allowed in v0.
+No always-on polling is allowed in Local Runner Bridge v0.
 
 No scheduled execution is allowed in v0.
+
+Bridge Operator automatic polling is now an approved future direction under `docs/BRIDGE_OPERATOR_V0_SPEC.md`, but it is not implemented or operational in this architecture. Polling scope, bounded loop behavior, and login startup still require separately approved implementation phases.
 
 Manual start is not the target workflow.
 
@@ -545,6 +562,8 @@ This architecture expects the result packet to include at least:
 
 The result packet should be readable by ChatGPT without long transcripts.
 
+`BRIDGE-TASK-PACKET` and `BRIDGE-RESULT-PACKET` are not currently implemented or adapted to the verified `CHATGPT-DISPATCH` / `LAWBRUNNER-RESULT` path.
+
 ## Policy Engine relationship
 
 #127 should define Local Runner Policy Engine v0.
@@ -568,9 +587,9 @@ The policy engine must run before any write action.
 
 The policy engine must reject ambiguous tasks.
 
-## MVP implementation path
+## Historical MVP implementation path
 
-The recommended implementation path is:
+The original recommended implementation path was:
 
 1. #124 architecture
 2. #125 task packet schema
@@ -595,9 +614,13 @@ ChatGPT creates a GitHub task packet
 -> ChatGPT reviews without the user pasting a long prompt or long transcript
 ```
 
-This success criterion is transitional.
+This path is preserved as design history. It is historical and superseded by the verified Lv4.5 Dispatcher / Runner path; it is not a live Issue-number execution sequence.
+
+This success criterion was transitional.
 
 The stronger bridge success criterion is no-copy / no-paste dispatch and result readback, where the user does not manually paste task text into Codex and does not manually paste Codex output back into ChatGPT.
+
+The current approved next direction for closing the remaining manual-trigger gap is Bridge Operator Phase B, not another pass through the old #124 through #130 sequence.
 
 ## Security model
 
@@ -686,7 +709,7 @@ Any Lv5 or beyond capability requires separate design, review, and explicit appr
 
 ## Explicitly not authorized
 
-This document does not authorize:
+This historical architecture document does not authorize:
 
 * background watcher
 * always-on polling
@@ -707,7 +730,11 @@ This document does not authorize:
 * automation authority expansion
 * Lv5 full automation
 
-## Completion criteria
+Bridge Operator automatic polling is approved only as a future Phase B direction under the Bridge Operator specification. It remains unimplemented here and does not authorize broad issue scanning, automatic high-risk continuation, login startup, or hidden unattended service behavior.
+
+## Historical Completion Criteria
+
+This acceptance language belongs to the original architecture design. It does not refer to the current live GitHub Issue #124 and is not an active execution checklist.
 
 #124 is complete when this architecture document exists and clearly defines:
 
@@ -740,10 +767,12 @@ This document does not authorize:
 
 ## Current status
 
-Local Runner Bridge v0 architecture is defined as a bounded transitional task handoff bridge aligned with the Direction Lock.
+Local Runner Bridge v0 architecture is preserved as a bounded transitional task handoff bridge aligned with the Direction Lock.
 
-Manual foreground start may remain a current safety constraint, but it is not the target end state.
+Lv4.5 is the current verified manual operational baseline. Manual foreground `PollOnce` remains available and becomes the recovery path after Bridge Operator Phase B becomes operational.
 
-The next recommended step after #124 is #125 Local Runner Task Packet v1.
+The old next-step note after #124 is historical. It is superseded by the verified Lv4.5 Dispatcher / Runner path and the approved Bridge Operator Phase B direction.
 
-The bridge should reduce copy-paste overhead while preserving ChatGPT review and user-controlled high-risk approval.
+Bridge Operator Phase B is approved as future development-workflow tooling, but it is not implemented in this document. Phase C MCP / ChatGPT App integration is deferred until Phase B is stable.
+
+The bridge direction should continue reducing copy-paste and manual trigger overhead while preserving ChatGPT review and user-controlled high-risk approval.
