@@ -303,16 +303,23 @@ VERIFIED / DOCUMENTATION:
 - B0-2 complete
 - B0-3 complete
 - B0-4A complete
-- B0-4B current task
+- B0-4B complete
 
-REMAINING B0 WORK:
+B0 ISSUE CLEANUP:
 
-- B0-4 remains:
-  - completed/superseded Issue cleanup
-  - PR readiness
-  - PR into `master` after approval
+- #120 completed
+- #121 completed
+- #125 completed
+- #124 not planned
+- #126 not planned
 
-This patch does not authorize Issue cleanup or PR creation. Manual `PollOnce` remains the verified current baseline and future recovery path, not the final daily UX.
+B0 reconciliation, verification, and completed/superseded Issue cleanup are complete on `workflow-codex-task-discipline`.
+
+Integration into `master` remains governed by a separately approved PR. This document does not authorize PR creation or merge.
+
+Bridge Operator Phase B implementation has not started. B1 requires a separately approved implementation task.
+
+Manual `PollOnce` remains the verified current baseline and future recovery path, not the final daily UX. Phase C ChatGPT App / MCP remains deferred until Phase B is stable.
 
 SEPARATE APPROVAL:
 
@@ -336,3 +343,7 @@ For future conversations:
 ### v0.1 - 2026-06-12
 
 Created the active operational baseline and handoff entrypoint for the verified semi-automated workflow, course-computer environment, commands, troubleshooting, milestone evidence, and approved Bridge Operator Phase B direction.
+
+### B0 closeout - 2026-06-13
+
+Recorded B0-4B completion, completed/superseded Issue cleanup state, and the remaining requirement for separate PR review and approval before integration into `master`.
