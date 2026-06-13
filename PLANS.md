@@ -23,8 +23,9 @@ The public product mainline remains the Local Document-to-Knowledge Workbench. I
 Development workflow tooling is separate from the product runtime.
 
 - The verified Lv4.5 baseline uses ChatGPT-authored `CHATGPT-DISPATCH` requests, Dispatcher v1 `PollOnce`, Runner v1 ReviewBundle, Codex, and `LAWBRUNNER-RESULT` readback for ChatGPT review.
-- The bridge discipline work was developed and reviewed on `workflow-codex-task-discipline`; integration into `master` is handled through a separately approved PR.
+- The B0 bridge discipline baseline was integrated into `master` through PR #134 on 2026-06-13. Merge commit: `29381d16d438f8fcf9807f48e93544f99df9301e`.
 - Bridge Operator Phase B is the approved next direction for development workflow tooling: fixed Bridge Inbox, bounded local operator, existing Dispatcher / Runner delegation, and ChatGPT-readable GitHub result readback.
+- Bridge Operator B1 remains separately approval-gated and is not yet implemented.
 - Phase C ChatGPT App / MCP work is deferred until Phase B is stable.
 
 Bridge Operator is development workflow tooling and portfolio engineering evidence. It is not the primary product runtime.
@@ -34,8 +35,8 @@ Bridge Operator is development workflow tooling and portfolio engineering eviden
 1. B0 documentation reconciliation - complete.
 2. Verification - complete.
 3. Completed or superseded Issue cleanup - complete.
-4. Integration into `master` - separate PR review and approval.
-5. Return to visible product, demo, onboarding, and portfolio value.
+4. Integration into `master` through PR #134 - complete.
+5. Return to visible product, demo, onboarding, and portfolio value - current focus.
 6. B1 implementation - only through a separately approved task.
 
 This task does not authorize automatic polling, bounded loop execution, login startup, tray UI, MCP, new action authority, automatic commit, push, issue close, label edit, PR creation, merge, or approval chaining.
@@ -69,6 +70,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-06-13: Merged PR #134 into `master`, verified post-merge master state, cleaned up the merged feature branch, and returned focus to visible product value.
 - 2026-06-13: Recorded B0 closeout status, completed/superseded Issue cleanup, and separate PR approval requirement for bridge discipline integration.
 - 2026-04-10: M1 narrowed to local preview/approve/audit prototype.
 
