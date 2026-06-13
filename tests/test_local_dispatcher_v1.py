@@ -49,6 +49,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $script:GitStatus = ""
             $script:Markers = @()
             $script:IssueMarkers = @{{}}
+            $script:IssueStates = @{{}}
             $script:PostCalls = 0
             $script:PostedIssue = 0
             $script:PostedBody = ""
@@ -64,11 +65,12 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             function New-TestComment {{
                 param(
                     [Parameter(Mandatory = $true)][string]$Body,
-                    [string]$Id = "comment-1"
+                    [string]$Id = "comment-1",
+                    [string]$AuthorLogin = "HarryWhite-TW"
                 )
                 return [pscustomobject]@{{
                     id = $Id
-                    author = [pscustomobject]@{{ login = "tester" }}
+                    author = [pscustomobject]@{{ login = $AuthorLogin }}
                     createdAt = "2026-05-18T00:00:00Z"
                     body = $Body
                 }}
@@ -78,14 +80,15 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                 param(
                     [Parameter(Mandatory = $true)][string]$Line,
                     [string]$Body = $null,
-                    [string]$Id = "comment-1"
+                    [string]$Id = "comment-1",
+                    [string]$AuthorLogin = "HarryWhite-TW"
                 )
                 if ([string]::IsNullOrEmpty($Body)) {{
                     $Body = $Line
                 }}
                 return [pscustomobject]@{{
                     Line = $Line
-                    Comment = (New-TestComment -Body $Body -Id $Id)
+                    Comment = (New-TestComment -Body $Body -Id $Id -AuthorLogin $AuthorLogin)
                     CommentIndex = 1
                     LineNumber = 1
                 }}
@@ -130,11 +133,15 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                 if ($script:IssueMarkers.ContainsKey($requestedIssue)) {{
                     $sourceMarkers = @($script:IssueMarkers[$requestedIssue])
                 }}
+                $issueState = "OPEN"
+                if ($script:IssueStates.ContainsKey($requestedIssue)) {{
+                    $issueState = [string]$script:IssueStates[$requestedIssue]
+                }}
                 $comments = @($sourceMarkers | ForEach-Object {{ $_.Comment }})
                 $payload = [pscustomobject]@{{
                     number = $requestedIssue
                     title = "Issue $requestedIssue"
-                    state = "OPEN"
+                    state = $issueState
                     comments = @($comments)
                 }} | ConvertTo-Json -Depth 8
                 return [pscustomobject]@{{
@@ -680,6 +687,18 @@ def test_publish_runner_result_comment_uses_resolved_fallback_gh_path(tmp_path):
             '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "push-approved-once")))',
             "Forbidden dispatch action",
         ),
+        (
+            '$script:IssueStates[83] = "CLOSED"; $script:Markers = @((New-TestMarker (New-DispatchLine)))',
+            "Target issue #83 is not OPEN.",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine) -AuthorLogin "outsider"))',
+            "Dispatch marker author 'outsider' is not trusted.",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -RequestedBy "human")))',
+            "Dispatch marker field 'requested_by' mismatch.",
+        ),
     ],
 )
 def test_fail_closed_cases_do_not_post_comments(tmp_path, setup, expected):
@@ -925,6 +944,18 @@ def test_dry_run_reports_rejected_issue_and_fails_closed_without_posting(tmp_pat
             '$script:Markers = @((New-TestMarker "CHATGPT-DISPATCH protocol=lawb.dispatch.v1 action=maybe-status-check issue=83 repo=HarryWhite-TW/local-ai-workbench branch=master head=1111111111111111111111111111111111111111 expires=20990101T000000Z requested_by=chatgpt"))',
             "Missing required dispatch marker field 'request_id'",
         ),
+        (
+            '$script:IssueStates[83] = "CLOSED"; $script:Markers = @((New-TestMarker (New-DispatchLine)))',
+            "Target issue #83 is not OPEN.",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine) -AuthorLogin "outsider"))',
+            "Dispatch marker author 'outsider' is not trusted.",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -RequestedBy "outsider")))',
+            "Dispatch marker field 'requested_by' mismatch.",
+        ),
     ],
 )
 def test_dry_run_marker_validation_failures_are_reported_without_posting(tmp_path, setup, expected):
@@ -1084,6 +1115,45 @@ def test_bounded_poll_marker_validation_failure_prevents_all_action_execution(tm
     assert_success(result)
     assert "CASE_RESULT=failure" in result.stdout
     assert "Forbidden dispatch action 'push'" in result.stdout
+    assert "BoundedPoll failed closed before action execution" in result.stdout
+    assert MARKER not in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected"),
+    [
+        (
+            '$script:IssueStates[84] = "CLOSED"; $script:IssueMarkers[84] = @((New-TestMarker (New-DispatchLine -Issue "84" -RequestId "req-84")))',
+            "Target issue #84 is not OPEN.",
+        ),
+        (
+            '$script:IssueMarkers[84] = @((New-TestMarker (New-DispatchLine -Issue "84" -RequestId "req-84") -AuthorLogin "outsider"))',
+            "Dispatch marker author 'outsider' is not trusted.",
+        ),
+        (
+            '$script:IssueMarkers[84] = @((New-TestMarker (New-DispatchLine -Issue "84" -RequestId "req-84" -RequestedBy "human")))',
+            "Dispatch marker field 'requested_by' mismatch.",
+        ),
+    ],
+)
+def test_bounded_poll_trust_boundary_rejection_prevents_all_action_execution(tmp_path, setup, expected):
+    result = run_bounded_case(
+        tmp_path,
+        f"""
+        $IssueNumber = 0
+        $IssueNumbers = @(83, 84)
+        $script:IssueMarkers[83] = @((New-TestMarker (New-DispatchLine -Issue "83" -RequestId "req-83")))
+        {setup}
+        function Invoke-MaybeStatusCheck {{
+            throw "bounded poll must not execute when any scoped issue is rejected"
+        }}
+        """,
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert expected in result.stdout
     assert "BoundedPoll failed closed before action execution" in result.stdout
     assert MARKER not in result.stdout
     assert "POST_CALLS=0" in result.stdout

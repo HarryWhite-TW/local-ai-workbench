@@ -47,6 +47,7 @@ $GhCliPortableFallbackPath = Join-Path $env:USERPROFILE "tools\gh-portable\bin\g
 $MaxDryRunIssuesPerRun = 3
 $MaxBoundedPollIssuesPerRun = 3
 $AllowedDispatchActions = @("maybe-status-check", "run-reviewbundle")
+$TrustedDispatchAuthors = @("HarryWhite-TW")
 $ReservedDispatchActions = @("read-final-audit")
 $ForbiddenDispatchActions = @(
     "commit",
@@ -819,6 +820,10 @@ function Get-ValidatedDispatchSelection {
     $readResult = Get-IssueDispatchMarkerReadResult -IssueNumber $IssueNumber
     $markers = @($readResult.Markers)
 
+    if (-not [string]::Equals([string]$readResult.IssueState, "OPEN", [System.StringComparison]::Ordinal)) {
+        throw "Target issue #$IssueNumber is not OPEN."
+    }
+
     if ($markers.Count -eq 0) {
         throw "No current dispatch marker found for issue #$IssueNumber. No CHATGPT-DISPATCH marker comments were found."
     }
@@ -839,6 +844,13 @@ function Get-ValidatedDispatchSelection {
     }
 
     $selected = $currentMarkers[0]
+    $authorLogin = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
+    if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value $authorLogin)) {
+        throw "Dispatch marker author '$authorLogin' is not trusted."
+    }
+
+    Assert-DispatchFieldEquals -Fields $selected.Fields -Name "requested_by" -Expected "chatgpt"
+
     Assert-DispatchMarkerMatchesLocalState `
         -Fields $selected.Fields `
         -ExpectedIssueNumber $IssueNumber `

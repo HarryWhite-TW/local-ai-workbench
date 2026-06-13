@@ -111,10 +111,13 @@ The Dispatcher remains responsible for validating:
 
 - repository identity;
 - explicit target Issue;
+- target Issue is `OPEN` immediately before delegation;
 - exactly one current dispatch marker;
+- target `CHATGPT-DISPATCH` marker comment author is trusted;
 - protocol and action allowlist;
 - branch and HEAD binding;
 - expiry;
+- `requested_by=chatgpt`;
 - request identity;
 - clean-repository requirements for `run-reviewbundle`;
 - result comment publication.
@@ -175,6 +178,22 @@ Each executable request must remain bound to:
 - requested action.
 
 The operator must recheck expiry and local state immediately before delegation.
+
+### Trusted Request Origin
+
+Bridge Operator v0 and the existing Dispatcher path must treat GitHub author
+metadata as the identity source of truth.
+
+- the fixed Bridge Inbox request author must be in the configured trusted
+  GitHub actor allowlist;
+- the target `CHATGPT-DISPATCH` marker comment author must be in the same
+  trusted GitHub actor allowlist;
+- the initial default trusted actor is `HarryWhite-TW`;
+- the dispatch marker field `requested_by` must equal `chatgpt`;
+- the target Issue must be `OPEN` immediately before delegation;
+- a closed Issue, untrusted author, or `requested_by` mismatch fails closed;
+- author display text inside the marker is not identity evidence. GitHub
+  comment metadata is authoritative.
 
 ### Idempotency
 
@@ -241,8 +260,12 @@ The operator must fail closed for:
 - missing or expired GitHub authentication;
 - network loss after bounded retry;
 - malformed or duplicate inbox request;
+- untrusted Bridge Inbox request author;
 - missing target Issue;
+- closed target Issue;
 - missing or duplicate target dispatch marker;
+- untrusted target dispatch marker author;
+- target dispatch marker `requested_by` mismatch;
 - wrong repository, branch, or HEAD;
 - unsupported action;
 - dirty repository where clean state is required;
@@ -339,6 +362,7 @@ Reasons:
 
 - read one fixed Bridge Inbox;
 - parse one explicit request;
+- validate fixed Bridge Inbox request author against the trusted actor allowlist;
 - resolve one target Issue;
 - validate request and local readiness;
 - emit local dry-run evidence;
@@ -347,6 +371,8 @@ Reasons:
 ### Phase B2 — One-Shot Delegation
 
 - process one request and stop;
+- recheck target Issue is open, trusted marker author, and `requested_by=chatgpt`
+  immediately before delegation;
 - invoke existing Dispatcher PollOnce;
 - prove `maybe-status-check` first;
 - then prove `run-reviewbundle`;
@@ -386,6 +412,10 @@ Phase B is considered operational only when all of the following are proven:
 - user can remain in ChatGPT for normal task creation and result review;
 - operator detects one fixed-inbox request without manual PollOnce;
 - one explicit target Issue is processed;
+- Bridge Inbox and target dispatch marker authors are trusted by GitHub comment
+  metadata;
+- closed target Issues fail closed before delegation;
+- `requested_by` mismatch fails closed before delegation;
 - duplicate `request_id` does not rerun;
 - malformed, expired, wrong-HEAD, dirty-repo, auth-loss, and network-loss cases fail closed;
 - `maybe-status-check` succeeds end to end;
@@ -440,4 +470,8 @@ The following changes always require a separate decision:
 - adding any write or approval authority;
 - changing the primary host model;
 - replacing GitHub as the audit surface;
-- replacing ChatGPT as the primary user interface.
+- replacing ChatGPT as the primary user interface;
+- adding another trusted bot, app, or user to the actor allowlist.
+
+Changing the trusted actor allowlist is an authority and trust-boundary change.
+It requires separate explicit approval.
