@@ -6,7 +6,7 @@ Runs one safe local CHATGPT-DISPATCH poll for an explicit GitHub issue.
 local_dispatcher_v1.ps1 implements manual PollOnce only for
 CHATGPT-DISPATCH protocol=lawb.dispatch.v1. It reads only the explicitly
 selected issue, validates exactly one current standalone dispatch marker, and
-executes only the low-risk maybe-status-check action in this slice.
+executes only supported bounded dispatcher actions in this slice.
 
 The dispatcher never treats CHATGPT-DISPATCH as approval for commit, push,
 issue close, labels, PRs, merges, force push, or approval chaining.
@@ -42,10 +42,13 @@ $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $DryRunProtocol = "lawb.dispatch_dry_run.v1"
 $DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
+$GhCliFallbackPath = "C:\Program Files\GitHub CLI\gh.exe"
+$GhCliPortableFallbackPath = Join-Path $env:USERPROFILE "tools\gh-portable\bin\gh.exe"
 $MaxDryRunIssuesPerRun = 3
 $MaxBoundedPollIssuesPerRun = 3
-$AllowedDispatchActions = @("maybe-status-check")
-$ReservedDispatchActions = @("run-reviewbundle", "read-final-audit")
+$AllowedDispatchActions = @("maybe-status-check", "run-reviewbundle")
+$TrustedDispatchAuthors = @("HarryWhite-TW")
+$ReservedDispatchActions = @("read-final-audit")
 $ForbiddenDispatchActions = @(
     "commit",
     "push",
@@ -70,9 +73,9 @@ $DispatchRequiredFields = @(
     "request_id"
 )
 $DispatchKnownFields = @($DispatchRequiredFields + "mode", "expected_state", "reason" | Sort-Object -Unique)
-$PollOnceSafetyBoundary = "PollOnce reads only the explicit issue and supports only maybe-status-check. It does not run Codex, run runner v1, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
+$PollOnceSafetyBoundary = "PollOnce reads only the explicit issue and supports only maybe-status-check or run-reviewbundle. run-reviewbundle delegates once to runner v1 ReviewBundle after a clean-status preflight. It does not run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 $DryRunSafetyBoundary = "DryRunBoundedPoll reads only the explicit issue scope, validates marker selection, prints local decisions, and does not execute dispatch actions, post claim comments, post result comments, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
-$BoundedPollSafetyBoundary = "BoundedPoll reads only the explicit issue scope, supports only maybe-status-check, executes at most one action per accepted dispatch, and does not run Codex, run runner v1, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
+$BoundedPollSafetyBoundary = "BoundedPoll reads only the explicit issue scope, supports only maybe-status-check execution, executes at most one action per accepted dispatch, and does not run Codex, run runner v1, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 
 function Invoke-ReadOnlyCommand {
     param(
@@ -287,11 +290,35 @@ function Assert-RepoRoot {
     }
 }
 
-function Assert-GhAvailable {
+function Resolve-GhPath {
     $command = Get-Command "gh" -ErrorAction SilentlyContinue
-    if ($null -eq $command) {
-        throw "GitHub CLI 'gh' is required to read the selected issue."
+    if ($null -ne $command) {
+        $source = Get-ObjectPropertyText -Object $command -PropertyName "Source"
+        if (-not [string]::IsNullOrWhiteSpace($source)) {
+            return $source
+        }
+
+        $path = Get-ObjectPropertyText -Object $command -PropertyName "Path"
+        if (-not [string]::IsNullOrWhiteSpace($path)) {
+            return $path
+        }
+
+        return $command.Name
     }
+
+    $fallbackPaths = @($GhCliFallbackPath, $GhCliPortableFallbackPath)
+    foreach ($fallbackPath in $fallbackPaths) {
+        if ([string]::IsNullOrWhiteSpace($fallbackPath)) {
+            continue
+        }
+
+        if (Test-Path -LiteralPath $fallbackPath -PathType Leaf) {
+            return $fallbackPath
+        }
+    }
+
+    $fallbackSummary = ($fallbackPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "', '"
+    throw "GitHub CLI 'gh' is required to read the selected issue. Tried PATH command 'gh' and fallback paths '$fallbackSummary'."
 }
 
 function Get-CurrentBranch {
@@ -351,8 +378,8 @@ function New-RunnerResultSummaryJson {
     $validations = [ordered]@{
         dispatch_marker = (New-RunnerValidationResult -Status "reported" -Summary "See dispatcher output for marker validation details.")
         git_status_clean = (New-RunnerValidationResult -Status "reported" -Summary "See dispatcher output for local git status.")
-        pytest = (New-RunnerValidationResult -Status "not_run" -Summary "Dispatcher maybe-status-check did not run pytest.")
-        git_diff_check = (New-RunnerValidationResult -Status "not_run" -Summary "Dispatcher maybe-status-check did not run git diff --check.")
+        pytest = (New-RunnerValidationResult -Status "not_run" -Summary "Dispatcher action '$Action' did not independently run pytest.")
+        git_diff_check = (New-RunnerValidationResult -Status "not_run" -Summary "Dispatcher action '$Action' did not independently run git diff --check.")
     }
     foreach ($key in $ValidationOverrides.Keys) {
         $validations[$key] = $ValidationOverrides[$key]
@@ -654,7 +681,7 @@ function Get-IssueDispatchMarkerReadResult {
         [int]$IssueNumber
     )
 
-    Assert-GhAvailable
+    $ghPath = Resolve-GhPath
 
     $ghArgs = @(
         "issue",
@@ -665,7 +692,7 @@ function Get-IssueDispatchMarkerReadResult {
         "--json",
         "number,title,state,comments"
     )
-    $result = Invoke-ReadOnlyCommand -FilePath "gh" -Arguments $ghArgs -Action "gh issue view"
+    $result = Invoke-ReadOnlyCommand -FilePath $ghPath -Arguments $ghArgs -Action "gh issue view"
     Require-Success -Result $result -Action "gh issue view"
 
     if ([string]::IsNullOrWhiteSpace($result.Stdout)) {
@@ -793,6 +820,10 @@ function Get-ValidatedDispatchSelection {
     $readResult = Get-IssueDispatchMarkerReadResult -IssueNumber $IssueNumber
     $markers = @($readResult.Markers)
 
+    if (-not [string]::Equals([string]$readResult.IssueState, "OPEN", [System.StringComparison]::Ordinal)) {
+        throw "Target issue #$IssueNumber is not OPEN."
+    }
+
     if ($markers.Count -eq 0) {
         throw "No current dispatch marker found for issue #$IssueNumber. No CHATGPT-DISPATCH marker comments were found."
     }
@@ -813,6 +844,13 @@ function Get-ValidatedDispatchSelection {
     }
 
     $selected = $currentMarkers[0]
+    $authorLogin = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
+    if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value $authorLogin)) {
+        throw "Dispatch marker author '$authorLogin' is not trusted."
+    }
+
+    Assert-DispatchFieldEquals -Fields $selected.Fields -Name "requested_by" -Expected "chatgpt"
+
     Assert-DispatchMarkerMatchesLocalState `
         -Fields $selected.Fields `
         -ExpectedIssueNumber $IssueNumber `
@@ -846,6 +884,42 @@ function Invoke-MaybeStatusCheck {
     }
 }
 
+function Invoke-ReviewBundle {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Selection,
+        [Parameter(Mandatory = $true)]
+        [int]$Issue
+    )
+
+    $status = Get-GitStatusShort
+    if (-not [string]::IsNullOrWhiteSpace($status)) {
+        throw "run-reviewbundle requires a clean repo before dispatch. Current git status: $status"
+    }
+
+    $runnerScript = Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1"
+    if (-not (Test-Path -LiteralPath $runnerScript -PathType Leaf)) {
+        throw "Runner v1 script not found at $runnerScript."
+    }
+
+    $runnerResult = Invoke-WriteCommand `
+        -FilePath $runnerScript `
+        -Arguments @("$Issue", "ReviewBundle") `
+        -Action "local_runner_v1.ps1 ReviewBundle"
+
+    $result = if ($runnerResult.ExitCode -eq 0) { "success" } else { "failure" }
+
+    return [pscustomobject]@{
+        Action = "run-reviewbundle"
+        Result = $result
+        Status = $status
+        StatusSummary = "clean"
+        RunnerExitCode = $runnerResult.ExitCode
+        Stdout = $runnerResult.Stdout
+        Stderr = $runnerResult.Stderr
+    }
+}
+
 function Publish-RunnerResultComment {
     param(
         [Parameter(Mandatory = $true)]
@@ -858,7 +932,8 @@ function Publish-RunnerResultComment {
     try {
         $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
         [System.IO.File]::WriteAllText($bodyFile.FullName, $Body, $utf8NoBom)
-        $result = Invoke-WriteCommand -FilePath "gh" -Arguments @("issue", "comment", "$IssueNumber", "--repo", $Repo, "--body-file", $bodyFile.FullName) -Action "gh issue comment"
+        $ghPath = Resolve-GhPath
+        $result = Invoke-WriteCommand -FilePath $ghPath -Arguments @("issue", "comment", "$IssueNumber", "--repo", $Repo, "--body-file", $bodyFile.FullName) -Action "gh issue comment"
         Require-Success -Result $result -Action "gh issue comment"
         return $result
     }
@@ -909,11 +984,24 @@ function Invoke-AcceptedDispatchAction {
     Write-Host "Safety boundary: $SafetyBoundary"
     Write-Host ""
 
-    if (-not [string]::Equals($action, "maybe-status-check", [System.StringComparison]::Ordinal)) {
+    if ([string]::Equals($action, "maybe-status-check", [System.StringComparison]::Ordinal)) {
+        $actionResult = Invoke-MaybeStatusCheck -Selection $selection
+    }
+    elseif ([string]::Equals($action, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+        $actionResult = Invoke-ReviewBundle -Selection $selection -Issue $Issue
+        if (-not [string]::IsNullOrWhiteSpace($actionResult.Stdout)) {
+            Write-Host "Runner v1 stdout:"
+            Write-Host $actionResult.Stdout
+        }
+        if (-not [string]::IsNullOrWhiteSpace($actionResult.Stderr)) {
+            Write-Host "Runner v1 stderr:"
+            Write-Host $actionResult.Stderr
+        }
+    }
+    else {
         throw "Internal dispatcher error: selected unsupported action '$action'."
     }
 
-    $actionResult = Invoke-MaybeStatusCheck -Selection $selection
     Write-Host "Action result: $($actionResult.Result)"
     Write-Host "Git status summary: $($actionResult.StatusSummary)"
     if (-not [string]::IsNullOrWhiteSpace($actionResult.Status)) {
@@ -922,14 +1010,28 @@ function Invoke-AcceptedDispatchAction {
 
     Write-FinalGitStatus
 
+    $gitStatusValidationSummary = if ([string]::Equals($action, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+        "run-reviewbundle pre-dispatch git status was clean."
+    }
+    else {
+        "maybe-status-check observed git status: $($actionResult.StatusSummary)."
+    }
+
     $validationOverrides = @{
         dispatch_marker = (New-RunnerValidationResult -Status "passed" -Summary "Exactly one current CHATGPT-DISPATCH marker matched issue, repo, branch, HEAD, expiry, and allowed action.")
-        git_status_clean = (New-RunnerValidationResult -Status $(if ($actionResult.StatusSummary -eq "clean") { "passed" } else { "warning" }) -Summary "maybe-status-check observed git status: $($actionResult.StatusSummary).")
+        git_status_clean = (New-RunnerValidationResult -Status $(if ($actionResult.StatusSummary -eq "clean") { "passed" } else { "warning" }) -Summary $gitStatusValidationSummary)
     }
+
+    if ([string]::Equals($action, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+        $runnerExitCode = if ($null -eq $actionResult.RunnerExitCode) { "unknown" } else { [string]$actionResult.RunnerExitCode }
+        $runnerValidationStatus = if ([string]::Equals($actionResult.Result, "success", [System.StringComparison]::Ordinal)) { "passed" } else { "failed" }
+        $validationOverrides["runner_v1"] = New-RunnerValidationResult -Status $runnerValidationStatus -Summary "runner v1 invocation attempted; exit code: $runnerExitCode."
+    }
+
     $summaryJson = New-RunnerResultSummaryJson `
         -Issue $Issue `
         -Action $action `
-        -Result "success" `
+        -Result $actionResult.Result `
         -Branch $selection.Branch `
         -Head $selection.Head `
         -SelectedIssue $Issue `
@@ -1086,6 +1188,10 @@ function Invoke-BoundedPoll {
         try {
             $selection = Get-ValidatedDispatchSelection -IssueNumber $issue
             $fields = $selection.Selected.Fields
+
+            if ([string]::Equals([string]$fields["action"], "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+                throw "BoundedPoll does not execute run-reviewbundle. Use PollOnce with one explicit -IssueNumber."
+            }
 
             if (Test-MatchingRunnerResultExists -ReadResult $selection.ReadResult -Fields $fields) {
                 throw "Matching LAWBRUNNER-RESULT already exists for issue #$issue request_id=$($fields["request_id"])."

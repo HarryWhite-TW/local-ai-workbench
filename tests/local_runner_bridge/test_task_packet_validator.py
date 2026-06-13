@@ -31,6 +31,40 @@ result_target:
 stop_condition: stop_after_result_packet
 """
 
+VALID_PACKET_V1_1 = """protocol: lawb.local_runner.task_packet.v1.1
+packet_id: task-138-read-only-validator
+logical_issue: 138
+phase: read_only_validator_implementation_slice_reviewbundle
+action_type: read_only_audit
+risk_level: low
+repository: HarryWhite-TW/local-ai-workbench
+branch: master
+expected_head: 427b63c74f83e87aae0745f4ba28a83d2bf72c4d
+allowed_files:
+  - src/local_runner_bridge/task_packet_validator.py
+forbidden_operations:
+  - commit
+approval:
+  required: false
+payload:
+  kind: none
+result_target:
+  github_issue: 114
+  marker: REVIEWBUNDLE-AUDIT-VISIBLE
+stop_condition: stop_after_result_packet
+task_mode: PATCH_ONLY
+objective: Add Task Packet v1.1 structural validation.
+max_allowed_files: 2
+context_scope:
+  - src/local_runner_bridge/task_packet_validator.py
+  - tests/local_runner_bridge/test_task_packet_validator.py
+repair_attempt_limit: 1
+verification_command_policy: explicit_only
+verification_commands:
+  - python -m pytest tests/local_runner_bridge/test_task_packet_validator.py -q -p no:cacheprovider
+scope_expansion_allowed: false
+"""
+
 
 def surface(packet_text=VALID_PACKET):
     return (
@@ -151,6 +185,93 @@ def test_unknown_top_level_field_returns_blocked():
     assert summary["result"] == "blocked"
     assert "unknown_top_level_fields" in summary["errors"]
     assert summary["unknown_fields"] == ["unexpected_authority"]
+
+
+def test_v1_1_valid_packet_returns_success_summary():
+    summary = validate_task_packet(VALID_PACKET_V1_1)
+
+    assert summary["result"] == "success"
+    assert summary["task_packet_protocol_valid"] is True
+    assert summary["required_fields_present"] is True
+    assert summary["codex_side_action_executed"] is False
+    assert summary["commit_performed"] is False
+    assert summary["push_performed"] is False
+
+
+def test_v1_1_missing_discipline_field_returns_blocked():
+    packet = VALID_PACKET_V1_1.replace("task_mode: PATCH_ONLY\n", "")
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "required_fields_missing" in summary["errors"]
+    assert "task_mode" in summary["missing_fields"]
+
+
+def test_v1_1_invalid_task_mode_returns_blocked():
+    packet = VALID_PACKET_V1_1.replace("task_mode: PATCH_ONLY", "task_mode: RUNNER")
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "invalid_task_mode" in summary["errors"]
+
+
+def test_v1_1_allowed_files_exceeding_max_returns_blocked():
+    packet = VALID_PACKET_V1_1.replace(
+        "max_allowed_files: 2", "max_allowed_files: 1"
+    ).replace(
+        "allowed_files:\n"
+        "  - src/local_runner_bridge/task_packet_validator.py\n",
+        "allowed_files:\n"
+        "  - src/local_runner_bridge/task_packet_validator.py\n"
+        "  - tests/local_runner_bridge/test_task_packet_validator.py\n",
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "allowed_files_exceed_max_allowed_files" in summary["errors"]
+
+
+def test_v1_1_invalid_context_scope_returns_blocked():
+    packet = VALID_PACKET_V1_1.replace(
+        "context_scope:\n"
+        "  - src/local_runner_bridge/task_packet_validator.py\n"
+        "  - tests/local_runner_bridge/test_task_packet_validator.py\n",
+        "context_scope: src/local_runner_bridge/task_packet_validator.py\n",
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "invalid_list_fields" in summary["errors"]
+    assert "context_scope" in summary["invalid_list_fields"]
+    assert "invalid_context_scope" in summary["errors"]
+
+
+def test_v1_1_scope_expansion_allowed_true_returns_blocked():
+    packet = VALID_PACKET_V1_1.replace(
+        "scope_expansion_allowed: false", "scope_expansion_allowed: true"
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "scope_expansion_allowed_must_be_false" in summary["errors"]
+
+
+def test_v1_1_explicit_only_with_empty_verification_commands_returns_blocked():
+    packet = VALID_PACKET_V1_1.replace(
+        "verification_commands:\n"
+        "  - python -m pytest tests/local_runner_bridge/test_task_packet_validator.py -q -p no:cacheprovider\n",
+        "verification_commands: []\n",
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "verification_commands_required" in summary["errors"]
 
 
 def test_unknown_nested_field_does_not_count_as_unknown_top_level_field():

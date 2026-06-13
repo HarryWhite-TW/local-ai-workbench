@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Lv4.5 is the daily operating procedure for the completed minimum loop between ChatGPT, GitHub Issues, and the local manual dispatcher.
+Lv4.5 is the currently implemented and verified foreground, explicit, issue-scoped manual baseline between ChatGPT, GitHub Issues, and the local manual dispatcher.
 
 It is a semi-automated safe bridge:
 
@@ -12,7 +12,7 @@ It is a semi-automated safe bridge:
 - The dispatcher posts `LAWBRUNNER-RESULT` back to the same GitHub Issue when explicitly requested.
 - ChatGPT reads the GitHub result comment and reviews the outcome.
 
-Lv4.5 keeps the repo aligned with the `Local Document Assistant Prototype` showcase as a local-first document workbench. It reduces manual relay, but it does not expand automation authority.
+Lv4.5 keeps the repo aligned with the Local Document-to-Knowledge Workbench showcase as a local-first document workbench. It reduces manual relay, but it does not expand automation authority.
 
 ## What Lv4.5 Is Not
 
@@ -32,7 +32,7 @@ Lv4.5 dispatcher work is foreground, explicit, issue-scoped, and state-bound.
 
 ## Daily Usage Flow
 
-Use this loop for normal Lv4.5 work:
+Use this loop for current Lv4.5 work:
 
 1. User tells ChatGPT the task.
 2. ChatGPT prepares a dispatch marker or gives the user the exact dispatch instruction.
@@ -41,13 +41,15 @@ Use this loop for normal Lv4.5 work:
 5. User tells ChatGPT: `#N has result, please review`.
 6. ChatGPT reads the issue comment and gives a decision or next action.
 
-The user remains the operator. PollOnce is manually invoked each time and stops after one selected issue.
+Today, the user remains the operator. `PollOnce` is manually invoked each time and stops after one selected issue.
+
+After Bridge Operator Phase B becomes operational, manual `PollOnce` becomes the recovery path rather than the target daily experience. Bridge Operator v0 is approved future development-workflow tooling, but it is not yet implemented. Automatic polling, bounded operator loops, tray behavior, and login startup are not currently available.
 
 ## Workflow Level Selection
 
 Use the smallest workflow level that fits the task:
 
-- Lv4.5: one explicit issue, one foreground `PollOnce` run, and one allowed low-risk action. This remains the daily manual bridge when the operator wants maximum locality and no polling loop.
+- Lv4.5: one explicit issue, one foreground `PollOnce` run, and one allowed low-risk action. This is the verified manual baseline today, and it remains the recovery path after Bridge Operator Phase B becomes operational.
 - Lv5-lite: limited trial workflow for proving the marker/result contract around a repeatable operator action without adding broad automation authority.
 - Lv5-safe: bounded foreground polling over an explicit issue or explicit issue list. Use this only for verified bounded modes such as dry-run evaluation or `maybe-status-check` result reporting.
 
@@ -55,17 +57,17 @@ All three levels keep commit, push, close, label, PR, merge, force-push, approva
 
 ## Supported Actions v1
 
-The currently safe Lv4.5 dispatch action is:
+The currently implemented and verified `PollOnce` dispatch actions are:
 
 - `maybe-status-check`: read-only status check used to decide whether action is needed.
+- `run-reviewbundle`: issue-scoped handoff to Runner v1 ReviewBundle after Dispatcher validation and clean-repo preflight.
 
 Reserved / future dispatch action names:
 
-- `run-reviewbundle`
 - `run-reviewbundle-handoff`
 - `read-final-audit`
 
-Reserved actions are not currently active Lv4.5 daily actions. They must fail closed until explicitly implemented and verified.
+Reserved actions are not currently active Lv4.5 `PollOnce` actions unless documented elsewhere as a separately verified path. They must fail closed until explicitly implemented and verified.
 
 Forbidden dispatch actions include commit, push, close, label, PR, merge, force-push, approval consumption, and any action that directly or indirectly performs those operations.
 
@@ -77,7 +79,7 @@ Run PollOnce without posting a GitHub result comment:
 .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N>
 ```
 
-Run PollOnce and post a successful `LAWBRUNNER-RESULT` comment back to the same issue:
+Run PollOnce and post a `LAWBRUNNER-RESULT` comment back to the same issue. This is also the manual recovery command after Bridge Operator Phase B becomes operational:
 
 ```powershell
 .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
@@ -387,7 +389,7 @@ Do not treat Lv4.5 or Lv5-safe BoundedPoll as permission to add:
 
 Lv4.5 is complete when the manual dispatch bridge can safely carry one bounded request, one bounded local action, and one structured result back to the same issue for review.
 
-Background watcher and always-on polling remain unimplemented because the verified need is bounded foreground review, not unattended automation. Adding a watcher would introduce lifecycle, retry, stop, scheduling, and approval-boundary questions that require separate explicit design approval.
+Background watcher and always-on polling remain unimplemented in Lv4.5. Bridge Operator Phase B is now the approved future direction for bounded automatic detection, but it is not implemented or operational here; polling scope, bounded loop behavior, and login startup still require their separately approved implementation phases.
 
 ## Runner Capability
 

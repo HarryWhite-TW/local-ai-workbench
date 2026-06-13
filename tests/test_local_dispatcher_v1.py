@@ -49,19 +49,28 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $script:GitStatus = ""
             $script:Markers = @()
             $script:IssueMarkers = @{{}}
+            $script:IssueStates = @{{}}
             $script:PostCalls = 0
             $script:PostedIssue = 0
             $script:PostedBody = ""
             $script:ForbiddenCalls = @()
+            $script:RunnerCalls = 0
+            $script:RunnerFilePath = ""
+            $script:RunnerArguments = @()
+            $script:RunnerStdout = "runner v1 review bundle ok"
+            $script:RunnerStderr = ""
+            $script:RunnerExitCode = 0
+            Set-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1") -Value "# runner stub" -Encoding UTF8
 
             function New-TestComment {{
                 param(
                     [Parameter(Mandatory = $true)][string]$Body,
-                    [string]$Id = "comment-1"
+                    [string]$Id = "comment-1",
+                    [string]$AuthorLogin = "HarryWhite-TW"
                 )
                 return [pscustomobject]@{{
                     id = $Id
-                    author = [pscustomobject]@{{ login = "tester" }}
+                    author = [pscustomobject]@{{ login = $AuthorLogin }}
                     createdAt = "2026-05-18T00:00:00Z"
                     body = $Body
                 }}
@@ -71,14 +80,15 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                 param(
                     [Parameter(Mandatory = $true)][string]$Line,
                     [string]$Body = $null,
-                    [string]$Id = "comment-1"
+                    [string]$Id = "comment-1",
+                    [string]$AuthorLogin = "HarryWhite-TW"
                 )
                 if ([string]::IsNullOrEmpty($Body)) {{
                     $Body = $Line
                 }}
                 return [pscustomobject]@{{
                     Line = $Line
-                    Comment = (New-TestComment -Body $Body -Id $Id)
+                    Comment = (New-TestComment -Body $Body -Id $Id -AuthorLogin $AuthorLogin)
                     CommentIndex = 1
                     LineNumber = 1
                 }}
@@ -104,7 +114,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             }}
 
             function Assert-RepoRoot {{}}
-            function Assert-GhAvailable {{}}
+            function Resolve-GhPath {{ return "gh" }}
             function Get-CurrentBranch {{ return $script:Branch }}
             function Get-CurrentFullHead {{ return $script:Head }}
             function Get-GitStatusShort {{ return $script:GitStatus }}
@@ -123,11 +133,15 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                 if ($script:IssueMarkers.ContainsKey($requestedIssue)) {{
                     $sourceMarkers = @($script:IssueMarkers[$requestedIssue])
                 }}
+                $issueState = "OPEN"
+                if ($script:IssueStates.ContainsKey($requestedIssue)) {{
+                    $issueState = [string]$script:IssueStates[$requestedIssue]
+                }}
                 $comments = @($sourceMarkers | ForEach-Object {{ $_.Comment }})
                 $payload = [pscustomobject]@{{
                     number = $requestedIssue
                     title = "Issue $requestedIssue"
-                    state = "OPEN"
+                    state = $issueState
                     comments = @($comments)
                 }} | ConvertTo-Json -Depth 8
                 return [pscustomobject]@{{
@@ -142,6 +156,17 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                 $script:PostedIssue = $IssueNumber
                 $script:PostedBody = $Body
                 return [pscustomobject]@{{ ExitCode = 0; Stdout = "posted"; Stderr = "" }}
+            }}
+            function Invoke-WriteCommand {{
+                param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+                $script:RunnerCalls += 1
+                $script:RunnerFilePath = $FilePath
+                $script:RunnerArguments = @($Arguments)
+                return [pscustomobject]@{{
+                    ExitCode = $script:RunnerExitCode
+                    Stdout = $script:RunnerStdout
+                    Stderr = $script:RunnerStderr
+                }}
             }}
             function git {{ $script:ForbiddenCalls += "git" }}
             function gh {{ $script:ForbiddenCalls += "gh" }}
@@ -238,6 +263,9 @@ def run_case(tmp_path: Path, setup: str, post: bool = False) -> subprocess.Compl
         }}
         Write-Host "POST_CALLS=$script:PostCalls"
         Write-Host "POSTED_ISSUE=$script:PostedIssue"
+        Write-Host "RUNNER_CALLS=$script:RunnerCalls"
+        Write-Host "RUNNER_FILE=$script:RunnerFilePath"
+        Write-Host "RUNNER_ARGS=$($script:RunnerArguments -join '|')"
         if (-not [string]::IsNullOrEmpty($script:PostedBody)) {{
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($script:PostedBody)
             Write-Host "POSTED_BODY_BASE64=$([System.BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant())"
@@ -319,6 +347,72 @@ def test_valid_maybe_status_check_succeeds_without_posting_by_default(tmp_path):
     assert summary["issue"] == 83
     assert summary["selected_issue"] == 83
     assert summary["result"] == "success"
+    assert "RUNNER_CALLS=0" in result.stdout
+
+
+def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
+    result = run_case(
+        tmp_path,
+        '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-rb-83")))',
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "RUNNER_CALLS=1" in result.stdout
+    assert "RUNNER_ARGS=83|ReviewBundle" in result.stdout
+    assert "RUNNER_ARGS=-IssueNumber|83|-Mode|ReviewBundle" not in result.stdout
+    assert "local_runner_v1.ps1" in result.stdout
+    assert "runner v1 review bundle ok" in result.stdout
+
+    summary = extract_summary(result.stdout)
+    assert summary["action"] == "run-reviewbundle"
+    assert summary["issue"] == 83
+    assert summary["selected_issue"] == 83
+    assert summary["request_id"] == "req-rb-83"
+    assert summary["result"] == "success"
+    assert summary["validations"]["git_status_clean"]["status"] == "passed"
+    assert summary["safety"]["no_commit"] is True
+
+
+def test_run_reviewbundle_runner_failure_posts_dispatcher_failure_result(tmp_path):
+    result = run_case(
+        tmp_path,
+        '$script:RunnerExitCode = 1; $script:RunnerStdout = "runner bundle posted"; $script:RunnerStderr = "runner failed"; $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-rb-fail-83")))',
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "Action result: failure" in result.stdout
+    assert "RUNNER_CALLS=1" in result.stdout
+    assert "POST_CALLS=1" in result.stdout
+
+    summary = extract_summary(result.stdout)
+    assert summary["action"] == "run-reviewbundle"
+    assert summary["result"] == "failure"
+    assert summary["request_id"] == "req-rb-fail-83"
+    assert summary["validations"]["git_status_clean"]["status"] == "passed"
+    assert summary["validations"]["runner_v1"]["status"] == "failed"
+    assert "exit code: 1" in summary["validations"]["runner_v1"]["summary"]
+    assert summary["safety"]["no_commit"] is True
+    assert summary["safety"]["no_push"] is True
+    assert summary["safety"]["no_issue_close"] is True
+
+    posted_body = extract_posted_body(result.stdout)
+    posted_summary = extract_summary_after(posted_body, MARKER)
+    assert posted_summary["result"] == "failure"
+    assert posted_summary["request_id"] == "req-rb-fail-83"
+
+
+def test_run_reviewbundle_fails_closed_when_repo_is_dirty_before_runner(tmp_path):
+    result = run_case(
+        tmp_path,
+        '$script:GitStatus = " M docs/RUNNER_V2.md"; $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle")))',
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "run-reviewbundle requires a clean repo before dispatch" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
 
 
 def test_valid_maybe_status_check_with_post_result_comment_posts_exactly_one_parseable_result(tmp_path):
@@ -402,8 +496,143 @@ def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_pat
     assert posted_body.startswith(MARKER + "\n")
     posted_summary = json.loads(posted_body.split("\n", 1)[1])
     assert posted_summary["validations"]["git_diff_check"]["summary"] == (
-        "Dispatcher maybe-status-check did not run git diff --check."
+        "Dispatcher action 'maybe-status-check' did not independently run git diff --check."
     )
+
+
+def test_resolve_gh_path_prefers_path_command_before_fallback(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return [pscustomobject]@{ Source = "C:\Tools\gh.exe" }
+        }
+
+        Write-Host "GH_PATH=$(Resolve-GhPath)"
+        """,
+    )
+    assert_success(result)
+    assert r"GH_PATH=C:\Tools\gh.exe" in result.stdout
+
+
+def test_resolve_gh_path_uses_fallback_when_path_command_missing(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+
+        Write-Host "GH_PATH=$(Resolve-GhPath)"
+        """,
+    )
+    assert_success(result)
+    assert f"GH_PATH={tmp_path / 'fallback-gh.exe'}" in result.stdout
+
+
+
+def test_resolve_gh_path_uses_portable_fallback_when_path_and_program_files_missing(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-program-files-gh.exe"
+        $GhCliPortableFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "portable-gh.exe"
+        New-Item -ItemType File -Path $GhCliPortableFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+
+        Write-Host "GH_PATH=$(Resolve-GhPath)"
+        """,
+    )
+    assert_success(result)
+    assert f"GH_PATH={tmp_path / 'portable-gh.exe'}" in result.stdout
+
+def test_resolve_gh_path_fails_closed_when_missing_from_path_and_fallback(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-gh.exe"
+        $GhCliPortableFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-portable-gh.exe"
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+
+        try {
+            $null = Resolve-GhPath
+            Write-Host "CASE_RESULT=success"
+        } catch {
+            Write-Host "CASE_RESULT=failure"
+            Write-Host "CASE_ERROR=$($_.Exception.Message)"
+        }
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Tried PATH command 'gh'" in result.stdout
+    assert "missing-gh.exe" in result.stdout
+
+
+def test_issue_read_uses_resolved_fallback_gh_path(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+        function Invoke-ReadOnlyCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            $script:CapturedFilePath = $FilePath
+            $payload = [pscustomobject]@{
+                number = 83
+                title = "Issue 83"
+                state = "OPEN"
+                comments = @()
+            } | ConvertTo-Json -Depth 8
+            return [pscustomobject]@{ ExitCode = 0; Stdout = $payload; Stderr = "" }
+        }
+
+        $null = Get-IssueDispatchMarkerReadResult -IssueNumber 83
+        Write-Host "CAPTURED_FILE_PATH=$script:CapturedFilePath"
+        """,
+    )
+    assert_success(result)
+    assert f"CAPTURED_FILE_PATH={tmp_path / 'fallback-gh.exe'}" in result.stdout
+
+
+def test_publish_runner_result_comment_uses_resolved_fallback_gh_path(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [object]$ErrorAction)
+            return $null
+        }
+        function Invoke-WriteCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            $script:CapturedFilePath = $FilePath
+            return [pscustomobject]@{ ExitCode = 0; Stdout = "posted"; Stderr = "" }
+        }
+
+        $null = Publish-RunnerResultComment -IssueNumber 83 -Body "result"
+        Write-Host "CAPTURED_FILE_PATH=$script:CapturedFilePath"
+        """,
+    )
+    assert_success(result)
+    assert f"CAPTURED_FILE_PATH={tmp_path / 'fallback-gh.exe'}" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -439,10 +668,6 @@ def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_pat
             "Unsupported dispatch action",
         ),
         (
-            '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle")))',
-            "Reserved dispatch action",
-        ),
-        (
             '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "read-final-audit")))',
             "Reserved dispatch action",
         ),
@@ -461,6 +686,18 @@ def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_pat
         (
             '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "push-approved-once")))',
             "Forbidden dispatch action",
+        ),
+        (
+            '$script:IssueStates[83] = "CLOSED"; $script:Markers = @((New-TestMarker (New-DispatchLine)))',
+            "Target issue #83 is not OPEN.",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine) -AuthorLogin "outsider"))',
+            "Dispatch marker author 'outsider' is not trusted.",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -RequestedBy "human")))',
+            "Dispatch marker field 'requested_by' mismatch.",
         ),
     ],
 )
@@ -597,6 +834,27 @@ def test_dry_run_single_issue_reports_would_happen_without_action_or_post(tmp_pa
     assert summary["safety"]["no_result_comment"] is True
 
 
+def test_dry_run_accepts_run_reviewbundle_without_delegating_to_runner(tmp_path):
+    result = run_dry_case(
+        tmp_path,
+        """
+        $IssueNumber = 83
+        $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-rb-83")))
+        function Invoke-ReviewBundle {
+            throw "dry-run must not execute runner v1 ReviewBundle"
+        }
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+    summary = extract_summary_after(result.stdout, DRY_RUN_MARKER)
+    assert summary["result"] == "success"
+    assert summary["decisions"][0]["action"] == "run-reviewbundle"
+    assert summary["decisions"][0]["request_id"] == "req-rb-83"
+    assert summary["decisions"][0]["would_execute_dispatch_action"] is False
+
+
 def test_dry_run_bounded_issue_list_accepts_up_to_three_explicit_issues(tmp_path):
     result = run_dry_case(
         tmp_path,
@@ -685,6 +943,18 @@ def test_dry_run_reports_rejected_issue_and_fails_closed_without_posting(tmp_pat
         (
             '$script:Markers = @((New-TestMarker "CHATGPT-DISPATCH protocol=lawb.dispatch.v1 action=maybe-status-check issue=83 repo=HarryWhite-TW/local-ai-workbench branch=master head=1111111111111111111111111111111111111111 expires=20990101T000000Z requested_by=chatgpt"))',
             "Missing required dispatch marker field 'request_id'",
+        ),
+        (
+            '$script:IssueStates[83] = "CLOSED"; $script:Markers = @((New-TestMarker (New-DispatchLine)))',
+            "Target issue #83 is not OPEN.",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine) -AuthorLogin "outsider"))',
+            "Dispatch marker author 'outsider' is not trusted.",
+        ),
+        (
+            '$script:Markers = @((New-TestMarker (New-DispatchLine -RequestedBy "outsider")))',
+            "Dispatch marker field 'requested_by' mismatch.",
         ),
     ],
 )
@@ -850,6 +1120,45 @@ def test_bounded_poll_marker_validation_failure_prevents_all_action_execution(tm
     assert "POST_CALLS=0" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("setup", "expected"),
+    [
+        (
+            '$script:IssueStates[84] = "CLOSED"; $script:IssueMarkers[84] = @((New-TestMarker (New-DispatchLine -Issue "84" -RequestId "req-84")))',
+            "Target issue #84 is not OPEN.",
+        ),
+        (
+            '$script:IssueMarkers[84] = @((New-TestMarker (New-DispatchLine -Issue "84" -RequestId "req-84") -AuthorLogin "outsider"))',
+            "Dispatch marker author 'outsider' is not trusted.",
+        ),
+        (
+            '$script:IssueMarkers[84] = @((New-TestMarker (New-DispatchLine -Issue "84" -RequestId "req-84" -RequestedBy "human")))',
+            "Dispatch marker field 'requested_by' mismatch.",
+        ),
+    ],
+)
+def test_bounded_poll_trust_boundary_rejection_prevents_all_action_execution(tmp_path, setup, expected):
+    result = run_bounded_case(
+        tmp_path,
+        f"""
+        $IssueNumber = 0
+        $IssueNumbers = @(83, 84)
+        $script:IssueMarkers[83] = @((New-TestMarker (New-DispatchLine -Issue "83" -RequestId "req-83")))
+        {setup}
+        function Invoke-MaybeStatusCheck {{
+            throw "bounded poll must not execute when any scoped issue is rejected"
+        }}
+        """,
+        post=True,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert expected in result.stdout
+    assert "BoundedPoll failed closed before action execution" in result.stdout
+    assert MARKER not in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+
+
 def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):
     result = subprocess.run(
         [
@@ -869,4 +1178,5 @@ def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):
         timeout=30,
     )
     assert result.returncode != 0
-    assert "Missing mode" in (result.stdout + result.stderr)
+    compact_output = "".join((result.stdout + result.stderr).split())
+    assert "Missingmode" in compact_output

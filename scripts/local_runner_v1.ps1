@@ -266,6 +266,176 @@ function Format-CommandLineForDisplay {
     return $displayParts -join " "
 }
 
+function Get-CommandCandidatePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Command
+    )
+
+    foreach ($propertyName in @("Source", "Path", "Definition")) {
+        $property = $Command.PSObject.Properties[$propertyName]
+        if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            return [string]$property.Value
+        }
+    }
+
+    return ""
+}
+
+function Resolve-CodexCommand {
+    param(
+        [object[]]$Commands = $null
+    )
+
+    if ($null -eq $Commands) {
+        $Commands = @(Get-Command codex -All -ErrorAction SilentlyContinue)
+    }
+
+    if (@($Commands).Count -eq 0) {
+        throw "codex command was not found on PATH for this PowerShell session."
+    }
+
+    $candidates = @()
+    foreach ($command in @($Commands)) {
+        $path = Get-CommandCandidatePath -Command $command
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $commandType = ""
+        $commandTypeProperty = $command.PSObject.Properties["CommandType"]
+        if ($null -ne $commandTypeProperty) {
+            $commandType = [string]$commandTypeProperty.Value
+        }
+
+        $candidates += [pscustomobject]@{
+            Command = $command
+            Source = $path
+            Extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+            CommandType = $commandType
+        }
+    }
+
+    if ($candidates.Count -eq 0) {
+        throw "codex command was found, but no launchable path could be resolved."
+    }
+
+    $selected = @($candidates | Where-Object { $_.Extension -eq ".exe" } | Select-Object -First 1)
+    if ($selected.Count -eq 0) {
+        $selected = @($candidates | Where-Object { $_.Extension -eq ".cmd" } | Select-Object -First 1)
+    }
+    if ($selected.Count -eq 0) {
+        $selected = @($candidates | Where-Object { $_.Extension -eq ".bat" } | Select-Object -First 1)
+    }
+    if ($selected.Count -eq 0) {
+        $selected = @($candidates | Where-Object {
+            $_.CommandType -eq "Application" -and $_.Extension -ne ".ps1"
+        } | Select-Object -First 1)
+    }
+    if ($selected.Count -eq 0) {
+        $selected = @($candidates | Where-Object { $_.Extension -ne ".ps1" } | Select-Object -First 1)
+    }
+
+    if ($selected.Count -eq 0) {
+        throw "codex command was found, but only PowerShell script wrappers were available. Refusing to directly launch codex.ps1; ensure codex.cmd or codex.exe is available on PATH."
+    }
+
+    return [pscustomobject]@{
+        Source = [string]$selected[0].Source
+        Command = $selected[0].Command
+        Reason = "resolved by local-runner-v1 launcher preference"
+    }
+}
+
+function Get-GitHubCliCandidatePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Command
+    )
+
+    foreach ($propertyName in @("Source", "Path", "Definition")) {
+        $property = $Command.PSObject.Properties[$propertyName]
+        if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            return [string]$property.Value
+        }
+    }
+
+    return ""
+}
+
+function Resolve-GitHubCliCommand {
+    param(
+        [object[]]$Commands = $null,
+        [string[]]$ExtraCandidatePaths = $null,
+        [string]$DefaultPath = "C:\Program Files\GitHub CLI\gh.exe",
+        [string]$PortablePath = ""
+    )
+
+    $candidatePaths = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($DefaultPath) -and (Test-Path -LiteralPath $DefaultPath)) {
+        $candidatePaths += $DefaultPath
+    }
+
+    if ($null -eq $Commands) {
+        $Commands = @(Get-Command gh -All -ErrorAction SilentlyContinue)
+    }
+
+    foreach ($command in @($Commands)) {
+        $path = Get-GitHubCliCandidatePath -Command $command
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $candidatePaths += $path
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PortablePath)) {
+        $PortablePath = Join-Path $env:USERPROFILE "tools\gh-portable\bin\gh.exe"
+    }
+
+    $candidatePaths += $PortablePath
+
+    if ($null -ne $ExtraCandidatePaths) {
+        $candidatePaths += $ExtraCandidatePaths
+    }
+
+    $normalized = @()
+    foreach ($path in $candidatePaths) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+        if ($extension -eq ".ps1") {
+            continue
+        }
+
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+
+        $normalized += [pscustomobject]@{
+            Source = $path
+            Extension = $extension
+        }
+    }
+
+    if (@($normalized).Count -eq 0) {
+        throw "GitHub CLI was not found. Checked fixed Program Files path, PATH candidates, and portable user tools path."
+    }
+
+    $selected = @($normalized | Where-Object { $_.Extension -eq ".exe" } | Select-Object -First 1)
+    if ($selected.Count -eq 0) {
+        $selected = @($normalized | Where-Object { $_.Extension -eq ".cmd" } | Select-Object -First 1)
+    }
+    if ($selected.Count -eq 0) {
+        $selected = @($normalized | Select-Object -First 1)
+    }
+
+    return [string]$selected[0].Source
+}
+
 function ConvertTo-NativeArgumentString {
     param(
         [Parameter(Mandatory = $true)]
@@ -1413,9 +1583,7 @@ if ($Mode -eq "ApprovalStateDiagnostic") {
     exit 0
 }
 
-if (-not (Test-Path -LiteralPath $Gh)) {
-    throw "GitHub CLI was not found at expected path: $Gh"
-}
+$Gh = Resolve-GitHubCliCommand
 
 if ($Mode -eq "CommitApproved") {
     try {
@@ -1555,10 +1723,7 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
     exit 3
 }
 
-if ($null -eq (Get-Command codex -ErrorAction SilentlyContinue)) {
-    throw "codex command was not found on PATH for this PowerShell session."
-}
-$codexCommand = Get-Command codex -ErrorAction Stop
+$codexCommand = Resolve-CodexCommand
 
 $issueBodyForPrompt = Truncate-Text -Text $issueBody -MaxChars $MaxIssueBodyChars -Label "issue body"
 

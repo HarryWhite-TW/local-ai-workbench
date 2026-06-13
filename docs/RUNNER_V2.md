@@ -157,13 +157,24 @@ Use:
 
 `-IssueNumber <N>` is mandatory. PollOnce reads only that selected issue by default; it does not scan open issues broadly and it does not run as a watcher, daemon, scheduler, or background loop.
 
-For this slice, the only implemented dispatch action is:
+For this slice, the implemented dispatch actions are:
 
 ```text
 maybe-status-check
+run-reviewbundle
 ```
 
-`run-reviewbundle` and `read-final-audit` remain reserved in this slice and fail closed. Commit, push, close, commit-approval, push-approval, and close-approval action names are explicitly forbidden as dispatch actions.
+`maybe-status-check` is read-only and reports local git status.
+
+`run-reviewbundle` delegates once to runner v1 ReviewBundle for the same explicit issue:
+
+```powershell
+.\scripts\local_runner_v1.ps1 -IssueNumber <N> -Mode ReviewBundle
+```
+
+Before delegating, the dispatcher requires the local repo to be clean. A dirty repo is a fail-closed stop condition for `run-reviewbundle`.
+
+`read-final-audit` remains reserved in this slice and fails closed. Commit, push, close, commit-approval, push-approval, and close-approval action names are explicitly forbidden as dispatch actions.
 
 PollOnce requires exactly one current standalone GitHub issue comment whose body is the `CHATGPT-DISPATCH` marker line. It fails closed when there are zero marker comments, duplicate current marker comments, malformed marker fields, expired markers, repo mismatch, issue mismatch, branch mismatch, HEAD mismatch, reserved actions, unsupported actions, or forbidden commit / push / close actions.
 
@@ -173,7 +184,7 @@ PollOnce emits a stdout result block after a successful allowed action:
 LAWBRUNNER-RESULT protocol=lawb.runner_result.v1
 ```
 
-The JSON object immediately after that line uses the same runner result summary v1 shape documented above. `maybe-status-check` is read-only and reports local git status in the validation summary; a dirty working tree is reported as a warning, not modified.
+The JSON object immediately after that line uses the same runner result summary v1 shape documented above. `maybe-status-check` is read-only and reports local git status in the validation summary; a dirty working tree is reported as a warning, not modified. `run-reviewbundle` reports the dispatcher handoff result while runner v1 remains the execution boundary for Codex ReviewBundle work.
 
 Posting the result back to GitHub is explicit opt-in:
 
@@ -189,8 +200,7 @@ Safety boundaries:
 
 - no background watcher
 - no broad issue scan by default
-- no Codex auto-run
-- no runner v1 ReviewBundle handoff in this slice
+- no Codex auto-run except through the explicit `run-reviewbundle` handoff to runner v1 ReviewBundle
 - no staging
 - no commit
 - no push

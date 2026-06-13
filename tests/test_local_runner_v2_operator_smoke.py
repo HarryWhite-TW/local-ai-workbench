@@ -49,6 +49,7 @@ def _status_paths() -> list[str]:
 
 def _materialize_example_queue(tmp_path: Path) -> Path:
     queue = json.loads(EXAMPLE_QUEUE.read_text(encoding="utf-8"))
+    queue["branch"] = _git("branch", "--show-current")
     queue["head"] = _git("rev-parse", "HEAD")
     dirty_files = _status_paths()
     if dirty_files:
