@@ -7,7 +7,7 @@ review-bundle-only mode and leave an unstaged documentation diff for ChatGPT
 review.
 
 This is not new product scope, not a feature milestone, and not a change to the
-Local Document Assistant Prototype behavior.
+Local Document-to-Knowledge Workbench product behavior.
 
 ## Scope
 
@@ -23,4 +23,3 @@ The intended final state is one unstaged change:
 ```text
 docs/RUNNER_V1_CODEX_CLI_SMOKE.md
 ```
-
