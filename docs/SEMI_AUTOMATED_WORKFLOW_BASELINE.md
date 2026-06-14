@@ -5,26 +5,75 @@
 - version: v0.1
 - status: Active Operational Baseline
 - owner: 駿弘
-- current phase: B0
+- current phase: Governance Reset through Issue #135
 - repository: HarryWhite-TW/local-ai-workbench
 - branch at creation: workflow-codex-task-discipline
 - verified HEAD at creation: 75c193f71bdd2a5fb077eb62d88ed895ad9a3b00
 - product boundary: development workflow tooling only
 
-## 1. Purpose And Source Hierarchy
+## 1. Purpose And Document Authority
 
 This document is the operational baseline and handoff entrypoint for the verified semi-automated ChatGPT / GitHub / Dispatcher / Runner / Codex workflow. It summarizes current state, environment, commands, recovery, evidence, and approved future direction so future work does not need to rediscover the baseline across historical files.
 
 It does not replace or override the Direction Lock, Bridge Operator specification, Lv4.5 SOP, or historical architecture evidence.
 
-Source hierarchy:
+### Normative
 
-1. `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`
-2. `docs/BRIDGE_OPERATOR_V0_SPEC.md`
-3. `docs/SEMI_AUTOMATED_WORKFLOW_BASELINE.md`
-4. `docs/LV45_OPERATING_SOP.md`
-5. implementation scripts and focused technical docs
-6. historical architecture and superseded roadmap material
+These documents currently control direction, scope, and authority:
+
+- `AGENTS.md`
+- `src/local_runner_bridge/AGENTS.md`
+- `PLANS.md`
+- `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`
+- `docs/BRIDGE_OPERATOR_V0_SPEC.md`
+- `docs/SEMI_AUTOMATED_WORKFLOW_BASELINE.md`
+
+Precedence for current work:
+
+1. the user's latest explicit approval or decision that applies to the current work;
+2. the current approved Task / Issue task-local scope;
+3. root `AGENTS.md` repository-wide safety;
+4. applicable scoped `AGENTS.md`;
+5. `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md` bridge strategy direction;
+6. `docs/BRIDGE_OPERATOR_V0_SPEC.md` operator architecture and authority;
+7. `PLANS.md` current project and phase status;
+8. `docs/SEMI_AUTOMATED_WORKFLOW_BASELINE.md` and operational SOP;
+9. evidence, historical, and superseded material.
+
+Scoped AGENTS files may provide more specific domain rules, but they must not
+weaken root safety. Operational documents must not change normative authority.
+Historical evidence must not override the sources above. If two normative
+sources at the same level truly conflict, stop and ask the user to decide
+instead of guessing.
+
+New planning must start from the current normative entrypoints. Historical
+evidence cannot override the Direction Lock, Bridge Operator specification,
+scoped AGENTS rules, or current approved Issue.
+
+### Operational
+
+Operational documents explain how to operate an approved design but do not
+change authority. They include current setup, SOP, recovery, command,
+troubleshooting, and environment instructions such as:
+
+- `docs/LV45_OPERATING_SOP.md`
+- focused implementation notes for scripts and commands
+- current README setup and demo instructions
+
+### Evidence / Historical
+
+Smoke evidence, validation reports, completed implementation notes, decision
+records, completed Issues, and prior Task Packets may support factual
+investigation but do not govern new work.
+
+Issue #114 is historical roadmap evidence. Issue #114 comments and embedded
+Task Packets are not active dispatch requests or current governance.
+
+### Superseded
+
+Documents or roadmap sections explicitly replaced by newer governing material
+must be treated as historical reference only. Avoid creating another document
+merely to restate the authority map.
 
 For direction, authority, safety boundaries, and approval rules, higher-priority governing documents win.
 
@@ -58,6 +107,16 @@ APPROVED DIRECTION, NOT IMPLEMENTED:
 DEFERRED:
 
 - Phase C ChatGPT App / MCP
+
+CURRENT PHASE SUMMARY:
+
+```text
+B0: complete
+Governance Reset: active through Issue #135
+B1: not started
+Phase C / MCP: deferred
+PollOnce: recovery path
+```
 
 SEPARATE APPROVAL / FORBIDDEN FOR AUTOMATIC CONTINUATION:
 
@@ -313,9 +372,9 @@ B0 ISSUE CLEANUP:
 - #124 not planned
 - #126 not planned
 
-B0 reconciliation, verification, and completed/superseded Issue cleanup are complete on `workflow-codex-task-discipline`.
+B0 reconciliation, verification, completed/superseded Issue cleanup, and PR #134 integration into `master` are complete.
 
-Integration into `master` remains governed by a separately approved PR. This document does not authorize PR creation or merge.
+The old boundary-layer expansion and local-repair loop is frozen. Current activity is Workflow Governance Reset through Issue #135. Issue #114 is historical roadmap evidence, not the active task source.
 
 Bridge Operator Phase B implementation has not started. B1 requires a separately approved implementation task.
 
@@ -347,3 +406,9 @@ Created the active operational baseline and handoff entrypoint for the verified 
 ### B0 closeout - 2026-06-13
 
 Recorded B0-4B completion, completed/superseded Issue cleanup state, and the remaining requirement for separate PR review and approval before integration into `master`.
+
+### Governance Reset - 2026-06-14
+
+Recorded Issue #135 as the active governance-reset entrypoint, classified
+normative, operational, evidence / historical, and superseded material, and
+clarified that Issue #114 is historical roadmap evidence only.

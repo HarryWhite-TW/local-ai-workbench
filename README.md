@@ -31,8 +31,15 @@ Current baseline:
 - Obsidian-ready Markdown Export MVP completed through #211
 - export destination intelligence completed through #216
 - current roadmap recorded at #212 and refreshed after #216
+- B0 ChatGPT-Codex bridge workflow discipline integrated into `master` through PR #134
+- PR #134 exact-head and post-merge verification completed with `424 passed`
+- Governance Reset is tracked in Issue #135; repository-wide and bridge-specific governance are being separated
+- the next product-facing focus after Governance Reset is visible product, demo, onboarding, and portfolio value
+- Bridge Operator B1 remains not implemented and separately approval-gated
 
 The #197 decision is important: **stop adding safety/writeback boundary layers**. Bridge Operator v0 is an approved development-workflow trigger/usability integration, not another product writeback boundary, and it does not expand high-risk authority. Future work should return to visible project value such as README polish, demo documentation, architecture maps, onboarding notes, or test cleanup.
+
+Detailed governance belongs in the Direction Lock, Bridge Operator specification, scoped AGENTS files, PLANS, and the semi-automated workflow operational baseline. Bridge Operator Phase B remains approved but is not implemented by the Governance Reset.
 
 ## Product Runtime
 
