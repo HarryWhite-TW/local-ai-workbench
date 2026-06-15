@@ -1,15 +1,19 @@
 import sys
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
+import local_runner_bridge.bridge_operator_b1 as b1
 from local_runner_bridge.bridge_operator_b1 import (
     CommentRecord,
     GitHubApiClient,
     IssueRecord,
     LocalReadiness,
+    _github_get_json_with_gh,
+    _run_command,
     parse_bridge_inbox_request,
     parse_chatgpt_dispatch_marker,
     run_bridge_operator_b1_dry_run,
@@ -558,3 +562,70 @@ def test_github_client_comments_read_with_per_page_injects_get_without_write_end
     assert "PATCH" not in args
     assert "DELETE" not in args
     assert not any(arg.endswith("/comments/1") for arg in args)
+
+
+def test_run_command_uses_explicit_utf8_replacement_decoding(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(b1.subprocess, "run", fake_run)
+
+    result = _run_command(["git", "status", "--porcelain"], cwd=ROOT_PATH)
+
+    assert result.returncode == 0
+    assert calls == [
+        (
+            ["git", "status", "--porcelain"],
+            {
+                "cwd": ROOT_PATH,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "capture_output": True,
+                "check": False,
+                "timeout": 20,
+            },
+        )
+    ]
+
+
+def test_github_get_json_with_gh_uses_explicit_utf8_replacement_decoding(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout='{"ok": true}', stderr="")
+
+    monkeypatch.setattr(b1, "_resolve_gh_path", lambda: "gh.exe")
+    monkeypatch.setattr(b1.subprocess, "run", fake_run)
+
+    payload = _github_get_json_with_gh(["repos/example/repo/issues/1"], "token", False)
+
+    assert payload == {"ok": True}
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command == ["gh.exe", "api", "repos/example/repo/issues/1"]
+    assert kwargs["text"] is True
+    assert kwargs["encoding"] == "utf-8"
+    assert kwargs["errors"] == "replace"
+    assert kwargs["capture_output"] is True
+    assert kwargs["check"] is False
+    assert kwargs["timeout"] == 30
+    assert kwargs["env"]["GH_TOKEN"] == "token"
+
+
+def test_run_command_decodes_utf8_output_not_representable_in_cp950():
+    result = _run_command(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write(b'utf8: \\xf0\\x9f\\x9a\\x80')",
+        ],
+        cwd=str(ROOT),
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "utf8: \U0001f680"
