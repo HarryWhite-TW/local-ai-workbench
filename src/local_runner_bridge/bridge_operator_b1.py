@@ -634,6 +634,8 @@ def _run_command(command: list[str], *, cwd: str) -> subprocess.CompletedProcess
         command,
         cwd=cwd,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
         timeout=20,
@@ -651,6 +653,8 @@ def _github_get_json_with_gh(args: list[str], token: str | None, paginate: bool)
     result = subprocess.run(
         command,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
         timeout=30,
