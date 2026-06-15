@@ -30,16 +30,21 @@ Current baseline:
 - product direction aligned as a Local Document-to-Knowledge Workbench at #204
 - Obsidian-ready Markdown Export MVP completed through #211
 - export destination intelligence completed through #216
-- current roadmap recorded at #212 and refreshed after #216
-- B0 ChatGPT-Codex bridge workflow discipline integrated into `master` through PR #134
-- PR #134 exact-head and post-merge verification completed with `424 passed`
-- Governance Reset is tracked in Issue #135; repository-wide and bridge-specific governance are being separated
-- the next product-facing focus after Governance Reset is visible product, demo, onboarding, and portfolio value
-- Bridge Operator B1 remains not implemented and separately approval-gated
+- current product roadmap recorded at #212 and refreshed after #216
+- B0 ChatGPT-Codex bridge workflow discipline integrated through PR #134
+- Governance Reset #135 completed
+- Bridge Operator B1 completed through PR #139 and reliability follow-up PR #143
+- current B1-integrated `master`: `e03e04729edba08a74c1ef3f45a51e0092fba72d`
+- final B1 verification: `102 passed`, compileall passed, controlled read-only dry run succeeded, stderr clean
+- B2 has not started and remains separately approval-gated
+- the next bridge decisions are permanent Bridge Inbox selection and a separately approved B2 task
+- high-risk operations continue to require separate approvals
 
-The #197 decision is important: **stop adding safety/writeback boundary layers**. Bridge Operator v0 is an approved development-workflow trigger/usability integration, not another product writeback boundary, and it does not expand high-risk authority. Future work should return to visible project value such as README polish, demo documentation, architecture maps, onboarding notes, or test cleanup.
+The public product mainline remains the Local Document-to-Knowledge Workbench. Bridge Operator is development workflow tooling and portfolio engineering evidence, not product runtime.
 
-Detailed governance belongs in the Direction Lock, Bridge Operator specification, scoped AGENTS files, PLANS, and the semi-automated workflow operational baseline. Bridge Operator Phase B remains approved but is not implemented by the Governance Reset.
+The #197 decision remains active: **stop adding product safety/writeback boundary layers**. B1 is a bounded development-workflow trigger and validation component that preserves the existing Dispatcher and Runner authority boundaries.
+
+Detailed B1 implementation history, deviations, verification evidence, and next-phase entry conditions are recorded in [`docs/BRIDGE_OPERATOR_B1_CLOSEOUT.md`](docs/BRIDGE_OPERATOR_B1_CLOSEOUT.md).
 
 ## Product Runtime
 
@@ -119,7 +124,7 @@ Manual `PollOnce` is the verified Lv4.5 baseline and future recovery path:
 .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
 ```
 
-Manual `PollOnce` is not the final target experience. Bridge Operator v0 is the approved future development-workflow direction: Phase B first, Phase C ChatGPT App / MCP later after Phase B is stable. Bridge Operator is not product runtime and is not yet implemented.
+Manual `PollOnce` is not the final target experience. Bridge Operator B1 is now implemented as the fixed-Inbox, one-shot, read-only validation slice; it stops before Dispatcher delegation. B2 one-shot delegation has not started and remains separately approval-gated. Phase C ChatGPT App / MCP remains deferred until Phase B is stable. See [`docs/BRIDGE_OPERATOR_B1_CLOSEOUT.md`](docs/BRIDGE_OPERATOR_B1_CLOSEOUT.md) for the durable implementation and verification history.
 
 ## What Is Intentionally Not Implemented
 

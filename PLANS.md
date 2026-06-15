@@ -22,33 +22,37 @@ The public product mainline remains the Local Document-to-Knowledge Workbench. I
 
 Development workflow tooling is separate from the product runtime.
 
-- The verified Lv4.5 baseline uses ChatGPT-authored `CHATGPT-DISPATCH` requests, Dispatcher v1 `PollOnce`, Runner v1 ReviewBundle, Codex, and `LAWBRUNNER-RESULT` readback for ChatGPT review.
-- The B0 bridge discipline baseline was integrated into `master` through PR #134 on 2026-06-13. Merge commit: `29381d16d438f8fcf9807f48e93544f99df9301e`.
-- B0 governance and integration baseline is complete.
-- Current activity is `Workflow Governance Reset`, tracked by Issue #135.
-- Issue #114 is historical roadmap evidence, not the active task source.
-- Bridge Operator Phase B is the approved next direction for development workflow tooling: fixed Bridge Inbox, bounded local operator, existing Dispatcher / Runner delegation, and ChatGPT-readable GitHub result readback.
-- The old boundary-layer expansion and local-repair loop is frozen.
-- Bridge Operator B1 remains separately approval-gated and is not yet implemented.
-- Bridge Operator B1 has not been started by this task.
+- The verified Lv4.5 baseline uses ChatGPT-authored `CHATGPT-DISPATCH` requests, Dispatcher v1 `PollOnce`, Runner v1 ReviewBundle, Codex, and `LAWBRUNNER-RESULT` readback.
+- B0 bridge discipline was integrated through PR #134.
+- Governance Reset #135 is completed.
+- Bridge Operator B1 is completed through PR #139 and follow-up PR #143.
+- Current B1-integrated `master`: `e03e04729edba08a74c1ef3f45a51e0092fba72d`.
+- Final B1 verification passed with 102 tests, compileall, a real fixed-Inbox read-only dry run, clean stderr, and a clean working tree.
+- B1 stops before Dispatcher, Runner, or Codex delegation by design.
+- B2 has not started and requires a separate bounded task and explicit approval.
+- The permanent Bridge Inbox has not yet been selected.
 - Manual `PollOnce` remains the verified recovery path, not the target daily experience.
-- Phase C ChatGPT App / MCP work is deferred until Phase B is stable.
-- High-risk operations continue to require separate approvals.
-- The next implementation decision after Governance Reset must be separately reviewed and approved.
+- Phase C ChatGPT App / MCP remains deferred until Phase B is stable.
+- High-risk operations remain separately approval-gated.
+- Raw local audit packets remain local; their durable conclusions and canonical references are preserved in GitHub and `docs/BRIDGE_OPERATOR_B1_CLOSEOUT.md`.
 
-Bridge Operator is development workflow tooling and portfolio engineering evidence. It is not the primary product runtime.
+Bridge Operator remains development workflow tooling and portfolio engineering evidence, not product runtime.
 
 ## Current Integration Sequence
 
 1. B0 documentation reconciliation - complete.
-2. Verification - complete.
-3. Completed or superseded Issue cleanup - complete.
-4. Integration into `master` through PR #134 - complete.
-5. Workflow Governance Reset through Issue #135 - current activity.
-6. Return to visible product, demo, onboarding, and portfolio value - after Governance Reset review.
-7. B1 implementation - only through a separately approved task.
+2. Governance Reset #135 - complete.
+3. B1 implementation through #137 / #138 and PR #139 - complete.
+4. Traditional Chinese Windows UTF-8 repair through #142 and PR #143 - complete.
+5. Final post-merge B1 verification - complete.
+6. B1 closeout documentation reconciliation through #145 - current activity.
+7. Select one permanent fixed Bridge Inbox - separate decision required.
+8. Create one bounded B2 implementation Issue - separate approval required.
+9. B2 proves one-shot `maybe-status-check`, then one-shot `run-reviewbundle`.
+10. B3 begins only after B2 passes and is separately approved.
+11. Product-facing demo, onboarding, and portfolio work remain valid parallel priorities.
 
-This task does not authorize automatic polling, bounded loop execution, login startup, tray UI, MCP, new action authority, automatic commit, push, issue close, label edit, PR creation, merge, or approval chaining.
+This documentation task does not authorize automatic polling, delegation, bounded loops, startup, tray UI, MCP, new authority, commit, push, Issue close, labels, PR, merge, branch deletion, or approval chaining.
 
 ## Historical M1 Baseline
 
@@ -79,8 +83,8 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-06-15: Completed Bridge Operator B1 through PR #139 and UTF-8 reliability follow-up PR #143; final post-merge verification passed with 102 tests and clean stderr; began B1 closeout documentation reconciliation through Issue #145.
 - 2026-06-14: Began Workflow Governance Reset through Issue #135, clarified Issue #114 as historical roadmap evidence, and kept B1, Phase C, and high-risk operations separately approval-gated.
 - 2026-06-13: Merged PR #134 into `master`, verified post-merge master state, cleaned up the merged feature branch, and returned focus to visible product value.
 - 2026-06-13: Recorded B0 closeout status, completed/superseded Issue cleanup, and separate PR approval requirement for bridge discipline integration.
 - 2026-04-10: M1 narrowed to local preview/approve/audit prototype.
-
