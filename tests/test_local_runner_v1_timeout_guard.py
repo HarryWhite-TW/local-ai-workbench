@@ -269,6 +269,45 @@ def test_captured_native_process_non_timeout_path_preserves_exit_code_and_output
     assert_success(result)
 
 
+def test_captured_native_process_writes_standard_input_as_utf8(tmp_path):
+    child = tmp_path / "stdin_bytes.ps1"
+    child.write_text(
+        textwrap.dedent(
+            """
+            $stream = [Console]::OpenStandardInput()
+            $memory = New-Object System.IO.MemoryStream
+            $buffer = New-Object byte[] 1024
+            while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $memory.Write($buffer, 0, $count)
+            }
+            Write-Output ([BitConverter]::ToString($memory.ToArray()))
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $prompt = "ASCII " + [string][char]0x5C08 + [string][char]0x6848
+        $result = Invoke-CapturedNativeProcess `
+            -FilePath {str(_powershell())!r} `
+            -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", {str(child)!r}) `
+            -WorkingDirectory {str(tmp_path)!r} `
+            -StandardInput $prompt `
+            -TimeoutSeconds 10 `
+            -Action "stdin utf8 test"
+
+        if ($result.TimedOut) {{ throw "Did not expect timeout" }}
+        if ($result.ExitCode -ne 0) {{ throw "Expected exit code 0, got $($result.ExitCode): $($result.Stderr)" }}
+        if ($result.Stdout -ne "41-53-43-49-49-20-E5-B0-88-E6-A1-88") {{
+            throw "Expected UTF-8 stdin bytes, got $($result.Stdout)"
+        }}
+        """,
+    )
+    assert_success(result)
+
+
 def test_timeout_summary_reports_fail_closed_partial_candidate_and_no_followup_actions(tmp_path):
     result = run_timeout_guard_script(
         tmp_path,
