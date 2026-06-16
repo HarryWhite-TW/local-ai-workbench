@@ -1,4 +1,4 @@
-"""Foreground CLI for Bridge Operator B3-A dry-run bounded loop."""
+"""Foreground CLI for Bridge Operator B3 bounded loop."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from pathlib import Path
 from local_runner_bridge.bridge_operator_b1 import DEFAULT_REPOSITORY, GitHubApiClient
 from local_runner_bridge.bridge_operator_b2 import DEFAULT_INBOX_ISSUE
 from local_runner_bridge.bridge_operator_b3 import (
+    B3A_MODE,
+    B3B_MODE,
     SUMMARY_PROTOCOL,
     run_bridge_operator_b3_dry_run_loop,
 )
@@ -28,6 +30,8 @@ def _blocked_summary(errors: list[str]) -> dict:
         "latest_next_inference_performed": False,
         "dispatcher_invoked": False,
         "dispatcher_invocation_count": 0,
+        "dispatcher_result_writeback_reached": False,
+        "dispatcher_result_writeback_verified": False,
         "runner_invoked": False,
         "codex_invoked": False,
         "github_write_performed": False,
@@ -52,11 +56,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-cycles", type=int, required=True)
     parser.add_argument("--poll-interval-seconds", type=float, required=True)
     parser.add_argument("--state-dir")
+    parser.add_argument("--mode", choices=[B3A_MODE, B3B_MODE], default=B3A_MODE)
+    parser.add_argument("--timeout-seconds", type=int)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Print one parseable B3-A dry-run summary as JSON."""
+    """Print one parseable B3 bounded-loop summary as JSON."""
     parser = _parser()
     try:
         args = parser.parse_args(argv)
@@ -76,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
         poll_interval_seconds=args.poll_interval_seconds,
         state_dir=args.state_dir,
         github_client=client,
+        mode=args.mode,
+        timeout_seconds=args.timeout_seconds,
     )
     print(json.dumps(summary, sort_keys=True))
     return 0 if summary.get("result") == "success" else 1

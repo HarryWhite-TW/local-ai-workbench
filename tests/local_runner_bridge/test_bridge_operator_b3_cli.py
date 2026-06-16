@@ -21,6 +21,8 @@ def assert_safety(summary):
     assert summary["latest_next_inference_performed"] is False
     assert summary["dispatcher_invoked"] is False
     assert summary["dispatcher_invocation_count"] == 0
+    assert summary["dispatcher_result_writeback_reached"] is False
+    assert summary["dispatcher_result_writeback_verified"] is False
     assert summary["runner_invoked"] is False
     assert summary["codex_invoked"] is False
     assert summary["github_write_performed"] is False
@@ -57,6 +59,8 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
                 kwargs["max_cycles"],
                 kwargs["poll_interval_seconds"],
                 kwargs["state_dir"],
+                kwargs["mode"],
+                kwargs["timeout_seconds"],
             )
         )
         return {
@@ -67,6 +71,8 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
             "latest_next_inference_performed": False,
             "dispatcher_invoked": False,
             "dispatcher_invocation_count": 0,
+            "dispatcher_result_writeback_reached": False,
+            "dispatcher_result_writeback_verified": False,
             "runner_invoked": False,
             "codex_invoked": False,
             "github_write_performed": False,
@@ -97,6 +103,10 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
             "C:/state",
             "--github-token-env",
             "B3_TOKEN",
+            "--mode",
+            "b3b-maybe-status-check",
+            "--timeout-seconds",
+            "45",
         ]
     )
     output = capsys.readouterr().out
@@ -105,7 +115,17 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
     assert result == 0
     assert calls == [
         ("client", "HarryWhite-TW/local-ai-workbench", "ghp_TEST_SECRET_DO_NOT_LEAK"),
-        ("run", 147, "HarryWhite-TW/local-ai-workbench", "C:\\repo", 2, 0.5, "C:/state"),
+        (
+            "run",
+            147,
+            "HarryWhite-TW/local-ai-workbench",
+            "C:\\repo",
+            2,
+            0.5,
+            "C:/state",
+            "b3b-maybe-status-check",
+            45,
+        ),
     ]
     assert "ghp_TEST_SECRET_DO_NOT_LEAK" not in output
     assert summary["result"] == "success"
@@ -127,6 +147,8 @@ def test_cli_returns_one_for_blocked_summary(monkeypatch, capsys):
             "latest_next_inference_performed": False,
             "dispatcher_invoked": False,
             "dispatcher_invocation_count": 0,
+            "dispatcher_result_writeback_reached": False,
+            "dispatcher_result_writeback_verified": False,
             "runner_invoked": False,
             "codex_invoked": False,
             "github_write_performed": False,
