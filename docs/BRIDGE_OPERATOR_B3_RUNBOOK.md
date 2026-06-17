@@ -14,6 +14,10 @@ B3-B adds the first real Dispatcher delegation slice for exactly one eligible
 `PollOnce` path, verifies one matching `LAWBRUNNER-RESULT`, and writes
 `processed_requests.jsonl` only after verified success.
 
+B3-C adds the explicit opt-in real Dispatcher delegation slice for exactly one
+eligible `run-reviewbundle` request. It uses the same existing Dispatcher
+`PollOnce` path and never invokes Runner or Codex directly.
+
 B3 is development workflow tooling only. It is not Local
 Document-to-Knowledge Workbench product runtime.
 
@@ -25,12 +29,14 @@ Document-to-Knowledge Workbench product runtime.
   - `b3a-dry-run`: foreground dry-run bounded loop
   - `b3b-maybe-status-check`: foreground bounded loop with real Dispatcher
     delegation for `maybe-status-check` only
+  - `b3c-run-reviewbundle`: foreground bounded loop with real Dispatcher
+    delegation for `run-reviewbundle` only
 - Dispatcher invocation: forbidden in B3-A; allowed once per unprocessed
-  eligible request in B3-B
+  eligible request in B3-B or B3-C
 - Runner invocation: forbidden
 - Codex direct invocation: forbidden
-- `run-reviewbundle` in the B3 loop: forbidden until B3-C is separately
-  approved
+- `maybe-status-check` in B3-C: forbidden unless separately configured as B3-B
+- `run-reviewbundle` in B3-B: forbidden
 - Broad Issue scanning: forbidden
 - Latest/next Issue inference: forbidden
 - Startup, tray UI, service, and MCP behavior: forbidden
@@ -57,7 +63,7 @@ Optional arguments:
 --repo HarryWhite-TW/local-ai-workbench
 --github-token-env <ENV_VAR_NAME>
 --state-dir <PATH>
---mode b3a-dry-run|b3b-maybe-status-check
+--mode b3a-dry-run|b3b-maybe-status-check|b3c-run-reviewbundle
 --timeout-seconds <SECONDS>
 ```
 
@@ -89,8 +95,8 @@ stop.flag
 B3-A may write `dry_run_observations.jsonl`. It must not mark a request as
 truly processed.
 
-B3-B writes `processed_requests.jsonl` only after Dispatcher exit `0` and one
-matching verified result. It never writes processed-request state for
+B3-B and B3-C write `processed_requests.jsonl` only after Dispatcher exit `0`
+and one matching verified result. They never write processed-request state for
 Dispatcher failure, timeout, exception, missing result, untrusted result author,
 identity mismatch, dirty repo, wrong HEAD, pause, stop, or active lock.
 Already processed `request_id` values are skipped and do not rerun Dispatcher.
@@ -110,10 +116,10 @@ Issue after Dispatcher execution. `dispatcher_result_writeback_verified` becomes
 true only when that matching result is trusted and successful. Operator logs and
 `last_failure.json` include the same two fields for review.
 
-## B3-B Dispatcher Contract
+## B3-B/B3-C Dispatcher Contract
 
-B3-B does not reimplement Dispatcher policy. It delegates through the existing
-Dispatcher command equivalent to:
+B3-B and B3-C do not reimplement Dispatcher policy. They delegate through the
+existing Dispatcher command equivalent to:
 
 ```powershell
 .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <target_issue> -PostResultComment
@@ -132,7 +138,15 @@ B3-B blocks or skips before Dispatcher when:
 - local readiness reports a dirty repo or wrong HEAD;
 - pause, stop, or active lock controls are present.
 
-After Dispatcher success, B3-B verifies a target Issue result comment:
+B3-C blocks or skips before Dispatcher when:
+
+- the request action is not exactly `run-reviewbundle`;
+- the request was already written to `processed_requests.jsonl`;
+- B1 validation fails;
+- local readiness reports a dirty repo or wrong HEAD;
+- pause, stop, or active lock controls are present.
+
+After Dispatcher success, B3-B and B3-C verify a target Issue result comment:
 
 ```text
 LAWBRUNNER-RESULT protocol=lawb.runner_result.v1
@@ -143,7 +157,7 @@ The JSON payload must match:
 ```text
 schema=lawb.runner_result.v1
 issue=<target_issue>
-action=maybe-status-check
+action=<maybe-status-check|run-reviewbundle>
 repo=HarryWhite-TW/local-ai-workbench
 branch=<expected_branch>
 head=<expected_head>
@@ -171,8 +185,8 @@ explicit state directory, and bounded GitHub read failure.
 
 On failure, B3 writes `last_failure.json` when the state directory is usable.
 Logs state whether Dispatcher, Runner, Codex, or GitHub writeback was reached.
-For B3-A these remain false. For B3-B, `dispatcher_reached` may be true, while
-Runner and Codex direct invocation remain false.
+For B3-A these remain false. For B3-B and B3-C, `dispatcher_reached` may be
+true, while Runner and Codex direct invocation remain false.
 
 ## Recovery
 
@@ -188,6 +202,6 @@ Manual `PollOnce` remains the recovery path, not the target daily workflow:
 
 ## Next Phase Boundary
 
-B3-B does not authorize B3-C. `run-reviewbundle` loop delegation, startup
-behavior, tray UX, MCP, trusted-actor changes, action allowlist changes, or any
-commit/push/close/label/PR/merge behavior require separate approval.
+B3-C does not authorize startup behavior, tray UX, MCP, trusted-actor changes,
+action allowlist changes, or any commit/push/close/label/PR/merge behavior.
+Those changes require separate approval.

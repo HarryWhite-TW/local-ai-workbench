@@ -34,7 +34,9 @@ PROCESSED_REQUEST_PROTOCOL = "lawb.bridge_operator_b3_processed_request.v1"
 FAILURE_PROTOCOL = "lawb.bridge_operator_b3_failure.v1"
 B3A_MODE = "b3a-dry-run"
 B3B_MODE = "b3b-maybe-status-check"
+B3C_MODE = "b3c-run-reviewbundle"
 B3B_ALLOWED_ACTION = "maybe-status-check"
+B3C_ALLOWED_ACTION = "run-reviewbundle"
 
 DEFAULT_MAX_CYCLES_LIMIT = 100
 DEFAULT_MAX_POLL_INTERVAL_SECONDS = 3600.0
@@ -168,7 +170,7 @@ def run_bridge_operator_b3_dry_run_loop(
                         summary["dry_run_duplicate_observation"] = not appended
                         _write_log(state_root, "observed", "eligible_request_dry_run_observed", summary)
                     else:
-                        reason = _delegate_b3b_request(
+                        reason = _delegate_b3_request(
                             state_root=state_root,
                             repo_root=repo_root,
                             repository=repository,
@@ -313,7 +315,7 @@ def _validate_loop_config(
         return "invalid_poll_interval_seconds"
     if read_retry_count < 0 or read_retry_count > 5:
         return "invalid_read_retry_count"
-    if mode not in {B3A_MODE, B3B_MODE}:
+    if mode not in {B3A_MODE, B3B_MODE, B3C_MODE}:
         return "invalid_mode"
     return None
 
@@ -455,7 +457,7 @@ def _append_observation_if_new(
     return True
 
 
-def _delegate_b3b_request(
+def _delegate_b3_request(
     *,
     state_root: Path,
     repo_root: str | Path,
@@ -468,9 +470,13 @@ def _delegate_b3b_request(
     dispatcher_invoker: Any | None,
     timeout_seconds: int | None,
 ) -> str | None:
-    if b1_summary.get("requested_action") != B3B_ALLOWED_ACTION:
+    action = b1_summary.get("requested_action")
+    if summary.get("mode") == B3B_MODE and action != B3B_ALLOWED_ACTION:
         _block(summary, "run_reviewbundle_not_enabled_in_b3b")
         return "run_reviewbundle_not_enabled_in_b3b"
+    if summary.get("mode") == B3C_MODE and action != B3C_ALLOWED_ACTION:
+        _block(summary, "maybe_status_check_not_enabled_in_b3c")
+        return "maybe_status_check_not_enabled_in_b3c"
     readiness = b1_summary.get("local_readiness") or {}
     if readiness.get("clean") is not True:
         _block(summary, "dirty_repository")

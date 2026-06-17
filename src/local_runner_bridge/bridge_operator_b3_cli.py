@@ -12,6 +12,7 @@ from local_runner_bridge.bridge_operator_b2 import DEFAULT_INBOX_ISSUE
 from local_runner_bridge.bridge_operator_b3 import (
     B3A_MODE,
     B3B_MODE,
+    B3C_MODE,
     SUMMARY_PROTOCOL,
     run_bridge_operator_b3_dry_run_loop,
 )
@@ -56,7 +57,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-cycles", type=int, required=True)
     parser.add_argument("--poll-interval-seconds", type=float, required=True)
     parser.add_argument("--state-dir")
-    parser.add_argument("--mode", choices=[B3A_MODE, B3B_MODE], default=B3A_MODE)
+    parser.add_argument("--mode", choices=[B3A_MODE, B3B_MODE, B3C_MODE], default=B3A_MODE)
     parser.add_argument("--timeout-seconds", type=int)
     return parser
 
