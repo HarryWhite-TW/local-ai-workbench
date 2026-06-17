@@ -1,4 +1,4 @@
-"""Bridge Operator B3-A foreground dry-run bounded loop."""
+"""Bridge Operator B3 foreground bounded loop."""
 
 from __future__ import annotations
 
@@ -13,16 +13,28 @@ from typing import Any
 from local_runner_bridge.bridge_operator_b1 import (
     DEFAULT_REPOSITORY,
     GitHubApiClient,
+    TRUSTED_ACTORS,
     run_bridge_operator_b1_dry_run,
 )
 from local_runner_bridge.bridge_operator_b2 import DEFAULT_INBOX_ISSUE
+from local_runner_bridge.bridge_operator_b2 import (
+    DEFAULT_TIMEOUT_SECONDS,
+    DispatcherInvocationResult,
+    build_dispatcher_command,
+    default_dispatcher_invoker,
+    _read_matching_results,
+)
 
 SUMMARY_PROTOCOL = "lawb.bridge_operator_b3_dry_run_loop_summary.v1"
 HEARTBEAT_PROTOCOL = "lawb.bridge_operator_b3_heartbeat.v1"
 LOCK_PROTOCOL = "lawb.bridge_operator_b3_lock.v1"
 STATE_PROTOCOL = "lawb.bridge_operator_b3_state.v1"
 OBSERVATION_PROTOCOL = "lawb.bridge_operator_b3_dry_run_observation.v1"
+PROCESSED_REQUEST_PROTOCOL = "lawb.bridge_operator_b3_processed_request.v1"
 FAILURE_PROTOCOL = "lawb.bridge_operator_b3_failure.v1"
+B3A_MODE = "b3a-dry-run"
+B3B_MODE = "b3b-maybe-status-check"
+B3B_ALLOWED_ACTION = "maybe-status-check"
 
 DEFAULT_MAX_CYCLES_LIMIT = 100
 DEFAULT_MAX_POLL_INTERVAL_SECONDS = 3600.0
@@ -43,9 +55,12 @@ def run_bridge_operator_b3_dry_run_loop(
     now_utc: Callable[[], datetime] | datetime | None = None,
     sleeper: Callable[[float], None] | None = None,
     read_retry_count: int = DEFAULT_READ_RETRY_COUNT,
+    mode: str = B3A_MODE,
+    dispatcher_invoker: Any | None = None,
+    timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
-    """Run a visible dry-run loop without delegating to Dispatcher."""
-    summary = _base_summary(repository, inbox_issue, repo_root)
+    """Run a visible bounded loop, dry-run by default."""
+    summary = _base_summary(repository, inbox_issue, repo_root, mode)
     sleep = sleeper or time.sleep
     lock_acquired = False
     lock_path: Path | None = None
@@ -62,6 +77,7 @@ def run_bridge_operator_b3_dry_run_loop(
         max_cycles=max_cycles,
         poll_interval_seconds=poll_interval_seconds,
         read_retry_count=read_retry_count,
+        mode=mode,
     )
     if validation_error is not None:
         _block(summary, validation_error)
@@ -84,7 +100,7 @@ def run_bridge_operator_b3_dry_run_loop(
 
     lock_path = state_root / "operator.lock"
     try:
-        _acquire_lock(lock_path, repository, inbox_issue, _now(now_utc))
+        _acquire_lock(lock_path, repository, inbox_issue, mode, _now(now_utc))
         lock_acquired = True
     except FileExistsError:
         _block(summary, "active_lock_present")
@@ -141,15 +157,34 @@ def run_bridge_operator_b3_dry_run_loop(
                 _copy_b1_identity(summary, b1_summary)
                 if b1_summary.get("result") == "success":
                     summary["eligible_request_observed"] = True
-                    appended = _append_observation_if_new(
-                        state_root,
-                        b1_summary,
-                        cycle,
-                        _now(now_utc),
-                    )
-                    summary["dry_run_observation_written"] = appended
-                    summary["dry_run_duplicate_observation"] = not appended
-                    _write_log(state_root, "observed", "eligible_request_dry_run_observed", summary)
+                    if mode == B3A_MODE:
+                        appended = _append_observation_if_new(
+                            state_root,
+                            b1_summary,
+                            cycle,
+                            _now(now_utc),
+                        )
+                        summary["dry_run_observation_written"] = appended
+                        summary["dry_run_duplicate_observation"] = not appended
+                        _write_log(state_root, "observed", "eligible_request_dry_run_observed", summary)
+                    else:
+                        reason = _delegate_b3b_request(
+                            state_root=state_root,
+                            repo_root=repo_root,
+                            repository=repository,
+                            client=client,
+                            b1_summary=b1_summary,
+                            cycle=cycle,
+                            now=_now(now_utc),
+                            summary=summary,
+                            dispatcher_invoker=dispatcher_invoker,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        if reason is not None:
+                            _record_failure(state_root, summary, reason, _now(now_utc))
+                            _write_log(state_root, "failed", reason, summary)
+                            break
+                        _write_log(state_root, "processed", "verified_dispatcher_result", summary)
                 elif _is_github_read_failure(b1_summary):
                     _block(summary, "github_read_unavailable")
                     _record_failure(state_root, summary, "github_read_unavailable", _now(now_utc))
@@ -182,7 +217,12 @@ def run_bridge_operator_b3_dry_run_loop(
                 pass
 
 
-def _base_summary(repository: str, inbox_issue: int, repo_root: str | Path) -> dict[str, Any]:
+def _base_summary(
+    repository: str,
+    inbox_issue: int,
+    repo_root: str | Path,
+    mode: str,
+) -> dict[str, Any]:
     return {
         "protocol": SUMMARY_PROTOCOL,
         "phase": "preflight",
@@ -191,7 +231,7 @@ def _base_summary(repository: str, inbox_issue: int, repo_root: str | Path) -> d
         "configured_inbox_issue": inbox_issue,
         "repo_root": str(repo_root),
         "state_dir": None,
-        "mode": "b3a-dry-run",
+        "mode": mode,
         "lock_acquired": False,
         "loop_started": False,
         "cycles_started": 0,
@@ -205,6 +245,7 @@ def _base_summary(repository: str, inbox_issue: int, repo_root: str | Path) -> d
         "dry_run_observation_written": False,
         "dry_run_duplicate_observation": False,
         "processed_request_written": False,
+        "processed_request_already_seen": False,
         "request_id": None,
         "target_issue": None,
         "target_dispatch_request_id": None,
@@ -213,6 +254,16 @@ def _base_summary(repository: str, inbox_issue: int, repo_root: str | Path) -> d
         "expected_head": None,
         "last_b1_result": None,
         "last_b1_blocked_reasons": [],
+        "dispatcher_exit_code": None,
+        "dispatcher_timed_out": False,
+        "dispatcher_missing": False,
+        "dispatcher_stdout": "",
+        "dispatcher_stderr": "",
+        "dispatcher_result_writeback_reached": False,
+        "dispatcher_result_writeback_verified": False,
+        "target_result_verified": False,
+        "target_result_comment_id": None,
+        "target_result_author": None,
         "github_read_attempts": 0,
         "retry_performed": False,
         "blocked_reasons": [],
@@ -250,6 +301,7 @@ def _validate_loop_config(
     max_cycles: int,
     poll_interval_seconds: float,
     read_retry_count: int,
+    mode: str,
 ) -> str | None:
     if repository != DEFAULT_REPOSITORY:
         return "unsupported_repository"
@@ -261,6 +313,8 @@ def _validate_loop_config(
         return "invalid_poll_interval_seconds"
     if read_retry_count < 0 or read_retry_count > 5:
         return "invalid_read_retry_count"
+    if mode not in {B3A_MODE, B3B_MODE}:
+        return "invalid_mode"
     return None
 
 
@@ -290,15 +344,28 @@ def _validate_state_files(state_dir: Path) -> None:
         except (OSError, json.JSONDecodeError, ValueError) as error:
             raise ValueError("corrupted_state") from error
 
+    processed = state_dir / "processed_requests.jsonl"
+    if processed.exists():
+        try:
+            _read_processed_request_ids(processed)
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            raise ValueError("corrupted_state") from error
 
-def _acquire_lock(lock_path: Path, repository: str, inbox_issue: int, now: datetime) -> None:
+
+def _acquire_lock(
+    lock_path: Path,
+    repository: str,
+    inbox_issue: int,
+    mode: str,
+    now: datetime,
+) -> None:
     payload = {
         "protocol": LOCK_PROTOCOL,
         "pid": os.getpid(),
         "created_at_utc": _format_time(now),
         "repo": repository,
         "inbox_issue": inbox_issue,
-        "mode": "b3a-dry-run",
+        "mode": mode,
     }
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
     fd = os.open(str(lock_path), flags)
@@ -388,6 +455,139 @@ def _append_observation_if_new(
     return True
 
 
+def _delegate_b3b_request(
+    *,
+    state_root: Path,
+    repo_root: str | Path,
+    repository: str,
+    client: Any,
+    b1_summary: dict[str, Any],
+    cycle: int,
+    now: datetime,
+    summary: dict[str, Any],
+    dispatcher_invoker: Any | None,
+    timeout_seconds: int | None,
+) -> str | None:
+    if b1_summary.get("requested_action") != B3B_ALLOWED_ACTION:
+        _block(summary, "run_reviewbundle_not_enabled_in_b3b")
+        return "run_reviewbundle_not_enabled_in_b3b"
+    readiness = b1_summary.get("local_readiness") or {}
+    if readiness.get("clean") is not True:
+        _block(summary, "dirty_repository")
+        return "dirty_repository"
+
+    processed_path = state_root / "processed_requests.jsonl"
+    request_id = str(b1_summary.get("request_id") or "")
+    processed = _read_processed_request_ids(processed_path) if processed_path.exists() else set()
+    if request_id in processed:
+        summary["processed_request_already_seen"] = True
+        summary["phase"] = "already_processed"
+        return None
+
+    invoker = dispatcher_invoker or default_dispatcher_invoker
+    timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
+    args = build_dispatcher_command(
+        repo_root=repo_root,
+        target_issue=int(b1_summary["target_issue"]),
+        repository=repository,
+    )
+    summary["dispatcher_invocation_args"] = args
+    summary["dispatcher_invoked"] = True
+    summary["dispatcher_invocation_count"] += 1
+
+    try:
+        invocation = invoker(args=args, cwd=str(Path(repo_root).resolve()), timeout_seconds=timeout)
+    except TimeoutError as error:
+        invocation = DispatcherInvocationResult(returncode=1, stderr=str(error), timed_out=True)
+    except FileNotFoundError as error:
+        invocation = DispatcherInvocationResult(returncode=1, stderr=str(error), timed_out=False)
+        summary["dispatcher_missing"] = True
+    except Exception as error:
+        invocation = DispatcherInvocationResult(returncode=1, stderr=str(error), timed_out=False)
+
+    summary["dispatcher_exit_code"] = invocation.returncode
+    summary["dispatcher_timed_out"] = bool(invocation.timed_out)
+    summary["dispatcher_stdout"] = invocation.stdout
+    summary["dispatcher_stderr"] = invocation.stderr
+
+    if summary.get("dispatcher_missing"):
+        _block(summary, "dispatcher_missing")
+        return "dispatcher_missing"
+    if invocation.timed_out:
+        _block(summary, "dispatcher_timeout")
+        return "dispatcher_timeout"
+    if invocation.returncode != 0:
+        _block(summary, "dispatcher_nonzero_exit")
+        return "dispatcher_nonzero_exit"
+
+    result_lookup_summary = {
+        "target_issue": b1_summary["target_issue"],
+        "requested_action": b1_summary["requested_action"],
+        "repository": repository,
+        "expected_branch": b1_summary["expected_branch"],
+        "expected_head": b1_summary["expected_head"],
+        "target_dispatch_request_id": b1_summary["target_dispatch_request_id"],
+    }
+    matches = _read_matching_results(client, result_lookup_summary)
+    if matches["read_error"] is not None:
+        _block(summary, "github_read_unavailable")
+        summary["github_read_error_type"] = matches["read_error"]
+        return "github_read_unavailable"
+    if matches["matching_count"] == 0:
+        _block(summary, "target_result_missing")
+        return "target_result_missing"
+    if matches["matching_count"] > 1:
+        summary["dispatcher_result_writeback_reached"] = True
+        _block(summary, "multiple_matching_results")
+        return "multiple_matching_results"
+
+    match = matches["matches"][0]
+    summary["dispatcher_result_writeback_reached"] = True
+    summary["target_result_comment_id"] = match["comment_id"]
+    summary["target_result_author"] = match["author"]
+    if match["author"] not in TRUSTED_ACTORS:
+        _block(summary, "untrusted_result_author")
+        return "untrusted_result_author"
+    payload = match["payload"]
+    if str(payload.get("result") or "") != "success":
+        _block(summary, "target_result_not_success")
+        return "target_result_not_success"
+
+    summary["target_result_verified"] = True
+    summary["dispatcher_result_writeback_verified"] = True
+    _append_processed_request(state_root, b1_summary, match, cycle, now)
+    summary["processed_request_written"] = True
+    return None
+
+
+def _append_processed_request(
+    state_dir: Path,
+    b1_summary: dict[str, Any],
+    match: dict[str, Any],
+    cycle: int,
+    now: datetime,
+) -> None:
+    path = state_dir / "processed_requests.jsonl"
+    payload = {
+        "protocol": PROCESSED_REQUEST_PROTOCOL,
+        "processed_at_utc": _format_time(now),
+        "cycle": cycle,
+        "request_id": b1_summary.get("request_id"),
+        "target_issue": b1_summary.get("target_issue"),
+        "target_dispatch_request_id": b1_summary.get("target_dispatch_request_id"),
+        "requested_action": b1_summary.get("requested_action"),
+        "expected_branch": b1_summary.get("expected_branch"),
+        "expected_head": b1_summary.get("expected_head"),
+        "target_result_comment_id": match.get("comment_id"),
+        "target_result_author": match.get("author"),
+        "dispatcher_invoked": True,
+        "result_verified": True,
+    }
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        json.dump(payload, handle, sort_keys=True)
+        handle.write("\n")
+
+
 def _read_observed_request_ids(path: Path) -> set[str]:
     request_ids: set[str] = set()
     if not path.exists():
@@ -398,6 +598,20 @@ def _read_observed_request_ids(path: Path) -> set[str]:
         payload = json.loads(line)
         if not isinstance(payload, dict) or "request_id" not in payload:
             raise ValueError("invalid_observation")
+        request_ids.add(str(payload["request_id"]))
+    return request_ids
+
+
+def _read_processed_request_ids(path: Path) -> set[str]:
+    request_ids: set[str] = set()
+    if not path.exists():
+        return request_ids
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if not isinstance(payload, dict) or "request_id" not in payload:
+            raise ValueError("invalid_processed_request")
         request_ids.add(str(payload["request_id"]))
     return request_ids
 
@@ -424,7 +638,7 @@ def _write_state(state_dir: Path, status: str, summary: dict[str, Any], now: dat
         "protocol": STATE_PROTOCOL,
         "updated_at_utc": _format_time(now),
         "status": status,
-        "mode": "b3a-dry-run",
+        "mode": summary["mode"],
         "repo": summary["repository"],
         "inbox_issue": summary["configured_inbox_issue"],
         "cycles_completed": summary["cycles_completed"],
@@ -444,7 +658,7 @@ def _write_heartbeat(
         "protocol": HEARTBEAT_PROTOCOL,
         "updated_at_utc": _format_time(now),
         "pid": os.getpid(),
-        "mode": "b3a-dry-run",
+        "mode": summary["mode"],
         "status": status,
         "cycle": cycle,
         "repo": summary["repository"],
@@ -460,14 +674,20 @@ def _record_failure(state_dir: Path, summary: dict[str, Any], reason: str, now: 
         "protocol": FAILURE_PROTOCOL,
         "failed_at_utc": _format_time(now),
         "reason": reason,
-        "mode": "b3a-dry-run",
+        "mode": summary["mode"],
         "repo": summary["repository"],
         "inbox_issue": summary["configured_inbox_issue"],
         "request_id": summary.get("request_id"),
-        "dispatcher_reached": False,
+        "dispatcher_reached": bool(summary.get("dispatcher_invoked")),
+        "dispatcher_result_writeback_reached": bool(
+            summary.get("dispatcher_result_writeback_reached")
+        ),
+        "dispatcher_result_writeback_verified": bool(
+            summary.get("dispatcher_result_writeback_verified")
+        ),
         "runner_reached": False,
         "codex_reached": False,
-        "github_write_reached": False,
+        "github_write_reached": bool(summary.get("github_write_performed")),
     }
     _write_json(state_dir / "last_failure.json", payload)
 
@@ -477,11 +697,17 @@ def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]
         "at_utc": _format_time(datetime.now(timezone.utc)),
         "event": event,
         "reason": reason,
-        "mode": "b3a-dry-run",
+        "mode": summary["mode"],
         "repo": summary["repository"],
         "inbox_issue": summary["configured_inbox_issue"],
         "request_id": summary.get("request_id"),
-        "dispatcher_invoked": False,
+        "dispatcher_invoked": bool(summary.get("dispatcher_invoked")),
+        "dispatcher_result_writeback_reached": bool(
+            summary.get("dispatcher_result_writeback_reached")
+        ),
+        "dispatcher_result_writeback_verified": bool(
+            summary.get("dispatcher_result_writeback_verified")
+        ),
         "runner_invoked": False,
         "codex_invoked": False,
         "github_write_performed": False,
