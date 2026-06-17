@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from local_runner_bridge.bridge_operator_b1 import CommentRecord, IssueRecord, LocalReadiness
 from local_runner_bridge.bridge_operator_b3 import (
     B3B_MODE,
+    B3C_MODE,
     DEFAULT_INBOX_ISSUE,
     run_bridge_operator_b3_dry_run_loop,
 )
@@ -153,6 +154,42 @@ def run_b3b(tmp_path, client=None, readiness=None, dispatcher_invoker=None, **kw
     )
 
 
+def run_b3c(tmp_path, client=None, readiness=None, dispatcher_invoker=None, **kwargs):
+    return run_bridge_operator_b3_dry_run_loop(
+        repo_root=ROOT_PATH,
+        state_dir=tmp_path,
+        github_client=client or FakeGitHub(
+            inbox_comments=[
+                CommentRecord(
+                    id=1,
+                    body=inbox_marker(action="run-reviewbundle"),
+                    author="HarryWhite-TW",
+                )
+            ],
+            target_comments=[
+                CommentRecord(
+                    id=10,
+                    body=dispatch_marker(action="run-reviewbundle"),
+                    author="HarryWhite-TW",
+                ),
+                CommentRecord(
+                    id=20,
+                    body=result_comment(action="run-reviewbundle"),
+                    author="HarryWhite-TW",
+                ),
+            ],
+        ),
+        local_checker=readiness or ready(tmp_path),
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        mode=B3C_MODE,
+        dispatcher_invoker=dispatcher_invoker
+        or (lambda **_: DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")),
+        timeout_seconds=30,
+        **kwargs,
+    )
+
+
 def assert_safety(summary):
     assert summary["broad_issue_scan_performed"] is False
     assert summary["latest_next_inference_performed"] is False
@@ -179,6 +216,7 @@ def assert_high_risk_safety(summary):
     assert summary["latest_next_inference_performed"] is False
     assert summary["runner_invoked"] is False
     assert summary["codex_invoked"] is False
+    assert summary["github_write_performed"] is False
     assert summary["background_service_started"] is False
     assert summary["commit_performed"] is False
     assert summary["push_performed"] is False
@@ -265,6 +303,42 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
     assert_high_risk_safety(summary)
 
 
+def test_b3c_run_reviewbundle_invokes_dispatcher_once_and_processes_request(tmp_path):
+    calls = []
+
+    def invoker(**kwargs):
+        calls.append(kwargs)
+        return DispatcherInvocationResult(returncode=0, stdout="dispatcher ok", stderr="")
+
+    summary = run_b3c(tmp_path, dispatcher_invoker=invoker)
+
+    assert summary["result"] == "success"
+    assert summary["mode"] == "b3c-run-reviewbundle"
+    assert summary["requested_action"] == "run-reviewbundle"
+    assert summary["dispatcher_invoked"] is True
+    assert summary["dispatcher_invocation_count"] == 1
+    assert summary["dispatcher_result_writeback_reached"] is True
+    assert summary["dispatcher_result_writeback_verified"] is True
+    assert summary["target_result_verified"] is True
+    assert summary["processed_request_written"] is True
+    assert calls[0]["args"][0] == "powershell.exe"
+    assert "-PollOnce" in calls[0]["args"]
+    assert "-PostResultComment" in calls[0]["args"]
+    assert calls[0]["args"][calls[0]["args"].index("-IssueNumber") + 1] == "151"
+    command_text = " ".join(calls[0]["args"])
+    assert "local_dispatcher_v1.ps1" in command_text
+    assert "local_runner_v1.ps1" not in command_text
+    assert "codex" not in command_text.lower()
+    processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(processed) == 1
+    payload = json.loads(processed[0])
+    assert payload["request_id"] == "b3a-151-20260616T080000Z"
+    assert payload["requested_action"] == "run-reviewbundle"
+    assert payload["dispatcher_invoked"] is True
+    assert payload["result_verified"] is True
+    assert_high_risk_safety(summary)
+
+
 def test_b3a_dry_run_still_does_not_invoke_dispatcher_when_invoker_is_available(tmp_path):
     calls = []
 
@@ -300,6 +374,28 @@ def test_b3b_blocks_run_reviewbundle_before_dispatcher(tmp_path):
 
     assert summary["result"] == "blocked"
     assert summary["blocked_reasons"] == ["run_reviewbundle_not_enabled_in_b3b"]
+    assert summary["dispatcher_invoked"] is False
+    assert calls == []
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+    assert_high_risk_safety(summary)
+
+
+def test_b3c_blocks_maybe_status_check_before_dispatcher(tmp_path):
+    calls = []
+
+    summary = run_b3c(
+        tmp_path,
+        FakeGitHub(
+            target_comments=[
+                CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+                CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"),
+            ]
+        ),
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["maybe_status_check_not_enabled_in_b3c"]
     assert summary["dispatcher_invoked"] is False
     assert calls == []
     assert not (tmp_path / "processed_requests.jsonl").exists()
@@ -363,6 +459,29 @@ def test_b3b_dispatcher_failures_do_not_write_processed_request(tmp_path):
         assert_high_risk_safety(summary)
 
 
+def test_b3c_dispatcher_failures_do_not_write_processed_request(tmp_path):
+    cases = [
+        ("dispatcher_missing", lambda **_: (_ for _ in ()).throw(FileNotFoundError("missing"))),
+        ("dispatcher_nonzero_exit", lambda **_: DispatcherInvocationResult(returncode=2, stderr="bad")),
+        ("dispatcher_timeout", lambda **_: DispatcherInvocationResult(returncode=1, timed_out=True)),
+        ("dispatcher_nonzero_exit", lambda **_: (_ for _ in ()).throw(RuntimeError("boom"))),
+    ]
+
+    for reason, invoker in cases:
+        case_dir = tmp_path / reason
+        summary = run_b3c(case_dir, dispatcher_invoker=invoker)
+        assert summary["result"] == "blocked"
+        assert summary["blocked_reasons"] == [reason]
+        assert summary["dispatcher_invocation_count"] == 1
+        failure = read_json(case_dir / "last_failure.json")
+        assert failure["reason"] == reason
+        assert failure["dispatcher_reached"] is True
+        assert failure["dispatcher_result_writeback_reached"] is False
+        assert failure["dispatcher_result_writeback_verified"] is False
+        assert not (case_dir / "processed_requests.jsonl").exists()
+        assert_high_risk_safety(summary)
+
+
 def test_b3b_dispatcher_success_without_verifiable_result_fails_closed(tmp_path):
     missing = run_b3b(
         tmp_path,
@@ -390,6 +509,62 @@ def test_b3b_dispatcher_success_without_verifiable_result_fails_closed(tmp_path)
         assert failure["dispatcher_result_writeback_verified"] is False
         assert_high_risk_safety(summary)
     assert not (tmp_path / "processed_requests.jsonl").exists()
+
+
+def test_b3c_dispatcher_success_without_verifiable_result_fails_closed(tmp_path):
+    missing = run_b3c(
+        tmp_path,
+        FakeGitHub(
+            inbox_comments=[
+                CommentRecord(
+                    id=1,
+                    body=inbox_marker(action="run-reviewbundle"),
+                    author="HarryWhite-TW",
+                )
+            ],
+            target_comments=[
+                CommentRecord(
+                    id=10,
+                    body=dispatch_marker(action="run-reviewbundle"),
+                    author="HarryWhite-TW",
+                )
+            ],
+        ),
+    )
+    mismatched = run_b3c(
+        tmp_path / "mismatched",
+        FakeGitHub(
+            inbox_comments=[
+                CommentRecord(
+                    id=1,
+                    body=inbox_marker(action="run-reviewbundle"),
+                    author="HarryWhite-TW",
+                )
+            ],
+            target_comments=[
+                CommentRecord(
+                    id=10,
+                    body=dispatch_marker(action="run-reviewbundle"),
+                    author="HarryWhite-TW",
+                ),
+                CommentRecord(
+                    id=20,
+                    body=result_comment(action="run-reviewbundle", request_id="other"),
+                    author="HarryWhite-TW",
+                ),
+            ],
+        ),
+    )
+
+    for summary, case_dir in ((missing, tmp_path), (mismatched, tmp_path / "mismatched")):
+        assert summary["result"] == "blocked"
+        assert summary["blocked_reasons"] == ["target_result_missing"]
+        assert summary["dispatcher_invocation_count"] == 1
+        assert summary["dispatcher_result_writeback_reached"] is False
+        assert summary["dispatcher_result_writeback_verified"] is False
+        assert read_json(case_dir / "last_failure.json")["dispatcher_reached"] is True
+        assert not (case_dir / "processed_requests.jsonl").exists()
+        assert_high_risk_safety(summary)
 
 
 def test_b3b_dirty_repo_and_wrong_head_fail_before_dispatcher(tmp_path):
@@ -467,6 +642,52 @@ def test_b3b_already_processed_request_does_not_rerun_dispatcher(tmp_path):
     processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(processed) == 1
     assert_high_risk_safety(second)
+
+
+def test_b3c_already_processed_request_does_not_rerun_dispatcher(tmp_path):
+    first = run_b3c(tmp_path)
+    calls = []
+    second = run_b3c(tmp_path, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    assert first["processed_request_written"] is True
+    assert second["result"] == "success"
+    assert second["processed_request_already_seen"] is True
+    assert second["dispatcher_invoked"] is False
+    assert calls == []
+    processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(processed) == 1
+    assert_high_risk_safety(second)
+
+
+def test_b3c_lock_pause_and_stop_block_before_delegation(tmp_path):
+    calls = []
+    lock_dir = tmp_path / "lock"
+    lock_dir.mkdir()
+    (lock_dir / "operator.lock").write_text('{"pid": 1}\n', encoding="utf-8")
+    active_lock = run_b3c(lock_dir, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    pause_dir = tmp_path / "pause"
+    pause_dir.mkdir()
+    (pause_dir / "pause.flag").write_text("", encoding="utf-8")
+    paused = run_b3c(pause_dir, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    stop_dir = tmp_path / "stop"
+    stop_dir.mkdir()
+    (stop_dir / "stop.flag").write_text("", encoding="utf-8")
+    stopped = run_b3c(stop_dir, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    assert active_lock["blocked_reasons"] == ["active_lock_present"]
+    assert active_lock["dispatcher_invoked"] is False
+    assert paused["result"] == "success"
+    assert paused["pause_observed"] is True
+    assert paused["dispatcher_invoked"] is False
+    assert stopped["result"] == "success"
+    assert stopped["stop_requested"] is True
+    assert stopped["dispatcher_invoked"] is False
+    assert calls == []
+    assert_high_risk_safety(active_lock)
+    assert_high_risk_safety(paused)
+    assert_high_risk_safety(stopped)
 
 
 def test_no_current_request_is_safe_wait_condition(tmp_path):

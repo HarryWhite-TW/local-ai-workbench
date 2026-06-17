@@ -132,6 +132,64 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
     assert_safety(summary)
 
 
+def test_cli_accepts_b3c_run_reviewbundle_mode(monkeypatch, capsys):
+    calls = []
+
+    class FakeClient:
+        def __init__(self, repo, token=None):
+            calls.append(("client", repo, token))
+
+    def fake_run(**kwargs):
+        calls.append(("run", kwargs["mode"], kwargs["inbox_issue"]))
+        return {
+            "protocol": "lawb.bridge_operator_b3_dry_run_loop_summary.v1",
+            "result": "success",
+            "configured_inbox_issue": 147,
+            "broad_issue_scan_performed": False,
+            "latest_next_inference_performed": False,
+            "dispatcher_invoked": False,
+            "dispatcher_invocation_count": 0,
+            "dispatcher_result_writeback_reached": False,
+            "dispatcher_result_writeback_verified": False,
+            "runner_invoked": False,
+            "codex_invoked": False,
+            "github_write_performed": False,
+            "background_service_started": False,
+            "commit_performed": False,
+            "push_performed": False,
+            "issue_closed": False,
+            "label_changed": False,
+            "pr_created": False,
+            "merge_performed": False,
+            "branch_deleted": False,
+            "approval_consumed": False,
+        }
+
+    monkeypatch.setattr(cli, "GitHubApiClient", FakeClient)
+    monkeypatch.setattr(cli, "run_bridge_operator_b3_dry_run_loop", fake_run)
+
+    result = cli.main(
+        [
+            "--repo-root",
+            "C:/repo",
+            "--max-cycles",
+            "1",
+            "--poll-interval-seconds",
+            "0",
+            "--mode",
+            "b3c-run-reviewbundle",
+        ]
+    )
+    summary = read_json(capsys)
+
+    assert result == 0
+    assert calls == [
+        ("client", "HarryWhite-TW/local-ai-workbench", None),
+        ("run", "b3c-run-reviewbundle", 147),
+    ]
+    assert_safety(summary)
+
+
 def test_cli_returns_one_for_blocked_summary(monkeypatch, capsys):
     class FakeClient:
         def __init__(self, repo, token=None):
