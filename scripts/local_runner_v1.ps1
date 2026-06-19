@@ -561,11 +561,25 @@ function Invoke-CapturedNativeProcess {
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not [string]::IsNullOrEmpty($StandardInput)) {
-            $inputBytes = [System.Text.Encoding]::UTF8.GetBytes($StandardInput)
-            $process.StandardInput.BaseStream.Write($inputBytes, 0, $inputBytes.Length)
-            $process.StandardInput.BaseStream.Flush()
+            $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+            $stdinWriter = New-Object System.IO.StreamWriter(
+                $process.StandardInput.BaseStream,
+                $utf8NoBom,
+                1024,
+                $true
+            )
+            try {
+                $stdinWriter.Write($StandardInput)
+                $stdinWriter.Flush()
+            }
+            finally {
+                $stdinWriter.Dispose()
+            }
+            $process.StandardInput.BaseStream.Close()
         }
-        $process.StandardInput.Close()
+        else {
+            $process.StandardInput.Close()
+        }
 
         $completed = $process.WaitForExit($TimeoutSeconds * 1000)
         if (-not $completed) {
