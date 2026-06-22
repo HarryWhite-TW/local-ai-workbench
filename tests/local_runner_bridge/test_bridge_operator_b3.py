@@ -285,6 +285,22 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
     assert summary["dispatcher_result_writeback_reached"] is True
     assert summary["dispatcher_result_writeback_verified"] is True
     assert summary["target_result_verified"] is True
+    assert summary["operator_direct_execution_performed"] is True
+    assert summary["current_run"] == {
+        "request_id": "b3a-151-20260616T080000Z",
+        "issue_number": 151,
+        "mode": "b3b-maybe-status-check",
+        "max_cycles": 1,
+        "operator_dispatcher_invocation_performed": True,
+        "dispatcher_invoked": True,
+        "operator_direct_runner_invoked": False,
+        "operator_direct_codex_invoked": False,
+        "github_result_writeback_observed": True,
+        "current_failure_recorded": False,
+        "current_failure_reason": None,
+        "last_failure_json_applies_to_current_run": False,
+        "last_failure_json_status": "not_present",
+    }
     assert summary["github_write_performed"] is False
     assert summary["processed_request_written"] is True
     assert calls[0]["args"][0] == "powershell.exe"
@@ -296,6 +312,8 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
     assert json.loads(processed[0])["request_id"] == "b3a-151-20260616T080000Z"
     log = read_log_events(tmp_path / "operator.log")[-1]
     assert log["dispatcher_invoked"] is True
+    assert log["current_run"]["request_id"] == "b3a-151-20260616T080000Z"
+    assert log["current_run"]["operator_dispatcher_invocation_performed"] is True
     assert log["dispatcher_result_writeback_reached"] is True
     assert log["dispatcher_result_writeback_verified"] is True
     assert log["github_write_performed"] is False
@@ -449,6 +467,11 @@ def test_b3b_dispatcher_failures_do_not_write_processed_request(tmp_path):
         assert summary["dispatcher_invocation_count"] == 1
         failure = read_json(case_dir / "last_failure.json")
         assert failure["reason"] == reason
+        assert failure["current_failure_recorded"] is True
+        assert failure["last_failure_json_applies_to_current_run"] is True
+        assert failure["last_failure_json_status"] == "current_failure"
+        assert failure["current_run"]["current_failure_reason"] == reason
+        assert summary["current_run"]["last_failure_json_status"] == "current_failure"
         assert failure["dispatcher_reached"] is True
         assert failure["dispatcher_result_writeback_reached"] is False
         assert failure["dispatcher_result_writeback_verified"] is False
@@ -642,6 +665,34 @@ def test_b3b_already_processed_request_does_not_rerun_dispatcher(tmp_path):
     processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(processed) == 1
     assert_high_risk_safety(second)
+
+
+def test_success_summary_marks_existing_last_failure_as_historical(tmp_path):
+    stale_failure = {
+        "protocol": "lawb.bridge_operator_b3_failure.v1",
+        "failed_at_utc": "2026-06-15T08:00:00Z",
+        "reason": "dispatcher_timeout",
+        "request_id": "old-request",
+        "last_failure_json_status": "current_failure",
+    }
+    (tmp_path / "last_failure.json").write_text(
+        json.dumps(stale_failure, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    summary = run_b3b(tmp_path)
+
+    assert summary["result"] == "success"
+    assert summary["current_failure_recorded"] is False
+    assert summary["historical_last_failure_file_present"] is True
+    assert summary["last_failure_json_applies_to_current_run"] is False
+    assert summary["last_failure_json_status"] == "historical_not_current_run"
+    assert summary["current_run"]["last_failure_json_status"] == "historical_not_current_run"
+    assert summary["current_run"]["current_failure_recorded"] is False
+    assert read_json(tmp_path / "last_failure.json") == stale_failure
+    log = read_log_events(tmp_path / "operator.log")[-1]
+    assert log["last_failure_json_status"] == "historical_not_current_run"
+    assert log["current_run"]["last_failure_json_applies_to_current_run"] is False
 
 
 def test_b3c_already_processed_request_does_not_rerun_dispatcher(tmp_path):
