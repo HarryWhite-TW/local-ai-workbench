@@ -63,6 +63,8 @@ def run_bridge_operator_b3_dry_run_loop(
 ) -> dict[str, Any]:
     """Run a visible bounded loop, dry-run by default."""
     summary = _base_summary(repository, inbox_issue, repo_root, mode)
+    summary["configured_max_cycles"] = max_cycles
+    summary["configured_poll_interval_seconds"] = poll_interval_seconds
     sleep = sleeper or time.sleep
     lock_acquired = False
     lock_path: Path | None = None
@@ -70,7 +72,7 @@ def run_bridge_operator_b3_dry_run_loop(
     state_root = _resolve_state_dir(state_dir)
     if state_root is None:
         _block(summary, "localappdata_missing")
-        return summary
+        return _finalize_summary(summary)
     summary["state_dir"] = str(state_root)
 
     validation_error = _validate_loop_config(
@@ -83,14 +85,15 @@ def run_bridge_operator_b3_dry_run_loop(
     )
     if validation_error is not None:
         _block(summary, validation_error)
-        return summary
+        return _finalize_summary(summary)
 
     try:
         state_root.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         _block(summary, "state_dir_unavailable")
         summary["state_error_type"] = type(error).__name__
-        return summary
+        return _finalize_summary(summary)
+    summary["historical_last_failure_file_present"] = (state_root / "last_failure.json").exists()
 
     try:
         _validate_state_files(state_root)
@@ -98,7 +101,7 @@ def run_bridge_operator_b3_dry_run_loop(
         _block(summary, str(error))
         _record_failure(state_root, summary, str(error), _now(now_utc))
         _write_log(state_root, "failed", str(error), summary)
-        return summary
+        return _finalize_summary(summary)
 
     lock_path = state_root / "operator.lock"
     try:
@@ -108,13 +111,13 @@ def run_bridge_operator_b3_dry_run_loop(
         _block(summary, "active_lock_present")
         _record_failure(state_root, summary, "active_lock_present", _now(now_utc))
         _write_log(state_root, "blocked", "active_lock_present", summary)
-        return summary
+        return _finalize_summary(summary)
     except OSError as error:
         _block(summary, "lock_unavailable")
         summary["lock_error_type"] = type(error).__name__
         _record_failure(state_root, summary, "lock_unavailable", _now(now_utc))
         _write_log(state_root, "blocked", "lock_unavailable", summary)
-        return summary
+        return _finalize_summary(summary)
 
     try:
         summary["lock_acquired"] = True
@@ -208,6 +211,7 @@ def run_bridge_operator_b3_dry_run_loop(
 
         if summary["result"] == "success" and summary["phase"] == "running":
             summary["phase"] = "max_cycles_completed"
+        _finalize_summary(summary)
         _write_state(state_root, summary["phase"], summary, _now(now_utc))
         _write_heartbeat(state_root, summary["phase"], summary["cycles_completed"], summary, _now(now_utc))
         return summary
@@ -234,6 +238,8 @@ def _base_summary(
         "repo_root": str(repo_root),
         "state_dir": None,
         "mode": mode,
+        "configured_max_cycles": None,
+        "configured_poll_interval_seconds": None,
         "lock_acquired": False,
         "loop_started": False,
         "cycles_started": 0,
@@ -266,6 +272,13 @@ def _base_summary(
         "target_result_verified": False,
         "target_result_comment_id": None,
         "target_result_author": None,
+        "operator_direct_execution_performed": False,
+        "current_failure_recorded": False,
+        "current_failure_reason": None,
+        "historical_last_failure_file_present": False,
+        "last_failure_json_applies_to_current_run": False,
+        "last_failure_json_status": "not_present",
+        "current_run": {},
         "github_read_attempts": 0,
         "retry_performed": False,
         "blocked_reasons": [],
@@ -498,6 +511,7 @@ def _delegate_b3_request(
         repository=repository,
     )
     summary["dispatcher_invocation_args"] = args
+    summary["operator_direct_execution_performed"] = True
     summary["dispatcher_invoked"] = True
     summary["dispatcher_invocation_count"] += 1
 
@@ -635,6 +649,44 @@ def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> No
             summary[key] = b1_summary.get(key)
 
 
+def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "request_id": summary.get("request_id"),
+        "issue_number": summary.get("target_issue"),
+        "mode": summary.get("mode"),
+        "max_cycles": summary.get("configured_max_cycles"),
+        "operator_dispatcher_invocation_performed": bool(
+            summary.get("operator_direct_execution_performed")
+        ),
+        "dispatcher_invoked": bool(summary.get("dispatcher_invoked")),
+        "operator_direct_runner_invoked": bool(summary.get("runner_invoked")),
+        "operator_direct_codex_invoked": bool(summary.get("codex_invoked")),
+        "github_result_writeback_observed": bool(
+            summary.get("dispatcher_result_writeback_reached")
+            or summary.get("github_write_performed")
+        ),
+        "current_failure_recorded": bool(summary.get("current_failure_recorded")),
+        "current_failure_reason": summary.get("current_failure_reason"),
+        "last_failure_json_applies_to_current_run": bool(
+            summary.get("last_failure_json_applies_to_current_run")
+        ),
+        "last_failure_json_status": summary.get("last_failure_json_status"),
+    }
+
+
+def _finalize_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    if summary.get("current_failure_recorded"):
+        status = "current_failure"
+    elif summary.get("historical_last_failure_file_present"):
+        status = "historical_not_current_run"
+    else:
+        status = "not_present"
+    summary["last_failure_json_status"] = status
+    summary["last_failure_json_applies_to_current_run"] = status == "current_failure"
+    summary["current_run"] = _current_run_visibility(summary)
+    return summary
+
+
 def _flag_exists(state_dir: Path, name: str) -> bool:
     return (state_dir / name).exists()
 
@@ -676,6 +728,9 @@ def _write_heartbeat(
 
 
 def _record_failure(state_dir: Path, summary: dict[str, Any], reason: str, now: datetime) -> None:
+    summary["current_failure_recorded"] = True
+    summary["current_failure_reason"] = reason
+    _finalize_summary(summary)
     payload = {
         "protocol": FAILURE_PROTOCOL,
         "failed_at_utc": _format_time(now),
@@ -694,11 +749,16 @@ def _record_failure(state_dir: Path, summary: dict[str, Any], reason: str, now: 
         "runner_reached": False,
         "codex_reached": False,
         "github_write_reached": bool(summary.get("github_write_performed")),
+        "current_run": summary["current_run"],
+        "current_failure_recorded": True,
+        "last_failure_json_applies_to_current_run": True,
+        "last_failure_json_status": "current_failure",
     }
     _write_json(state_dir / "last_failure.json", payload)
 
 
 def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]) -> None:
+    _finalize_summary(summary)
     payload = {
         "at_utc": _format_time(datetime.now(timezone.utc)),
         "event": event,
@@ -717,6 +777,12 @@ def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]
         "runner_invoked": False,
         "codex_invoked": False,
         "github_write_performed": False,
+        "current_run": summary["current_run"],
+        "current_failure_recorded": bool(summary.get("current_failure_recorded")),
+        "last_failure_json_applies_to_current_run": bool(
+            summary.get("last_failure_json_applies_to_current_run")
+        ),
+        "last_failure_json_status": summary.get("last_failure_json_status"),
     }
     with (state_dir / "operator.log").open("a", encoding="utf-8", newline="\n") as handle:
         json.dump(payload, handle, sort_keys=True)
