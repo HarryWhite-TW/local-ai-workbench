@@ -1,0 +1,25 @@
+{
+  "protocol": "lawb.bootstrap_course_environment_manifest.v1",
+  "python": {
+    "minimum_version": "3.10"
+  },
+  "github_cli": {
+    "version": "2.95.0",
+    "zip_name": "gh_2.95.0_windows_amd64.zip",
+    "checksums_name": "gh_2.95.0_checksums.txt",
+    "zip_url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_windows_amd64.zip",
+    "checksums_url": "https://github.com/cli/cli/releases/download/v2.95.0/gh_2.95.0_checksums.txt"
+  },
+  "codex": {
+    "package": "@openai/codex",
+    "version": "0.141.0",
+    "minimum_node_major": 18
+  },
+  "paths": {
+    "venv": ".venv-course",
+    "gh_root": "LocalAIWorkbench/gh",
+    "npm_root": "LocalAIWorkbench/npm",
+    "node_fallback": "C:/nvm4w/nodejs"
+  },
+  "requirements": "requirements-course.txt"
+}
