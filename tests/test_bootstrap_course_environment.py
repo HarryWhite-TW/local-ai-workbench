@@ -40,14 +40,27 @@ exit /b 0
     )
 
 
-def fake_python(bin_dir: Path, *, version="3.14.3", imports_ready=True) -> None:
+def fake_python(
+    bin_dir: Path,
+    *,
+    version="3.14.3",
+    imports_ready=True,
+    pip_ready=True,
+    ensurepip_succeeds=True,
+) -> None:
     import_exit = "0" if imports_ready else "1"
+    pip_default_exit = "0" if pip_ready else "1"
+    ensurepip_exit = "0" if ensurepip_succeeds else "1"
     write_cmd(
         bin_dir / "python.cmd",
         f"""@echo off
 echo python %*>> "%LAW_BOOTSTRAP_COMMAND_LOG%"
 if "%1"=="--version" echo Python {version}& exit /b 0
 if "%1"=="-m" if "%2"=="venv" mkdir "%~3\\Scripts" 2>nul & copy /Y "%~f0" "%~3\\Scripts\\python.cmd" >nul & exit /b 0
+if "%1"=="-m" if "%2"=="pip" if "%3"=="--version" if exist "%~dp0pip-ready" echo pip 25.1& exit /b 0
+if "%1"=="-m" if "%2"=="pip" if "%3"=="--version" exit /b {pip_default_exit}
+if "%1"=="-m" if "%2"=="ensurepip" if {ensurepip_exit}==0 type nul > "%~dp0pip-ready"
+if "%1"=="-m" if "%2"=="ensurepip" exit /b {ensurepip_exit}
 if "%1"=="-m" if "%2"=="pip" exit /b 0
 if "%1"=="-m" if "%2"=="local_runner_bridge.bridge_diagnostics" echo {{""status"":""READY"",""status_reasons"":[""ready""]}}& exit /b 0
 if "%1"=="-c" exit /b {import_exit}
@@ -70,11 +83,11 @@ exit /b 0
         """@echo off
 echo npm %*>> "%LAW_BOOTSTRAP_COMMAND_LOG%"
 if "%1"=="--version" echo 10.8.2& exit /b 0
-if "%1"=="install" (
-  mkdir "%~3" 2>nul
-  > "%~3\\codex.cmd" echo @echo off
-  >> "%~3\\codex.cmd" echo echo codex %%*^>^> "%%LAW_BOOTSTRAP_COMMAND_LOG%%"
-  >> "%~3\\codex.cmd" echo if "%%1"=="--version" echo codex-cli 0.141.0^& exit /b 0
+if "%1"=="install" if "%2"=="--global" (
+  mkdir "%~4" 2>nul
+  > "%~4\\codex.cmd" echo @echo off
+  >> "%~4\\codex.cmd" echo echo codex %%*^>^> "%%LAW_BOOTSTRAP_COMMAND_LOG%%"
+  >> "%~4\\codex.cmd" echo if "%%1"=="--version" echo codex-cli 0.141.0^& exit /b 0
   exit /b 0
 )
 exit /b 0
@@ -264,6 +277,80 @@ def test_apply_reuses_working_venv_gh_and_codex(tmp_path):
     assert "reused_codex" in payload["actions_skipped_reused"]
     assert "python -m venv" not in commands
     assert "npm install" not in commands
+
+
+def test_audit_reports_broken_venv_pip_without_repairing(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_python(bin_dir, pip_ready=False)
+    fake_node_npm(bin_dir)
+    fake_gh(bin_dir)
+    fake_codex(bin_dir)
+    seed_working_venv(repo, bin_dir)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env)
+    commands = log.read_text(encoding="utf-8")
+
+    assert result.returncode == 0
+    assert payload["venv"]["status"] == "pip_unusable"
+    assert payload["venv"]["pip_ready"] is False
+    assert "venv_pip_unusable" in payload["attention"]
+    assert "reused_venv" not in payload["actions_skipped_reused"]
+    assert "python -m pip --version" in commands
+    assert "python -m ensurepip" not in commands
+
+
+def test_apply_repairs_broken_venv_pip_and_continues(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_python(bin_dir, pip_ready=False)
+    fake_node_npm(bin_dir)
+    fake_gh(bin_dir)
+    fake_codex(bin_dir)
+    seed_working_venv(repo, bin_dir)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env, "-Apply")
+    commands = log.read_text(encoding="utf-8")
+
+    assert result.returncode == 0
+    assert payload["venv"]["status"] == "usable"
+    assert payload["venv"]["pip_ready"] is True
+    assert "repaired_venv_pip" in payload["actions_performed"]
+    assert commands.count("python -m pip --version") == 2
+    assert "python -m ensurepip --upgrade --default-pip" in commands
+    assert "installed_requirements_course" in payload["actions_performed"]
+
+
+def test_apply_reports_venv_pip_repair_failure(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_python(bin_dir, pip_ready=False, ensurepip_succeeds=False)
+    fake_node_npm(bin_dir)
+    fake_gh(bin_dir)
+    fake_codex(bin_dir)
+    seed_working_venv(repo, bin_dir)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env, "-Apply")
+    commands = log.read_text(encoding="utf-8")
+
+    assert result.returncode == 2
+    assert payload["venv"]["status"] == "pip_repair_failed"
+    assert payload["venv"]["pip_ready"] is False
+    assert "venv_pip_repair_failed" in payload["blockers"]
+    assert "python -m ensurepip --upgrade --default-pip" in commands
+    assert "python -m pip install" not in commands
 
 
 def test_missing_python_is_blocked_and_causes_no_partial_repair(tmp_path):
@@ -630,6 +717,30 @@ exit /b 1
     assert "codex_missing_or_wrong_version" not in payload["attention"]
 
 
+def test_codex_install_uses_global_prefix_and_real_shim_layout(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_python(bin_dir)
+    fake_node_npm(bin_dir)
+    fake_gh(bin_dir)
+    seed_working_venv(repo, bin_dir)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env, "-Apply")
+    commands = log.read_text(encoding="utf-8")
+    expected = tmp_path / "localappdata" / "LocalAIWorkbench" / "npm" / "codex.cmd"
+
+    assert result.returncode == 0
+    assert f"npm install --global --prefix {expected.parent} @openai/codex@0.141.0" in commands
+    assert expected.is_file()
+    assert payload["detected"]["codex"]["path"].lower() == str(expected).lower()
+    assert payload["detected"]["codex"]["command_usable"] is True
+    assert payload["detected"]["codex"]["ready"] is True
+
+
 def test_codex_command_failure_in_path_with_spaces_is_not_ready(tmp_path):
     repo = make_repo(tmp_path)
     bin_dir = tmp_path / "bin"
@@ -828,3 +939,10 @@ def test_b4b_diagnostics_invoked_only_when_venv_can_run_it(tmp_path):
 
     assert payload["diagnostics"]["invoked"] is False
     assert "python -m local_runner_bridge.bridge_diagnostics" not in commands
+
+
+def test_course_requirements_pin_python_314_compatible_pydantic():
+    requirements = (ROOT / "requirements-course.txt").read_text(encoding="utf-8")
+
+    assert "pydantic==2.13.4" in requirements.splitlines()
+    assert "pydantic==2.9.2" not in requirements.splitlines()

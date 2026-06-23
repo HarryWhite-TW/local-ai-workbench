@@ -236,6 +236,14 @@ function Resolve-VenvPython([string]$VenvRoot) {
     return $null
 }
 
+function Test-PipReady([string]$PythonPath, [string]$RepoRootPath) {
+    if (-not $PythonPath) {
+        return [ordered]@{ ready = $false; output = "venv_python_missing" }
+    }
+    $result = Invoke-CapturedCommand -CommandPath $PythonPath -Arguments @("-m", "pip", "--version") -WorkingDirectory $RepoRootPath
+    return [ordered]@{ ready = ($result.exit_code -eq 0); output = $result.text }
+}
+
 function Test-ImportsReady([string]$PythonPath, [string]$RepoRootPath) {
     if (-not $PythonPath) {
         return [ordered]@{ ready = $false; output = "venv_python_missing" }
@@ -439,12 +447,15 @@ try {
     }
 
     $venvPython = Resolve-VenvPython $venvRoot
-    $Summary.venv = [ordered]@{ path = $venvRoot; exists = (Test-Path -LiteralPath $venvRoot); python = $venvPython; status = "missing" }
-    if ($venvPython) {
-        $Summary.venv.status = "usable"
-        Add-Unique $Summary.actions_skipped_reused "reused_venv"
+    $Summary.venv = [ordered]@{
+        path = $venvRoot
+        exists = (Test-Path -LiteralPath $venvRoot)
+        python = $venvPython
+        pip_ready = $false
+        pip_output = $null
+        status = "missing"
     }
-    elseif ($Apply -and $pythonPath -and $Summary.blockers.Count -eq 0) {
+    if (-not $venvPython -and $Apply -and $pythonPath -and $Summary.blockers.Count -eq 0) {
         Add-Unique $Summary.actions_planned "create_venv"
         $result = Invoke-CapturedCommand -CommandPath $pythonPath -Arguments @("-m", "venv", $venvRoot) -WorkingDirectory $ResolvedRepoRoot
         if ($result.exit_code -eq 0) {
@@ -458,11 +469,52 @@ try {
             Add-Unique $Summary.blockers "venv_create_failed"
         }
     }
-    else {
+    elseif (-not $venvPython) {
         Add-Unique $Summary.attention "venv_missing"
     }
 
-    $depsReady = Test-ImportsReady -PythonPath $venvPython -RepoRootPath $ResolvedRepoRoot
+    $pipReady = Test-PipReady -PythonPath $venvPython -RepoRootPath $ResolvedRepoRoot
+    $Summary.venv.pip_ready = $pipReady.ready
+    $Summary.venv.pip_output = $pipReady.output
+    if ($venvPython -and $pipReady.ready) {
+        $Summary.venv.status = "usable"
+        if (-not $Summary.actions_performed.Contains("created_venv")) {
+            Add-Unique $Summary.actions_skipped_reused "reused_venv"
+        }
+    }
+    elseif ($venvPython -and $Apply -and $Summary.blockers.Count -eq 0) {
+        $Summary.venv.status = "pip_unusable"
+        Add-Unique $Summary.actions_planned "repair_venv_pip"
+        $repairResult = Invoke-CapturedCommand -CommandPath $venvPython -Arguments @("-m", "ensurepip", "--upgrade", "--default-pip") -WorkingDirectory $ResolvedRepoRoot
+        if ($repairResult.exit_code -eq 0) {
+            $pipReady = Test-PipReady -PythonPath $venvPython -RepoRootPath $ResolvedRepoRoot
+            $Summary.venv.pip_ready = $pipReady.ready
+            $Summary.venv.pip_output = $pipReady.output
+            if ($pipReady.ready) {
+                $Summary.venv.status = "usable"
+                Add-Unique $Summary.actions_performed "repaired_venv_pip"
+            }
+            else {
+                $Summary.venv.status = "pip_unusable_after_repair"
+                Add-Unique $Summary.blockers "venv_pip_unusable_after_repair"
+            }
+        }
+        else {
+            $Summary.venv.status = "pip_repair_failed"
+            Add-Unique $Summary.blockers "venv_pip_repair_failed"
+        }
+    }
+    elseif ($venvPython) {
+        $Summary.venv.status = "pip_unusable"
+        Add-Unique $Summary.attention "venv_pip_unusable"
+    }
+
+    $depsReady = if ($Summary.venv.pip_ready) {
+        Test-ImportsReady -PythonPath $venvPython -RepoRootPath $ResolvedRepoRoot
+    }
+    else {
+        [ordered]@{ ready = $false; output = "venv_pip_unusable" }
+    }
     $Summary.dependencies = [ordered]@{
         requirements = $requirementsPath
         ready = $depsReady.ready
@@ -472,7 +524,7 @@ try {
     if ($depsReady.ready) {
         Add-Unique $Summary.actions_skipped_reused "reused_python_dependencies"
     }
-    elseif ($Apply -and $venvPython -and (Test-Path -LiteralPath $requirementsPath)) {
+    elseif ($Apply -and $venvPython -and $Summary.venv.pip_ready -and (Test-Path -LiteralPath $requirementsPath)) {
         Add-Unique $Summary.actions_planned "install_requirements_course"
         $installResult = Invoke-CapturedCommand -CommandPath $venvPython -Arguments @("-m", "pip", "install", "-r", $requirementsPath) -WorkingDirectory $ResolvedRepoRoot
         if ($installResult.exit_code -eq 0) {
@@ -531,15 +583,18 @@ try {
     elseif ($Apply -and $npmPath -and $nodePath -and $Summary.blockers.Count -eq 0) {
         Add-Unique $Summary.actions_planned "install_codex_0.141.0"
         New-Item -ItemType Directory -Force -Path $npmPrefix | Out-Null
-        $installCodex = Invoke-CapturedCommand -CommandPath $npmPath -Arguments @("install", "--prefix", $npmPrefix, "$($Manifest.codex.package)@$($Manifest.codex.version)") -WorkingDirectory $ResolvedRepoRoot
+        $installCodex = Invoke-CapturedCommand -CommandPath $npmPath -Arguments @("install", "--global", "--prefix", $npmPrefix, "$($Manifest.codex.package)@$($Manifest.codex.version)") -WorkingDirectory $ResolvedRepoRoot
         if ($installCodex.exit_code -eq 0) {
             Add-Unique $Summary.actions_performed "installed_codex_0.141.0"
             $existingCodex = Resolve-ExistingFileCaseInsensitive $expectedCodex
-            $codexPath = if ($existingCodex) { $existingCodex } else { $codexPath }
+            $codexPath = $existingCodex
             $codexFacts = Get-CodexFacts -CommandPath $codexPath -WorkingDirectory $ResolvedRepoRoot -NpmPrefix $npmPrefix -ExpectedVersion $Manifest.codex.version
             $codexFacts.expected_path = $expectedCodex
             $codexReady = $codexPath -and $codexFacts.ready
             $Summary.detected.codex = $codexFacts
+            if (-not $codexReady) {
+                Add-CodexReadinessAttention -Summary $Summary -CodexFacts $codexFacts
+            }
         }
         else {
             Add-Unique $Summary.attention "codex_install_failed"
@@ -563,7 +618,7 @@ try {
         if ($codexReady) { Ensure-PathEntry -Entry $codexDir -Persist:$PersistUserPath -Summary $Summary }
     }
 
-    if ($venvPython -and $Summary.dependencies.ready) {
+    if ($venvPython -and $Summary.venv.pip_ready -and $Summary.dependencies.ready) {
         Invoke-Diagnostics -Summary $Summary -VenvPython $venvPython -RepoRootPath $ResolvedRepoRoot
     }
 
