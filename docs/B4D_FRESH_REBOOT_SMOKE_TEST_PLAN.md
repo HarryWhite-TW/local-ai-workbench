@@ -494,8 +494,7 @@ $env:PYTHONPATH='src'
 21. Run the one-shot B2 command in a visible foreground PowerShell:
 
 ```powershell
-$env:PYTHONPATH='src'
-.\.venv-course\Scripts\python.exe -m local_runner_bridge.bridge_operator_b2_cli --repo-root .
+$env:PYTHONPATH = "src"; & .\.venv-course\Scripts\python.exe -m local_runner_bridge.bridge_operator_b2_cli --repo-root .
 ```
 
 22. Do not rerun the command regardless of outcome.

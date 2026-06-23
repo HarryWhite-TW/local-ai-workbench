@@ -115,6 +115,19 @@ def test_valid_manifest_and_preview():
     assert result["preview"]["next_required_action"] == "human_review_approval_a"
 
 
+def test_preview_b2_command_is_src_layout_safe_and_exact():
+    expected = (
+        '$env:PYTHONPATH = "src"; & .\\.venv-course\\Scripts\\python.exe '
+        "-m local_runner_bridge.bridge_operator_b2_cli --repo-root ."
+    )
+    result = validate(valid_manifest())
+
+    assert B2_COMMAND == expected
+    assert result["preview"]["approval_b"]["command"] == expected
+    assert '$env:PYTHONPATH = "src"' in expected
+    assert "local_runner_bridge.bridge_operator_b2_cli --repo-root ." in expected
+
+
 def test_canonical_markers_are_exact_and_ordered():
     manifest = valid_manifest()
 

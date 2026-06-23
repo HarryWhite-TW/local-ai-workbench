@@ -18,7 +18,7 @@ BRANCH = "master"
 ACTION = "run-reviewbundle"
 REQUESTED_BY = "chatgpt"
 B2_COMMAND = (
-    r".\.venv-course\Scripts\python.exe "
+    r'$env:PYTHONPATH = "src"; & .\.venv-course\Scripts\python.exe '
     r"-m local_runner_bridge.bridge_operator_b2_cli --repo-root ."
 )
 
