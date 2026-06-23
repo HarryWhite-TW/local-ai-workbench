@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 MANIFEST_PROTOCOL = "lawb.b4d_smoke_manifest.v1"
@@ -21,6 +21,7 @@ B2_COMMAND = (
     r'$env:PYTHONPATH = "src"; & .\.venv-course\Scripts\python.exe '
     r"-m local_runner_bridge.bridge_operator_b2_cli --repo-root ."
 )
+MAX_EXPIRY_WINDOW = timedelta(hours=4)
 
 TOP_LEVEL_FIELDS = (
     "protocol",
@@ -56,6 +57,7 @@ SAFETY_FIELDS = (
     "no_label",
     "no_pr",
     "no_merge",
+    "no_branch_delete",
     "no_automatic_cleanup",
     "no_approval_chaining",
 )
@@ -79,6 +81,7 @@ FORBIDDEN_ACTIONS = (
     "label",
     "pr",
     "merge",
+    "branch_delete",
     "approval_chaining",
     "another_request",
 )
@@ -88,6 +91,7 @@ _HEAD_RE = re.compile(r"^[0-9a-f]{40}$")
 _EXPIRY_RE = re.compile(r"^\d{8}T\d{6}Z$")
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
 _WILDCARD_RE = re.compile(r"[*?\[\]]")
+_WINDOWS_FORBIDDEN_RE = re.compile(r'[<>"|]')
 _RESERVED_DEVICE_RE = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", re.IGNORECASE)
 
 
@@ -150,6 +154,13 @@ def validate_manifest(
         _error(errors, "invalid_expiry", "expires", "expires must use valid UTC basic YYYYMMDDTHHMMSSZ format.")
     elif expires <= validation_time:
         _error(errors, "expired_manifest", "expires", "expires must be later than validation time.")
+    elif expires > validation_time + MAX_EXPIRY_WINDOW:
+        _error(
+            errors,
+            "expiry_too_far",
+            "expires",
+            "expires must be no later than 4 hours after validation time.",
+        )
 
     for field in ("inbox_request_id", "dispatch_request_id"):
         value = manifest[field]
@@ -246,6 +257,14 @@ def _validate_allowed_paths(errors: list[dict[str, str]], value: Any) -> list[st
             continue
         if ":" in path:
             _error(errors, "path_colon_forbidden", field, "Allowed path must not contain colon characters.")
+            continue
+        if _WINDOWS_FORBIDDEN_RE.search(path):
+            _error(
+                errors,
+                "windows_forbidden_character",
+                field,
+                'Allowed path must not contain Windows-forbidden characters <, >, ", or |.',
+            )
             continue
         if _WILDCARD_RE.search(path):
             _error(errors, "wildcard_allowed_path", field, "Allowed path must not contain wildcards.")

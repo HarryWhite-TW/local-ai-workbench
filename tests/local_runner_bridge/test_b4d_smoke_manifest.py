@@ -2,7 +2,7 @@ import hashlib
 import json
 import sys
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -15,6 +15,7 @@ import local_runner_bridge.b4d_smoke_manifest_cli as cli_module
 from local_runner_bridge.b4d_smoke_manifest import (
     B2_COMMAND,
     MANIFEST_PROTOCOL,
+    MAX_EXPIRY_WINDOW,
     SAFETY_FIELDS,
     canonical_dispatch_marker,
     canonical_inbox_marker,
@@ -25,7 +26,11 @@ NOW = datetime(2026, 6, 23, 12, 0, 0, tzinfo=timezone.utc)
 HEAD = "a" * 40
 
 
-def valid_manifest():
+def utc_basic(value):
+    return value.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def valid_manifest(*, expires=None):
     base = {
         "protocol": MANIFEST_PROTOCOL,
         "repo": "HarryWhite-TW/local-ai-workbench",
@@ -35,7 +40,7 @@ def valid_manifest():
         "head": HEAD,
         "action": "run-reviewbundle",
         "requested_by": "chatgpt",
-        "expires": "20260624T120000Z",
+        "expires": expires or utc_basic(NOW + timedelta(hours=1)),
         "inbox_request_id": "b4d-inbox-200",
         "dispatch_request_id": "b4d-dispatch-200",
         "allowed_paths": ["docs/smoke.md", r"src\local_runner_bridge\sample.py"],
@@ -49,6 +54,10 @@ def valid_manifest():
     }
     base["approvals"] = expected_approvals(base)
     return base
+
+
+def cli_valid_manifest():
+    return valid_manifest(expires=utc_basic(datetime.now(timezone.utc) + timedelta(hours=1)))
 
 
 def expected_approvals(manifest):
@@ -113,6 +122,8 @@ def test_valid_manifest_and_preview():
     ]
     assert result["preview"]["approval_b"]["command"] == B2_COMMAND
     assert result["preview"]["next_required_action"] == "human_review_approval_a"
+    assert result["canonical_manifest"]["safety"]["no_branch_delete"] is True
+    assert "branch_delete" in result["preview"]["forbidden_actions"]
 
 
 def test_preview_b2_command_is_src_layout_safe_and_exact():
@@ -134,13 +145,13 @@ def test_canonical_markers_are_exact_and_ordered():
     assert manifest["markers"]["dispatch"] == (
         "CHATGPT-DISPATCH protocol=lawb.dispatch.v1 action=run-reviewbundle "
         f"issue=200 repo=HarryWhite-TW/local-ai-workbench branch=master head={HEAD} "
-        "expires=20260624T120000Z requested_by=chatgpt request_id=b4d-dispatch-200"
+        "expires=20260623T130000Z requested_by=chatgpt request_id=b4d-dispatch-200"
     )
     assert manifest["markers"]["inbox"] == (
         "BRIDGE-INBOX-REQUEST protocol=lawb.bridge_inbox_request.v1 "
         "request_id=b4d-inbox-200 repo=HarryWhite-TW/local-ai-workbench "
         "target_issue=200 target_dispatch_request_id=b4d-dispatch-200 "
-        f"branch=master head={HEAD} expires=20260624T120000Z "
+        f"branch=master head={HEAD} expires=20260623T130000Z "
         "action=run-reviewbundle requested_by=chatgpt"
     )
 
@@ -153,7 +164,6 @@ def test_canonical_markers_are_exact_and_ordered():
         ("branch", "feature/x", "fixed_value_mismatch"),
         ("head", "A" * 40, "invalid_head"),
         ("head", "a" * 39, "invalid_head"),
-        ("expires", "20260623T110000Z", "expired_manifest"),
         ("expires", "20261399T999999Z", "invalid_expiry"),
         ("inbox_request_id", "x", "invalid_request_id"),
         ("dispatch_request_id", "bad id", "invalid_request_id"),
@@ -164,6 +174,26 @@ def test_invalid_scalar_contracts(field, value, code):
     manifest[field] = value
     result = validate(manifest)
     assert_invalid_without_partial_result(result, code)
+
+
+@pytest.mark.parametrize(
+    ("offset", "valid", "code"),
+    [
+        (timedelta(seconds=-1), False, "expired_manifest"),
+        (timedelta(seconds=1), True, None),
+        (MAX_EXPIRY_WINDOW, True, None),
+        (MAX_EXPIRY_WINDOW + timedelta(seconds=1), False, "expiry_too_far"),
+        (timedelta(days=36500), False, "expiry_too_far"),
+    ],
+)
+def test_expiry_window_boundaries(offset, valid, code):
+    manifest = valid_manifest(expires=utc_basic(NOW + offset))
+
+    result = validate(manifest)
+
+    assert result["valid"] is valid
+    if code is not None:
+        assert_invalid_without_partial_result(result, code)
 
 
 def test_target_equals_inbox():
@@ -236,6 +266,14 @@ def test_windows_path_authority_rejections(paths, code):
     assert_invalid_without_partial_result(validate(manifest), code)
 
 
+@pytest.mark.parametrize("character", ["<", ">", '"', "|"])
+def test_remaining_windows_forbidden_filename_characters(character):
+    manifest = valid_manifest()
+    manifest["allowed_paths"] = [f"docs/file{character}name.txt"]
+
+    assert_invalid_without_partial_result(validate(manifest), "windows_forbidden_character")
+
+
 def test_valid_mixed_case_path_preserves_case_and_normalizes_slashes():
     manifest = valid_manifest()
     manifest["allowed_paths"] = [r"Docs\Smoke\File.MD"]
@@ -303,6 +341,8 @@ def test_deterministic_sha256_and_preview():
     compact = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     assert first["preview"]["manifest_sha256"] == hashlib.sha256(compact.encode("utf-8")).hexdigest()
     assert first["preview"]["forbidden_actions"] == list(manifest_module.FORBIDDEN_ACTIONS)
+    assert first["canonical_manifest"]["safety"]["no_branch_delete"] is True
+    assert first["preview"]["forbidden_actions"].count("branch_delete") == 1
 
 
 def run_cli(tmp_path, content, capsys):
@@ -345,7 +385,7 @@ def duplicate_json(base, old, new):
     ],
 )
 def test_cli_rejects_duplicate_json_keys_at_any_nesting_level(tmp_path, capsys, content):
-    returncode, captured = run_cli(tmp_path, content(valid_manifest()), capsys)
+    returncode, captured = run_cli(tmp_path, content(cli_valid_manifest()), capsys)
     payload = json.loads(captured.out)
 
     assert returncode == 2
@@ -354,14 +394,14 @@ def test_cli_rejects_duplicate_json_keys_at_any_nesting_level(tmp_path, capsys, 
 
 
 def test_cli_valid_exit_zero(tmp_path, capsys):
-    returncode, captured = run_cli(tmp_path, json.dumps(valid_manifest()), capsys)
+    returncode, captured = run_cli(tmp_path, json.dumps(cli_valid_manifest()), capsys)
     payload = json.loads(captured.out)
     assert returncode == 0
     assert payload["valid"] is True
 
 
 def test_cli_invalid_exit_two(tmp_path, capsys):
-    manifest = valid_manifest()
+    manifest = cli_valid_manifest()
     manifest["repo"] = "other/repo"
     returncode, captured = run_cli(tmp_path, json.dumps(manifest), capsys)
     payload = json.loads(captured.out)
@@ -408,7 +448,7 @@ def test_cli_manifest_read_failure_is_structured_exit_two(tmp_path, capsys):
 
 def test_cli_unexpected_validation_failure_is_structured_exit_one(tmp_path, capsys, monkeypatch):
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps(valid_manifest()), encoding="utf-8")
+    path.write_text(json.dumps(cli_valid_manifest()), encoding="utf-8")
 
     def fail(_manifest):
         raise RuntimeError("sensitive internal detail")

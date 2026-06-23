@@ -109,7 +109,8 @@ All preconditions must be checked immediately before a future smoke:
 12. The trusted GitHub actor remains `HarryWhite-TW`, unless a separately
     approved authority change has occurred.
 13. The Inbox request and target dispatch have unique IDs, exact branch/HEAD
-    binding, and an expiry comfortably beyond the bounded run timeout.
+    binding, and an expiry later than validation time but no more than four
+    hours after validation time.
 14. No matching result already exists for the target dispatch request ID.
 15. The human has reviewed the exact planned GitHub writes and execution scope.
 
@@ -373,8 +374,8 @@ The future smoke has two non-chainable approvals:
 | Separate approval B | One Runner review-bundle comment and one Dispatcher `LAWBRUNNER-RESULT` comment on `<TARGET_ISSUE>` | Any additional or substitute GitHub write |
 
 Approval A cannot authorize approval B. Neither approval authorizes commit,
-push, cleanup, Issue close, label change, PR creation, merge, retry, or another
-request.
+push, cleanup, Issue close, label change, PR creation, merge, branch deletion,
+retry, or another request.
 
 Approval B also permits local unstaged repository changes only within the target
 Issue's exact allowed paths and existing B2/operator local runtime evidence
@@ -424,8 +425,9 @@ All commands below are future commands. This planning task does not run them.
    - exact validation and final-report requirements.
 3. Record `master` and `<MASTER_HEAD_40_SHA>`.
 4. Generate unique `<INBOX_REQUEST_ID>` and `<DISPATCH_REQUEST_ID>`.
-5. Choose `<EXPIRY_UTC_BASIC>` with enough time for review and the bounded
-   Codex timeout, but no unnecessary long-lived authority.
+5. Choose `<EXPIRY_UTC_BASIC>` later than validation time and no more than four
+   hours after validation time, with enough time for review and the bounded
+   Codex timeout.
 6. Prepare the exact two marker comments and approval A.
 7. Stop for explicit approval A before either GitHub write.
 
@@ -609,7 +611,7 @@ The smoke passes only if all are true:
 14. ChatGPT can read and review the target-Issue result without the user copying
     a long Codex transcript.
 15. No retry, loop, broad scan, background behavior, stage, commit, push, close,
-    label, PR, merge, or approval chaining occurs.
+    label, PR, merge, branch deletion, or approval chaining occurs.
 16. The process stops after ChatGPT review.
 
 Any missing criterion means the smoke is failed or incomplete, not partially
