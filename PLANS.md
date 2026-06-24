@@ -111,28 +111,29 @@ This order may change only through explicit user-approved change control. Comple
 
 ## Immediate Next Gate
 
-The current task is activation-metadata synchronization after Roadmap v2 adoption.
+The current task is documentation-only truth synchronization for `RV2-01` readiness preparation.
 
-Authorized scope for this metadata task:
+Authorized scope for this truth-sync task:
 
-- mark the Roadmap v2 specification as active;
-- record its canonical `master` reference, activation PR, and activation commit;
-- update `PLANS.md` from proposed language to adopted language;
+- remove stale proposed-state language from the Direction Lock;
+- bind the B4-D smoke plan to Direction Lock v1.2, Roadmap v2, tracker #168, and planned node #169;
+- update this planning file to reflect the current readiness gate;
 - commit, push, and open a documentation-only PR on the approved branch.
 
 Not authorized by this task:
 
-- merge the activation-metadata PR;
-- mark RV2-00 `DONE` before post-merge verification;
+- merge the truth-sync PR;
+- update tracker #168, node Issue #169, or Inbox #147;
+- create or select a target Issue;
 - change RV2-01 from `PLANNED`;
-- publish B4-D markers;
-- execute B1, B2, B3, Dispatcher, Runner, Codex, or live B4-D;
+- generate or publish B4-D markers;
+- execute Bootstrap Audit, diagnostics, B1, B2, B3, Dispatcher, Runner, Codex, or live B4-D;
 - enable automatic polling, startup, tray UI, service, or MCP;
-- modify labels;
+- modify labels or milestones;
 - delete a branch;
 - add commit, push, close, PR, merge, or approval-chaining authority to the bridge runtime.
 
-After this metadata PR is separately approved, merged, and verified, the tracker may mark RV2-00 `DONE`. RV2-01 remains `PLANNED` until its entry criteria are evaluated.
+After this truth-sync PR is separately approved, merged, and verified, the next gate is current read-only course-computer preflight plus explicit human target selection. RV2-01 remains `PLANNED` until all entry criteria have current evidence and a separate status decision is approved.
 
 ## Product Parallel Priority
 
@@ -169,6 +170,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-06-24: Began RV2-01 readiness truth synchronization while keeping the node planned and the live smoke separately gated.
 - 2026-06-24: Adopted Bridge Roadmap v2 execution governance through squash-merged PR #167, created tracker #168 and planned node #169, and kept live B4-D separately gated.
 - 2026-06-24: Merged B4-D smoke planning and manifest-validator preparation through PR #166; began Roadmap v2 documentation-only adoption with live smoke still separately gated.
 - 2026-06-15: Completed Bridge Operator B1 through PR #139 and UTF-8 reliability follow-up PR #143; final post-merge verification passed with 102 tests and clean stderr; began B1 closeout documentation reconciliation through Issue #145.

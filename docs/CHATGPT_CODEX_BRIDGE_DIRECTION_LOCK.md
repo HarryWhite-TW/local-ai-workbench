@@ -39,7 +39,7 @@ docs/BRIDGE_OPERATOR_V0_SPEC.md
 docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md
 ```
 
-The Roadmap v2 specification remains proposed and non-authoritative until its pull request is explicitly approved and merged.
+The Roadmap v2 specification is active after explicit approval and squash merge through PR #167. It governs Roadmap v2 work subject to this Direction Lock and the Bridge Operator specification. Its activation does not itself authorize live execution, automatic polling, startup, MCP, or another roadmap node.
 
 ## Non-Goal And Fallback Rule
 
@@ -197,13 +197,11 @@ The B4-D planning and validator implementation is merged, but the live B4-D smok
 
 ## Correct Next Strategic Target
 
-Before Roadmap v2 adoption, the immediate target is the documentation-only adoption of:
+Roadmap v2 is active. Tracker #168 records `RV2-00` as `DONE`, and Issue #169 is the sole next-node candidate for `RV2-01`.
 
-```text
-docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md
-```
+`RV2-01` remains `PLANNED` until governing-document truth synchronization, current course-computer preflight evidence, explicit human target selection, and manifest validation are complete. This status does not authorize target creation, marker publication, or live B4-D execution.
 
-After adoption, the default ordered direction is:
+The default ordered direction is:
 
 1. `RV2-01`: one explicitly approved B4-D supervised live smoke through the existing path.
 2. `RV2-02`: B4-D closeout and documentation truth synchronization.
