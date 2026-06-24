@@ -5,7 +5,7 @@
 ```text
 PLAN-READ-AUDIT protocol=lawb.direction_lock_plan_read.v1
 plan_path=docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md
-plan_version=v1.1
+plan_version=v1.2
 primary_goal_read=true
 task_alignment=core
 manual_copy_paste_is_target=false
@@ -29,9 +29,28 @@ high_risk_actions_remain_separate=true
 failure_reason=none
 ```
 
+```text
+ROADMAP-V2-READ-AUDIT protocol=lawb.bridge_roadmap_v2_read.v1
+spec_path=docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md
+spec_version=v1.0
+spec_read=true
+tracker_issue=168
+active_node=none
+active_node_issue=none
+entry_criteria_met=false
+task_alignment=core
+authority_change_requested=false
+chatgpt_remains_primary_interface=true
+high_risk_actions_remain_separate=true
+product_runtime_boundary_preserved=true
+failure_reason=rv2_01_readiness_evidence_incomplete
+```
+
 `B4-D` in this document is the course-computer recovery milestone name. It is
 not Bridge Operator specification Phase B4 and does not authorize tray UI,
 startup behavior, a service, or any other Phase B4 capability.
+
+Roadmap v2 tracker #168 records `RV2-00` as `DONE`. Issue #169 is the sole next-node candidate for `RV2-01`, which remains `PLANNED`. This readiness truth-sync does not create or select a target Issue, publish request markers, authorize the smoke, or execute any B4-D step.
 
 ## 1. Purpose
 
@@ -638,22 +657,17 @@ There is no automatic rollback.
 - Confirm the repository's final status and any remaining operator state before
   declaring cleanup complete.
 
-## 17. Recommended next implementation slice
+## 17. RV2-01 readiness gate
 
-After this planning document is reviewed, the next bounded slice should be a
-documentation-and-test-only **B4-D smoke harness preparation** task:
+This plan and its local-only validator are implemented, but `RV2-01` is not ready for live execution merely because this document is synchronized.
 
-- add no new runtime authority;
-- add no GitHub writes;
-- add no Operator, Dispatcher, Runner, or Codex invocation in tests;
-- provide a local validator for a filled smoke manifest containing the explicit
-  target Issue, master HEAD, request IDs, expiry, exact marker strings, allowed
-  paths, expected write count, and stop conditions;
-- validate that the manifest targets Inbox `#147`, action
-  `run-reviewbundle`, branch `master`, one explicit target Issue, unique IDs,
-  exact cross-marker binding, and no forbidden authority;
-- emit a read-only preview package for human approval.
+The remaining readiness evidence is:
 
-Only after that slice passes should a separately authorized live smoke populate
-the manifest, publish the approved markers, run B1, stop for execution approval,
-and then invoke B2 once.
+1. This governing-document truth-sync PR is separately approved, merged, and verified on `master`.
+2. Current course-computer read-only preflight proves the intended repository, `master`, reviewed HEAD equality with `origin/master`, a clean working tree, Bootstrap Audit `READY`, and acceptable B4-B diagnostics.
+3. A human explicitly selects one existing open target Issue and verifies Runner eligibility, bounded scope, and exact allowed paths.
+4. A filled smoke manifest passes the local validator and produces an exact approval preview with current IDs, HEAD, expiry, markers, and safety boundaries.
+5. Separate approval A authorizes only the exact request comments.
+6. After request publication and successful B1 evidence, separate approval B authorizes only one foreground B2 execution chain and its expected result writeback.
+
+The current documentation task stops after creating a reviewable PR. It does not update tracker #168 or Issue #169, create a target, publish markers, run preflight, or execute B4-D. A later readiness decision must use current evidence and explicit approval; no status transition or execution authority is inferred from this document change.
