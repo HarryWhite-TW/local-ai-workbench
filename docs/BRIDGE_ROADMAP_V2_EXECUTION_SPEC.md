@@ -4,10 +4,12 @@
 
 - title: Bridge Roadmap v2 Execution Specification
 - version: v1.0
-- status: Proposed Execution Baseline
+- status: Active Execution Baseline
 - owner: 駿弘
 - repository: `HarryWhite-TW/local-ai-workbench`
-- branch: `docs/bridge-roadmap-v2-spec`
+- canonical_ref: `master`
+- activation_pr: `#167`
+- activation_commit: `9baf606197bbdf886b23782d1c67f2a872e76e09`
 - scope: Execution governance for the ChatGPT-centered local Codex bridge roadmap after B4-D preparation
 
 ## Governing Documents And Precedence
@@ -30,7 +32,7 @@ CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md
 
 A lower-level artifact must not expand authority, weaken an approval boundary, replace ChatGPT as the primary interface, or redefine the public product runtime.
 
-This specification becomes active only after its pull request is explicitly approved and merged. Before merge it is a proposal and does not authorize tracker creation, node activation, live smoke execution, automatic polling, startup, MCP, or any high-risk action.
+This specification became active after explicit approval and squash merge through PR #167 at commit `9baf606197bbdf886b23782d1c67f2a872e76e09`. Its activation does not by itself authorize live smoke execution, automatic polling, startup, MCP, or any high-risk action.
 
 ## Strategic Goals
 
