@@ -180,6 +180,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
         [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
         cwd=REPO_ROOT,
         text=True,
+        errors="replace",
         capture_output=True,
         timeout=30,
     )
@@ -209,6 +210,7 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
         [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
         cwd=REPO_ROOT,
         text=True,
+        errors="replace",
         capture_output=True,
         timeout=30,
     )
@@ -1174,6 +1176,7 @@ def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):
         ],
         cwd=REPO_ROOT,
         text=True,
+        errors="replace",
         capture_output=True,
         timeout=30,
     )

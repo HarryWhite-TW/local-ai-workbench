@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -231,11 +232,17 @@ def _run_relay(args: list[str], *, env: dict[str, str] | None = None) -> subproc
         ],
         cwd=REPO_ROOT,
         text=True,
+        errors="replace",
         capture_output=True,
         timeout=20,
         env=env,
     )
 
+
+def _normalized_process_output(result: subprocess.CompletedProcess) -> str:
+    output = (result.stdout or "") + (result.stderr or "")
+    output = re.sub(r"(?<=\S)\r?\n(?=\S)", "", output)
+    return " ".join(output.split())
 
 def test_relay_smoke_document_defines_target_readback_without_drift():
     text = DOC.read_text(encoding="utf-8")
@@ -468,7 +475,7 @@ def test_unknown_command_kind_fails_closed(tmp_path):
     result = _run_relay(["-TaskPacketFile", str(task_file)])
 
     assert result.returncode != 0
-    assert "local-git-status-summary" in (result.stdout + result.stderr)
+    assert "local-git-status-summary" in _normalized_process_output(result)
 
 
 def test_unsafe_command_fields_fail_closed(tmp_path):
@@ -490,7 +497,7 @@ def test_unsafe_command_fields_fail_closed(tmp_path):
     result = _run_relay(["-TaskPacketFile", str(task_file)])
 
     assert result.returncode != 0
-    assert "Unsupported unsafe command field: command_text" in (result.stdout + result.stderr)
+    assert "Unsupported unsafe command field: command_text" in _normalized_process_output(result)
 
 
 def test_arbitrary_prompt_field_fails_closed(tmp_path):
@@ -512,7 +519,7 @@ def test_arbitrary_prompt_field_fails_closed(tmp_path):
     result = _run_relay(["-TaskPacketFile", str(task_file)])
 
     assert result.returncode != 0
-    assert "Unsupported unsafe command field: prompt" in (result.stdout + result.stderr)
+    assert "Unsupported unsafe command field: prompt" in _normalized_process_output(result)
 
 
 def test_timeout_above_30_fails_closed(tmp_path):
@@ -533,7 +540,7 @@ def test_timeout_above_30_fails_closed(tmp_path):
     result = _run_relay(["-TaskPacketFile", str(task_file)])
 
     assert result.returncode != 0
-    assert "timeout_seconds must be <= 30" in (result.stdout + result.stderr)
+    assert "timeout_seconds must be <= 30" in _normalized_process_output(result)
 
 
 def test_github_issue_task_packet_read_no_post_default(tmp_path):
@@ -586,7 +593,7 @@ def test_github_issue_duplicate_task_packets_fail_closed_without_posting(tmp_pat
     )
 
     assert result.returncode != 0
-    assert "Multiple BRIDGE-TASK-PACKET entries" in (result.stdout + result.stderr)
+    assert "Multiple BRIDGE-TASK-PACKET entries" in _normalized_process_output(result)
     assert not record_file.exists()
 
 
@@ -601,7 +608,7 @@ def test_github_issue_missing_task_packet_fails_closed_without_posting(tmp_path)
     )
 
     assert result.returncode != 0
-    assert "No BRIDGE-TASK-PACKET found" in (result.stdout + result.stderr)
+    assert "No BRIDGE-TASK-PACKET found" in _normalized_process_output(result)
     assert not record_file.exists()
 
 
@@ -616,5 +623,5 @@ def test_github_issue_malformed_task_packet_fails_closed_without_posting(tmp_pat
     )
 
     assert result.returncode != 0
-    assert "Malformed BRIDGE-TASK-PACKET JSON" in (result.stdout + result.stderr)
+    assert "Malformed BRIDGE-TASK-PACKET JSON" in _normalized_process_output(result)
     assert not record_file.exists()
