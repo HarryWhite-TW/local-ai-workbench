@@ -33,6 +33,27 @@ def _powershell() -> str:
     return shell
 
 
+def _decode_process_stream(stream: bytes | None) -> str | None:
+    if stream is None:
+        return None
+    return stream.decode("utf-8", errors="replace")
+
+
+def _run_powershell(command: list[str]) -> subprocess.CompletedProcess:
+    result = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        timeout=30,
+    )
+    return subprocess.CompletedProcess(
+        args=result.args,
+        returncode=result.returncode,
+        stdout=_decode_process_stream(result.stdout),
+        stderr=_decode_process_stream(result.stderr),
+    )
+
+
 def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
     script = tmp_path / "dispatcher_v1_test.ps1"
     script.write_text(
@@ -176,13 +197,8 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
         + textwrap.dedent(body),
         encoding="utf-8",
     )
-    return subprocess.run(
-        [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
-        cwd=REPO_ROOT,
-        text=True,
-        errors="replace",
-        capture_output=True,
-        timeout=30,
+    return _run_powershell(
+        [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
     )
 
 
@@ -206,13 +222,8 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
         + textwrap.dedent(body),
         encoding="utf-8",
     )
-    return subprocess.run(
-        [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
-        cwd=REPO_ROOT,
-        text=True,
-        errors="replace",
-        capture_output=True,
-        timeout=30,
+    return _run_powershell(
+        [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
     )
 
 
@@ -225,6 +236,7 @@ def extract_summary(stdout: str) -> dict:
 
 
 def extract_summary_after(stdout: str, marker: str) -> dict:
+    assert "\ufffd" not in stdout, "Structured dispatcher output contained replacement characters."
     lines = stdout.splitlines()
     marker_index = lines.index(marker)
     json_lines = []
@@ -237,6 +249,13 @@ def extract_summary_after(stdout: str, marker: str) -> dict:
         if started and depth == 0:
             break
     return json.loads("\n".join(json_lines))
+
+
+def test_extract_summary_rejects_replacement_characters():
+    output = MARKER + '\n{"result":"success\ufffd"}'
+
+    with pytest.raises(AssertionError, match="replacement characters"):
+        extract_summary(output)
 
 
 def extract_posted_body(stdout: str) -> str:
@@ -1162,7 +1181,7 @@ def test_bounded_poll_trust_boundary_rejection_prevents_all_action_execution(tmp
 
 
 def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):
-    result = subprocess.run(
+    result = _run_powershell(
         [
             _powershell(),
             "-NoProfile",
@@ -1173,13 +1192,7 @@ def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):
             "-PostResultComment",
             "-IssueNumber",
             "83",
-        ],
-        cwd=REPO_ROOT,
-        text=True,
-        errors="replace",
-        capture_output=True,
-        timeout=30,
+        ]
     )
     assert result.returncode != 0
-    compact_output = "".join((result.stdout + result.stderr).split())
-    assert "Missingmode" in compact_output
+    assert any("Missing mode." in stream for stream in (result.stdout or "", result.stderr or ""))

@@ -35,6 +35,7 @@ def _git(*args: str) -> str:
 
 
 def _extract_packet(stdout: str) -> dict:
+    assert "\ufffd" not in stdout, "Structured relay output contained replacement characters."
     lines = stdout.splitlines()
     marker_index = lines.index(MARKER)
     json_text = "\n".join(lines[marker_index + 1 :])
@@ -219,8 +220,14 @@ def _write_fake_gh(
     return record_file
 
 
+def _decode_process_stream(stream: bytes | None) -> str | None:
+    if stream is None:
+        return None
+    return stream.decode("utf-8", errors="replace")
+
+
 def _run_relay(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    result = subprocess.run(
         [
             _powershell(),
             "-NoProfile",
@@ -231,18 +238,97 @@ def _run_relay(args: list[str], *, env: dict[str, str] | None = None) -> subproc
             *args,
         ],
         cwd=REPO_ROOT,
-        text=True,
-        errors="replace",
         capture_output=True,
         timeout=20,
         env=env,
     )
+    return subprocess.CompletedProcess(
+        args=result.args,
+        returncode=result.returncode,
+        stdout=_decode_process_stream(result.stdout),
+        stderr=_decode_process_stream(result.stderr),
+    )
 
 
-def _normalized_process_output(result: subprocess.CompletedProcess) -> str:
-    output = (result.stdout or "") + (result.stderr or "")
-    output = re.sub(r"(?<=\S)\r?\n(?=\S)", "", output)
-    return " ".join(output.split())
+def _normalize_line_endings(stream: str | None) -> str:
+    return (stream or "").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _process_output_contains(
+    result: subprocess.CompletedProcess,
+    token: str,
+    *,
+    allow_single_hard_wrap: bool = False,
+) -> bool:
+    for stream in (result.stdout, result.stderr):
+        normalized = _normalize_line_endings(stream)
+        if token in normalized:
+            return True
+        if not allow_single_hard_wrap:
+            continue
+        for index in range(1, len(token)):
+            if token[index - 1].isspace() or token[index].isspace():
+                continue
+            pattern = (
+                re.escape(token[:index])
+                + r"\n[ \t]*"
+                + re.escape(token[index:])
+            )
+            if re.search(pattern, normalized):
+                return True
+    return False
+
+
+def test_process_output_match_does_not_cross_stream_boundary():
+    result = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout="command_",
+        stderr="text",
+    )
+
+    assert not _process_output_contains(
+        result,
+        "command_text",
+        allow_single_hard_wrap=True,
+    )
+
+
+def test_process_output_match_accepts_one_crlf_hard_wrap():
+    result = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout=None,
+        stderr="Unsupported unsafe command field: command_\r\n    text",
+    )
+
+    assert _process_output_contains(
+        result,
+        "Unsupported unsafe command field: command_text",
+        allow_single_hard_wrap=True,
+    )
+
+
+def test_process_output_match_handles_none_streams():
+    result = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout=None,
+        stderr=None,
+    )
+
+    assert not _process_output_contains(result, "command_text")
+
+
+def test_decode_process_stream_replaces_invalid_utf8_without_crashing():
+    assert _decode_process_stream(b"\xa6command_text") == "\ufffdcommand_text"
+
+
+def test_extract_packet_rejects_replacement_characters():
+    output = MARKER + '\n{"result":"success\ufffd"}'
+
+    with pytest.raises(AssertionError, match="replacement characters"):
+        _extract_packet(output)
 
 def test_relay_smoke_document_defines_target_readback_without_drift():
     text = DOC.read_text(encoding="utf-8")
@@ -475,7 +561,7 @@ def test_unknown_command_kind_fails_closed(tmp_path):
     result = _run_relay(["-TaskPacketFile", str(task_file)])
 
     assert result.returncode != 0
-    assert "local-git-status-summary" in _normalized_process_output(result)
+    assert _process_output_contains(result, "local-git-status-summary")
 
 
 def test_unsafe_command_fields_fail_closed(tmp_path):
@@ -497,7 +583,11 @@ def test_unsafe_command_fields_fail_closed(tmp_path):
     result = _run_relay(["-TaskPacketFile", str(task_file)])
 
     assert result.returncode != 0
-    assert "Unsupported unsafe command field: command_text" in _normalized_process_output(result)
+    assert _process_output_contains(
+        result,
+        "Unsupported unsafe command field: command_text",
+        allow_single_hard_wrap=True,
+    )
 
 
 def test_arbitrary_prompt_field_fails_closed(tmp_path):
@@ -519,7 +609,7 @@ def test_arbitrary_prompt_field_fails_closed(tmp_path):
     result = _run_relay(["-TaskPacketFile", str(task_file)])
 
     assert result.returncode != 0
-    assert "Unsupported unsafe command field: prompt" in _normalized_process_output(result)
+    assert _process_output_contains(result, "Unsupported unsafe command field: prompt")
 
 
 def test_timeout_above_30_fails_closed(tmp_path):
@@ -540,7 +630,7 @@ def test_timeout_above_30_fails_closed(tmp_path):
     result = _run_relay(["-TaskPacketFile", str(task_file)])
 
     assert result.returncode != 0
-    assert "timeout_seconds must be <= 30" in _normalized_process_output(result)
+    assert _process_output_contains(result, "timeout_seconds must be <= 30")
 
 
 def test_github_issue_task_packet_read_no_post_default(tmp_path):
@@ -593,7 +683,7 @@ def test_github_issue_duplicate_task_packets_fail_closed_without_posting(tmp_pat
     )
 
     assert result.returncode != 0
-    assert "Multiple BRIDGE-TASK-PACKET entries" in _normalized_process_output(result)
+    assert _process_output_contains(result, "Multiple BRIDGE-TASK-PACKET entries")
     assert not record_file.exists()
 
 
@@ -608,7 +698,7 @@ def test_github_issue_missing_task_packet_fails_closed_without_posting(tmp_path)
     )
 
     assert result.returncode != 0
-    assert "No BRIDGE-TASK-PACKET found" in _normalized_process_output(result)
+    assert _process_output_contains(result, "No BRIDGE-TASK-PACKET found")
     assert not record_file.exists()
 
 
@@ -623,5 +713,5 @@ def test_github_issue_malformed_task_packet_fails_closed_without_posting(tmp_pat
     )
 
     assert result.returncode != 0
-    assert "Malformed BRIDGE-TASK-PACKET JSON" in _normalized_process_output(result)
+    assert _process_output_contains(result, "Malformed BRIDGE-TASK-PACKET JSON")
     assert not record_file.exists()
