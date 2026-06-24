@@ -33,8 +33,11 @@ Development workflow tooling is separate from the product runtime.
 - Runner stdin hardening was completed through PR #161 and PR #162.
 - Bridge Operator safety visibility, read-only diagnostics, and course-environment bootstrap were completed through PR #163, PR #164, and PR #165.
 - B4-D fresh-reboot smoke planning and manifest-validator preparation were completed through PR #166.
-- Current post-PR-#166 `master` merge commit: `380f1c2fc1d7ea6201da7e7a56da387aea766d48`.
+- Roadmap v2 execution governance was adopted through PR #167.
+- Current Roadmap v2 activation commit: `9baf606197bbdf886b23782d1c67f2a872e76e09`.
 - Permanent fixed Bridge Inbox: Issue `#147`.
+- Roadmap v2 tracker: Issue `#168`.
+- RV2-01 planned node: Issue `#169`.
 - Latest reported B4-D focused validation: `78 passed`.
 - Latest reported adjacent validation: `126 passed`.
 - Course-computer environment restore/import check: `COURSE ENV OK`.
@@ -49,7 +52,7 @@ Bridge Operator remains development workflow tooling and portfolio engineering e
 
 ## Bridge Roadmap v2 Position
 
-The proposed execution-governance specification is:
+The active execution-governance specification is:
 
 ```text
 docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md
@@ -62,9 +65,9 @@ docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md
 docs/BRIDGE_OPERATOR_V0_SPEC.md
 ```
 
-The specification remains proposed until its documentation PR is explicitly approved and merged. Before merge it does not authorize tracker creation, node activation, live smoke execution, automatic polling, startup, MCP, or any high-risk operation.
+The specification was explicitly approved and squash-merged through PR #167 at commit `9baf606197bbdf886b23782d1c67f2a872e76e09`. Its activation does not authorize live smoke execution, automatic polling, startup, MCP, or any high-risk operation.
 
-After adoption, GitHub governance uses:
+The active GitHub governance model uses:
 
 - one long-lived Roadmap v2 tracker Issue;
 - one active execution-node Issue at a time;
@@ -88,8 +91,9 @@ Completed baseline:
 10. B4-B read-only diagnostics.
 11. B4-C safe course-environment bootstrap.
 12. B4-D smoke plan and local-only manifest validator.
+13. Roadmap v2 execution-governance adoption through PR #167.
 
-Roadmap v2 default sequence after specification adoption:
+Roadmap v2 default sequence:
 
 1. `RV2-00` — specification adoption and execution baseline.
 2. `RV2-01` — one supervised B4-D live smoke through the existing path.
@@ -107,25 +111,28 @@ This order may change only through explicit user-approved change control. Comple
 
 ## Immediate Next Gate
 
-The current task is documentation-only adoption of Roadmap v2.
+The current task is activation-metadata synchronization after Roadmap v2 adoption.
 
-Authorized scope for this adoption task:
+Authorized scope for this metadata task:
 
-- add `docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md`;
-- update `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`;
-- update `PLANS.md`;
-- commit, push, and open a documentation PR on the approved branch.
+- mark the Roadmap v2 specification as active;
+- record its canonical `master` reference, activation PR, and activation commit;
+- update `PLANS.md` from proposed language to adopted language;
+- commit, push, and open a documentation-only PR on the approved branch.
 
 Not authorized by this task:
 
-- merge the documentation PR;
-- create the tracker or `RV2-01` Issue before merge;
+- merge the activation-metadata PR;
+- mark RV2-00 `DONE` before post-merge verification;
+- change RV2-01 from `PLANNED`;
 - publish B4-D markers;
 - execute B1, B2, B3, Dispatcher, Runner, Codex, or live B4-D;
 - enable automatic polling, startup, tray UI, service, or MCP;
 - modify labels;
 - delete a branch;
 - add commit, push, close, PR, merge, or approval-chaining authority to the bridge runtime.
+
+After this metadata PR is separately approved, merged, and verified, the tracker may mark RV2-00 `DONE`. RV2-01 remains `PLANNED` until its entry criteria are evaluated.
 
 ## Product Parallel Priority
 
@@ -162,6 +169,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-06-24: Adopted Bridge Roadmap v2 execution governance through squash-merged PR #167, created tracker #168 and planned node #169, and kept live B4-D separately gated.
 - 2026-06-24: Merged B4-D smoke planning and manifest-validator preparation through PR #166; began Roadmap v2 documentation-only adoption with live smoke still separately gated.
 - 2026-06-15: Completed Bridge Operator B1 through PR #139 and UTF-8 reliability follow-up PR #143; final post-merge verification passed with 102 tests and clean stderr; began B1 closeout documentation reconciliation through Issue #145.
 - 2026-06-14: Began Workflow Governance Reset through Issue #135, clarified Issue #114 as historical roadmap evidence, and kept B1, Phase C, and high-risk operations separately approval-gated.
