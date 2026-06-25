@@ -6,7 +6,7 @@ title: ChatGPT Codex Bridge Direction Lock
 version: v1.2
 status: Active
 owner: 駿弘
-scope: Future ChatGPT-Codex bridge, relay, runner, operator, connector, and Roadmap v2 workflow work in this repository.
+scope: Future ChatGPT-Codex bridge, relay, runner, operator, connector, Roadmap v2, and approved repository-separation work using this repository as the first validated reference host.
 
 ## Primary Goal
 
@@ -193,26 +193,31 @@ The following implementation slices are integrated into `master`:
 
 The permanent fixed Bridge Inbox is Issue `#147`.
 
-The B4-D planning and validator implementation is merged, but the live B4-D smoke has not been authorized or executed. B4-D is a course-computer recovery milestone name; it is not Bridge Operator specification Phase B4 and does not authorize tray UX, login startup, a service, or MCP.
+One supervised B4-D `run-reviewbundle` smoke succeeded on clean `master` at full HEAD `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`. The validated manifest SHA-256 was `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080`. The evidence is dispatch comment `4795080463`, Inbox comment `4795082149`, Runner review-bundle comment `4795131449`, and matching `LAWBRUNNER-RESULT` comment `4795131543`.
 
-## Correct Next Strategic Target
+Exactly one B2/Dispatcher/Runner/Codex chain ran. The result was success, Codex exited `0`, no retry occurred, no files changed, and the worktree remained clean. This supervised smoke proves the bounded B4-D path only; it does not prove daily B3 operational acceptance. B4-D is a course-computer recovery milestone name, not Bridge Operator specification Phase B4, and does not authorize tray UX, login startup, a service, or MCP.
 
-Roadmap v2 is active. Tracker #168 records `RV2-00` as `DONE`, and Issue #169 is the sole next-node candidate for `RV2-01`.
+## Roadmap And Strategic Direction
 
-`RV2-01` remains `PLANNED` until governing-document truth synchronization, current course-computer preflight evidence, explicit human target selection, and manifest validation are complete. This status does not authorize target creation, marker publication, or live B4-D execution.
+Roadmap v2 is active and tracker #168 is canonical. It records `RV2-00` and `RV2-01` as `DONE`. There is currently no active node. Completion does not activate `RV2-03` or any later node.
+
+The bridge is intended to become reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host, not the permanent repository boundary. Physical extraction has not started. The current in-repository implementation remains the proven baseline until migration acceptance passes.
+
+This direction does not authorize a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, startup behavior, tray UX, service behavior, MCP, automatic commit/push/close/merge, or approval chaining. A later separately approved migration implementation node is required. The bounded design is recorded in `docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md`.
 
 The default ordered direction is:
 
-1. `RV2-01`: one explicitly approved B4-D supervised live smoke through the existing path.
-2. `RV2-02`: B4-D closeout and documentation truth synchronization.
-3. `RV2-03`: B3 operational acceptance on the primary home Windows host.
-4. `RV2-04`: Task Packet to execution-manifest runtime contract binding.
-5. `RV2-05`: minimal thin `lawb` CLI facade over proven contracts.
-6. `RV2-06`: execution profiles and evidence-based token control.
-7. `RV2-07`: optional visible Phase B4 tray/status UX.
-8. `RV2-08`: separately approved Phase B5 Windows login startup.
-9. `RV2-09`: later Phase C ChatGPT App / MCP feasibility and bounded integration.
-10. `RV2-P1`: parallel product-mainline checkpoint after operational or runtime-binding milestones.
+1. `RV2-00`: specification adoption and execution baseline (`DONE`).
+2. `RV2-01`: one explicitly approved B4-D supervised live smoke through the existing path (`DONE`).
+3. `RV2-02`: B4-D closeout, documentation truth synchronization, and repository-separation design.
+4. `RV2-03`: B3 operational acceptance on the primary home Windows host.
+5. `RV2-04`: Task Packet to execution-manifest runtime contract binding.
+6. `RV2-05`: minimal thin `lawb` CLI facade over proven contracts.
+7. `RV2-06`: execution profiles and evidence-based token control.
+8. `RV2-07`: optional visible Phase B4 tray/status UX.
+9. `RV2-08`: separately approved Phase B5 Windows login startup.
+10. `RV2-09`: later Phase C ChatGPT App / MCP feasibility and bounded integration.
+11. `RV2-P1`: parallel product-mainline checkpoint after operational or runtime-binding milestones.
 
 This order remains bounded and auditable. It must not implement automatic commit, automatic push, automatic close, approval chaining, broad issue scanning, hidden unattended services, or a high-risk Release Bundle.
 

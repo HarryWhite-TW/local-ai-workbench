@@ -270,6 +270,8 @@ Objective:
 - bind the Direction Lock and planning documents to Roadmap v2;
 - establish the future tracker and node-management rules.
 
+Current status: `DONE`.
+
 Acceptance:
 
 - this file is merged to `master`;
@@ -289,6 +291,8 @@ After acceptance:
 Objective:
 
 Prove one fresh-reboot, foreground-only, explicitly approved `run-reviewbundle` path through the existing production chain on the course computer.
+
+Current status: `DONE`.
 
 Required path:
 
@@ -319,6 +323,15 @@ Acceptance:
 - no retry or prohibited side effect occurs;
 - success or failure is unambiguous and reviewable.
 
+Accepted outcome:
+
+- one supervised `run-reviewbundle` smoke succeeded on clean `master` at full HEAD `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`;
+- manifest SHA-256 was `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080`;
+- dispatch comment `4795080463`, Inbox comment `4795082149`, Runner review-bundle comment `4795131449`, and matching `LAWBRUNNER-RESULT` comment `4795131543` preserve the evidence;
+- exactly one B2/Dispatcher/Runner/Codex chain ran;
+- result was success, Codex exit code was `0`, no retry occurred, no files changed, and the worktree remained clean;
+- the result does not establish daily B3 operational acceptance.
+
 ### RV2-02 — B4-D Closeout And Documentation Truth Sync
 
 Objective:
@@ -333,6 +346,8 @@ Acceptance:
 - B4-D evidence and failure/success conclusion are recorded;
 - no new runtime authority is introduced;
 - next-node entry requirements are explicit.
+
+This node also records the approved design direction for eventual repository separation. The bridge is intended to become reusable cross-project development infrastructure, with `local-ai-workbench` as its first validated reference host. This node authorizes documentation and design only. Physical extraction, a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, or activation of another node require separate approval.
 
 ### RV2-03 — B3 Operational Acceptance
 
@@ -351,6 +366,18 @@ Required acceptance cases:
 - Dispatcher or Codex failure does not cause an automatic execution retry;
 - local state and logs do not dirty the repository;
 - manual `PollOnce` remains a working recovery path.
+
+High-priority future defect acceptance requirements:
+
+- request lifecycle handling must immediately transition a successfully completed request to explicit `CONSUMED` state;
+- expiry must remain a failure-safe fallback invalidation boundary, not the lock lifetime for a successfully completed request;
+- publication of a new request must require `current_request_count = 0`;
+- one-shot execution requests must use a short execution TTL;
+- current-marker telemetry must expose comment ID, request ID, expiry, and the evaluator's current UTC time;
+- Windows tool resolution must pass acceptance in a new shell and after a fresh reboot, not only in a shell whose `PATH` was manually repaired;
+- before B2 delegation, preflight must validate that the runtime resolver can actually resolve and execute the configured tools.
+
+These are future RV2-03 acceptance requirements only. This specification update does not mark RV2-03 active, ready, started, or done, and does not claim that any requirement is implemented.
 
 This node does not authorize visible UX, login startup, MCP, or authority expansion.
 
@@ -381,6 +408,16 @@ Minimum bindings:
 - repair-attempt limit;
 - `scope_expansion_allowed=false`;
 - repository, branch, HEAD, target, and request identity.
+
+High-priority future defect contract requirements:
+
+- the versioned Host Profile contract must carry reviewed executable paths for `gh`/`gh.exe` and Codex;
+- bootstrap and runtime must use one shared tool-resolution contract;
+- `manifest_review_expires` and `execution_request_expires` must be distinct fields with distinct semantics;
+- B1 and B2 must emit a safe, stage-specific diagnostic schema rather than only `github_read_unavailable` or a generic `RuntimeError`;
+- Runner evidence must propagate consistently to the outer result, including `changed_files`, `review_id`, `diff_fingerprint`, and `files_fingerprint`.
+
+These are future RV2-04 contract requirements only. This specification update does not mark RV2-04 active, ready, started, or done, and does not claim that any requirement is implemented.
 
 Pre-execution enforcement:
 
@@ -653,6 +690,8 @@ After merge and post-merge verification:
 3. create `RV2-01` as the sole active-node candidate;
 4. set `RV2-01` to `PLANNED` or `READY` only after checking its entry criteria;
 5. do not publish smoke markers or execute B4-D until the required separate approvals are obtained.
+
+This section records the historical activation procedure. Current canonical state is maintained in tracker #168: `RV2-00` and `RV2-01` are `DONE`, and there is currently no active node.
 
 ## Current Authority Boundary
 

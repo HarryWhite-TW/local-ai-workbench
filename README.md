@@ -31,13 +31,14 @@ Current baseline:
 - Obsidian-ready Markdown Export MVP completed through #211
 - export destination intelligence completed through #216
 - current product roadmap recorded at #212 and refreshed after #216
-- B0 ChatGPT-Codex bridge workflow discipline integrated through PR #134
-- Governance Reset #135 completed
-- Bridge Operator B1 completed through PR #139 and reliability follow-up PR #143
-- current B1-integrated `master`: `e03e04729edba08a74c1ef3f45a51e0092fba72d`
-- final B1 verification: `102 passed`, compileall passed, controlled read-only dry run succeeded, stderr clean
-- B2 has not started and remains separately approval-gated
-- the next bridge decisions are permanent Bridge Inbox selection and a separately approved B2 task
+- ChatGPT-Codex bridge B0 through B3 implementation slices are integrated
+- permanent fixed Bridge Inbox: Issue `#147`
+- Roadmap v2 tracker: Issue `#168`
+- `RV2-00` and `RV2-01` are `DONE`; there is currently no active node
+- one supervised B4-D `run-reviewbundle` smoke succeeded on clean `master` at full HEAD `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`
+- the successful smoke used manifest SHA-256 `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080` and produced dispatch comment `4795080463`, Inbox comment `4795082149`, Runner review-bundle comment `4795131449`, and matching `LAWBRUNNER-RESULT` comment `4795131543`
+- exactly one B2/Dispatcher/Runner/Codex chain ran; it succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree
+- this supervised smoke proves the bounded path, not daily B3 operational acceptance
 - high-risk operations continue to require separate approvals
 
 The public product mainline remains the Local Document-to-Knowledge Workbench. Bridge Operator is development workflow tooling and portfolio engineering evidence, not product runtime.
@@ -124,7 +125,9 @@ Manual `PollOnce` is the verified Lv4.5 baseline and future recovery path:
 .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
 ```
 
-Manual `PollOnce` is not the final target experience. Bridge Operator B1 is now implemented as the fixed-Inbox, one-shot, read-only validation slice; it stops before Dispatcher delegation. B2 one-shot delegation has not started and remains separately approval-gated. Phase C ChatGPT App / MCP remains deferred until Phase B is stable. See [`docs/BRIDGE_OPERATOR_B1_CLOSEOUT.md`](docs/BRIDGE_OPERATOR_B1_CLOSEOUT.md) for the durable implementation and verification history.
+Manual `PollOnce` remains a recovery path, not the target daily experience. The existing Bridge Operator, Dispatcher, Runner, and Codex chain has completed one supervised B4-D smoke, but B3 daily operational acceptance remains unproven. Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
+
+The bridge is approved to evolve into reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host. Physical extraction has not started; the current in-repository implementation remains the proven baseline until a separately approved migration implementation passes acceptance. See [`docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md`](docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md).
 
 ## What Is Intentionally Not Implemented
 

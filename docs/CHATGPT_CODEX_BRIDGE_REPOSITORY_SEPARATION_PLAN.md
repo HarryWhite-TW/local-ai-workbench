@@ -1,0 +1,122 @@
+# ChatGPT-Codex Bridge Repository Separation Plan
+
+## Decision Context
+
+The ChatGPT-Codex bridge is intended to become reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host, not the permanent repository boundary.
+
+Roadmap v2 tracker #168 is canonical. RV2-00 and RV2-01 are `DONE`, and there is currently no active node. The accepted RV2-01 smoke ran one successful B2/Dispatcher/Runner/Codex chain on clean `master` at `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`, with manifest SHA-256 `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080`. Evidence comments are dispatch `4795080463`, Inbox `4795082149`, Runner review bundle `4795131449`, and matching `LAWBRUNNER-RESULT` `4795131543`.
+
+The smoke succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree. It proves one supervised path, not daily B3 operational readiness.
+
+## Current Coupling Inventory
+
+The proven baseline currently couples generic bridge behavior and host assumptions inside `local-ai-workbench`:
+
+- Python Bridge Operator modules under `src/local_runner_bridge/`;
+- PowerShell Dispatcher, Runner, bootstrap, and related launch scripts;
+- repository-local tests and documentation;
+- fixed GitHub identity `HarryWhite-TW/local-ai-workbench`;
+- default branch `master`;
+- fixed Bridge Inbox Issue `#147`;
+- repository-relative commands, allowed paths, timeouts, and result-write rules;
+- local environment and state-path conventions;
+- governance documents and Roadmap v2 evidence.
+
+Before migration, implementation work must classify each dependency as generic bridge core, host adapter, host profile data, test fixture, or host-owned governance.
+
+## Target Repository Boundary
+
+The generic bridge core should contain protocol parsing, request validation, state binding, bounded operator control, Dispatcher/Runner orchestration contracts, result validation, local state handling, and safety enforcement that do not depend on one host repository.
+
+Host-specific configuration should remain outside the generic core. It includes repository identity, local checkout root, branch policy, fixed Inbox, trusted actors, action and path allowlists, verification commands, timeouts, result-write policy, launch commands, and host governance references.
+
+The target boundary must preserve ChatGPT as the primary interface, GitHub as the auditable request/result surface, manual `PollOnce` as recovery only, and all existing approval and no-high-risk-action boundaries.
+
+## Host Profile Contract
+
+Each host must provide an explicit, reviewable profile containing at least:
+
+- local repository root;
+- GitHub repository identity;
+- default branch;
+- fixed Inbox issue;
+- trusted actors;
+- allowed actions;
+- allowed paths;
+- verification commands;
+- timeouts;
+- result-write policy.
+
+The contract should also carry a profile schema version, local state location, launcher commands, required governance-document paths, clean-worktree policy, result protocol versions, and whether each action is dry-run-only or write-capable.
+
+Profiles are configuration, not approval. A profile must not enable an action beyond the generic core allowlist or bypass task-specific approval, branch/HEAD binding, expiry, clean-tree checks, trusted-author checks, or result validation.
+
+## Known Operational Blockers And Migration Prerequisites
+
+The following high-priority defects remain future acceptance and contract requirements assigned to RV2-03 and RV2-04. They are not implemented or activated by this plan:
+
+- a successfully completed request must immediately transition to an explicit `CONSUMED` state;
+- expiry is only a failure-safe invalidation boundary and must not remain the lock lifetime after successful completion;
+- before publishing a new request, `current_request_count` must equal `0`;
+- `manifest_review_expires` and `execution_request_expires` must be separate fields;
+- one-shot execution requests must use a short execution TTL;
+- current-request telemetry must expose comment ID, request ID, expiry, and the evaluator's current UTC time;
+- bootstrap and runtime must use one shared tool-resolution contract;
+- each versioned Host Profile must explicitly carry reviewed executable paths for `gh`/`gh.exe` and Codex;
+- B2 preflight must verify that the runtime resolver can actually resolve and execute the configured tools;
+- B1 and B2 must provide safe, stage-specific diagnostic information instead of only `github_read_unavailable` or a generic `RuntimeError`;
+- tool resolution must be accepted in a new shell and after a fresh reboot, not only in a shell whose `PATH` was manually repaired;
+- Runner evidence must propagate consistently into the outer result, including `changed_files`, `review_id`, `diff_fingerprint`, and `files_fingerprint`.
+
+RV2-03 owns the operational acceptance requirements for request lifecycle, publication safety, current-marker telemetry, short execution TTL, and durable Windows tool resolution. RV2-04 owns the versioned Host Profile, shared resolver, distinct expiry fields, diagnostic schema, and Runner-to-outer-result evidence contract.
+
+These requirements must be accepted before repository separation or cross-project portability may be considered operationally credible. Documentation of the target boundary alone is not evidence that the current bridge can be safely extracted or reused across hosts.
+
+## Migration Stages
+
+1. Inventory and classify current coupling without changing runtime behavior.
+2. Define and validate a versioned host-profile schema using the current `local-ai-workbench` values.
+3. Add characterization tests proving the existing in-repository baseline before boundary changes.
+4. Introduce an internal profile-loading seam while retaining current paths and launchers.
+5. Prepare a separate generic-core repository or package layout only under a separately approved migration implementation node.
+6. Run compatibility tests against `local-ai-workbench` with identical request, safety, and result behavior.
+7. Validate a second, materially different repository with its own profile.
+8. Cut over only after both hosts pass acceptance and rollback rehearsal.
+
+No stage may silently activate the next stage or consume approval for it.
+
+## Compatibility And Rollback
+
+The current in-repository implementation remains the proven baseline until migration acceptance passes. Migration must preserve protocol shapes, fail-closed behavior, one-request execution bounds, no-retry behavior, trusted-author validation, branch/HEAD binding, clean-worktree requirements, and result readback.
+
+Compatibility evidence must compare old and candidate paths using the same bounded fixtures and expected outcomes. During migration, the host must retain a documented way to select the existing in-repository baseline. Rollback means restoring that selection without rewriting evidence, deleting state, or automatically cleaning repository changes.
+
+## Acceptance Criteria
+
+Repository separation may be called complete only when:
+
+- generic core and host-specific configuration are explicitly separated;
+- the host-profile schema contains all required fields and rejects missing or unsafe values;
+- `local-ai-workbench` passes equivalent positive and fail-closed cases through the candidate boundary;
+- at least one second repository with a different profile passes the same portability suite;
+- at least two different repositories are validated before any cross-project portability claim;
+- result packets and audit evidence remain ChatGPT-readable;
+- no automatic commit, push, close, merge, label edit, approval chaining, retry, startup, tray, service, or MCP authority is introduced;
+- rollback to the proven in-repository baseline is tested and documented;
+- the migration implementation and cutover receive separate explicit approval.
+
+## Explicit Non-Authorization
+
+This plan is design only. It does not authorize:
+
+- creation of a new repository;
+- moving or deleting bridge files;
+- package publishing;
+- import, launcher, runtime-path, or profile rewiring;
+- runtime-boundary changes;
+- changing trusted actors, allowed actions, allowed paths, or result-write authority;
+- automatic polling, startup, tray UX, service behavior, or MCP;
+- automatic commit, push, Issue close, label edit, PR creation, merge, or approval chaining;
+- activation of RV2-03 or any later node.
+
+A later separately approved migration implementation node is required.

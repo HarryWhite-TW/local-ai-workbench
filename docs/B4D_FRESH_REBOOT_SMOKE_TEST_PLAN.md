@@ -20,7 +20,7 @@ BRIDGE-OPERATOR-SPEC-READ-AUDIT protocol=lawb.bridge_operator_spec_read.v1
 spec_path=docs/BRIDGE_OPERATOR_V0_SPEC.md
 spec_version=v0.1
 spec_read=true
-current_phase=B3
+current_phase=B4
 task_alignment=core
 authority_change_requested=false
 chatgpt_remains_primary_interface=true
@@ -43,14 +43,14 @@ authority_change_requested=false
 chatgpt_remains_primary_interface=true
 high_risk_actions_remain_separate=true
 product_runtime_boundary_preserved=true
-failure_reason=rv2_01_readiness_evidence_incomplete
+failure_reason=none
 ```
 
 `B4-D` in this document is the course-computer recovery milestone name. It is
 not Bridge Operator specification Phase B4 and does not authorize tray UI,
 startup behavior, a service, or any other Phase B4 capability.
 
-Roadmap v2 tracker #168 records `RV2-00` as `DONE`. Issue #169 is the sole next-node candidate for `RV2-01`, which remains `PLANNED`. This readiness truth-sync does not create or select a target Issue, publish request markers, authorize the smoke, or execute any B4-D step.
+Roadmap v2 tracker #168 is canonical. It records `RV2-00` and `RV2-01` as `DONE`, and there is currently no active node.
 
 ## 1. Purpose
 
@@ -71,7 +71,9 @@ The smoke is intended to prove that a freshly restored course computer can
 complete one bounded `run-reviewbundle` request after B4-B diagnostics and B4-C
 Bootstrap Audit report readiness.
 
-This document is planning only. It performs none of the future steps.
+This document was the governing plan for the completed supervised smoke. It remains a historical runbook and safety reference; it does not authorize another run.
+
+Sections 2 through 16 preserve the reviewed pre-run procedure in future tense as historical evidence. Section 17 is the current outcome and closeout record.
 
 ## 2. Preconditions
 
@@ -657,17 +659,21 @@ There is no automatic rollback.
 - Confirm the repository's final status and any remaining operator state before
   declaring cleanup complete.
 
-## 17. RV2-01 readiness gate
+## 17. RV2-01 outcome and closeout
 
-This plan and its local-only validator are implemented, but `RV2-01` is not ready for live execution merely because this document is synchronized.
+The supervised B4-D smoke completed successfully:
 
-The remaining readiness evidence is:
+- branch and full HEAD: `master` at `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`;
+- manifest SHA-256: `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080`;
+- dispatch comment: `4795080463`;
+- fixed Inbox `#147` request comment: `4795082149`;
+- Runner review-bundle comment: `4795131449`;
+- matching `LAWBRUNNER-RESULT` comment: `4795131543`;
+- exactly one B2/Dispatcher/Runner/Codex chain ran;
+- result: success;
+- Codex exit code: `0`;
+- retry: none;
+- changed files: none;
+- final worktree: clean.
 
-1. This governing-document truth-sync PR is separately approved, merged, and verified on `master`.
-2. Current course-computer read-only preflight proves the intended repository, `master`, reviewed HEAD equality with `origin/master`, a clean working tree, Bootstrap Audit `READY`, and acceptable B4-B diagnostics.
-3. A human explicitly selects one existing open target Issue and verifies Runner eligibility, bounded scope, and exact allowed paths.
-4. A filled smoke manifest passes the local validator and produces an exact approval preview with current IDs, HEAD, expiry, markers, and safety boundaries.
-5. Separate approval A authorizes only the exact request comments.
-6. After request publication and successful B1 evidence, separate approval B authorizes only one foreground B2 execution chain and its expected result writeback.
-
-The current documentation task stops after creating a reviewable PR. It does not update tracker #168 or Issue #169, create a target, publish markers, run preflight, or execute B4-D. A later readiness decision must use current evidence and explicit approval; no status transition or execution authority is inferred from this document change.
+This is supervised smoke evidence, not daily B3 operational acceptance. Manual `PollOnce` remains a recovery path, not the target daily experience. Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope. Another smoke or any later node requires separate authority.

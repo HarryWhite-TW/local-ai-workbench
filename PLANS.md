@@ -37,14 +37,20 @@ Development workflow tooling is separate from the product runtime.
 - Current Roadmap v2 activation commit: `9baf606197bbdf886b23782d1c67f2a872e76e09`.
 - Permanent fixed Bridge Inbox: Issue `#147`.
 - Roadmap v2 tracker: Issue `#168`.
-- RV2-01 planned node: Issue `#169`.
+- RV2-00: `DONE`.
+- RV2-01: `DONE`.
+- There is currently no active Roadmap v2 node.
 - Latest reported B4-D focused validation: `78 passed`.
 - Latest reported adjacent validation: `126 passed`.
 - Course-computer environment restore/import check: `COURSE ENV OK`.
-- The live B4-D smoke has not been authorized or executed.
+- One supervised B4-D `run-reviewbundle` smoke succeeded on clean `master` at full HEAD `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`.
+- Manifest SHA-256: `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080`.
+- Evidence comments: dispatch `4795080463`, Inbox `4795082149`, Runner review bundle `4795131449`, matching `LAWBRUNNER-RESULT` `4795131543`.
+- Exactly one B2/Dispatcher/Runner/Codex chain ran. It succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree.
 - Manual `PollOnce` remains the verified recovery path, not the target daily experience.
 - B3 implementation exists, but primary-host operational daily-use acceptance remains to be proven.
 - Phase C ChatGPT App / MCP remains deferred until Phase B is stable and accepted.
+- Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
 - High-risk operations remain separately approval-gated.
 - Raw local audit packets may remain local; durable conclusions and canonical references belong in GitHub and repository documentation.
 
@@ -95,9 +101,9 @@ Completed baseline:
 
 Roadmap v2 default sequence:
 
-1. `RV2-00` — specification adoption and execution baseline.
-2. `RV2-01` — one supervised B4-D live smoke through the existing path.
-3. `RV2-02` — B4-D closeout and documentation truth synchronization.
+1. `RV2-00` — specification adoption and execution baseline (`DONE`).
+2. `RV2-01` — one supervised B4-D live smoke through the existing path (`DONE`).
+3. `RV2-02` — B4-D closeout, documentation truth synchronization, and repository-separation design (current review bundle; not active until tracker change control says otherwise).
 4. `RV2-03` — B3 operational acceptance on the primary home Windows host.
 5. `RV2-04` — Task Packet v1.1 to runtime execution-contract binding.
 6. `RV2-05` — minimal thin `lawb` CLI facade.
@@ -111,29 +117,11 @@ This order may change only through explicit user-approved change control. Comple
 
 ## Immediate Next Gate
 
-The current task is documentation-only truth synchronization for `RV2-01` readiness preparation.
+Tracker #168 is canonical. RV2-00 and RV2-01 are `DONE`, and there is currently no active node. This RV2-02 work is documentation-only closeout and design; it does not activate RV2-03 or any later node.
 
-Authorized scope for this truth-sync task:
+The approved strategic direction is to prepare the bridge for future repository separation as reusable cross-project development infrastructure. `local-ai-workbench` remains the first validated host and reference host. Physical extraction, a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, startup, tray UX, service behavior, MCP, and authority expansion are not authorized here. A later separately approved migration implementation node is required.
 
-- remove stale proposed-state language from the Direction Lock;
-- bind the B4-D smoke plan to Direction Lock v1.2, Roadmap v2, tracker #168, and planned node #169;
-- update this planning file to reflect the current readiness gate;
-- commit, push, and open a documentation-only PR on the approved branch.
-
-Not authorized by this task:
-
-- merge the truth-sync PR;
-- update tracker #168, node Issue #169, or Inbox #147;
-- create or select a target Issue;
-- change RV2-01 from `PLANNED`;
-- generate or publish B4-D markers;
-- execute Bootstrap Audit, diagnostics, B1, B2, B3, Dispatcher, Runner, Codex, or live B4-D;
-- enable automatic polling, startup, tray UI, service, or MCP;
-- modify labels or milestones;
-- delete a branch;
-- add commit, push, close, PR, merge, or approval-chaining authority to the bridge runtime.
-
-After this truth-sync PR is separately approved, merged, and verified, the next gate is current read-only course-computer preflight plus explicit human target selection. RV2-01 remains `PLANNED` until all entry criteria have current evidence and a separate status decision is approved.
+The current in-repository implementation remains the proven baseline until migration acceptance passes. Cross-project portability cannot be claimed until the extracted design is validated with at least two different repositories.
 
 ## Product Parallel Priority
 
@@ -170,6 +158,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-06-25: Recorded RV2-01/B4-D supervised smoke success, closed stale readiness language, and added the bounded repository-separation design while keeping physical extraction unauthorized.
 - 2026-06-24: Began RV2-01 readiness truth synchronization while keeping the node planned and the live smoke separately gated.
 - 2026-06-24: Adopted Bridge Roadmap v2 execution governance through squash-merged PR #167, created tracker #168 and planned node #169, and kept live B4-D separately gated.
 - 2026-06-24: Merged B4-D smoke planning and manifest-validator preparation through PR #166; began Roadmap v2 documentation-only adoption with live smoke still separately gated.
