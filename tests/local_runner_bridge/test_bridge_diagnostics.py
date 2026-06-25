@@ -315,6 +315,64 @@ def test_cmd_tool_version_uses_comspec_without_shell(monkeypatch, tmp_path):
     assert ["C:/Windows/System32/cmd.exe", "/d", "/c", "C:/tools/gh.cmd", "--version"] in commands.calls
 
 
+def test_diagnostics_codex_resolver_prefers_cmd_over_ps1_and_extensionless(tmp_path):
+    write_state_baseline(tmp_path / "state")
+    commands = FakeCommands()
+    candidates = {
+        "gh": "C:/tools/gh.exe",
+        "codex": "C:/tools/codex.ps1",
+        "codex.cmd": "C:/tools/codex.cmd",
+        "codex-no-extension": "C:/tools/codex",
+    }
+
+    summary = run(
+        tmp_path,
+        command_runner=commands,
+        which=lambda name: candidates.get(name),
+    )
+
+    assert summary["tools"]["codex_available"] is True
+    assert summary["tools"]["codex_path"] == "C:/tools/codex.cmd"
+    assert all("codex.ps1" not in part for call in commands.calls for part in call)
+
+
+def test_diagnostics_codex_resolver_rejects_ps1_only(tmp_path):
+    write_state_baseline(tmp_path / "state")
+
+    summary = run(
+        tmp_path,
+        which=lambda name: "C:/tools/codex.ps1" if name == "codex" else (
+            "C:/tools/gh.exe" if name == "gh" else None
+        ),
+    )
+
+    assert summary["tools"]["codex_available"] is False
+    assert summary["tools"]["codex_path"] is None
+    assert "codex_unavailable" in summary["status_reasons"]
+
+
+def test_diagnostics_windows_rejects_extensionless_and_unsafe_shell_wrappers():
+    assert (
+        diagnostics._resolve_safe_application(
+            "codex",
+            lambda name: {
+                "codex": "C:/tools/codex",
+                "codex.sh": "C:/tools/codex.sh",
+            }.get(name),
+            platform="win32",
+        )
+        is None
+    )
+
+
+def test_diagnostics_non_windows_preserves_genuine_extensionless_executable():
+    assert diagnostics._resolve_safe_application(
+        "codex",
+        lambda name: "/usr/local/bin/codex" if name == "codex" else None,
+        platform="linux",
+    ) == "/usr/local/bin/codex"
+
+
 def test_cli_returns_zero_and_prints_valid_json(monkeypatch, capsys):
     def fake_run(**kwargs):
         return {

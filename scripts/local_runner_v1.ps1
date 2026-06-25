@@ -282,6 +282,27 @@ function Get-CommandCandidatePath {
     return ""
 }
 
+function Resolve-ComSpecPath {
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:COMSPEC)) {
+        $candidates += $env:COMSPEC
+    }
+    $cmdCommand = Get-Command cmd.exe -CommandType Application -ErrorAction SilentlyContinue
+    if ($null -ne $cmdCommand) {
+        $cmdPath = Get-CommandCandidatePath -Command $cmdCommand
+        if (-not [string]::IsNullOrWhiteSpace($cmdPath)) {
+            $candidates += $cmdPath
+        }
+    }
+
+    foreach ($candidate in @($candidates | Select-Object -Unique)) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+    throw "cmd.exe was not found through COMSPEC or the Application command resolver."
+}
+
 function Resolve-CodexCommand {
     param(
         [object[]]$Commands = $null
@@ -320,30 +341,47 @@ function Resolve-CodexCommand {
         throw "codex command was found, but no launchable path could be resolved."
     }
 
-    $selected = @($candidates | Where-Object { $_.Extension -eq ".exe" } | Select-Object -First 1)
-    if ($selected.Count -eq 0) {
-        $selected = @($candidates | Where-Object { $_.Extension -eq ".cmd" } | Select-Object -First 1)
-    }
-    if ($selected.Count -eq 0) {
-        $selected = @($candidates | Where-Object { $_.Extension -eq ".bat" } | Select-Object -First 1)
-    }
+    $selected = @($candidates | Where-Object {
+        $_.CommandType -eq "Application" -and $_.Extension -eq ".exe"
+    } | Select-Object -First 1)
     if ($selected.Count -eq 0) {
         $selected = @($candidates | Where-Object {
-            $_.CommandType -eq "Application" -and $_.Extension -ne ".ps1"
+            $_.CommandType -eq "Application" -and $_.Extension -eq ".cmd"
         } | Select-Object -First 1)
     }
     if ($selected.Count -eq 0) {
-        $selected = @($candidates | Where-Object { $_.Extension -ne ".ps1" } | Select-Object -First 1)
+        $selected = @($candidates | Where-Object {
+            $_.CommandType -eq "Application" -and $_.Extension -eq ".bat"
+        } | Select-Object -First 1)
+    }
+    if ($selected.Count -eq 0) {
+        $selected = @($candidates | Where-Object {
+            $_.CommandType -eq "Application" -and $_.Extension -eq ".com"
+        } | Select-Object -First 1)
+    }
+    if ($selected.Count -eq 0) {
+        throw "codex command was found, but only PowerShell script wrappers or other unsafe launchers were available. Refusing to directly launch codex.ps1 or another shell wrapper; ensure codex.exe, codex.cmd, or codex.bat is available on PATH."
     }
 
-    if ($selected.Count -eq 0) {
-        throw "codex command was found, but only PowerShell script wrappers were available. Refusing to directly launch codex.ps1; ensure codex.cmd or codex.exe is available on PATH."
+    $source = [string]$selected[0].Source
+    $extension = [string]$selected[0].Extension
+    if ($extension -in @(".cmd", ".bat")) {
+        $filePath = Resolve-ComSpecPath
+        $argumentPrefix = @("/d", "/s", "/c", "call", $source)
+        $reason = "resolved safe batch launcher through cmd.exe"
+    }
+    else {
+        $filePath = $source
+        $argumentPrefix = @()
+        $reason = "resolved direct executable launcher"
     }
 
     return [pscustomobject]@{
-        Source = [string]$selected[0].Source
+        Source = $source
+        FilePath = $filePath
+        ArgumentPrefix = @($argumentPrefix)
         Command = $selected[0].Command
-        Reason = "resolved by local-runner-v1 launcher preference"
+        Reason = $reason
     }
 }
 
@@ -528,6 +566,12 @@ function Invoke-CapturedNativeProcess {
         [AllowNull()]
         [string]$StandardInput = "",
         [Parameter(Mandatory = $true)]
+        [System.Text.Encoding]$StandardInputEncoding,
+        [Parameter(Mandatory = $true)]
+        [System.Text.Encoding]$StandardOutputEncoding,
+        [Parameter(Mandatory = $true)]
+        [System.Text.Encoding]$StandardErrorEncoding,
+        [Parameter(Mandatory = $true)]
         [ValidateRange(1, [int]::MaxValue)]
         [int]$TimeoutSeconds,
         [Parameter(Mandatory = $true)]
@@ -542,6 +586,8 @@ function Invoke-CapturedNativeProcess {
     $exitCode = 1
     $stdoutTask = $null
     $stderrTask = $null
+    $stdout = ""
+    $stderr = ""
 
     try {
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -553,28 +599,20 @@ function Invoke-CapturedNativeProcess {
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
         $startInfo.CreateNoWindow = $true
+        $startInfo.StandardOutputEncoding = $StandardOutputEncoding
+        $startInfo.StandardErrorEncoding = $StandardErrorEncoding
 
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $startInfo
 
         $hasStandardInput = -not [string]::IsNullOrEmpty($StandardInput)
-        $originalConsoleInputEncoding = $null
-        if ($hasStandardInput) {
-            $originalConsoleInputEncoding = [Console]::InputEncoding
-            [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
-        }
-        try {
-            $null = $process.Start()
-        }
-        finally {
-            if ($hasStandardInput) {
-                [Console]::InputEncoding = $originalConsoleInputEncoding
-            }
-        }
+        $null = $process.Start()
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         if ($hasStandardInput) {
-            $process.StandardInput.Write($StandardInput)
+            $inputBytes = $StandardInputEncoding.GetBytes($StandardInput)
+            $process.StandardInput.BaseStream.Write($inputBytes, 0, $inputBytes.Length)
+            $process.StandardInput.BaseStream.Flush()
         }
         $process.StandardInput.Close()
 
@@ -590,16 +628,17 @@ function Invoke-CapturedNativeProcess {
             $process.WaitForExit()
             $exitCode = [int]$process.ExitCode
         }
+        $stdout = if ($null -eq $stdoutTask) { "" } else { $stdoutTask.GetAwaiter().GetResult() }
+        $stderr = if ($null -eq $stderrTask) { "" } else { $stderrTask.GetAwaiter().GetResult() }
     }
     catch {
-        $stdout = if ($null -eq $stdoutTask) { "" } else { $stdoutTask.Result }
-        $capturedStderr = if ($null -eq $stderrTask) { "" } else { $stderrTask.Result }
-        $stderr = "$Action failed: $($_.Exception.Message)`n$capturedStderr"
+        $stderr = "$Action failed: $($_.Exception.Message)"
+        $failureExitCode = if ($timedOut) { 124 } else { 1 }
         return [pscustomobject]@{
-            ExitCode = 1
+            ExitCode = $failureExitCode
             Stdout = $stdout.TrimEnd()
             Stderr = $stderr.TrimEnd()
-            TimedOut = $false
+            TimedOut = $timedOut
             TimeoutSeconds = $TimeoutSeconds
             CommandLine = $commandLine
             LastStdoutLine = Get-LastNonEmptyLine -Text $stdout
@@ -609,9 +648,6 @@ function Invoke-CapturedNativeProcess {
             StoppedProcessIds = @($stoppedProcessIds)
         }
     }
-
-    $stdout = if ($null -eq $stdoutTask) { "" } else { $stdoutTask.Result }
-    $stderr = if ($null -eq $stderrTask) { "" } else { $stderrTask.Result }
 
     return [pscustomobject]@{
         ExitCode = $exitCode
@@ -836,6 +872,23 @@ function Assert-NoPreexistingStagedFiles {
 
     if (@($stagedLines).Count -gt 0) {
         throw "Refusing commit-approved mode because staged files already exist:`n$($stagedLines -join [Environment]::NewLine)"
+    }
+}
+
+function Assert-RepositoryLocalGitIdentity {
+    $nameResult = Invoke-Git -GitArgs @("config", "--local", "--get", "user.name")
+    if ($nameResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($nameResult.Stdout)) {
+        throw "Repository-local git user.name is missing. Configure it explicitly before CommitApproved."
+    }
+
+    $emailResult = Invoke-Git -GitArgs @("config", "--local", "--get", "user.email")
+    if ($emailResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($emailResult.Stdout)) {
+        throw "Repository-local git user.email is missing. Configure it explicitly before CommitApproved."
+    }
+
+    return [pscustomobject]@{
+        UserName = $nameResult.Stdout.Trim()
+        UserEmail = $emailResult.Stdout.Trim()
     }
 }
 
@@ -1498,6 +1551,8 @@ function Invoke-CommitApprovedMode {
         throw "Repository path was not found: $RepoPath"
     }
 
+    $null = Assert-RepositoryLocalGitIdentity
+
     $issueJsonResult = Invoke-Captured {
         & $Gh issue view $IssueNumber --repo $Repo --json title,body,url,number
     }
@@ -1737,6 +1792,17 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
 }
 
 $codexCommand = Resolve-CodexCommand
+$codexUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+$codexArguments = @(
+    "--ask-for-approval",
+    "never",
+    "exec",
+    "--sandbox",
+    "workspace-write",
+    "-C",
+    ".",
+    "-"
+)
 
 $issueBodyForPrompt = Truncate-Text -Text $issueBody -MaxChars $MaxIssueBodyChars -Label "issue body"
 
@@ -1758,10 +1824,13 @@ $issueBodyForPrompt
 "@
 
 $codexResult = Invoke-CapturedNativeProcess `
-    -FilePath $codexCommand.Source `
-    -Arguments @("--ask-for-approval", "never", "exec", "--sandbox", "workspace-write", "-C", ".", "-") `
+    -FilePath $codexCommand.FilePath `
+    -Arguments (@($codexCommand.ArgumentPrefix) + $codexArguments) `
     -WorkingDirectory $RepoPath `
     -StandardInput $prompt `
+    -StandardInputEncoding $codexUtf8 `
+    -StandardOutputEncoding $codexUtf8 `
+    -StandardErrorEncoding $codexUtf8 `
     -TimeoutSeconds $ReviewBundleCodexTimeoutSeconds `
     -Action "codex ReviewBundle candidate generation"
 
