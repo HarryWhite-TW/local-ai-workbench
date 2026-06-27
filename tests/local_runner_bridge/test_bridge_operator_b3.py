@@ -310,6 +310,7 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
     processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(processed) == 1
     assert json.loads(processed[0])["request_id"] == "b3a-151-20260616T080000Z"
+    assert json.loads(processed[0])["lifecycle_state"] == "CONSUMED"
     log = read_log_events(tmp_path / "operator.log")[-1]
     assert log["dispatcher_invoked"] is True
     assert log["current_run"]["request_id"] == "b3a-151-20260616T080000Z"
@@ -318,6 +319,137 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
     assert log["dispatcher_result_writeback_verified"] is True
     assert log["github_write_performed"] is False
     assert not (tmp_path / "dry_run_observations.jsonl").exists()
+    assert_high_risk_safety(summary)
+
+
+def test_b3b_processed_a_plus_new_b_dispatches_only_b_and_appends_one_record(tmp_path):
+    original = {
+        "protocol": "lawb.bridge_operator_b3_processed_request.v1",
+        "processed_at_utc": "2026-06-16T07:00:00Z",
+        "cycle": 1,
+        "request_id": "processed-a",
+        "lifecycle_state": "CONSUMED",
+    }
+    (tmp_path / "processed_requests.jsonl").write_text(
+        json.dumps(original, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    calls = []
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(id=1, body=inbox_marker(request_id="processed-a"), author="HarryWhite-TW"),
+            CommentRecord(
+                id=2,
+                body=inbox_marker(request_id="current-b", target_dispatch_request_id="dispatch-b"),
+                author="HarryWhite-TW",
+            ),
+        ],
+        target_comments=[
+            CommentRecord(id=10, body=dispatch_marker(request_id="dispatch-b"), author="HarryWhite-TW"),
+            CommentRecord(id=20, body=result_comment(request_id="dispatch-b"), author="HarryWhite-TW"),
+        ],
+    )
+
+    summary = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs)
+        or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
+    )
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == "current-b"
+    assert summary["inbox_comment_id"] == 2
+    assert summary["current_request_count"] == 1
+    assert summary["consumed_request_count"] == 1
+    assert summary["selected_request_state"] == "CURRENT"
+    assert summary["dispatcher_invocation_count"] == 1
+    assert calls[0]["args"][calls[0]["args"].index("-IssueNumber") + 1] == "151"
+    processed = [
+        json.loads(line)
+        for line in (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["request_id"] for record in processed] == ["processed-a", "current-b"]
+    assert processed[1]["lifecycle_state"] == "CONSUMED"
+    assert_high_risk_safety(summary)
+
+
+def test_b3b_two_cycle_consumed_transition_clears_selected_current_lifecycle(tmp_path):
+    calls = []
+
+    summary = run_b3b(
+        tmp_path,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs)
+        or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
+        max_cycles=2,
+    )
+
+    assert summary["result"] == "success"
+    assert summary["dispatcher_invocation_count"] == 1
+    assert summary["last_b1_blocked_reasons"] == ["no_current_request_after_consumption"]
+    assert summary["current_request_count"] == 0
+    assert summary["consumed_request_count"] == 1
+    assert summary["selected_request_state"] is None
+    assert summary["inbox_comment_id"] is None
+    assert summary["expires"] is None
+    assert summary["request_id"] == "b3a-151-20260616T080000Z"
+    assert summary["target_issue"] == 151
+    assert summary["current_run"]["request_id"] == "b3a-151-20260616T080000Z"
+    assert summary["current_run"]["issue_number"] == 151
+    assert summary["processed_request_written"] is True
+    assert summary["current_failure_recorded"] is False
+    assert len(calls) == 1
+    processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(processed) == 1
+    assert read_json(tmp_path / "state.json")["last_request_id"] == "b3a-151-20260616T080000Z"
+    assert read_json(tmp_path / "heartbeat.json")["request_id"] == "b3a-151-20260616T080000Z"
+
+    waiting_events = [
+        event
+        for event in read_log_events(tmp_path / "operator.log")
+        if event["event"] == "waiting"
+    ]
+    assert waiting_events
+    final_waiting = waiting_events[-1]
+    assert final_waiting["reason"] == "no_eligible_current_request"
+    assert final_waiting["current_request_count"] == 0
+    assert final_waiting["consumed_request_count"] == 1
+    assert final_waiting["selected_request_state"] is None
+    assert final_waiting["request_id"] == "b3a-151-20260616T080000Z"
+    assert_high_risk_safety(summary)
+
+
+def test_b3b_consumed_only_inbox_is_safe_wait_without_dispatcher_or_failure(tmp_path):
+    (tmp_path / "processed_requests.jsonl").write_text(
+        json.dumps(
+            {
+                "protocol": "lawb.bridge_operator_b3_processed_request.v1",
+                "request_id": "b3a-151-20260616T080000Z",
+                "lifecycle_state": "CONSUMED",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    summary = run_b3b(tmp_path, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    assert summary["result"] == "success"
+    assert summary["last_b1_blocked_reasons"] == ["no_current_request_after_consumption"]
+    assert summary["empty_or_blocked_cycles"] == 1
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert summary["current_request_count"] == 0
+    assert summary["consumed_request_count"] == 1
+    assert summary["selected_request_state"] is None
+    assert summary["request_id"] is None
+    assert summary["current_run"]["request_id"] is None
+    assert calls == []
+    assert not (tmp_path / "last_failure.json").exists()
+    processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(processed) == 1
     assert_high_risk_safety(summary)
 
 
@@ -354,6 +486,7 @@ def test_b3c_run_reviewbundle_invokes_dispatcher_once_and_processes_request(tmp_
     assert payload["requested_action"] == "run-reviewbundle"
     assert payload["dispatcher_invoked"] is True
     assert payload["result_verified"] is True
+    assert payload["lifecycle_state"] == "CONSUMED"
     assert_high_risk_safety(summary)
 
 
@@ -982,6 +1115,52 @@ def test_corrupted_state_fails_closed(tmp_path):
     assert summary["blocked_reasons"] == ["corrupted_state"]
     assert read_json(tmp_path / "last_failure.json")["reason"] == "corrupted_state"
     assert_safety(summary)
+
+
+def test_corrupted_processed_history_fails_closed_before_dispatcher(tmp_path):
+    (tmp_path / "processed_requests.jsonl").write_text("{not-json}\n", encoding="utf-8")
+    calls = []
+
+    summary = run_b3b(tmp_path, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["corrupted_state"]
+    assert summary["dispatcher_invoked"] is False
+    assert calls == []
+    assert read_json(tmp_path / "last_failure.json")["reason"] == "corrupted_state"
+    assert_high_risk_safety(summary)
+
+
+def test_local_checker_value_error_is_not_mislabeled_as_corrupted_processed_history(tmp_path):
+    existing = {
+        "protocol": "lawb.bridge_operator_b3_processed_request.v1",
+        "request_id": "unrelated-processed",
+        "lifecycle_state": "CONSUMED",
+    }
+    (tmp_path / "processed_requests.jsonl").write_text(
+        json.dumps(existing, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    def raising_checker(_root):
+        raise ValueError("local checker failed")
+
+    summary = run_b3b(
+        tmp_path,
+        readiness=raising_checker,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert summary["result"] == "blocked"
+    assert "corrupted_state" not in summary["blocked_reasons"]
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert calls == []
+    processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(processed) == 1
+    assert json.loads(processed[0]) == existing
+    assert_high_risk_safety(summary)
 
 
 def test_network_read_failure_uses_bounded_retry_only(tmp_path):

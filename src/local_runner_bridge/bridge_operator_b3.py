@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from local_runner_bridge.bridge_operator_b1 import (
+    CONSUMED,
     DEFAULT_REPOSITORY,
     GitHubApiClient,
     TRUSTED_ACTORS,
@@ -41,7 +42,7 @@ B3C_ALLOWED_ACTION = "run-reviewbundle"
 DEFAULT_MAX_CYCLES_LIMIT = 100
 DEFAULT_MAX_POLL_INTERVAL_SECONDS = 3600.0
 DEFAULT_READ_RETRY_COUNT = 2
-SAFE_WAIT_B1_REASONS = frozenset({"missing_request"})
+SAFE_WAIT_B1_REASONS = frozenset({"missing_request", "no_current_request_after_consumption"})
 
 
 def run_bridge_operator_b3_dry_run_loop(
@@ -148,6 +149,7 @@ def run_bridge_operator_b3_dry_run_loop(
                 summary["phase"] = "running"
                 _write_heartbeat(state_root, "polling", cycle, summary, _now(now_utc))
                 b1_summary = _run_b1_with_bounded_retry(
+                    state_root=state_root,
                     repo_root=repo_root,
                     repository=repository,
                     client=client,
@@ -196,6 +198,10 @@ def run_bridge_operator_b3_dry_run_loop(
                     _write_log(state_root, "failed", "github_read_unavailable", summary)
                     break
                 elif _is_safe_wait_b1_result(b1_summary):
+                    if "no_current_request_after_consumption" in b1_summary.get(
+                        "blocked_reasons", []
+                    ):
+                        summary["processed_request_already_seen"] = True
                     summary["empty_or_blocked_cycles"] += 1
                     _write_log(state_root, "waiting", "no_eligible_current_request", summary)
                 else:
@@ -255,11 +261,18 @@ def _base_summary(
         "processed_request_written": False,
         "processed_request_already_seen": False,
         "request_id": None,
+        "inbox_comment_id": None,
         "target_issue": None,
         "target_dispatch_request_id": None,
         "requested_action": None,
         "expected_branch": None,
         "expected_head": None,
+        "expires": None,
+        "evaluated_at_utc": None,
+        "current_request_count": 0,
+        "consumed_request_count": 0,
+        "expired_request_count": 0,
+        "selected_request_state": None,
         "last_b1_result": None,
         "last_b1_blocked_reasons": [],
         "dispatcher_exit_code": None,
@@ -391,6 +404,7 @@ def _acquire_lock(
 
 def _run_b1_with_bounded_retry(
     *,
+    state_root: Path,
     repo_root: str | Path,
     repository: str,
     client: Any,
@@ -403,6 +417,13 @@ def _run_b1_with_bounded_retry(
     last: dict[str, Any] | None = None
     for attempt in range(1, attempts + 1):
         summary["github_read_attempts"] += 1
+        processed_path = state_root / "processed_requests.jsonl"
+        try:
+            consumed_request_ids = (
+                _read_processed_request_ids(processed_path) if processed_path.exists() else set()
+            )
+        except (OSError, json.JSONDecodeError, ValueError):
+            return {"result": "blocked", "blocked_reasons": ["corrupted_state"]}
         try:
             last = run_bridge_operator_b1_dry_run(
                 inbox_issue=DEFAULT_INBOX_ISSUE,
@@ -411,6 +432,7 @@ def _run_b1_with_bounded_retry(
                 github_client=client,
                 local_checker=local_checker,
                 now_utc=_now(now_utc),
+                consumed_request_ids=consumed_request_ids,
             )
         except Exception as error:
             last = {
@@ -602,6 +624,7 @@ def _append_processed_request(
         "target_result_author": match.get("author"),
         "dispatcher_invoked": True,
         "result_verified": True,
+        "lifecycle_state": CONSUMED,
     }
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         json.dump(payload, handle, sort_keys=True)
@@ -637,15 +660,29 @@ def _read_processed_request_ids(path: Path) -> set[str]:
 
 
 def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> None:
+    # Latest lifecycle fields describe the most recent B1 evaluation cycle.
+    # A consumed-only waiting cycle must clear current-selection visibility.
     for key in (
-        "request_id",
-        "target_issue",
-        "target_dispatch_request_id",
-        "requested_action",
-        "expected_branch",
-        "expected_head",
+        "inbox_comment_id",
+        "expires",
+        "evaluated_at_utc",
+        "current_request_count",
+        "consumed_request_count",
+        "expired_request_count",
+        "selected_request_state",
     ):
-        if b1_summary.get(key) is not None:
+        summary[key] = b1_summary.get(key)
+    # Request identity fields describe the last CURRENT request selected during
+    # this B3 run. Later waiting cycles must not erase already-processed evidence.
+    if b1_summary.get("selected_request_state") == "CURRENT":
+        for key in (
+            "request_id",
+            "target_issue",
+            "target_dispatch_request_id",
+            "requested_action",
+            "expected_branch",
+            "expected_head",
+        ):
             summary[key] = b1_summary.get(key)
 
 
@@ -767,6 +804,13 @@ def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]
         "repo": summary["repository"],
         "inbox_issue": summary["configured_inbox_issue"],
         "request_id": summary.get("request_id"),
+        "inbox_comment_id": summary.get("inbox_comment_id"),
+        "expires": summary.get("expires"),
+        "evaluated_at_utc": summary.get("evaluated_at_utc"),
+        "current_request_count": summary.get("current_request_count"),
+        "consumed_request_count": summary.get("consumed_request_count"),
+        "expired_request_count": summary.get("expired_request_count"),
+        "selected_request_state": summary.get("selected_request_state"),
         "dispatcher_invoked": bool(summary.get("dispatcher_invoked")),
         "dispatcher_result_writeback_reached": bool(
             summary.get("dispatcher_result_writeback_reached")

@@ -184,6 +184,138 @@ def test_duplicate_current_marker_ambiguity_fails_closed():
 
     assert summary["result"] == "blocked"
     assert summary["blocked_reasons"] == ["multiple_current_requests"]
+    assert summary["current_request_count"] == 2
+    assert_no_side_effects(summary)
+
+
+def test_consumed_unexpired_marker_plus_new_current_marker_selects_new_marker():
+    comments = [
+        CommentRecord(id=1, body=marker(request_id="old-137"), author="HarryWhite-TW"),
+        CommentRecord(id=2, body=marker(), author="HarryWhite-TW"),
+    ]
+
+    summary = run(FakeGitHub(comments=comments), consumed_request_ids=["old-137"])
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == "b1-137-20260615T010000Z"
+    assert summary["inbox_comment_id"] == 2
+    assert summary["current_request_count"] == 1
+    assert summary["consumed_request_count"] == 1
+    assert summary["expired_request_count"] == 0
+    assert summary["selected_request_state"] == "CURRENT"
+    assert summary["request_lifecycle"] == [
+        {
+            "inbox_comment_id": 1,
+            "request_id": "old-137",
+            "expires": "20260616T010000Z",
+            "lifecycle_state": "CONSUMED",
+        },
+        {
+            "inbox_comment_id": 2,
+            "request_id": "b1-137-20260615T010000Z",
+            "expires": "20260616T010000Z",
+            "lifecycle_state": "CURRENT",
+        },
+    ]
+    assert_no_side_effects(summary)
+
+
+def test_consumed_only_marker_reports_no_current_request_after_consumption():
+    comments = [CommentRecord(id=1, body=marker(), author="HarryWhite-TW")]
+
+    summary = run(
+        FakeGitHub(comments=comments),
+        consumed_request_ids=["b1-137-20260615T010000Z"],
+    )
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["no_current_request_after_consumption"]
+    assert summary["current_request_count"] == 0
+    assert summary["consumed_request_count"] == 1
+    assert summary["selected_request_state"] is None
+    assert summary["target_issue_read_performed"] is False
+    assert_no_side_effects(summary)
+
+
+def test_consumed_classification_takes_precedence_over_expiry():
+    comments = [
+        CommentRecord(
+            id=1,
+            body=marker(request_id="old-137", expires="20260614T010000Z"),
+            author="HarryWhite-TW",
+        )
+    ]
+
+    summary = run(FakeGitHub(comments=comments), consumed_request_ids=["old-137"])
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["no_current_request_after_consumption"]
+    assert summary["consumed_request_count"] == 1
+    assert summary["expired_request_count"] == 0
+    assert summary["expired_historical_request_count"] == 0
+    assert summary["request_lifecycle"][0]["lifecycle_state"] == "CONSUMED"
+    assert_no_side_effects(summary)
+
+
+def test_lifecycle_telemetry_includes_safe_request_fields_and_evaluation_time():
+    comments = [CommentRecord(id=7, body=marker(), author="HarryWhite-TW")]
+
+    summary = run(FakeGitHub(comments=comments))
+
+    assert summary["evaluated_at_utc"] == "2026-06-15T01:00:00Z"
+    assert summary["current_request_count"] == 1
+    assert summary["consumed_request_count"] == 0
+    assert summary["expired_request_count"] == 0
+    assert summary["selected_request_state"] == "CURRENT"
+    assert summary["request_lifecycle"] == [
+        {
+            "inbox_comment_id": 7,
+            "request_id": "b1-137-20260615T010000Z",
+            "expires": "20260616T010000Z",
+            "lifecycle_state": "CURRENT",
+        }
+    ]
+    assert_no_side_effects(summary)
+
+
+def test_malformed_or_untrusted_consumed_markers_still_fail_closed():
+    malformed = run(
+        FakeGitHub(
+            comments=[
+                CommentRecord(
+                    id=1,
+                    body=marker(request_id="old-137") + "\nextra",
+                    author="HarryWhite-TW",
+                )
+            ]
+        ),
+        consumed_request_ids=["old-137"],
+    )
+    untrusted = run(
+        FakeGitHub(
+            comments=[
+                CommentRecord(id=1, body=marker(request_id="old-137"), author="other-user")
+            ]
+        ),
+        consumed_request_ids=["old-137"],
+    )
+
+    assert malformed["result"] == "blocked"
+    assert malformed["blocked_reasons"] == ["malformed_marker"]
+    assert untrusted["result"] == "blocked"
+    assert untrusted["blocked_reasons"] == ["untrusted_inbox_author"]
+    assert_no_side_effects(malformed)
+    assert_no_side_effects(untrusted)
+
+
+def test_consumed_request_ids_none_preserves_existing_compatibility():
+    summary = run(FakeGitHub(), consumed_request_ids=None)
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == "b1-137-20260615T010000Z"
+    assert summary["current_request_count"] == 1
+    assert summary["consumed_request_count"] == 0
+    assert summary["expired_request_count"] == 0
     assert_no_side_effects(summary)
 
 

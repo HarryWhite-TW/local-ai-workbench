@@ -22,6 +22,9 @@ DEFAULT_REPOSITORY = "HarryWhite-TW/local-ai-workbench"
 TRUSTED_ACTORS = ("HarryWhite-TW",)
 ALLOWED_ACTIONS = ("maybe-status-check", "run-reviewbundle")
 UTC_BASIC_FORMAT = "%Y%m%dT%H%M%SZ"
+CURRENT = "CURRENT"
+CONSUMED = "CONSUMED"
+EXPIRED = "EXPIRED"
 
 _FIELD_RE = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>[^ \t\r\n]+)$")
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$")
@@ -63,10 +66,13 @@ def run_bridge_operator_b1_dry_run(
     github_client: Any | None = None,
     local_checker: Callable[[str | Path], LocalReadiness] | None = None,
     now_utc: datetime | None = None,
+    consumed_request_ids: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Validate one fixed Bridge Inbox request without delegating execution."""
     summary = _base_summary(repository, inbox_issue, repo_root)
     now_utc = _normalize_now(now_utc)
+    summary["evaluated_at_utc"] = _format_time(now_utc)
+    consumed_ids = {str(request_id) for request_id in (consumed_request_ids or ())}
 
     if repository != DEFAULT_REPOSITORY:
         _block(summary, "unsupported_repository")
@@ -113,14 +119,37 @@ def run_bridge_operator_b1_dry_run(
         if expires is None:
             _block(summary, "invalid_expiry")
             return summary
-        if expires <= now_utc:
+        request_id = str(fields["request_id"])
+        if request_id in consumed_ids:
+            lifecycle_state = CONSUMED
+        elif expires <= now_utc:
+            lifecycle_state = EXPIRED
+        else:
+            lifecycle_state = CURRENT
+        summary["request_lifecycle"].append(
+            {
+                "inbox_comment_id": marker["comment_id"],
+                "request_id": request_id,
+                "expires": fields["expires"],
+                "lifecycle_state": lifecycle_state,
+            }
+        )
+        if lifecycle_state == CONSUMED:
+            summary["consumed_request_count"] += 1
+            continue
+        if lifecycle_state == EXPIRED:
+            summary["expired_request_count"] += 1
             summary["expired_historical_request_count"] = (
                 summary.get("expired_historical_request_count", 0) + 1
             )
             continue
+        summary["current_request_count"] += 1
         current_markers.append({"marker": marker, "fields": fields})
 
     if not current_markers:
+        if summary["consumed_request_count"] > 0:
+            _block(summary, "no_current_request_after_consumption")
+            return summary
         _block(summary, "missing_current_request")
         return summary
     if len(current_markers) > 1:
@@ -141,6 +170,7 @@ def run_bridge_operator_b1_dry_run(
     summary["expected_branch"] = fields["branch"]
     summary["expected_head"] = fields["head"]
     summary["expires"] = fields["expires"]
+    summary["selected_request_state"] = CURRENT
 
     _validate_request_fields(fields, summary, now_utc)
     if summary["blocked_reasons"]:
@@ -401,6 +431,13 @@ def _base_summary(repository: str, inbox_issue: int, repo_root: str | Path) -> d
         "dry_run_result": "blocked",
         "validations": {},
         "blocked_reasons": [],
+        "evaluated_at_utc": None,
+        "current_request_count": 0,
+        "consumed_request_count": 0,
+        "expired_request_count": 0,
+        "expired_historical_request_count": 0,
+        "selected_request_state": None,
+        "request_lifecycle": [],
         "next_recommended_action": "chatgpt_review",
     }
 
@@ -595,6 +632,10 @@ def _normalize_now(now_utc: datetime | None) -> datetime:
     if now.tzinfo is None:
         return now.replace(tzinfo=timezone.utc)
     return now.astimezone(timezone.utc)
+
+
+def _format_time(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _parse_utc_basic(value: str) -> datetime | None:
