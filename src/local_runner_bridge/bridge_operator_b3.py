@@ -659,6 +659,11 @@ def _read_processed_request_ids(path: Path) -> set[str]:
     return request_ids
 
 
+def read_processed_request_ids(path: str | Path) -> set[str]:
+    """Read B3 processed request IDs without modifying operator state."""
+    return _read_processed_request_ids(Path(path))
+
+
 def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> None:
     # Latest lifecycle fields describe the most recent B1 evaluation cycle.
     # A consumed-only waiting cycle must clear current-selection visibility.
