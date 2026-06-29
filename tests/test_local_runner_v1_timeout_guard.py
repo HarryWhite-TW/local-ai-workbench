@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 import textwrap
@@ -13,7 +14,7 @@ RUNNER = REPO_ROOT / "scripts" / "local_runner_v1.ps1"
 def _runner_core() -> str:
     source = RUNNER.read_text(encoding="utf-8")
     start = source.index("Set-StrictMode -Version Latest")
-    end = source.index('\nif ($Mode -eq "ApprovalStateDiagnostic")')
+    end = source.index("\nif ($ToolResolutionPreflight)")
     return source[start:end]
 
 
@@ -43,6 +44,19 @@ def run_timeout_guard_script(tmp_path: Path, body: str) -> subprocess.CompletedP
 
 def assert_success(result: subprocess.CompletedProcess) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_normal_runner_modes_still_require_issue_number():
+    result = subprocess.run(
+        [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(RUNNER)],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "IssueNumber is required" in (result.stdout + result.stderr)
 
 
 def test_resolve_github_cli_command_uses_portable_path_when_program_files_missing(tmp_path):
@@ -130,6 +144,70 @@ def test_resolve_github_cli_command_rejects_missing_candidates(tmp_path):
         if (-not $failed) {{
             throw "Expected Resolve-GitHubCliCommand to fail when no candidates exist."
         }}
+        """,
+    )
+    assert_success(result)
+
+
+def test_resolve_github_cli_command_rejects_ps1_and_unknown_extensions(tmp_path):
+    ps1 = tmp_path / "gh.ps1"
+    unknown = tmp_path / "gh.sh"
+    ps1.write_text("fake ps1", encoding="utf-8")
+    unknown.write_text("fake shell", encoding="utf-8")
+    missing_default = tmp_path / "missing-program-files-gh.exe"
+    missing_portable = tmp_path / "missing-portable-gh.exe"
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $commands = @(
+            [pscustomobject]@{{ CommandType = "ExternalScript"; Source = "{ps1.as_posix()}"; Definition = "{ps1.as_posix()}" }},
+            [pscustomobject]@{{ CommandType = "Application"; Source = "{unknown.as_posix()}"; Definition = "{unknown.as_posix()}" }}
+        )
+        $failed = $false
+        try {{
+            Resolve-GitHubCliCommand `
+                -Commands $commands `
+                -DefaultPath "{missing_default.as_posix()}" `
+                -PortablePath "{missing_portable.as_posix()}" `
+                -ExtraCandidatePaths @() | Out-Null
+        }}
+        catch {{
+            $failed = $true
+        }}
+        if (-not $failed) {{ throw "Expected unsafe GitHub CLI candidates to fail closed." }}
+        """,
+    )
+    assert_success(result)
+
+
+def test_resolve_github_cli_command_rejects_alias_and_function_even_with_exe_leaf(tmp_path):
+    alias_exe = tmp_path / "alias-gh.exe"
+    function_exe = tmp_path / "function-gh.exe"
+    alias_exe.write_text("fake alias", encoding="utf-8")
+    function_exe.write_text("fake function", encoding="utf-8")
+    missing_default = tmp_path / "missing-program-files-gh.exe"
+    missing_portable = tmp_path / "missing-portable-gh.exe"
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $commands = @(
+            [pscustomobject]@{{ CommandType = "Alias"; Source = "{alias_exe.as_posix()}"; Definition = "{alias_exe.as_posix()}" }},
+            [pscustomobject]@{{ CommandType = "Function"; Source = "{function_exe.as_posix()}"; Definition = "{function_exe.as_posix()}" }}
+        )
+        $failed = $false
+        try {{
+            Resolve-GitHubCliCommand `
+                -Commands $commands `
+                -DefaultPath "{missing_default.as_posix()}" `
+                -PortablePath "{missing_portable.as_posix()}" `
+                -ExtraCandidatePaths @() | Out-Null
+        }}
+        catch {{
+            $failed = $true
+        }}
+        if (-not $failed) {{ throw "Expected Alias/Function GitHub CLI metadata to fail closed." }}
         """,
     )
     assert_success(result)
@@ -349,6 +427,199 @@ def test_resolve_codex_command_rejects_ps1_only(tmp_path):
         if (-not $failed) {
             throw "Expected Resolve-CodexCommand to fail for ps1-only candidates."
         }
+        """,
+    )
+    assert_success(result)
+
+
+def test_tool_resolution_preflight_runs_without_issue_number_and_probes_versions_only(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:RequiredAction = "run-reviewbundle"
+        $script:IssueNumber = 0
+        $script:ProbeCalls = @()
+        function Resolve-GitHubCliCommand {{ return {str(tmp_path / 'gh.exe')!r} }}
+        function Resolve-CodexCommand {{
+            return [pscustomobject]@{{
+                Source = {str(tmp_path / 'codex.cmd')!r}
+                FilePath = "cmd.exe"
+                ArgumentPrefix = @("/d", "/s", "/c", "call", {str(tmp_path / 'codex.cmd')!r})
+            }}
+        }}
+        function Invoke-CapturedNativeProcess {{
+            param(
+                [string]$FilePath,
+                [string[]]$Arguments,
+                [string]$WorkingDirectory,
+                [string]$StandardInput,
+                [System.Text.Encoding]$StandardInputEncoding,
+                [System.Text.Encoding]$StandardOutputEncoding,
+                [System.Text.Encoding]$StandardErrorEncoding,
+                [int]$TimeoutSeconds,
+                [string]$Action
+            )
+            $script:ProbeCalls += "$Action|$FilePath|$($Arguments -join ',')"
+            if (($Arguments -join " ") -match "\\b(exec|review|workspace-write)\\b") {{
+                throw "preflight passed execution arguments: $($Arguments -join ' ')"
+            }}
+            return [pscustomobject]@{{ ExitCode = 0; TimedOut = $false; Stdout = "version"; Stderr = "" }}
+        }}
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["protocol"] == "lawb.rv2_03_tool_resolution_preflight.v1"
+    assert summary["component"] == "runner"
+    assert summary["result"] == "success"
+    assert summary["required_action"] == "run-reviewbundle"
+    assert summary["tools"]["runner_gh"] == {
+        "selected_path": str(tmp_path / "gh.exe"),
+        "suffix": ".exe",
+        "selection_source": "other existing source",
+        "version_probe": {
+            "executed": True,
+            "exit_code": 0,
+            "ok": True,
+            "safe_message": "ok",
+        },
+    }
+    assert summary["tools"]["codex"] == {
+        "selected_path": str(tmp_path / "codex.cmd"),
+        "suffix": ".cmd",
+        "selection_source": "path",
+        "version_probe": {
+            "executed": True,
+            "exit_code": 0,
+            "ok": True,
+            "safe_message": "ok",
+        },
+    }
+    assert summary["safety"]["github_issue_read_performed"] is False
+    assert summary["safety"]["runner_work_invoked"] is False
+    assert summary["safety"]["codex_task_executed"] is False
+
+
+@pytest.mark.parametrize(
+    ("suffix", "expected_file_kind"),
+    [
+        (".exe", "direct"),
+        (".cmd", "cmd-wrapper"),
+        (".bat", "cmd-wrapper"),
+    ],
+)
+def test_tool_resolution_preflight_gh_probe_uses_expected_launcher_composition(
+    tmp_path, suffix, expected_file_kind
+):
+    gh_launcher = tmp_path / f"gh{suffix}"
+    gh_launcher.write_text("fake gh", encoding="utf-8")
+    codex_launcher = tmp_path / "codex.exe"
+    codex_launcher.write_text("fake codex", encoding="utf-8")
+    fake_cmd = tmp_path / "cmd.exe"
+    fake_cmd.write_text("fake cmd", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:RequiredAction = "run-reviewbundle"
+        $script:IssueNumber = 0
+        $script:Mode = "ReviewBundle"
+        $script:ApprovalToken = ""
+        function Resolve-GitHubCliCommand {{ return {gh_launcher.as_posix()!r} }}
+        function Resolve-ComSpecPath {{ return {fake_cmd.as_posix()!r} }}
+        function Resolve-CodexCommand {{
+            return [pscustomobject]@{{
+                Source = {codex_launcher.as_posix()!r}
+                FilePath = {codex_launcher.as_posix()!r}
+                ArgumentPrefix = @()
+            }}
+        }}
+        function Invoke-CapturedNativeProcess {{
+            param(
+                [string]$FilePath,
+                [string[]]$Arguments,
+                [string]$WorkingDirectory,
+                [string]$StandardInput,
+                [System.Text.Encoding]$StandardInputEncoding,
+                [System.Text.Encoding]$StandardOutputEncoding,
+                [System.Text.Encoding]$StandardErrorEncoding,
+                [int]$TimeoutSeconds,
+                [string]$Action
+            )
+            if ($Action -eq "gh --version") {{
+                Write-Host "GH_PROBE_FILE=$FilePath"
+                Write-Host "GH_PROBE_ARGS=$($Arguments -join '|')"
+            }}
+            return [pscustomobject]@{{ ExitCode = 0; TimedOut = $false; Stdout = "version"; Stderr = "" }}
+        }}
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    if expected_file_kind == "direct":
+        assert f"GH_PROBE_FILE={gh_launcher.as_posix()}" in result.stdout
+        assert "GH_PROBE_ARGS=--version" in result.stdout
+    else:
+        assert f"GH_PROBE_FILE={fake_cmd.as_posix()}" in result.stdout
+        assert f"GH_PROBE_ARGS=/d|/s|/c|call|{gh_launcher.as_posix()}|--version" in result.stdout
+    summary = json.loads(result.stdout.splitlines()[-1])
+    assert summary["result"] == "success"
+
+
+def test_tool_resolution_preflight_blocks_when_gh_or_codex_missing(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:RequiredAction = "run-reviewbundle"
+        function Resolve-GitHubCliCommand {{ throw "missing gh" }}
+        function Resolve-CodexCommand {{ throw "missing codex" }}
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["result"] == "blocked"
+    assert "runner_gh_unavailable" in summary["blocked_reasons"]
+    assert "codex_unavailable" in summary["blocked_reasons"]
+    assert summary["safety"]["github_write_performed"] is False
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        '$script:IssueNumber = 123; $script:Mode = "ReviewBundle"; $script:ApprovalToken = ""',
+        '$script:IssueNumber = 0; $script:Mode = "CommitApproved"; $script:ApprovalToken = ""',
+        '$script:IssueNumber = 0; $script:Mode = "ApprovalStateDiagnostic"; $script:ApprovalToken = ""',
+        '$script:IssueNumber = 0; $script:Mode = "ReviewBundle"; $script:ApprovalToken = "token"',
+    ],
+)
+def test_tool_resolution_preflight_rejects_execution_parameters_before_probes(tmp_path, setup):
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:RequiredAction = "run-reviewbundle"
+        {setup}
+        function Resolve-GitHubCliCommand {{ throw "resolver must not run" }}
+        function Resolve-CodexCommand {{ throw "codex resolver must not run" }}
+        $failed = $false
+        try {{
+            Invoke-ToolResolutionPreflight
+        }}
+        catch {{
+            $failed = $true
+            if ($_.Exception.Message -notmatch "does not accept IssueNumber") {{
+                throw "Unexpected error: $($_.Exception.Message)"
+            }}
+        }}
+        if (-not $failed) {{ throw "Expected parameter boundary failure." }}
         """,
     )
     assert_success(result)

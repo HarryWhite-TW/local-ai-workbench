@@ -15,11 +15,12 @@ stops before calling Codex and posts a failure review bundle when possible.
 #>
 
 param(
-    [Parameter(Mandatory = $true)]
-    [ValidateRange(1, [int]::MaxValue)]
-    [int]$IssueNumber,
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$IssueNumber = 0,
     [ValidateSet("ReviewBundle", "CommitApproved", "ApprovalStateDiagnostic")]
     [string]$Mode = "ReviewBundle",
+    [switch]$ToolResolutionPreflight,
+    [string]$RequiredAction = "",
     [string]$ApprovalToken = ""
 )
 
@@ -39,6 +40,7 @@ $MaxGitOutputChars = 5000
 $ReviewBundleCodexTimeoutSeconds = 1200
 $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
+$ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
 $script:CommitApprovedLocalCommitCreated = "unknown"
 $script:CommitApprovedCommitSha = ""
 
@@ -410,9 +412,11 @@ function Resolve-GitHubCliCommand {
     )
 
     $candidatePaths = @()
+    $candidateOrder = 0
 
     if (-not [string]::IsNullOrWhiteSpace($DefaultPath) -and (Test-Path -LiteralPath $DefaultPath)) {
-        $candidatePaths += $DefaultPath
+        $candidatePaths += [pscustomobject]@{ Path = $DefaultPath; Order = $candidateOrder }
+        $candidateOrder += 1
     }
 
     if ($null -eq $Commands) {
@@ -420,42 +424,57 @@ function Resolve-GitHubCliCommand {
     }
 
     foreach ($command in @($Commands)) {
+        $commandTypeProperty = $command.PSObject.Properties["CommandType"]
+        $commandType = if ($null -eq $commandTypeProperty) { "" } else { [string]$commandTypeProperty.Value }
+        if (-not [string]::Equals($commandType, "Application", [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
         $path = Get-GitHubCliCandidatePath -Command $command
         if ([string]::IsNullOrWhiteSpace($path)) {
             continue
         }
 
-        $candidatePaths += $path
+        $candidatePaths += [pscustomobject]@{ Path = $path; Order = $candidateOrder }
+        $candidateOrder += 1
     }
 
     if ([string]::IsNullOrWhiteSpace($PortablePath)) {
         $PortablePath = Join-Path $env:USERPROFILE "tools\gh-portable\bin\gh.exe"
     }
 
-    $candidatePaths += $PortablePath
+    $candidatePaths += [pscustomobject]@{ Path = $PortablePath; Order = $candidateOrder }
+    $candidateOrder += 1
 
     if ($null -ne $ExtraCandidatePaths) {
-        $candidatePaths += $ExtraCandidatePaths
+        foreach ($extraPath in $ExtraCandidatePaths) {
+            $candidatePaths += [pscustomobject]@{ Path = $extraPath; Order = $candidateOrder }
+            $candidateOrder += 1
+        }
     }
 
     $normalized = @()
-    foreach ($path in $candidatePaths) {
+    foreach ($candidate in $candidatePaths) {
+        $path = [string]$candidate.Path
         if ([string]::IsNullOrWhiteSpace($path)) {
             continue
         }
 
         $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
-        if ($extension -eq ".ps1") {
+        $rank = [array]::IndexOf(@(".exe", ".cmd", ".bat", ".com"), $extension)
+        if ($rank -lt 0) {
             continue
         }
 
-        if (-not (Test-Path -LiteralPath $path)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             continue
         }
 
         $normalized += [pscustomobject]@{
-            Source = $path
+            Source = [System.IO.Path]::GetFullPath($path)
             Extension = $extension
+            Rank = $rank
+            Order = [int]$candidate.Order
         }
     }
 
@@ -463,13 +482,7 @@ function Resolve-GitHubCliCommand {
         throw "GitHub CLI was not found. Checked fixed Program Files path, PATH candidates, and portable user tools path."
     }
 
-    $selected = @($normalized | Where-Object { $_.Extension -eq ".exe" } | Select-Object -First 1)
-    if ($selected.Count -eq 0) {
-        $selected = @($normalized | Where-Object { $_.Extension -eq ".cmd" } | Select-Object -First 1)
-    }
-    if ($selected.Count -eq 0) {
-        $selected = @($normalized | Select-Object -First 1)
-    }
+    $selected = @($normalized | Sort-Object Rank, Order | Select-Object -First 1)
 
     return [string]$selected[0].Source
 }
@@ -662,6 +675,153 @@ function Invoke-CapturedNativeProcess {
         StopAttempted = $stopAttempted
         StoppedProcessIds = @($stoppedProcessIds)
     }
+}
+
+function New-ToolResolutionSafety {
+    return [ordered]@{
+        pollonce_invoked = $false
+        dispatcher_action_executed = $false
+        github_issue_read_performed = $false
+        github_write_performed = $false
+        runner_work_invoked = $false
+        codex_task_executed = $false
+    }
+}
+
+function New-ToolResolutionNativeProbe {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [string]$Action
+    )
+
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $probe = Invoke-CapturedNativeProcess `
+        -FilePath $FilePath `
+        -Arguments $Arguments `
+        -WorkingDirectory $RepoPath `
+        -StandardInput "" `
+        -StandardInputEncoding $utf8 `
+        -StandardOutputEncoding $utf8 `
+        -StandardErrorEncoding $utf8 `
+        -TimeoutSeconds 15 `
+        -Action $Action
+
+    return [ordered]@{
+        executed = $true
+        exit_code = $probe.ExitCode
+        ok = ($probe.ExitCode -eq 0)
+        safe_message = if ($probe.ExitCode -eq 0) { "ok" } elseif ($probe.TimedOut) { "version_probe_timeout" } else { "version_probe_failed" }
+    }
+}
+
+function Resolve-GitHubCliProbeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GhPath
+    )
+
+    $suffix = [System.IO.Path]::GetExtension($GhPath).ToLowerInvariant()
+    if ($suffix -in @(".cmd", ".bat")) {
+        return [pscustomobject]@{
+            FilePath = Resolve-ComSpecPath
+            Arguments = @("/d", "/s", "/c", "call", $GhPath, "--version")
+        }
+    }
+
+    return [pscustomobject]@{
+        FilePath = $GhPath
+        Arguments = @("--version")
+    }
+}
+
+function New-ToolEntry {
+    param(
+        [AllowNull()]
+        [string]$SelectedPath,
+        [AllowNull()]
+        [string]$SelectionSource,
+        [AllowNull()]
+        [object]$VersionProbe
+    )
+
+    return [ordered]@{
+        selected_path = if ([string]::IsNullOrWhiteSpace($SelectedPath)) { $null } else { [System.IO.Path]::GetFullPath($SelectedPath) }
+        suffix = if ([string]::IsNullOrWhiteSpace($SelectedPath)) { $null } else { [System.IO.Path]::GetExtension($SelectedPath).ToLowerInvariant() }
+        selection_source = $SelectionSource
+        version_probe = $VersionProbe
+    }
+}
+
+function Invoke-ToolResolutionPreflight {
+    $modeVariable = Get-Variable -Name Mode -ErrorAction SilentlyContinue
+    $modeValue = if ($null -eq $modeVariable) { "ReviewBundle" } else { [string]$modeVariable.Value }
+    $approvalTokenVariable = Get-Variable -Name ApprovalToken -ErrorAction SilentlyContinue
+    $approvalTokenValue = if ($null -eq $approvalTokenVariable) { "" } else { [string]$approvalTokenVariable.Value }
+    $issueNumberVariable = Get-Variable -Name IssueNumber -ErrorAction SilentlyContinue
+    $issueNumberValue = if ($null -eq $issueNumberVariable) { 0 } else { [int]$issueNumberVariable.Value }
+
+    if ($issueNumberValue -ne 0 -or
+        -not [string]::Equals($modeValue, "ReviewBundle", [System.StringComparison]::Ordinal) -or
+        -not [string]::IsNullOrEmpty($approvalTokenValue)) {
+        throw "ToolResolutionPreflight does not accept IssueNumber, non-ReviewBundle Mode, or ApprovalToken."
+    }
+    if (-not [string]::Equals($RequiredAction, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+        throw "ToolResolutionPreflight requires -RequiredAction run-reviewbundle."
+    }
+
+    $blocked = @()
+    $tools = @{}
+
+    try {
+        $ghPath = Resolve-GitHubCliCommand
+        $ghProbeCommand = Resolve-GitHubCliProbeCommand -GhPath $ghPath
+        $ghProbe = New-ToolResolutionNativeProbe -FilePath $ghProbeCommand.FilePath -Arguments @($ghProbeCommand.Arguments) -Action "gh --version"
+        $tools["runner_gh"] = New-ToolEntry -SelectedPath $ghPath -SelectionSource "other existing source" -VersionProbe $ghProbe
+        if (-not $ghProbe.ok) {
+            $blocked += "runner_gh_version_probe_failed"
+        }
+    }
+    catch {
+        $blocked += "runner_gh_unavailable"
+        $tools["runner_gh"] = New-ToolEntry -SelectedPath $null -SelectionSource $null -VersionProbe $null
+    }
+
+    try {
+        $codexCommand = Resolve-CodexCommand
+        $codexProbe = New-ToolResolutionNativeProbe `
+            -FilePath $codexCommand.FilePath `
+            -Arguments (@($codexCommand.ArgumentPrefix) + @("--version")) `
+            -Action "codex --version"
+        $tools["codex"] = New-ToolEntry -SelectedPath $codexCommand.Source -SelectionSource "path" -VersionProbe $codexProbe
+        if (-not $codexProbe.ok) {
+            $blocked += "codex_version_probe_failed"
+        }
+    }
+    catch {
+        $blocked += "codex_unavailable"
+        $tools["codex"] = New-ToolEntry -SelectedPath $null -SelectionSource $null -VersionProbe $null
+    }
+
+    $result = if ($blocked.Count -eq 0) { "success" } else { "blocked" }
+    $summary = [ordered]@{
+        protocol = $ToolResolutionPreflightProtocol
+        component = "runner"
+        result = $result
+        required_action = $RequiredAction
+        blocked_reasons = @($blocked)
+        tools = $tools
+        nested_runner = $null
+        safety = New-ToolResolutionSafety
+    }
+    Write-Output ($summary | ConvertTo-Json -Depth 12 -Compress)
+    if ($result -eq "success") {
+        exit 0
+    }
+    exit 2
 }
 
 function New-ChildProcessReviewBundleSummary {
@@ -1644,6 +1804,14 @@ function Invoke-CommitApprovedMode {
 
 if (-not (Test-Path -LiteralPath $RepoPath)) {
     throw "Repository path was not found: $RepoPath"
+}
+
+if ($ToolResolutionPreflight) {
+    Invoke-ToolResolutionPreflight
+}
+
+if ($IssueNumber -lt 1) {
+    throw "IssueNumber is required for ReviewBundle, CommitApproved, and ApprovalStateDiagnostic modes."
 }
 
 if ($Mode -eq "ApprovalStateDiagnostic") {

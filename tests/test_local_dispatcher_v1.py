@@ -461,6 +461,7 @@ def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_pat
     result = run_dispatcher_core_script(
         tmp_path,
         """
+        function Resolve-GhPath { return "gh" }
         function Invoke-WriteCommand {
             param([string]$FilePath, [string[]]$Arguments, [string]$Action)
             $script:CapturedFilePath = $FilePath
@@ -527,16 +528,18 @@ def test_resolve_gh_path_prefers_path_command_before_fallback(tmp_path):
         r"""
         $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
         New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        $PathGh = Join-Path -Path $PSScriptRoot -ChildPath "path-gh.exe"
+        New-Item -ItemType File -Path $PathGh -Force | Out-Null
         function Get-Command {
-            param([string]$Name, [object]$ErrorAction)
-            return [pscustomobject]@{ Source = "C:\Tools\gh.exe" }
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
+            return [pscustomobject]@{ CommandType = "Application"; Source = $PathGh }
         }
 
         Write-Host "GH_PATH=$(Resolve-GhPath)"
         """,
     )
     assert_success(result)
-    assert r"GH_PATH=C:\Tools\gh.exe" in result.stdout
+    assert f"GH_PATH={tmp_path / 'path-gh.exe'}" in result.stdout
 
 
 def test_resolve_gh_path_uses_fallback_when_path_command_missing(tmp_path):
@@ -546,7 +549,7 @@ def test_resolve_gh_path_uses_fallback_when_path_command_missing(tmp_path):
         $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
         New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
         function Get-Command {
-            param([string]$Name, [object]$ErrorAction)
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
             return $null
         }
 
@@ -566,7 +569,7 @@ def test_resolve_gh_path_uses_portable_fallback_when_path_and_program_files_miss
         $GhCliPortableFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "portable-gh.exe"
         New-Item -ItemType File -Path $GhCliPortableFallbackPath -Force | Out-Null
         function Get-Command {
-            param([string]$Name, [object]$ErrorAction)
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
             return $null
         }
 
@@ -576,6 +579,68 @@ def test_resolve_gh_path_uses_portable_fallback_when_path_and_program_files_miss
     assert_success(result)
     assert f"GH_PATH={tmp_path / 'portable-gh.exe'}" in result.stdout
 
+
+def test_resolve_gh_path_prefers_exe_and_rejects_unsafe_path_candidates(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-gh.exe"
+        $GhCliPortableFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-portable-gh.exe"
+        $ps1 = Join-Path -Path $PSScriptRoot -ChildPath "gh.ps1"
+        $unknown = Join-Path -Path $PSScriptRoot -ChildPath "gh.sh"
+        $cmd = Join-Path -Path $PSScriptRoot -ChildPath "gh.cmd"
+        $exe = Join-Path -Path $PSScriptRoot -ChildPath "gh.exe"
+        foreach ($path in @($ps1, $unknown, $cmd, $exe)) {
+            New-Item -ItemType File -Path $path -Force | Out-Null
+        }
+        function Get-Command {
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
+            return @(
+                [pscustomobject]@{ CommandType = "ExternalScript"; Source = $ps1 },
+                [pscustomobject]@{ CommandType = "Application"; Source = $unknown },
+                [pscustomobject]@{ CommandType = "Application"; Source = $cmd },
+                [pscustomobject]@{ CommandType = "Application"; Source = $exe }
+            )
+        }
+
+        Write-Host "GH_PATH=$(Resolve-GhPath)"
+        """,
+    )
+    assert_success(result)
+    assert f"GH_PATH={tmp_path / 'gh.exe'}" in result.stdout
+
+
+def test_resolve_gh_path_rejects_alias_function_and_unknown_extension(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-gh.exe"
+        $GhCliPortableFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-portable-gh.exe"
+        $unknown = Join-Path -Path $PSScriptRoot -ChildPath "gh.sh"
+        New-Item -ItemType File -Path $unknown -Force | Out-Null
+        function Get-Command {
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
+            return @(
+                [pscustomobject]@{ CommandType = "Alias"; Source = "gh-alias" },
+                [pscustomobject]@{ CommandType = "Function"; Source = "gh-function" },
+                [pscustomobject]@{ CommandType = "Application"; Source = $unknown }
+            )
+        }
+
+        try {
+            $null = Resolve-GhPath
+            Write-Host "CASE_RESULT=success"
+        } catch {
+            Write-Host "CASE_RESULT=failure"
+            Write-Host "CASE_ERROR=$($_.Exception.Message)"
+        }
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "GitHub CLI 'gh' is required" in result.stdout
+
+
 def test_resolve_gh_path_fails_closed_when_missing_from_path_and_fallback(tmp_path):
     result = run_dispatcher_core_script(
         tmp_path,
@@ -583,7 +648,7 @@ def test_resolve_gh_path_fails_closed_when_missing_from_path_and_fallback(tmp_pa
         $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-gh.exe"
         $GhCliPortableFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "missing-portable-gh.exe"
         function Get-Command {
-            param([string]$Name, [object]$ErrorAction)
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
             return $null
         }
 
@@ -609,7 +674,7 @@ def test_issue_read_uses_resolved_fallback_gh_path(tmp_path):
         $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
         New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
         function Get-Command {
-            param([string]$Name, [object]$ErrorAction)
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
             return $null
         }
         function Invoke-ReadOnlyCommand {
@@ -639,7 +704,7 @@ def test_publish_runner_result_comment_uses_resolved_fallback_gh_path(tmp_path):
         $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fallback-gh.exe"
         New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
         function Get-Command {
-            param([string]$Name, [object]$ErrorAction)
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
             return $null
         }
         function Invoke-WriteCommand {
@@ -654,6 +719,299 @@ def test_publish_runner_result_comment_uses_resolved_fallback_gh_path(tmp_path):
     )
     assert_success(result)
     assert f"CAPTURED_FILE_PATH={tmp_path / 'fallback-gh.exe'}" in result.stdout
+
+
+def test_tool_resolution_preflight_maybe_status_check_resolves_gh_only(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $Repo = "HarryWhite-TW/local-ai-workbench"
+        $RequiredAction = "maybe-status-check"
+        $IssueNumber = 0
+        $IssueNumbers = @()
+        $PostResultComment = $false
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fake-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        $script:VersionProbeCalls = 0
+        $script:IssueReadCalls = 0
+        function Get-Command {
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
+            return $null
+        }
+        function Assert-RepoRoot {}
+        function Invoke-ReadOnlyCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            if ($Action -eq "gh --version") {
+                $script:VersionProbeCalls += 1
+                return [pscustomobject]@{ ExitCode = 0; Stdout = "gh version 2.fake"; Stderr = "" }
+            }
+            $script:IssueReadCalls += 1
+            throw "unexpected read action $Action"
+        }
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["protocol"] == "lawb.rv2_03_tool_resolution_preflight.v1"
+    assert summary["component"] == "dispatcher"
+    assert summary["result"] == "success"
+    assert summary["required_action"] == "maybe-status-check"
+    assert summary["nested_runner"] is None
+    assert summary["tools"]["dispatcher_gh"]["suffix"] == ".exe"
+    assert summary["tools"]["dispatcher_gh"]["version_probe"]["ok"] is True
+    assert summary["safety"]["pollonce_invoked"] is False
+    assert summary["safety"]["github_issue_read_performed"] is False
+
+
+def _dispatcher_tool_entry(path=r"C:\Tools\gh.exe", suffix=".exe", **overrides):
+    entry = {
+        "selected_path": path,
+        "suffix": suffix,
+        "selection_source": "path",
+        "version_probe": {
+            "executed": True,
+            "exit_code": 0,
+            "ok": True,
+            "safe_message": "ok",
+        },
+    }
+    entry.update(overrides)
+    return entry
+
+
+def _dispatcher_nested_runner(**overrides):
+    nested = {
+        "protocol": "lawb.rv2_03_tool_resolution_preflight.v1",
+        "component": "runner",
+        "result": "success",
+        "required_action": "run-reviewbundle",
+        "blocked_reasons": [],
+        "tools": {
+            "runner_gh": _dispatcher_tool_entry(r"C:\Tools\gh.exe"),
+            "codex": _dispatcher_tool_entry(r"C:\Tools\codex.cmd", ".cmd"),
+        },
+        "nested_runner": None,
+        "safety": {
+            "pollonce_invoked": False,
+            "dispatcher_action_executed": False,
+            "github_issue_read_performed": False,
+            "github_write_performed": False,
+            "runner_work_invoked": False,
+            "codex_task_executed": False,
+        },
+    }
+    nested.update(overrides)
+    return nested
+
+
+def test_tool_resolution_preflight_run_reviewbundle_invokes_runner_preflight_once(tmp_path):
+    nested = _dispatcher_nested_runner()
+    result = run_dispatcher_core_script(
+        tmp_path,
+        rf"""
+        $Repo = "HarryWhite-TW/local-ai-workbench"
+        $RequiredAction = "run-reviewbundle"
+        $IssueNumber = 0
+        $IssueNumbers = @()
+        $PostResultComment = $false
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fake-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1") -Value "# runner" -Encoding UTF8
+        $script:RunnerPreflightCalls = 0
+        function Get-Command {{
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
+            return $null
+        }}
+        function Assert-RepoRoot {{}}
+        function Invoke-ReadOnlyCommand {{
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            if ($Action -eq "gh --version") {{
+                return [pscustomobject]@{{ ExitCode = 0; Stdout = "gh version 2.fake"; Stderr = "" }}
+            }}
+            if ($Action -eq "runner ToolResolutionPreflight") {{
+                $script:RunnerPreflightCalls += 1
+                if (($Arguments -join "|") -notmatch "ToolResolutionPreflight") {{
+                    throw "Runner preflight flag missing"
+                }}
+                return [pscustomobject]@{{ ExitCode = 0; Stdout = '{json.dumps(nested)}'; Stderr = "" }}
+            }}
+            throw "unexpected action $Action"
+        }}
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["result"] == "success"
+    assert summary["required_action"] == "run-reviewbundle"
+    assert summary["nested_runner"]["component"] == "runner"
+    assert summary["safety"]["runner_work_invoked"] is False
+
+
+def test_tool_resolution_preflight_blocks_on_malformed_runner_json(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        r"""
+        $Repo = "HarryWhite-TW/local-ai-workbench"
+        $RequiredAction = "run-reviewbundle"
+        $IssueNumber = 0
+        $IssueNumbers = @()
+        $PostResultComment = $false
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fake-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1") -Value "# runner" -Encoding UTF8
+        function Get-Command {
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
+            return $null
+        }
+        function Assert-RepoRoot {}
+        function Invoke-ReadOnlyCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            if ($Action -eq "gh --version") {
+                return [pscustomobject]@{ ExitCode = 0; Stdout = "gh version 2.fake"; Stderr = "" }
+            }
+            return [pscustomobject]@{ ExitCode = 0; Stdout = "not json"; Stderr = "" }
+        }
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["result"] == "blocked"
+    assert "runner_preflight_malformed_json" in summary["blocked_reasons"]
+
+
+def test_tool_resolution_preflight_preserves_blocked_runner_payload_with_missing_tool(tmp_path):
+    nested = _dispatcher_nested_runner(
+        result="blocked",
+        blocked_reasons=["runner_gh_unavailable"],
+        tools={
+            "runner_gh": {
+                "selected_path": None,
+                "suffix": None,
+                "selection_source": None,
+                "version_probe": None,
+            },
+            "codex": _dispatcher_tool_entry(r"C:\Tools\codex.cmd", ".cmd"),
+        },
+    )
+    result = run_dispatcher_core_script(
+        tmp_path,
+        rf"""
+        $Repo = "HarryWhite-TW/local-ai-workbench"
+        $RequiredAction = "run-reviewbundle"
+        $IssueNumber = 0
+        $IssueNumbers = @()
+        $PostResultComment = $false
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fake-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1") -Value "# runner" -Encoding UTF8
+        $script:UnexpectedReads = @()
+        function Get-Command {{
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
+            return $null
+        }}
+        function Assert-RepoRoot {{}}
+        function Invoke-ReadOnlyCommand {{
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            if ($Action -eq "gh --version") {{
+                return [pscustomobject]@{{ ExitCode = 0; Stdout = "gh version 2.fake"; Stderr = "" }}
+            }}
+            if ($Action -eq "runner ToolResolutionPreflight") {{
+                return [pscustomobject]@{{ ExitCode = 2; Stdout = '{json.dumps(nested)}'; Stderr = "" }}
+            }}
+            $script:UnexpectedReads += $Action
+            throw "unexpected action $Action"
+        }}
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["result"] == "blocked"
+    assert summary["nested_runner"] == nested
+    assert "runner_preflight_blocked" in summary["blocked_reasons"]
+    assert "runner_gh_unavailable" in summary["blocked_reasons"]
+    assert summary["safety"]["pollonce_invoked"] is False
+    assert summary["safety"]["github_issue_read_performed"] is False
+    assert summary["safety"]["github_write_performed"] is False
+    assert summary["nested_runner"]["safety"]["runner_work_invoked"] is False
+
+
+@pytest.mark.parametrize(
+    ("nested_overrides", "exit_code", "expected_reason"),
+    [
+        ({"result": "blocked", "blocked_reasons": ["missing"]}, 0, "runner_preflight_blocked_exit_mismatch"),
+        ({"result": "success"}, 2, "runner_preflight_success_exit_mismatch"),
+        ({"result": "unknown"}, 0, "runner_preflight_invalid_result"),
+        ({"blocked_reasons": None}, 0, "runner_preflight_invalid_blocked_reasons"),
+        ({"blocked_reasons": "missing"}, 0, "runner_preflight_invalid_blocked_reasons"),
+        ({"result": "blocked", "blocked_reasons": [7]}, 2, "runner_preflight_invalid_blocked_reasons"),
+        ({"blocked_reasons": ["   "]}, 0, "runner_preflight_invalid_blocked_reasons"),
+        ({"nested_runner": {"result": "success"}}, 0, "runner_preflight_unexpected_nested_runner"),
+        ({"safety": None}, 0, "runner_preflight_missing_safety"),
+        ({"safety": {"pollonce_invoked": False, "dispatcher_action_executed": False, "github_issue_read_performed": False, "github_write_performed": False, "runner_work_invoked": False}}, 0, "runner_preflight_safety_contradiction_codex_task_executed"),
+        ({"tools": None}, 0, "runner_preflight_missing_tools"),
+        ({"tools": {}}, 0, "runner_preflight_runner_gh_missing"),
+        ({"tools": {"codex": _dispatcher_tool_entry(r"C:\Tools\codex.exe")}}, 0, "runner_preflight_runner_gh_missing"),
+        ({"tools": {"runner_gh": _dispatcher_tool_entry(), "codex": _dispatcher_tool_entry(version_probe=None)}}, 0, "runner_preflight_codex_missing_version_probe"),
+        ({"tools": {"runner_gh": _dispatcher_tool_entry(), "codex": _dispatcher_tool_entry(version_probe={"exit_code": 0, "ok": True, "safe_message": "ok"})}}, 0, "runner_preflight_codex_version_probe_not_executed"),
+        (
+            {"tools": {"runner_gh": _dispatcher_tool_entry(version_probe={"executed": True, "exit_code": 0, "ok": False, "safe_message": "ok"}), "codex": _dispatcher_tool_entry(r"C:\Tools\codex.exe")}},
+            0,
+            "runner_preflight_runner_gh_version_probe_not_ok",
+        ),
+        (
+            {"tools": {"runner_gh": _dispatcher_tool_entry(version_probe={"executed": True, "exit_code": 1, "ok": True, "safe_message": "ok"}), "codex": _dispatcher_tool_entry(r"C:\Tools\codex.exe")}},
+            0,
+            "runner_preflight_runner_gh_version_probe_nonzero_exit",
+        ),
+        ({"tools": {"runner_gh": _dispatcher_tool_entry(r"C:\Tools\gh.ps1", ".ps1"), "codex": _dispatcher_tool_entry(r"C:\Tools\codex.exe")}}, 0, "runner_preflight_runner_gh_unsafe_suffix"),
+        ({"tools": {"runner_gh": _dispatcher_tool_entry(r"C:\Tools\gh.exe", ".cmd"), "codex": _dispatcher_tool_entry(r"C:\Tools\codex.exe")}}, 0, "runner_preflight_runner_gh_suffix_path_mismatch"),
+        ({"result": "success", "blocked_reasons": ["unexpected"]}, 0, "runner_preflight_success_with_blocked_reasons"),
+        ({"result": "blocked", "blocked_reasons": []}, 2, "runner_preflight_blocked_without_reasons"),
+    ],
+)
+def test_tool_resolution_preflight_blocks_on_contradictory_runner_contract(
+    tmp_path, nested_overrides, exit_code, expected_reason
+):
+    nested = _dispatcher_nested_runner(**nested_overrides)
+    result = run_dispatcher_core_script(
+        tmp_path,
+        rf"""
+        $Repo = "HarryWhite-TW/local-ai-workbench"
+        $RequiredAction = "run-reviewbundle"
+        $IssueNumber = 0
+        $IssueNumbers = @()
+        $PostResultComment = $false
+        $GhCliFallbackPath = Join-Path -Path $PSScriptRoot -ChildPath "fake-gh.exe"
+        New-Item -ItemType File -Path $GhCliFallbackPath -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1") -Value "# runner" -Encoding UTF8
+        function Get-Command {{
+            param([string]$Name, [switch]$All, [object]$ErrorAction)
+            return $null
+        }}
+        function Assert-RepoRoot {{}}
+        function Invoke-ReadOnlyCommand {{
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            if ($Action -eq "gh --version") {{
+                return [pscustomobject]@{{ ExitCode = 0; Stdout = "gh version 2.fake"; Stderr = "" }}
+            }}
+            return [pscustomobject]@{{ ExitCode = {exit_code}; Stdout = '{json.dumps(nested)}'; Stderr = "" }}
+        }}
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["result"] == "blocked"
+    assert expected_reason in summary["blocked_reasons"]
 
 
 @pytest.mark.parametrize(
@@ -1196,3 +1554,45 @@ def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):
     )
     assert result.returncode != 0
     assert any("Missing mode." in stream for stream in (result.stdout or "", result.stderr or ""))
+
+
+def test_script_entry_rejects_tool_resolution_preflight_with_other_mode():
+    result = _run_powershell(
+        [
+            _powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(DISPATCHER),
+            "-ToolResolutionPreflight",
+            "-PollOnce",
+            "-RequiredAction",
+            "maybe-status-check",
+        ]
+    )
+    assert result.returncode != 0
+    assert any("Choose exactly one mode" in stream for stream in (result.stdout or "", result.stderr or ""))
+
+
+def test_tool_resolution_preflight_rejects_issue_arguments_before_reads(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        """
+        $Repo = "HarryWhite-TW/local-ai-workbench"
+        $RequiredAction = "maybe-status-check"
+        $IssueNumber = 83
+        $IssueNumbers = @()
+        $PostResultComment = $false
+        function Get-IssueDispatchMarkerReadResult { throw "issue read must not happen" }
+        try {
+            Invoke-ToolResolutionPreflight
+        } catch {
+            Write-Host "CASE_RESULT=failure"
+            Write-Host "CASE_ERROR=$($_.Exception.Message)"
+        }
+        """,
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "does not accept IssueNumber" in result.stdout

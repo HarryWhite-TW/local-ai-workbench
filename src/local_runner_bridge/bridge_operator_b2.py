@@ -18,6 +18,7 @@ from local_runner_bridge.bridge_operator_b1 import (
 )
 
 SUMMARY_PROTOCOL = "lawb.bridge_operator_b2_delegation_summary.v1"
+TOOL_PREFLIGHT_PROTOCOL = "lawb.rv2_03_tool_resolution_preflight.v1"
 RUNNER_RESULT_MARKER = "LAWBRUNNER-RESULT"
 RUNNER_RESULT_PROTOCOL = "lawb.runner_result.v1"
 DEFAULT_INBOX_ISSUE = 147
@@ -39,6 +40,7 @@ def run_bridge_operator_b2_once(
     inbox_issue: int = DEFAULT_INBOX_ISSUE,
     github_client: Any | None = None,
     local_checker: Any | None = None,
+    preflight_invoker: Any | None = None,
     dispatcher_invoker: Any | None = None,
     now_utc: Any | None = None,
     timeout_seconds: int | None = None,
@@ -89,7 +91,51 @@ def run_bridge_operator_b2_once(
         return summary
 
     invoker = dispatcher_invoker or default_dispatcher_invoker
+    preflight = preflight_invoker or default_dispatcher_invoker
     timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
+    preflight_args = build_dispatcher_preflight_command(
+        repo_root=repo_root,
+        required_action=str(summary["requested_action"]),
+        repository=repository,
+    )
+    summary["tool_resolution_preflight_invocation_args"] = preflight_args
+    summary["tool_resolution_preflight_invoked"] = True
+    summary["tool_resolution_preflight_invocation_count"] = 1
+
+    try:
+        preflight_result = preflight(
+            args=preflight_args,
+            cwd=str(Path(repo_root).resolve()),
+            timeout_seconds=timeout,
+        )
+    except TimeoutError as error:
+        preflight_result = DispatcherInvocationResult(returncode=1, stderr=str(error), timed_out=True)
+    except Exception as error:
+        preflight_result = DispatcherInvocationResult(returncode=1, stderr=str(error), timed_out=False)
+
+    summary["tool_resolution_preflight_exit_code"] = preflight_result.returncode
+    summary["tool_resolution_preflight_timed_out"] = bool(preflight_result.timed_out)
+    summary["tool_resolution_preflight_stdout"] = preflight_result.stdout
+    summary["tool_resolution_preflight_stderr"] = preflight_result.stderr
+
+    preflight_validation = _validate_tool_resolution_preflight(
+        preflight_result,
+        required_action=str(summary["requested_action"]),
+    )
+    _copy_preflight_validation(summary, preflight_validation)
+    if not preflight_validation["ok"]:
+        reason = preflight_validation["reason"]
+        if preflight_validation["structured_blocked"]:
+            _block(summary, reason)
+            for blocked_reason in summary["tool_resolution_preflight_blocked_reasons"]:
+                if blocked_reason not in summary["blocked_reasons"]:
+                    summary["blocked_reasons"].append(blocked_reason)
+            summary["delegation_result"] = "blocked"
+        else:
+            _failure(summary, reason)
+            summary["delegation_result"] = "failure"
+        return summary
+
     args = build_dispatcher_command(
         repo_root=repo_root,
         target_issue=int(summary["target_issue"]),
@@ -180,6 +226,27 @@ def build_dispatcher_command(
     ]
 
 
+def build_dispatcher_preflight_command(
+    *,
+    repo_root: str | Path,
+    required_action: str,
+    repository: str = DEFAULT_REPOSITORY,
+) -> list[str]:
+    return [
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(Path(repo_root).resolve() / "scripts" / "local_dispatcher_v1.ps1"),
+        "-ToolResolutionPreflight",
+        "-RequiredAction",
+        required_action,
+        "-Repo",
+        repository,
+    ]
+
+
 def default_dispatcher_invoker(
     *,
     args: list[str],
@@ -238,6 +305,165 @@ def parse_lawbrunner_result_comment(comment: CommentRecord) -> dict[str, Any]:
     }
 
 
+def _validate_tool_resolution_preflight(
+    invocation: DispatcherInvocationResult,
+    *,
+    required_action: str,
+) -> dict[str, Any]:
+    base = {
+        "ok": False,
+        "reason": "tool_resolution_preflight_contract_failure",
+        "structured_blocked": False,
+        "payload": None,
+    }
+    if invocation.timed_out:
+        return {**base, "reason": "tool_resolution_preflight_timeout"}
+    if invocation.returncode not in (0, 2):
+        return {**base, "reason": "tool_resolution_preflight_nonzero_exit"}
+    if not invocation.stdout.strip():
+        return {**base, "reason": "tool_resolution_preflight_empty_stdout"}
+    try:
+        payload = json.loads(invocation.stdout)
+    except json.JSONDecodeError:
+        return {**base, "reason": "tool_resolution_preflight_malformed_json"}
+    if not isinstance(payload, dict):
+        return {**base, "reason": "tool_resolution_preflight_non_object_json"}
+
+    result = payload.get("result")
+    blocked_reasons = payload.get("blocked_reasons")
+    if payload.get("protocol") != TOOL_PREFLIGHT_PROTOCOL:
+        return {**base, "reason": "tool_resolution_preflight_wrong_protocol", "payload": payload}
+    if payload.get("component") != "dispatcher":
+        return {**base, "reason": "tool_resolution_preflight_wrong_component", "payload": payload}
+    if payload.get("required_action") != required_action:
+        return {**base, "reason": "tool_resolution_preflight_wrong_required_action", "payload": payload}
+    if result not in ("success", "blocked"):
+        return {**base, "reason": "tool_resolution_preflight_invalid_result", "payload": payload}
+    if not isinstance(blocked_reasons, list):
+        return {**base, "reason": "tool_resolution_preflight_invalid_blocked_reasons", "payload": payload}
+    if any(not isinstance(reason, str) or not reason.strip() for reason in blocked_reasons):
+        return {**base, "reason": "tool_resolution_preflight_invalid_blocked_reasons", "payload": payload}
+    if result == "success" and blocked_reasons:
+        return {**base, "reason": "tool_resolution_preflight_success_with_blocked_reasons", "payload": payload}
+    if result == "blocked" and not blocked_reasons:
+        return {**base, "reason": "tool_resolution_preflight_blocked_without_reasons", "payload": payload}
+    if result == "success" and invocation.returncode != 0:
+        return {**base, "reason": "tool_resolution_preflight_success_exit_mismatch", "payload": payload}
+    if result == "blocked" and invocation.returncode != 2:
+        return {**base, "reason": "tool_resolution_preflight_blocked_exit_mismatch", "payload": payload}
+
+    if result == "success":
+        tools = payload.get("tools")
+        if not isinstance(tools, dict):
+            return {**base, "reason": "tool_resolution_preflight_missing_tools", "payload": payload}
+        tool_error = _validate_tool_resolution_tool_entry(tools.get("dispatcher_gh"))
+        if tool_error is not None:
+            return {**base, "reason": f"tool_resolution_preflight_dispatcher_gh_{tool_error}", "payload": payload}
+
+        nested_runner = payload.get("nested_runner")
+        if required_action == "maybe-status-check":
+            if nested_runner is not None:
+                return {**base, "reason": "tool_resolution_preflight_unexpected_nested_runner", "payload": payload}
+        elif required_action == "run-reviewbundle":
+            nested_error = _validate_nested_runner_tool_resolution_preflight(nested_runner)
+            if nested_error is not None:
+                return {**base, "reason": f"tool_resolution_preflight_nested_runner_{nested_error}", "payload": payload}
+
+    safety = payload.get("safety")
+    if not isinstance(safety, dict):
+        return {**base, "reason": "tool_resolution_preflight_missing_safety", "payload": payload}
+    for field in _TOOL_RESOLUTION_SAFETY_FIELDS:
+        if safety.get(field) is not False:
+            return {
+                **base,
+                "reason": f"tool_resolution_preflight_safety_contradiction_{field}",
+                "payload": payload,
+            }
+
+    if result == "blocked":
+        return {
+            **base,
+            "reason": "tool_resolution_preflight_blocked",
+            "structured_blocked": True,
+            "payload": payload,
+        }
+    return {"ok": True, "reason": "none", "structured_blocked": False, "payload": payload}
+
+
+def _validate_nested_runner_tool_resolution_preflight(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return "missing"
+    if payload.get("protocol") != TOOL_PREFLIGHT_PROTOCOL:
+        return "wrong_protocol"
+    if payload.get("component") != "runner":
+        return "wrong_component"
+    if payload.get("result") != "success":
+        return "not_success"
+    if payload.get("required_action") != "run-reviewbundle":
+        return "wrong_required_action"
+    blocked_reasons = payload.get("blocked_reasons")
+    if not isinstance(blocked_reasons, list) or blocked_reasons:
+        return "invalid_blocked_reasons"
+    if payload.get("nested_runner") is not None:
+        return "unexpected_nested_runner"
+    safety = payload.get("safety")
+    if not isinstance(safety, dict):
+        return "missing_safety"
+    for field in _TOOL_RESOLUTION_SAFETY_FIELDS:
+        if safety.get(field) is not False:
+            return f"safety_contradiction_{field}"
+    tools = payload.get("tools")
+    if not isinstance(tools, dict):
+        return "missing_tools"
+    for tool_name in ("runner_gh", "codex"):
+        tool_error = _validate_tool_resolution_tool_entry(tools.get(tool_name))
+        if tool_error is not None:
+            return f"{tool_name}_{tool_error}"
+    return None
+
+
+_TOOL_RESOLUTION_SAFE_SUFFIXES = {".exe", ".cmd", ".bat", ".com"}
+_TOOL_RESOLUTION_SAFETY_FIELDS = (
+    "pollonce_invoked",
+    "dispatcher_action_executed",
+    "github_issue_read_performed",
+    "github_write_performed",
+    "runner_work_invoked",
+    "codex_task_executed",
+)
+
+
+def _validate_tool_resolution_tool_entry(tool: Any) -> str | None:
+    if not isinstance(tool, dict):
+        return "missing"
+    selected_path = tool.get("selected_path")
+    suffix = tool.get("suffix")
+    selection_source = tool.get("selection_source")
+    if not isinstance(selected_path, str) or not selected_path.strip():
+        return "missing_selected_path"
+    if not isinstance(suffix, str) or not suffix.strip():
+        return "missing_suffix"
+    normalized_suffix = suffix.lower()
+    if normalized_suffix not in _TOOL_RESOLUTION_SAFE_SUFFIXES:
+        return "unsafe_suffix"
+    if not selected_path.lower().endswith(normalized_suffix):
+        return "suffix_path_mismatch"
+    if not isinstance(selection_source, str) or not selection_source.strip():
+        return "missing_selection_source"
+    version_probe = tool.get("version_probe")
+    if not isinstance(version_probe, dict):
+        return "missing_version_probe"
+    if version_probe.get("executed") is not True:
+        return "version_probe_not_executed"
+    if version_probe.get("exit_code") != 0:
+        return "version_probe_nonzero_exit"
+    if version_probe.get("ok") is not True:
+        return "version_probe_not_ok"
+    if version_probe.get("safe_message") != "ok":
+        return "version_probe_unsafe_message"
+    return None
+
+
 def _read_matching_results(client: Any, summary: dict[str, Any]) -> dict[str, Any]:
     try:
         comments = client.list_issue_comments(int(summary["target_issue"]))
@@ -282,6 +508,16 @@ def _base_summary(repository: str, inbox_issue: int) -> dict[str, Any]:
         "expected_head": None,
         "b1_validation_result": None,
         "matching_result_preexisting": False,
+        "tool_resolution_preflight_invoked": False,
+        "tool_resolution_preflight_invocation_count": 0,
+        "tool_resolution_preflight_exit_code": None,
+        "tool_resolution_preflight_timed_out": False,
+        "tool_resolution_preflight_protocol": None,
+        "tool_resolution_preflight_result": None,
+        "tool_resolution_preflight_component": None,
+        "tool_resolution_preflight_required_action": None,
+        "tool_resolution_preflight_blocked_reasons": [],
+        "tool_resolution_preflight_safety": None,
         "dispatcher_invoked": False,
         "dispatcher_invocation_count": 0,
         "dispatcher_exit_code": None,
@@ -319,6 +555,24 @@ def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> No
         ("expected_head", "expected_head"),
     ):
         summary[target] = b1_summary.get(source)
+
+
+def _copy_preflight_validation(summary: dict[str, Any], validation: dict[str, Any]) -> None:
+    payload = validation.get("payload")
+    if not isinstance(payload, dict):
+        return
+    summary["tool_resolution_preflight_protocol"] = payload.get("protocol")
+    summary["tool_resolution_preflight_result"] = payload.get("result")
+    summary["tool_resolution_preflight_component"] = payload.get("component")
+    summary["tool_resolution_preflight_required_action"] = payload.get("required_action")
+    blocked_reasons = payload.get("blocked_reasons")
+    summary["tool_resolution_preflight_blocked_reasons"] = (
+        [reason for reason in blocked_reasons if isinstance(reason, str)]
+        if isinstance(blocked_reasons, list)
+        else []
+    )
+    safety = payload.get("safety")
+    summary["tool_resolution_preflight_safety"] = safety if isinstance(safety, dict) else None
 
 
 def _block(summary: dict[str, Any], reason: str) -> None:
