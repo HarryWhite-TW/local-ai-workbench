@@ -25,17 +25,67 @@ function Require-Command($Name, $InstallHint) {
     return $command.Source
 }
 
-function Invoke-Version($Command, $Arguments) {
+function Invoke-NativeCommand($Command, $Arguments) {
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("lawb-native-" + [System.Guid]::NewGuid().ToString("N"))
+    $stdoutPath = Join-Path $tempRoot "stdout.txt"
+    $stderrPath = Join-Path $tempRoot "stderr.txt"
+    $previousErrorActionPreference = $ErrorActionPreference
+
     try {
-        $output = & $Command @Arguments 2>&1 | Select-Object -First 1
-        if ($LASTEXITCODE -ne 0) {
-            return "version check failed: exit_code=$LASTEXITCODE"
+        New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+        $ErrorActionPreference = "Continue"
+        $launchError = $null
+        try {
+            & $Command @Arguments 1> $stdoutPath 2> $stderrPath
+            $exitCode = $LASTEXITCODE
         }
-        return $output
+        catch {
+            $exitCode = $null
+            $launchError = $_.Exception.Message
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+
+        $stdout = ""
+        $stderr = ""
+        if (Test-Path -LiteralPath $stdoutPath) {
+            $stdout = [System.IO.File]::ReadAllText($stdoutPath)
+        }
+        if (Test-Path -LiteralPath $stderrPath) {
+            $stderr = [System.IO.File]::ReadAllText($stderrPath)
+        }
+
+        return [PSCustomObject]@{
+            ExitCode = $exitCode
+            Stdout = $stdout
+            Stderr = $stderr
+            LaunchError = $launchError
+        }
     }
-    catch {
-        "version check failed: $($_.Exception.Message)"
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        if (Test-Path -LiteralPath $tempRoot) {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
     }
+}
+
+function Invoke-Version($Command, $Arguments) {
+    $result = Invoke-NativeCommand -Command $Command -Arguments $Arguments
+    if ($result.LaunchError) {
+        return "version check failed: $($result.LaunchError)"
+    }
+    if ($result.ExitCode -ne 0) {
+        return "version check failed: exit_code=$($result.ExitCode)"
+    }
+
+    foreach ($line in (($result.Stdout -split "\r?\n") + ($result.Stderr -split "\r?\n"))) {
+        if (-not [string]::IsNullOrWhiteSpace($line)) {
+            return $line.Trim()
+        }
+    }
+    return "version check failed: no output"
 }
 
 function Test-VersionReady($VersionText) {
@@ -134,8 +184,8 @@ function Resolve-CodexLauncher {
 }
 
 function Test-GhAuth($GhPath) {
-    & $GhPath auth status *> $null
-    return $LASTEXITCODE -eq 0
+    $result = Invoke-NativeCommand -Command $GhPath -Arguments @("auth", "status")
+    return (-not $result.LaunchError) -and ($result.ExitCode -eq 0)
 }
 
 Write-Host "Local AI Workbench course-computer environment recovery"
