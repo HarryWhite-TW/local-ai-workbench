@@ -105,7 +105,10 @@ needs user approval.
 ## Stop Conditions
 
 - If a required file anchor or expected code section is missing, stop and report instead of guessing.
-- If build or tests fail after one focused repair attempt, stop and report the failure, changed files, and suspected cause.
+- If build or tests fail after one focused repair attempt, stop and report the failure, changed files, and suspected cause, unless a separately approved task document defines a finite focused repair budget greater than one.
+- A separately approved task document may define a finite focused repair budget greater than one. If no explicit budget is approved, the default remains one focused repair attempt.
+- Each approved repair attempt must address the same failure within the original objective, allowed files, architecture, dependencies, security boundary, authority, side effects, and approved operations.
+- Stop and report when the budget is exhausted, the failure changes class, a new file or dependency is needed, or additional approval is required. A repair budget never authorizes stage, commit, push, GitHub writes, deployment, or other separately approved operations.
 - If the task appears larger than requested, stop and propose smaller follow-up tasks.
 - If the requested change conflicts with `README.md`, `AGENTS.md`, `PLANS.md`, a scoped `AGENTS.md`, or an explicit task document, stop and report the conflict.
 - Do not continue into unrelated cleanup, refactors, or visual polish after the requested task is complete.

@@ -1,0 +1,6 @@
+interface:
+  display_name: "LAWB Controlled Development"
+  short_description: "Run one approved bounded local implementation cycle with evidence."
+
+policy:
+  allow_implicit_invocation: false
