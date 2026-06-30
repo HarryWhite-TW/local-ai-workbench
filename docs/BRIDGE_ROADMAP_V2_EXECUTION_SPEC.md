@@ -379,7 +379,7 @@ High-priority future defect acceptance requirements:
 
 RV2-03 is now the current active Roadmap v2 node in Phase A. Phase A evidence has implemented or partially proven A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening on branch `rv2-03-phase-a-host-hardening`.
 
-This does not mark Phase A final acceptance passed, does not mark RV2-03 `DONE`, and does not claim Phase B home-host operational acceptance. Phase A closeout remains pending; canonical GitHub status synchronization and Phase A final acceptance have not yet passed. Startup, tray, service, MCP, authority expansion, and RV2-04 remain deferred.
+Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. This does not mark RV2-03 `DONE` and does not claim Phase B home-host operational acceptance. Phase B remains separately gated and required. Startup, tray, service, MCP, authority expansion, and RV2-04 remain deferred.
 
 This node does not authorize visible UX, login startup, MCP, or authority expansion.
 

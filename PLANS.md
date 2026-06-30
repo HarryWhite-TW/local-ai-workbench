@@ -53,7 +53,8 @@ Development workflow tooling is separate from the product runtime.
 - Manual `PollOnce` remains the verified recovery path, not the target daily experience.
 - B3 implementation exists, but primary-host operational daily-use acceptance remains to be proven.
 - RV2-03 Phase A implementation evidence now includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening.
-- Phase A closeout remains pending; canonical GitHub status synchronization and Phase A final acceptance have not yet passed.
+- Repository documentation and canonical GitHub status synchronization are complete.
+- RV2-03 Phase A final acceptance passed on 2026-06-30.
 - Phase B home-host operational acceptance remains required, and RV2-03 is not `DONE`.
 - Phase C ChatGPT App / MCP remains deferred until Phase B is stable and accepted.
 - Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
@@ -127,7 +128,9 @@ Tracker #168 is canonical. RV2-00, RV2-01, and RV2-02 are `DONE`. RV2-03 is the 
 
 Current RV2-03 Phase A evidence is implemented and verified beyond the older repository documentation. The accepted evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening.
 
-Phase A closeout remains pending. Canonical GitHub status synchronization and Phase A final acceptance have not yet passed. Phase B home-host operational acceptance remains required before RV2-03 can be `DONE`. The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
+Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B home-host operational acceptance remains separately gated and required before RV2-03 can be `DONE`. The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
+
+The RV2-03 truth-sync commit is `b90d56fb5ea08e0ac5036f50af8efc14ad5eab43`. It records the accepted documentation synchronization state and must not be treated as a permanent current HEAD.
 
 The approved strategic direction is to prepare the bridge for future repository separation as reusable cross-project development infrastructure. `local-ai-workbench` remains the first validated host and reference host. Physical extraction, a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, startup, tray UX, service behavior, MCP, and authority expansion are not authorized here. A later separately approved migration implementation node is required.
 
