@@ -27,6 +27,12 @@ The script installs only when a required tool is missing and the user confirms:
   from the official `cli/cli` GitHub release assets;
 - the official npm package `@openai/codex`, using `npm install -g @openai/codex`.
 
+Known limitation: automatic portable-GH installation calls the official GitHub
+latest-release API to discover release assets. A shared-IP rate limit may
+prevent automatic asset discovery, and the script currently has no automatic
+fixed-asset fallback. The safe response is to stop and use a reviewed official
+manual fallback rather than guessing or downloading from an unreviewed source.
+
 ## What It Only Verifies
 
 The script verifies and reports:
@@ -42,6 +48,9 @@ The script verifies and reports:
 The script never reports `codex.ps1` alone as ready. Failed version checks or
 failed readiness checks are summarized as blocked and stop the script rather
 than being reported as ready.
+
+`codex --version` success proves only that the reviewed launcher can run a
+version probe. It does not prove interactive ChatGPT sign-in.
 
 It does not invoke Dispatcher, Runner, Codex tasks, commits, pushes, Issue
 close, labels, PRs, merges, or approvals.

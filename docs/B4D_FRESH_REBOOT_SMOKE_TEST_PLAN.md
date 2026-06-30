@@ -50,7 +50,9 @@ failure_reason=none
 not Bridge Operator specification Phase B4 and does not authorize tray UI,
 startup behavior, a service, or any other Phase B4 capability.
 
-Roadmap v2 tracker #168 is canonical. It records `RV2-00` and `RV2-01` as `DONE`, and there is currently no active node.
+The read audit above records the Roadmap v2 tracker and active-node state at the time of RV2-01/B4-D planning and execution. It is historical evidence, not the current Roadmap v2 state.
+
+For current status, read tracker #168 and active node #175. They are the canonical sources for the current Roadmap v2 active-node state.
 
 ## 1. Purpose
 

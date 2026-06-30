@@ -34,7 +34,10 @@ Current baseline:
 - ChatGPT-Codex bridge B0 through B3 implementation slices are integrated
 - permanent fixed Bridge Inbox: Issue `#147`
 - Roadmap v2 tracker: Issue `#168`
-- `RV2-00` and `RV2-01` are `DONE`; there is currently no active node
+- `RV2-00`, `RV2-01`, and `RV2-02` are `DONE`
+- `RV2-03` is the current active Roadmap v2 node in Phase A on branch `rv2-03-phase-a-host-hardening`
+- Phase A closeout remains pending; canonical GitHub status synchronization and Phase A final acceptance have not yet passed
+- Phase B home-host operational acceptance is still required before RV2-03 can be `DONE`
 - one supervised B4-D `run-reviewbundle` smoke succeeded on clean `master` at full HEAD `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`
 - the successful smoke used manifest SHA-256 `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080` and produced dispatch comment `4795080463`, Inbox comment `4795082149`, Runner review-bundle comment `4795131449`, and matching `LAWBRUNNER-RESULT` comment `4795131543`
 - exactly one B2/Dispatcher/Runner/Codex chain ran; it succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree
@@ -125,7 +128,11 @@ Manual `PollOnce` is the verified Lv4.5 baseline and future recovery path:
 .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
 ```
 
-Manual `PollOnce` remains a recovery path, not the target daily experience. The existing Bridge Operator, Dispatcher, Runner, and Codex chain has completed one supervised B4-D smoke, but B3 daily operational acceptance remains unproven. Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
+Manual `PollOnce` remains a recovery path, not the target daily experience. The existing Bridge Operator, Dispatcher, Runner, and Codex chain has completed one supervised B4-D smoke, but B3 daily operational acceptance remains unproven.
+
+RV2-03 Phase A has implemented and verified host-hardening evidence through A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. Phase A closeout remains pending; canonical GitHub status synchronization and Phase A final acceptance have not yet passed. Phase B home-host operational acceptance remains required, and RV2-03 is not `DONE`. The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
+
+Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
 
 The bridge is approved to evolve into reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host. Physical extraction has not started; the current in-repository implementation remains the proven baseline until a separately approved migration implementation passes acceptance. See [`docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md`](docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md).
 
