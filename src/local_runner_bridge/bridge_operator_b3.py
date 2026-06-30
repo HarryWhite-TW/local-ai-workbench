@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from local_runner_bridge.bridge_operator_b1 import (
+    CONSUMED,
     DEFAULT_REPOSITORY,
     GitHubApiClient,
     TRUSTED_ACTORS,
@@ -41,7 +43,8 @@ B3C_ALLOWED_ACTION = "run-reviewbundle"
 DEFAULT_MAX_CYCLES_LIMIT = 100
 DEFAULT_MAX_POLL_INTERVAL_SECONDS = 3600.0
 DEFAULT_READ_RETRY_COUNT = 2
-SAFE_WAIT_B1_REASONS = frozenset({"missing_request"})
+SAFE_WAIT_B1_REASONS = frozenset({"missing_request", "no_current_request_after_consumption"})
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$")
 
 
 def run_bridge_operator_b3_dry_run_loop(
@@ -148,6 +151,7 @@ def run_bridge_operator_b3_dry_run_loop(
                 summary["phase"] = "running"
                 _write_heartbeat(state_root, "polling", cycle, summary, _now(now_utc))
                 b1_summary = _run_b1_with_bounded_retry(
+                    state_root=state_root,
                     repo_root=repo_root,
                     repository=repository,
                     client=client,
@@ -196,6 +200,10 @@ def run_bridge_operator_b3_dry_run_loop(
                     _write_log(state_root, "failed", "github_read_unavailable", summary)
                     break
                 elif _is_safe_wait_b1_result(b1_summary):
+                    if "no_current_request_after_consumption" in b1_summary.get(
+                        "blocked_reasons", []
+                    ):
+                        summary["processed_request_already_seen"] = True
                     summary["empty_or_blocked_cycles"] += 1
                     _write_log(state_root, "waiting", "no_eligible_current_request", summary)
                 else:
@@ -255,11 +263,18 @@ def _base_summary(
         "processed_request_written": False,
         "processed_request_already_seen": False,
         "request_id": None,
+        "inbox_comment_id": None,
         "target_issue": None,
         "target_dispatch_request_id": None,
         "requested_action": None,
         "expected_branch": None,
         "expected_head": None,
+        "expires": None,
+        "evaluated_at_utc": None,
+        "current_request_count": 0,
+        "consumed_request_count": 0,
+        "expired_request_count": 0,
+        "selected_request_state": None,
         "last_b1_result": None,
         "last_b1_blocked_reasons": [],
         "dispatcher_exit_code": None,
@@ -362,7 +377,7 @@ def _validate_state_files(state_dir: Path) -> None:
     processed = state_dir / "processed_requests.jsonl"
     if processed.exists():
         try:
-            _read_processed_request_ids(processed)
+            _read_processed_request_records(processed)
         except (OSError, json.JSONDecodeError, ValueError) as error:
             raise ValueError("corrupted_state") from error
 
@@ -391,6 +406,7 @@ def _acquire_lock(
 
 def _run_b1_with_bounded_retry(
     *,
+    state_root: Path,
     repo_root: str | Path,
     repository: str,
     client: Any,
@@ -403,6 +419,13 @@ def _run_b1_with_bounded_retry(
     last: dict[str, Any] | None = None
     for attempt in range(1, attempts + 1):
         summary["github_read_attempts"] += 1
+        processed_path = state_root / "processed_requests.jsonl"
+        try:
+            consumed_request_ids = (
+                _read_processed_request_records(processed_path) if processed_path.exists() else {}
+            )
+        except (OSError, json.JSONDecodeError, ValueError):
+            return {"result": "blocked", "blocked_reasons": ["corrupted_state"]}
         try:
             last = run_bridge_operator_b1_dry_run(
                 inbox_issue=DEFAULT_INBOX_ISSUE,
@@ -411,6 +434,7 @@ def _run_b1_with_bounded_retry(
                 github_client=client,
                 local_checker=local_checker,
                 now_utc=_now(now_utc),
+                consumed_request_ids=consumed_request_ids,
             )
         except Exception as error:
             last = {
@@ -497,8 +521,15 @@ def _delegate_b3_request(
 
     processed_path = state_root / "processed_requests.jsonl"
     request_id = str(b1_summary.get("request_id") or "")
-    processed = _read_processed_request_ids(processed_path) if processed_path.exists() else set()
+    try:
+        processed = _read_processed_request_records(processed_path) if processed_path.exists() else {}
+    except (OSError, ValueError):
+        _block(summary, "corrupted_state")
+        return "corrupted_state"
     if request_id in processed:
+        if not _processed_record_matches_b1_identity(processed[request_id], b1_summary):
+            _block(summary, "processed_request_identity_mismatch")
+            return "processed_request_identity_mismatch"
         summary["processed_request_already_seen"] = True
         summary["phase"] = "already_processed"
         return None
@@ -602,6 +633,7 @@ def _append_processed_request(
         "target_result_author": match.get("author"),
         "dispatcher_invoked": True,
         "result_verified": True,
+        "lifecycle_state": CONSUMED,
     }
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         json.dump(payload, handle, sort_keys=True)
@@ -622,30 +654,122 @@ def _read_observed_request_ids(path: Path) -> set[str]:
     return request_ids
 
 
-def _read_processed_request_ids(path: Path) -> set[str]:
-    request_ids: set[str] = set()
+def _read_processed_request_records(path: Path) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
     if not path.exists():
-        return request_ids
+        return records
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        payload = json.loads(line)
-        if not isinstance(payload, dict) or "request_id" not in payload:
+        payload = _parse_processed_request_record(line)
+        request_id = payload["request_id"]
+        if request_id in records:
             raise ValueError("invalid_processed_request")
-        request_ids.add(str(payload["request_id"]))
-    return request_ids
+        records[request_id] = payload
+    return records
 
 
-def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> None:
-    for key in (
-        "request_id",
+def _parse_processed_request_record(line: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys)
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid_processed_request") from error
+    _validate_processed_request_record(payload)
+    return payload
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_json_key")
+        result[key] = value
+    return result
+
+
+def _validate_processed_request_record(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_processed_request")
+    if payload.get("protocol") != PROCESSED_REQUEST_PROTOCOL:
+        raise ValueError("invalid_processed_request")
+    request_id = payload.get("request_id")
+    if not isinstance(request_id, str) or not REQUEST_ID_PATTERN.fullmatch(request_id):
+        raise ValueError("invalid_processed_request")
+    lifecycle_state = payload.get("lifecycle_state")
+    if "lifecycle_state" in payload and lifecycle_state != CONSUMED:
+        raise ValueError("invalid_processed_request")
+    if "dispatcher_invoked" in payload and payload.get("dispatcher_invoked") is not True:
+        raise ValueError("invalid_processed_request")
+    if "result_verified" in payload and payload.get("result_verified") is not True:
+        raise ValueError("invalid_processed_request")
+    identity_keys = (
         "target_issue",
         "target_dispatch_request_id",
         "requested_action",
         "expected_branch",
         "expected_head",
+    )
+    if not all(key in payload for key in identity_keys):
+        raise ValueError("invalid_processed_request")
+    if type(payload.get("target_issue")) is not int or payload["target_issue"] <= 0:
+        raise ValueError("invalid_processed_request")
+    for key in (
+        "target_dispatch_request_id",
+        "requested_action",
+        "expected_branch",
+        "expected_head",
     ):
-        if b1_summary.get(key) is not None:
+        if not isinstance(payload.get(key), str) or not payload[key].strip():
+            raise ValueError("invalid_processed_request")
+
+
+def _processed_record_matches_b1_identity(
+    record: dict[str, Any], b1_summary: dict[str, Any]
+) -> bool:
+    return (
+        record.get("target_issue") == b1_summary.get("target_issue")
+        and record.get("target_dispatch_request_id")
+        == b1_summary.get("target_dispatch_request_id")
+        and record.get("requested_action") == b1_summary.get("requested_action")
+        and record.get("expected_branch") == b1_summary.get("expected_branch")
+        and record.get("expected_head") == b1_summary.get("expected_head")
+    )
+
+
+def read_processed_request_ids(path: str | Path) -> set[str]:
+    """Read B3 processed request IDs without modifying operator state."""
+    return set(_read_processed_request_records(Path(path)))
+
+
+def read_processed_request_records(path: str | Path) -> dict[str, dict[str, Any]]:
+    """Read validated B3 processed request identity records without modifying state."""
+    return _read_processed_request_records(Path(path))
+
+
+def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> None:
+    # Latest lifecycle fields describe the most recent B1 evaluation cycle.
+    # A consumed-only waiting cycle must clear current-selection visibility.
+    for key in (
+        "inbox_comment_id",
+        "expires",
+        "evaluated_at_utc",
+        "current_request_count",
+        "consumed_request_count",
+        "expired_request_count",
+        "selected_request_state",
+    ):
+        summary[key] = b1_summary.get(key)
+    # Request identity fields describe the last CURRENT request selected during
+    # this B3 run. Later waiting cycles must not erase already-processed evidence.
+    if b1_summary.get("selected_request_state") == "CURRENT":
+        for key in (
+            "request_id",
+            "target_issue",
+            "target_dispatch_request_id",
+            "requested_action",
+            "expected_branch",
+            "expected_head",
+        ):
             summary[key] = b1_summary.get(key)
 
 
@@ -767,6 +891,13 @@ def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]
         "repo": summary["repository"],
         "inbox_issue": summary["configured_inbox_issue"],
         "request_id": summary.get("request_id"),
+        "inbox_comment_id": summary.get("inbox_comment_id"),
+        "expires": summary.get("expires"),
+        "evaluated_at_utc": summary.get("evaluated_at_utc"),
+        "current_request_count": summary.get("current_request_count"),
+        "consumed_request_count": summary.get("consumed_request_count"),
+        "expired_request_count": summary.get("expired_request_count"),
+        "selected_request_state": summary.get("selected_request_state"),
         "dispatcher_invoked": bool(summary.get("dispatcher_invoked")),
         "dispatcher_result_writeback_reached": bool(
             summary.get("dispatcher_result_writeback_reached")

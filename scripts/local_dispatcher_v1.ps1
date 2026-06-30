@@ -22,6 +22,8 @@ param(
     [switch]$PollOnce,
     [switch]$DryRunBoundedPoll,
     [switch]$BoundedPoll,
+    [switch]$ToolResolutionPreflight,
+    [string]$RequiredAction = "",
     [switch]$PostResultComment,
     [int]$IssueNumber = 0,
     [int[]]$IssueNumbers = @(),
@@ -41,6 +43,7 @@ $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $DryRunProtocol = "lawb.dispatch_dry_run.v1"
 $DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
+$ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
 $GhCliFallbackPath = "C:\Program Files\GitHub CLI\gh.exe"
 $GhCliPortableFallbackPath = Join-Path $env:USERPROFILE "tools\gh-portable\bin\gh.exe"
@@ -291,32 +294,64 @@ function Assert-RepoRoot {
 }
 
 function Resolve-GhPath {
-    $command = Get-Command "gh" -ErrorAction SilentlyContinue
-    if ($null -ne $command) {
-        $source = Get-ObjectPropertyText -Object $command -PropertyName "Source"
-        if (-not [string]::IsNullOrWhiteSpace($source)) {
-            return $source
-        }
+    return [string](Resolve-GhToolInfo).SelectedPath
+}
 
-        $path = Get-ObjectPropertyText -Object $command -PropertyName "Path"
-        if (-not [string]::IsNullOrWhiteSpace($path)) {
-            return $path
+function Resolve-GhToolInfo {
+    $candidates = @()
+    $candidateOrder = 0
+    foreach ($command in @(Get-Command "gh" -All -ErrorAction SilentlyContinue)) {
+        $commandType = Get-ObjectPropertyText -Object $command -PropertyName "CommandType"
+        if (-not [string]::Equals($commandType, "Application", [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
         }
+        foreach ($propertyName in @("Source", "Path", "Definition")) {
+            $path = Get-ObjectPropertyText -Object $command -PropertyName $propertyName
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                continue
+            }
+            $candidates += [pscustomobject]@{
+                Path = $path
+                Source = "path"
+                Order = $candidateOrder
+            }
+            $candidateOrder += 1
+            break
+        }
+    }
 
-        return $command.Name
+    $candidates += [pscustomobject]@{ Path = $GhCliFallbackPath; Source = "program_files_fallback"; Order = $candidateOrder }
+    $candidateOrder += 1
+    $candidates += [pscustomobject]@{ Path = $GhCliPortableFallbackPath; Source = "portable_fallback"; Order = $candidateOrder }
+
+    $normalized = @()
+    foreach ($candidate in @($candidates)) {
+        $path = [string]$candidate.Path
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+        $suffix = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+        $rank = [array]::IndexOf(@(".exe", ".cmd", ".bat", ".com"), $suffix)
+        if ($rank -lt 0) {
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            continue
+        }
+        $normalized += [pscustomobject]@{
+            SelectedPath = [System.IO.Path]::GetFullPath($path)
+            Suffix = $suffix
+            SelectionSource = [string]$candidate.Source
+            Rank = $rank
+            Order = [int]$candidate.Order
+        }
+    }
+
+    if (@($normalized).Count -gt 0) {
+        return @($normalized | Sort-Object Rank, Order | Select-Object -First 1)[0]
     }
 
     $fallbackPaths = @($GhCliFallbackPath, $GhCliPortableFallbackPath)
-    foreach ($fallbackPath in $fallbackPaths) {
-        if ([string]::IsNullOrWhiteSpace($fallbackPath)) {
-            continue
-        }
-
-        if (Test-Path -LiteralPath $fallbackPath -PathType Leaf) {
-            return $fallbackPath
-        }
-    }
-
     $fallbackSummary = ($fallbackPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "', '"
     throw "GitHub CLI 'gh' is required to read the selected issue. Tried PATH command 'gh' and fallback paths '$fallbackSummary'."
 }
@@ -920,6 +955,313 @@ function Invoke-ReviewBundle {
     }
 }
 
+function New-ToolResolutionSafety {
+    return [ordered]@{
+        pollonce_invoked = $false
+        dispatcher_action_executed = $false
+        github_issue_read_performed = $false
+        github_write_performed = $false
+        runner_work_invoked = $false
+        codex_task_executed = $false
+    }
+}
+
+function New-ToolResolutionProbe {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [string]$Action
+    )
+
+    try {
+        $result = Invoke-ReadOnlyCommand -FilePath $FilePath -Arguments $Arguments -Action $Action
+        return [ordered]@{
+            executed = $true
+            exit_code = $result.ExitCode
+            ok = ($result.ExitCode -eq 0)
+            safe_message = if ($result.ExitCode -eq 0) { "ok" } else { "version_probe_failed" }
+        }
+    }
+    catch {
+        return [ordered]@{
+            executed = $true
+            exit_code = 1
+            ok = $false
+            safe_message = "version_probe_failed"
+        }
+    }
+}
+
+function New-ToolEntry {
+    param(
+        [AllowNull()]
+        [object]$ToolInfo,
+        [AllowNull()]
+        [object]$VersionProbe
+    )
+
+    return [ordered]@{
+        selected_path = if ($null -eq $ToolInfo) { $null } else { [string]$ToolInfo.SelectedPath }
+        suffix = if ($null -eq $ToolInfo) { $null } else { [string]$ToolInfo.Suffix }
+        selection_source = if ($null -eq $ToolInfo) { $null } else { [string]$ToolInfo.SelectionSource }
+        version_probe = $VersionProbe
+    }
+}
+
+function New-ToolResolutionSummary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("success", "blocked")]
+        [string]$Result,
+        [Parameter(Mandatory = $true)]
+        [string]$RequiredActionValue,
+        [string[]]$BlockedReasons = @(),
+        [hashtable]$Tools = @{},
+        [AllowNull()]
+        [object]$NestedRunner = $null
+    )
+
+    return [ordered]@{
+        protocol = $ToolResolutionPreflightProtocol
+        component = "dispatcher"
+        result = $Result
+        required_action = $RequiredActionValue
+        blocked_reasons = @($BlockedReasons)
+        tools = $Tools
+        nested_runner = $NestedRunner
+        safety = New-ToolResolutionSafety
+    }
+}
+
+function Test-ToolResolutionToolEntry {
+    param(
+        [AllowNull()]
+        [object]$Tool,
+        [Parameter(Mandatory = $true)]
+        [string]$ReasonPrefix
+    )
+
+    if ($null -eq $Tool) {
+        throw "${ReasonPrefix}_missing"
+    }
+    $selectedPath = Get-ObjectPropertyText -Object $Tool -PropertyName "selected_path"
+    $suffix = Get-ObjectPropertyText -Object $Tool -PropertyName "suffix"
+    $selectionSource = Get-ObjectPropertyText -Object $Tool -PropertyName "selection_source"
+    if ([string]::IsNullOrWhiteSpace($selectedPath)) {
+        throw "${ReasonPrefix}_missing_selected_path"
+    }
+    if ([string]::IsNullOrWhiteSpace($suffix)) {
+        throw "${ReasonPrefix}_missing_suffix"
+    }
+    $normalizedSuffix = $suffix.ToLowerInvariant()
+    if ($normalizedSuffix -notin @(".exe", ".cmd", ".bat", ".com")) {
+        throw "${ReasonPrefix}_unsafe_suffix"
+    }
+    if (-not $selectedPath.ToLowerInvariant().EndsWith($normalizedSuffix)) {
+        throw "${ReasonPrefix}_suffix_path_mismatch"
+    }
+    if ([string]::IsNullOrWhiteSpace($selectionSource)) {
+        throw "${ReasonPrefix}_missing_selection_source"
+    }
+    $versionProbeProperty = $Tool.PSObject.Properties["version_probe"]
+    if ($null -eq $versionProbeProperty -or $null -eq $versionProbeProperty.Value) {
+        throw "${ReasonPrefix}_missing_version_probe"
+    }
+    $versionProbe = $versionProbeProperty.Value
+    $executedProperty = $versionProbe.PSObject.Properties["executed"]
+    if ($null -eq $executedProperty -or $executedProperty.Value -ne $true) {
+        throw "${ReasonPrefix}_version_probe_not_executed"
+    }
+    $exitCodeProperty = $versionProbe.PSObject.Properties["exit_code"]
+    if ($null -eq $exitCodeProperty -or $exitCodeProperty.Value -ne 0) {
+        throw "${ReasonPrefix}_version_probe_nonzero_exit"
+    }
+    $okProperty = $versionProbe.PSObject.Properties["ok"]
+    if ($null -eq $okProperty -or $okProperty.Value -ne $true) {
+        throw "${ReasonPrefix}_version_probe_not_ok"
+    }
+    $safeMessageProperty = $versionProbe.PSObject.Properties["safe_message"]
+    if ($null -eq $safeMessageProperty -or -not [string]::Equals([string]$safeMessageProperty.Value, "ok", [System.StringComparison]::Ordinal)) {
+        throw "${ReasonPrefix}_version_probe_unsafe_message"
+    }
+}
+
+function Test-ToolResolutionSafety {
+    param(
+        [AllowNull()]
+        [object]$Safety,
+        [Parameter(Mandatory = $true)]
+        [string]$ReasonPrefix
+    )
+
+    if ($null -eq $Safety) {
+        throw "${ReasonPrefix}_missing_safety"
+    }
+    foreach ($field in @("pollonce_invoked", "dispatcher_action_executed", "github_issue_read_performed", "github_write_performed", "runner_work_invoked", "codex_task_executed")) {
+        $fieldProperty = $Safety.PSObject.Properties[$field]
+        if ($null -eq $fieldProperty -or $fieldProperty.Value -ne $false) {
+            throw "${ReasonPrefix}_safety_contradiction_$field"
+        }
+    }
+}
+
+function ConvertFrom-ToolResolutionJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$JsonText,
+        [Parameter(Mandatory = $true)]
+        [int]$ExitCode
+    )
+
+    try {
+        $payload = $JsonText | ConvertFrom-Json
+    }
+    catch {
+        throw "runner_preflight_malformed_json"
+    }
+    if ($null -eq $payload -or $payload -is [array]) {
+        throw "runner_preflight_non_object_json"
+    }
+    if (-not [string]::Equals((Get-ObjectPropertyText -Object $payload -PropertyName "protocol"), $ToolResolutionPreflightProtocol, [System.StringComparison]::Ordinal)) {
+        throw "runner_preflight_wrong_protocol"
+    }
+    if (-not [string]::Equals((Get-ObjectPropertyText -Object $payload -PropertyName "component"), "runner", [System.StringComparison]::Ordinal)) {
+        throw "runner_preflight_wrong_component"
+    }
+    if (-not [string]::Equals((Get-ObjectPropertyText -Object $payload -PropertyName "required_action"), "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+        throw "runner_preflight_wrong_required_action"
+    }
+    $result = Get-ObjectPropertyText -Object $payload -PropertyName "result"
+    if (-not [string]::Equals($result, "success", [System.StringComparison]::Ordinal) -and
+        -not [string]::Equals($result, "blocked", [System.StringComparison]::Ordinal)) {
+        throw "runner_preflight_invalid_result"
+    }
+    if ([string]::Equals($result, "success", [System.StringComparison]::Ordinal) -and $ExitCode -ne 0) {
+        throw "runner_preflight_success_exit_mismatch"
+    }
+    if ([string]::Equals($result, "blocked", [System.StringComparison]::Ordinal) -and $ExitCode -ne 2) {
+        throw "runner_preflight_blocked_exit_mismatch"
+    }
+    $blockedReasonsProperty = $payload.PSObject.Properties["blocked_reasons"]
+    if ($null -eq $blockedReasonsProperty -or $null -eq $blockedReasonsProperty.Value -or $blockedReasonsProperty.Value -is [string]) {
+        throw "runner_preflight_invalid_blocked_reasons"
+    }
+    $blockedReasons = @($blockedReasonsProperty.Value)
+    foreach ($blockedReason in $blockedReasons) {
+        if ($blockedReason -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$blockedReason)) {
+            throw "runner_preflight_invalid_blocked_reasons"
+        }
+    }
+    if ([string]::Equals($result, "success", [System.StringComparison]::Ordinal) -and $blockedReasons.Count -ne 0) {
+        throw "runner_preflight_success_with_blocked_reasons"
+    }
+    if ([string]::Equals($result, "blocked", [System.StringComparison]::Ordinal) -and $blockedReasons.Count -eq 0) {
+        throw "runner_preflight_blocked_without_reasons"
+    }
+    $nestedRunnerProperty = $payload.PSObject.Properties["nested_runner"]
+    if ($null -eq $nestedRunnerProperty -or $null -ne $nestedRunnerProperty.Value) {
+        throw "runner_preflight_unexpected_nested_runner"
+    }
+    $safetyProperty = $payload.PSObject.Properties["safety"]
+    Test-ToolResolutionSafety -Safety $(if ($null -eq $safetyProperty) { $null } else { $safetyProperty.Value }) -ReasonPrefix "runner_preflight"
+
+    if ([string]::Equals($result, "success", [System.StringComparison]::Ordinal)) {
+        $toolsProperty = $payload.PSObject.Properties["tools"]
+        if ($null -eq $toolsProperty -or $null -eq $toolsProperty.Value) {
+            throw "runner_preflight_missing_tools"
+        }
+        $tools = $toolsProperty.Value
+        $runnerGhProperty = $tools.PSObject.Properties["runner_gh"]
+        $codexProperty = $tools.PSObject.Properties["codex"]
+        Test-ToolResolutionToolEntry -Tool $(if ($null -eq $runnerGhProperty) { $null } else { $runnerGhProperty.Value }) -ReasonPrefix "runner_preflight_runner_gh"
+        Test-ToolResolutionToolEntry -Tool $(if ($null -eq $codexProperty) { $null } else { $codexProperty.Value }) -ReasonPrefix "runner_preflight_codex"
+    }
+    return $payload
+}
+
+function Invoke-ToolResolutionPreflight {
+    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
+        throw "ToolResolutionPreflight supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
+    }
+    if (-not [string]::Equals($RequiredAction, "maybe-status-check", [System.StringComparison]::Ordinal) -and
+        -not [string]::Equals($RequiredAction, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+        throw "ToolResolutionPreflight requires -RequiredAction maybe-status-check or run-reviewbundle."
+    }
+    if ($PostResultComment -or $IssueNumber -ne 0 -or @($IssueNumbers).Count -ne 0) {
+        throw "ToolResolutionPreflight does not accept IssueNumber, IssueNumbers, or PostResultComment."
+    }
+
+    Assert-RepoRoot
+    $blocked = @()
+    $tools = @{}
+    $nestedRunner = $null
+
+    try {
+        $ghInfo = Resolve-GhToolInfo
+        $ghProbe = New-ToolResolutionProbe -FilePath $ghInfo.SelectedPath -Arguments @("--version") -Action "gh --version"
+        $tools["dispatcher_gh"] = New-ToolEntry -ToolInfo $ghInfo -VersionProbe $ghProbe
+        if (-not $ghProbe.ok) {
+            $blocked += "dispatcher_gh_version_probe_failed"
+        }
+    }
+    catch {
+        $blocked += "dispatcher_gh_unavailable"
+        $tools["dispatcher_gh"] = New-ToolEntry -ToolInfo $null -VersionProbe $null
+    }
+
+    if ([string]::Equals($RequiredAction, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+        $runnerScript = Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1"
+        if (-not (Test-Path -LiteralPath $runnerScript -PathType Leaf)) {
+            $blocked += "runner_script_missing"
+        }
+        else {
+            $runnerResult = Invoke-ReadOnlyCommand `
+                -FilePath "powershell.exe" `
+                -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-ToolResolutionPreflight", "-RequiredAction", "run-reviewbundle") `
+                -Action "runner ToolResolutionPreflight"
+            if ($runnerResult.ExitCode -notin @(0, 2)) {
+                $blocked += "runner_preflight_process_failed"
+            }
+            else {
+                try {
+                    $nestedRunner = ConvertFrom-ToolResolutionJson -JsonText $runnerResult.Stdout -ExitCode $runnerResult.ExitCode
+                    if ([string]$nestedRunner.result -eq "blocked") {
+                        $blocked += "runner_preflight_blocked"
+                        foreach ($nestedReason in @($nestedRunner.blocked_reasons)) {
+                            if ($nestedReason -is [string] -and -not [string]::IsNullOrWhiteSpace($nestedReason)) {
+                                $blocked += [string]$nestedReason
+                            }
+                        }
+                    }
+                }
+                catch {
+                    $knownReason = [string]$_.Exception.Message
+                    if ($knownReason -notmatch '^runner_preflight_[A-Za-z0-9_]+$') {
+                        $knownReason = "runner_preflight_contract_failure"
+                    }
+                    $blocked += $knownReason
+                }
+            }
+        }
+    }
+
+    $result = if ($blocked.Count -eq 0) { "success" } else { "blocked" }
+    $summary = New-ToolResolutionSummary `
+        -Result $result `
+        -RequiredActionValue $RequiredAction `
+        -BlockedReasons $blocked `
+        -Tools $tools `
+        -NestedRunner $nestedRunner
+    Write-Output ($summary | ConvertTo-Json -Depth 12 -Compress)
+    if ($result -eq "success") {
+        exit 0
+    }
+    exit 2
+}
+
 function Publish-RunnerResultComment {
     param(
         [Parameter(Mandatory = $true)]
@@ -1237,9 +1579,12 @@ try {
     if ($BoundedPoll) {
         $selectedModes += "BoundedPoll"
     }
+    if ($ToolResolutionPreflight) {
+        $selectedModes += "ToolResolutionPreflight"
+    }
 
     if ($selectedModes.Count -eq 0) {
-        throw "Missing mode. Use: .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> [-PostResultComment], .\scripts\local_dispatcher_v1.ps1 -DryRunBoundedPoll -IssueNumber <N>, or .\scripts\local_dispatcher_v1.ps1 -BoundedPoll -IssueNumber <N> [-PostResultComment]."
+        throw "Missing mode. Use: .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> [-PostResultComment], .\scripts\local_dispatcher_v1.ps1 -DryRunBoundedPoll -IssueNumber <N>, .\scripts\local_dispatcher_v1.ps1 -BoundedPoll -IssueNumber <N> [-PostResultComment], or .\scripts\local_dispatcher_v1.ps1 -ToolResolutionPreflight -RequiredAction <action>."
     }
 
     if ($selectedModes.Count -gt 1) {
@@ -1254,7 +1599,10 @@ try {
         throw "-IssueNumbers is valid only with -DryRunBoundedPoll or -BoundedPoll."
     }
 
-    if ($DryRunBoundedPoll) {
+    if ($ToolResolutionPreflight) {
+        Invoke-ToolResolutionPreflight
+    }
+    elseif ($DryRunBoundedPoll) {
         Invoke-DryRunBoundedPoll
     }
     elseif ($BoundedPoll) {

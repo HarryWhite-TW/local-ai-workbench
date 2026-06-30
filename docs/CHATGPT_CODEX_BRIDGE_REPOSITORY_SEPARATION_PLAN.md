@@ -4,9 +4,9 @@
 
 The ChatGPT-Codex bridge is intended to become reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host, not the permanent repository boundary.
 
-Roadmap v2 tracker #168 is canonical. RV2-00 and RV2-01 are `DONE`, and there is currently no active node. The accepted RV2-01 smoke ran one successful B2/Dispatcher/Runner/Codex chain on clean `master` at `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`, with manifest SHA-256 `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080`. Evidence comments are dispatch `4795080463`, Inbox `4795082149`, Runner review bundle `4795131449`, and matching `LAWBRUNNER-RESULT` `4795131543`.
+Roadmap v2 tracker #168 is canonical. RV2-00, RV2-01, and RV2-02 are `DONE`. RV2-03 is the current active node in Phase A on branch `rv2-03-phase-a-host-hardening`. The accepted RV2-01 smoke ran one successful B2/Dispatcher/Runner/Codex chain on clean `master` at `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`, with manifest SHA-256 `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080`. Evidence comments are dispatch `4795080463`, Inbox `4795082149`, Runner review bundle `4795131449`, and matching `LAWBRUNNER-RESULT` `4795131543`.
 
-The smoke succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree. It proves one supervised path, not daily B3 operational readiness.
+The smoke succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree. It proves one supervised path, not daily B3 operational readiness. RV2-03 Phase A implementation evidence has progressed, repository documentation and canonical GitHub status synchronization are complete, and RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B home-host operational acceptance remains separately gated and required, RV2-03 is not `DONE`, and the experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
 
 ## Current Coupling Inventory
 
@@ -53,22 +53,33 @@ Profiles are configuration, not approval. A profile must not enable an action be
 
 ## Known Operational Blockers And Migration Prerequisites
 
-The following high-priority defects remain future acceptance and contract requirements assigned to RV2-03 and RV2-04. They are not implemented or activated by this plan:
+The following requirements are split by current evidence status. This is not a blanket complete claim.
 
-- a successfully completed request must immediately transition to an explicit `CONSUMED` state;
-- expiry is only a failure-safe invalidation boundary and must not remain the lock lifetime after successful completion;
-- before publishing a new request, `current_request_count` must equal `0`;
+Implemented or partially proven during RV2-03 Phase A:
+
+- A0 Windows host compatibility hardening;
+- A1 Host Check Harness;
+- A2 request lifecycle and `CONSUMED` handling;
+- A3 read-only publication preflight, including `current_request_count = 0` gating before publication and short execution TTL handling;
+- B2 tool-resolution preflight;
+- fresh-reboot branch recovery;
+- course-computer environment recovery;
+- post-recovery readiness gate;
+- Recovery Script native-command/auth hardening;
+- current request lifecycle telemetry sufficient for the implemented A2/A3 paths.
+
+Still deferred to RV2-04 or Phase B where not fully proven:
+
 - `manifest_review_expires` and `execution_request_expires` must be separate fields;
-- one-shot execution requests must use a short execution TTL;
-- current-request telemetry must expose comment ID, request ID, expiry, and the evaluator's current UTC time;
-- bootstrap and runtime must use one shared tool-resolution contract;
+- a versioned Host Profile;
+- the full shared Bootstrap/runtime resolver contract where still deferred;
 - each versioned Host Profile must explicitly carry reviewed executable paths for `gh`/`gh.exe` and Codex;
-- B2 preflight must verify that the runtime resolver can actually resolve and execute the configured tools;
 - B1 and B2 must provide safe, stage-specific diagnostic information instead of only `github_read_unavailable` or a generic `RuntimeError`;
-- tool resolution must be accepted in a new shell and after a fresh reboot, not only in a shell whose `PATH` was manually repaired;
-- Runner evidence must propagate consistently into the outer result, including `changed_files`, `review_id`, `diff_fingerprint`, and `files_fingerprint`.
+- Runner evidence must propagate consistently into the outer result, including `changed_files`, `review_id`, `diff_fingerprint`, and `files_fingerprint`, where still deferred;
+- Phase B daily B3 operational acceptance on the home host;
+- startup, tray, service, and MCP remain separate future nodes.
 
-RV2-03 owns the operational acceptance requirements for request lifecycle, publication safety, current-marker telemetry, short execution TTL, and durable Windows tool resolution. RV2-04 owns the versioned Host Profile, shared resolver, distinct expiry fields, diagnostic schema, and Runner-to-outer-result evidence contract.
+RV2-03 owns operational acceptance, including Phase B home-host evidence. RV2-04 owns the versioned Host Profile, distinct expiry fields, any remaining shared resolver contract, diagnostic schema, and Runner-to-outer-result evidence contract not already proven by Phase A.
 
 These requirements must be accepted before repository separation or cross-project portability may be considered operationally credible. Documentation of the target boundary alone is not evidence that the current bridge can be safely extracted or reused across hosts.
 

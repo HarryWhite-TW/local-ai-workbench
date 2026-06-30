@@ -39,7 +39,10 @@ Development workflow tooling is separate from the product runtime.
 - Roadmap v2 tracker: Issue `#168`.
 - RV2-00: `DONE`.
 - RV2-01: `DONE`.
-- There is currently no active Roadmap v2 node.
+- RV2-02: `DONE`.
+- RV2-03: `ACTIVE` — Phase A.
+- Current RV2-03 branch: `rv2-03-phase-a-host-hardening`.
+- Pre-truth-sync Phase A implementation baseline commit: `9749911badec6c4011d17170f55b4305fe47a08c`.
 - Latest reported B4-D focused validation: `78 passed`.
 - Latest reported adjacent validation: `126 passed`.
 - Course-computer environment restore/import check: `COURSE ENV OK`.
@@ -49,6 +52,10 @@ Development workflow tooling is separate from the product runtime.
 - Exactly one B2/Dispatcher/Runner/Codex chain ran. It succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree.
 - Manual `PollOnce` remains the verified recovery path, not the target daily experience.
 - B3 implementation exists, but primary-host operational daily-use acceptance remains to be proven.
+- RV2-03 Phase A implementation evidence now includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening.
+- Repository documentation and canonical GitHub status synchronization are complete.
+- RV2-03 Phase A final acceptance passed on 2026-06-30.
+- Phase B home-host operational acceptance remains required, and RV2-03 is not `DONE`.
 - Phase C ChatGPT App / MCP remains deferred until Phase B is stable and accepted.
 - Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
 - High-risk operations remain separately approval-gated.
@@ -103,8 +110,8 @@ Roadmap v2 default sequence:
 
 1. `RV2-00` — specification adoption and execution baseline (`DONE`).
 2. `RV2-01` — one supervised B4-D live smoke through the existing path (`DONE`).
-3. `RV2-02` — B4-D closeout, documentation truth synchronization, and repository-separation design (current review bundle; not active until tracker change control says otherwise).
-4. `RV2-03` — B3 operational acceptance on the primary home Windows host.
+3. `RV2-02` — B4-D closeout, documentation truth synchronization, and repository-separation design (`DONE`).
+4. `RV2-03` — B3 operational acceptance on the primary home Windows host (`ACTIVE` — Phase A).
 5. `RV2-04` — Task Packet v1.1 to runtime execution-contract binding.
 6. `RV2-05` — minimal thin `lawb` CLI facade.
 7. `RV2-06` — execution profiles and evidence-based token control.
@@ -117,9 +124,17 @@ This order may change only through explicit user-approved change control. Comple
 
 ## Immediate Next Gate
 
-Tracker #168 is canonical. RV2-00 and RV2-01 are `DONE`, and there is currently no active node. This RV2-02 work is documentation-only closeout and design; it does not activate RV2-03 or any later node.
+Tracker #168 is canonical. RV2-00, RV2-01, and RV2-02 are `DONE`. RV2-03 is the current active node in Phase A on branch `rv2-03-phase-a-host-hardening`.
+
+Current RV2-03 Phase A evidence is implemented and verified beyond the older repository documentation. The accepted evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening.
+
+Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B home-host operational acceptance remains separately gated and required before RV2-03 can be `DONE`. The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
+
+The RV2-03 truth-sync commit is `b90d56fb5ea08e0ac5036f50af8efc14ad5eab43`. It records the accepted documentation synchronization state and must not be treated as a permanent current HEAD.
 
 The approved strategic direction is to prepare the bridge for future repository separation as reusable cross-project development infrastructure. `local-ai-workbench` remains the first validated host and reference host. Physical extraction, a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, startup, tray UX, service behavior, MCP, and authority expansion are not authorized here. A later separately approved migration implementation node is required.
+
+Deferred items still include distinct `manifest_review_expires` and `execution_request_expires` fields, a versioned Host Profile, the full shared Bootstrap/runtime resolver contract where not already proven, the outer Runner result evidence contract where not already proven, Phase B daily B3 operational acceptance, startup, tray, service, and MCP.
 
 The current in-repository implementation remains the proven baseline until migration acceptance passes. Cross-project portability cannot be claimed until the extracted design is validated with at least two different repositories.
 

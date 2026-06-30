@@ -377,7 +377,9 @@ High-priority future defect acceptance requirements:
 - Windows tool resolution must pass acceptance in a new shell and after a fresh reboot, not only in a shell whose `PATH` was manually repaired;
 - before B2 delegation, preflight must validate that the runtime resolver can actually resolve and execute the configured tools.
 
-These are future RV2-03 acceptance requirements only. This specification update does not mark RV2-03 active, ready, started, or done, and does not claim that any requirement is implemented.
+RV2-03 is now the current active Roadmap v2 node in Phase A. Phase A evidence has implemented or partially proven A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening on branch `rv2-03-phase-a-host-hardening`.
+
+Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. This does not mark RV2-03 `DONE` and does not claim Phase B home-host operational acceptance. Phase B remains separately gated and required. Startup, tray, service, MCP, authority expansion, and RV2-04 remain deferred.
 
 This node does not authorize visible UX, login startup, MCP, or authority expansion.
 
@@ -691,7 +693,7 @@ After merge and post-merge verification:
 4. set `RV2-01` to `PLANNED` or `READY` only after checking its entry criteria;
 5. do not publish smoke markers or execute B4-D until the required separate approvals are obtained.
 
-This section records the historical activation procedure. Current canonical state is maintained in tracker #168: `RV2-00` and `RV2-01` are `DONE`, and there is currently no active node.
+This section records the historical activation procedure. Current canonical state is maintained in tracker #168. As of the RV2-03 Phase A truth-sync task, tracker #168 records `RV2-00`, `RV2-01`, and `RV2-02` as `DONE`, and `RV2-03` in #175 as the current active node in Phase A. No other Roadmap v2 node is active.
 
 ## Current Authority Boundary
 

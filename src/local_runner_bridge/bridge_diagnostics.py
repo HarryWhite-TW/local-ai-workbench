@@ -308,7 +308,7 @@ def _payload_value(read_result: dict[str, Any], key: str) -> Any:
 
 def _inspect_tools(root: Path, runner: CommandRunner, finder: Which) -> dict[str, Any]:
     gh_path = finder("gh")
-    codex_path = finder("codex")
+    codex_path = _resolve_safe_application("codex", finder)
     return {
         "python_executable": sys.executable,
         "gh_available": gh_path is not None,
@@ -318,6 +318,40 @@ def _inspect_tools(root: Path, runner: CommandRunner, finder: Which) -> dict[str
         "codex_path": codex_path,
         "codex_version": _safe_version(root, runner, codex_path),
     }
+
+
+def _resolve_safe_application(
+    name: str,
+    finder: Which,
+    *,
+    platform: str | None = None,
+) -> str | None:
+    current_platform = platform or sys.platform
+    if current_platform == "win32":
+        candidates: list[str] = []
+        for query in (
+            name,
+            f"{name}.exe",
+            f"{name}.cmd",
+            f"{name}.bat",
+            f"{name}.com",
+        ):
+            candidate = finder(query)
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+
+        for suffix in (".exe", ".cmd", ".bat", ".com"):
+            for candidate in candidates:
+                if Path(candidate).suffix.lower() == suffix:
+                    return candidate
+        return None
+
+    candidate = finder(name)
+    if candidate is None:
+        return None
+    if Path(candidate).suffix.lower() in {".ps1", ".cmd", ".bat", ".sh"}:
+        return None
+    return candidate
 
 
 def _safe_version(root: Path, runner: CommandRunner, command_path: str | None) -> str | None:

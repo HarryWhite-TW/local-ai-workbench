@@ -1,9 +1,53 @@
+import shutil
+import subprocess
+import textwrap
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "restore_course_computer_environment.ps1"
 DOC = ROOT / "docs" / "COURSE_COMPUTER_ENVIRONMENT_RECOVERY.md"
+
+
+def _powershell():
+    found = shutil.which("powershell.exe") or shutil.which("powershell")
+    assert found, "PowerShell is required for recovery script tests"
+    return found
+
+
+def _ps(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _write_function_harness(tmp_path):
+    text = SCRIPT.read_text(encoding="utf-8")
+    marker = 'Write-Host "Local AI Workbench course-computer environment recovery"'
+    assert marker in text
+    harness = tmp_path / "recovery_functions.ps1"
+    harness.write_text(text.split(marker, 1)[0], encoding="utf-8")
+    return harness
+
+
+def _run_powershell(script):
+    return subprocess.run(
+        [
+            _powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=30,
+    )
+
+
+def _write_cmd(path, body):
+    path.write_text("@echo off\r\n" + textwrap.dedent(body).strip() + "\r\n", encoding="utf-8")
 
 
 def test_recovery_script_is_visible_bounded_and_non_destructive():
@@ -77,6 +121,280 @@ def test_recovery_script_reruns_auth_after_login_before_ready():
     ]
     for phrase in required:
         assert phrase in text
+
+
+def test_native_helper_is_bounded_and_argument_list_free():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    required = [
+        "function Invoke-NativeCommand",
+        "1> $stdoutPath 2> $stderrPath",
+        "$exitCode = $LASTEXITCODE",
+        "$ErrorActionPreference = $previousErrorActionPreference",
+        "Remove-Item -LiteralPath $tempRoot -Recurse -Force",
+        "LaunchError",
+    ]
+    for phrase in required:
+        assert phrase in text
+
+    assert "ProcessStartInfo.ArgumentList" not in text
+    assert ".ArgumentList" not in text
+
+
+def test_invoke_version_captures_successful_exe_version(tmp_path):
+    harness = _write_function_harness(tmp_path)
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            . {_ps(harness)}
+            Invoke-Version -Command $env:ComSpec -Arguments @('/d', '/c', 'echo exe version 1.2.3')
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = _run_powershell(runner)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "exe version 1.2.3"
+
+
+def test_invoke_version_captures_successful_cmd_version(tmp_path):
+    harness = _write_function_harness(tmp_path)
+    tool = tmp_path / "version.cmd"
+    _write_cmd(tool, "echo cmd version 2.0.0\nexit /b 0")
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            . {_ps(harness)}
+            Invoke-Version -Command {_ps(tool)} -Arguments @()
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = _run_powershell(runner)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "cmd version 2.0.0"
+
+
+def test_invoke_version_preserves_actual_nonzero_exit_code(tmp_path):
+    harness = _write_function_harness(tmp_path)
+    tool = tmp_path / "fail.cmd"
+    _write_cmd(tool, "echo failure text 1>&2\nexit /b 17")
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            . {_ps(harness)}
+            Invoke-Version -Command {_ps(tool)} -Arguments @()
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = _run_powershell(runner)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "version check failed: exit_code=17"
+
+
+def test_invoke_version_stderr_does_not_replace_success_exit_code(tmp_path):
+    harness = _write_function_harness(tmp_path)
+    tool = tmp_path / "stderr-success.cmd"
+    _write_cmd(tool, "echo warning text 1>&2\necho clean version\nexit /b 0")
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            . {_ps(harness)}
+            Invoke-Version -Command {_ps(tool)} -Arguments @()
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = _run_powershell(runner)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "clean version"
+
+
+def test_invoke_version_launch_failure_remains_blocked(tmp_path):
+    harness = _write_function_harness(tmp_path)
+    missing = tmp_path / "missing-tool.exe"
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            . {_ps(harness)}
+            $before = $ErrorActionPreference
+            $version = Invoke-Version -Command {_ps(missing)} -Arguments @('--version')
+            Write-Output $version
+            Write-Output "preference=$ErrorActionPreference"
+            if ($ErrorActionPreference -ne $before) {{ throw "preference was not restored" }}
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = _run_powershell(runner)
+
+    assert result.returncode == 0, result.stderr
+    assert "version check failed:" in result.stdout
+    assert "preference=Stop" in result.stdout
+
+
+def test_native_helper_removes_temporary_stdout_stderr_files(tmp_path):
+    harness = _write_function_harness(tmp_path)
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    tool = tmp_path / "version.cmd"
+    _write_cmd(tool, "echo clean version\necho warning text 1>&2\nexit /b 0")
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            . {_ps(harness)}
+            $env:TEMP = {_ps(temp_root)}
+            $env:TMP = {_ps(temp_root)}
+            $result = Invoke-NativeCommand -Command {_ps(tool)} -Arguments @()
+            Write-Output "exit=$($result.ExitCode)"
+            $leftovers = Get-ChildItem -LiteralPath {_ps(temp_root)} -Filter 'lawb-native-*' -Force
+            Write-Output "leftovers=$($leftovers.Count)"
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = _run_powershell(runner)
+
+    assert result.returncode == 0, result.stderr
+    assert "exit=0" in result.stdout
+    assert "leftovers=0" in result.stdout
+
+
+def test_unauthenticated_gh_status_returns_false_without_terminating(tmp_path):
+    harness = _write_function_harness(tmp_path)
+    gh = tmp_path / "gh.cmd"
+    _write_cmd(gh, "echo not logged in 1>&2\nexit /b 4")
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            . {_ps(harness)}
+            $ErrorActionPreference = "Stop"
+            $authenticated = Test-GhAuth -GhPath {_ps(gh)}
+            Write-Output "authenticated=$authenticated"
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = _run_powershell(runner)
+
+    assert result.returncode == 0, result.stderr
+    assert "authenticated=False" in result.stdout
+
+
+def test_unauthenticated_flow_reaches_login_confirmation_and_decline_blocks(tmp_path):
+    harness = _write_function_harness(tmp_path)
+    gh = tmp_path / "gh.cmd"
+    _write_cmd(gh, "echo not logged in 1>&2\nexit /b 4")
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            . {_ps(harness)}
+            function Confirm-Step($Prompt) {{
+                Write-Host "CONFIRM:$Prompt"
+                return $false
+            }}
+            $ghAuthenticated = Test-GhAuth -GhPath {_ps(gh)}
+            if (-not $ghAuthenticated) {{
+                Write-Output "GitHub CLI is not authenticated. The normal browser login flow can be started now."
+                if (Confirm-Step "Run 'gh auth login --web' for interactive browser authentication?") {{
+                    throw "unexpected login"
+                }}
+                else {{
+                    throw "GitHub CLI authentication is required. Login skipped by user."
+                }}
+            }}
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = _run_powershell(runner)
+
+    assert result.returncode != 0
+    assert "CONFIRM:Run 'gh auth login --web' for interactive browser authentication?" in result.stdout
+    assert "Login skipped by user" in result.stderr
+
+
+def test_authenticated_gh_status_skips_login_confirmation(tmp_path):
+    harness = _write_function_harness(tmp_path)
+    gh = tmp_path / "gh.cmd"
+    _write_cmd(gh, "echo logged in\nexit /b 0")
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        textwrap.dedent(
+            f"""
+            . {_ps(harness)}
+            function Confirm-Step($Prompt) {{
+                throw "unexpected confirmation: $Prompt"
+            }}
+            $ghAuthenticated = Test-GhAuth -GhPath {_ps(gh)}
+            if (-not $ghAuthenticated) {{
+                Confirm-Step "Run 'gh auth login --web' for interactive browser authentication?"
+            }}
+            Write-Output "authenticated=$ghAuthenticated"
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = _run_powershell(runner)
+
+    assert result.returncode == 0, result.stderr
+    assert "authenticated=True" in result.stdout
+
+
+def test_ready_gh_and_codex_paths_do_not_trigger_reinstall_prompts():
+    text = SCRIPT.read_text(encoding="utf-8")
+
+    gh_install_check = text.index("if (-not (Test-Path -LiteralPath $ghPath))")
+    gh_install = text.index("Install-PortableGitHubCli -TargetPath $ghPath")
+    codex_install_check = text.index("if (-not $codexPath) {")
+    codex_install = text.index("& $npmPath install -g @openai/codex")
+
+    assert gh_install_check < gh_install
+    assert codex_install_check < codex_install
+    assert "Install the official npm package @openai/codex globally?" in text
+    assert "Portable GitHub CLI is missing at $TargetPath" in text
+
+
+def test_recovery_script_introduces_no_dispatcher_runner_codex_task_or_write_actions():
+    text = SCRIPT.read_text(encoding="utf-8").lower()
+
+    forbidden = [
+        "pollonce",
+        "local_dispatcher_v1.ps1",
+        "local_runner_v1.ps1",
+        "codex exec",
+        "codex run",
+        "git add",
+        "git commit",
+        "git push",
+        "gh issue",
+        "gh pr",
+        "gh label",
+    ]
+    for phrase in forbidden:
+        assert phrase not in text
 
 
 def test_recovery_doc_covers_logout_and_authority_boundary():

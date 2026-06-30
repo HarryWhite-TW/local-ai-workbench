@@ -199,7 +199,11 @@ Exactly one B2/Dispatcher/Runner/Codex chain ran. The result was success, Codex 
 
 ## Roadmap And Strategic Direction
 
-Roadmap v2 is active and tracker #168 is canonical. It records `RV2-00` and `RV2-01` as `DONE`. There is currently no active node. Completion does not activate `RV2-03` or any later node.
+Roadmap v2 is active and tracker #168 is canonical. It records `RV2-00`, `RV2-01`, and `RV2-02` as `DONE`. `RV2-03` is the current active node in Phase A on branch `rv2-03-phase-a-host-hardening`.
+
+RV2-03 Phase A implementation evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B home-host operational acceptance remains separately gated and required, and RV2-03 is not `DONE`.
+
+The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability. Completion of Phase A evidence does not activate Phase B, RV2-04, startup, tray, service, MCP, or any later node.
 
 The bridge is intended to become reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host, not the permanent repository boundary. Physical extraction has not started. The current in-repository implementation remains the proven baseline until migration acceptance passes.
 
