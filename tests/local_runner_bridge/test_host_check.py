@@ -604,6 +604,13 @@ def test_manifest_invalid_schema_blocks(monkeypatch, tmp_path):
         {},
         {"protocol": "x", "paths": [], "codex": {"version": "0.141.0"}},
         {"protocol": "x", "paths": {}, "codex": {"version": "0.141.0"}},
+        {"protocol": "x", "paths": {"venv": {}}, "codex": {"version": "0.141.0"}},
+        {"protocol": "x", "paths": {"venv": []}, "codex": {"version": "0.141.0"}},
+        {"protocol": "x", "paths": {"venv": 1}, "codex": {"version": "0.141.0"}},
+        {"protocol": "x", "paths": {"venv": True}, "codex": {"version": "0.141.0"}},
+        {"protocol": "x", "paths": {"venv": None}, "codex": {"version": "0.141.0"}},
+        {"protocol": "x", "paths": {"venv": ""}, "codex": {"version": "0.141.0"}},
+        {"protocol": "x", "paths": {"venv": "   "}, "codex": {"version": "0.141.0"}},
         {"protocol": "x", "paths": {"venv": ".venv-course"}, "codex": []},
         {"protocol": "x", "paths": {"venv": ".venv-course"}, "codex": {}},
     ]

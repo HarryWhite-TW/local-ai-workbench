@@ -497,7 +497,12 @@ def _inspect_bootstrap_contract(
 
     paths_data = manifest_data.get("paths") if isinstance(manifest_data.get("paths"), dict) else {}
     codex_data = manifest_data.get("codex") if isinstance(manifest_data.get("codex"), dict) else {}
-    manifest_venv = paths_data.get("venv")
+    manifest_venv_raw = paths_data.get("venv")
+    manifest_venv = (
+        manifest_venv_raw.strip()
+        if isinstance(manifest_venv_raw, str) and manifest_venv_raw.strip()
+        else None
+    )
     manifest_codex = codex_data.get("version")
     manifest_abs = str((root / manifest_venv).resolve()) if manifest_venv else None
     reviewed_venv = str(Path(reviewed_python_path).resolve().parents[1])

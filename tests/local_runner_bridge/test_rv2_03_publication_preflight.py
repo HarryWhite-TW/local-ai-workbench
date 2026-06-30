@@ -189,6 +189,11 @@ def write_processed(path, request_id):
         "protocol": "lawb.bridge_operator_b3_processed_request.v1",
         "request_id": request_id,
         "lifecycle_state": "CONSUMED",
+        "target_issue": 200,
+        "target_dispatch_request_id": f"{request_id}-dispatch",
+        "requested_action": "run-reviewbundle",
+        "expected_branch": "master",
+        "expected_head": HEAD,
     }
     (path / "processed_requests.jsonl").write_text(
         json.dumps(payload, sort_keys=True) + "\n",
@@ -269,6 +274,35 @@ def test_consumed_only_is_publication_safe(tmp_path):
         "no_current_request_after_consumption"
     ]
     assert summary["inbox_telemetry"]["consumed_request_count"] == 1
+    assert client.comments_read == [147]
+
+
+def test_consumed_identity_mismatch_blocks_publication(tmp_path):
+    manifest = valid_manifest()
+    payload = {
+        "protocol": "lawb.bridge_operator_b3_processed_request.v1",
+        "request_id": manifest["inbox_request_id"],
+        "lifecycle_state": "CONSUMED",
+        "target_issue": 999,
+        "target_dispatch_request_id": manifest["dispatch_request_id"],
+        "requested_action": manifest["action"],
+        "expected_branch": manifest["branch"],
+        "expected_head": manifest["head"],
+    }
+    (tmp_path / "processed_requests.jsonl").write_text(
+        json.dumps(payload, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    client = FakeGitHub(inbox_comments=[inbox_comment_from(manifest)])
+
+    summary = run(tmp_path, manifest, client)
+
+    assert_blocked(summary, "processed_request_identity_mismatch")
+    assert summary["publication_safe"] is False
+    assert summary["approval_a"] is None
+    assert summary["inbox_telemetry"]["b1_blocked_reasons"] == [
+        "processed_request_identity_mismatch"
+    ]
     assert client.comments_read == [147]
 
 

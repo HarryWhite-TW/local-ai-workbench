@@ -248,6 +248,11 @@ def processed_record(**overrides):
     payload = {
         "protocol": "lawb.bridge_operator_b3_processed_request.v1",
         "request_id": "processed-a",
+        "target_issue": 151,
+        "target_dispatch_request_id": "dispatch-151",
+        "requested_action": "maybe-status-check",
+        "expected_branch": "feature/bridge-operator-b3a",
+        "expected_head": HEAD,
     }
     payload.update(overrides)
     return payload
@@ -341,6 +346,11 @@ def test_b3b_processed_a_plus_new_b_dispatches_only_b_and_appends_one_record(tmp
         "processed_at_utc": "2026-06-16T07:00:00Z",
         "cycle": 1,
         "request_id": "processed-a",
+        "target_issue": 151,
+        "target_dispatch_request_id": "dispatch-151",
+        "requested_action": "maybe-status-check",
+        "expected_branch": "feature/bridge-operator-b3a",
+        "expected_head": HEAD,
         "lifecycle_state": "CONSUMED",
     }
     (tmp_path / "processed_requests.jsonl").write_text(
@@ -438,6 +448,11 @@ def test_b3b_consumed_only_inbox_is_safe_wait_without_dispatcher_or_failure(tmp_
             {
                 "protocol": "lawb.bridge_operator_b3_processed_request.v1",
                 "request_id": "b3a-151-20260616T080000Z",
+                "target_issue": 151,
+                "target_dispatch_request_id": "dispatch-151",
+                "requested_action": "maybe-status-check",
+                "expected_branch": "feature/bridge-operator-b3a",
+                "expected_head": HEAD,
                 "lifecycle_state": "CONSUMED",
             },
             sort_keys=True,
@@ -1193,6 +1208,38 @@ def test_processed_history_accepts_full_legacy_processed_record(tmp_path):
     assert read_processed_request_ids(path) == {request_id}
 
 
+def test_processed_history_rejects_identityless_minimal_legacy_record(tmp_path):
+    path = tmp_path / "processed_requests.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "protocol": PROCESSED_REQUEST_PROTOCOL,
+                "request_id": "legacy-minimal-151",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        read_processed_request_ids(path)
+
+
+def test_processed_history_rejects_duplicate_request_id_records(tmp_path):
+    path = tmp_path / "processed_requests.jsonl"
+    path.write_text(
+        json.dumps(processed_record(), sort_keys=True)
+        + "\n"
+        + json.dumps(processed_record(target_issue=152), sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        read_processed_request_ids(path)
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -1205,6 +1252,12 @@ def test_processed_history_accepts_full_legacy_processed_record(tmp_path):
         processed_record(lifecycle_state="CURRENT"),
         processed_record(dispatcher_invoked=False),
         processed_record(result_verified=False),
+        processed_record(target_issue="151"),
+        processed_record(target_issue=True),
+        processed_record(target_dispatch_request_id=""),
+        processed_record(requested_action=""),
+        processed_record(expected_branch=""),
+        processed_record(expected_head=""),
     ],
 )
 def test_processed_history_rejects_semantically_malformed_records(tmp_path, payload):
@@ -1263,11 +1316,133 @@ def test_b3_does_not_invoke_dispatcher_after_processed_history_validation_failur
     assert read_json(tmp_path / "last_failure.json")["reason"] == "corrupted_state"
 
 
+def test_b3_blocks_dispatcher_when_processed_identity_mismatches_current_request(tmp_path):
+    (tmp_path / "processed_requests.jsonl").write_text(
+        json.dumps(processed_record(request_id="b3a-151-20260616T080000Z", target_issue=999), sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    summary = run_b3b(tmp_path, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["processed_request_identity_mismatch"]
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert calls == []
+    assert read_json(tmp_path / "last_failure.json")["reason"] == "processed_request_identity_mismatch"
+    assert_high_risk_safety(summary)
+
+
+def test_b3_second_read_blocks_dispatcher_when_race_writes_identity_mismatch(tmp_path):
+    def racing_checker(root):
+        (tmp_path / "processed_requests.jsonl").write_text(
+            json.dumps(
+                processed_record(
+                    request_id="b3a-151-20260616T080000Z",
+                    target_issue=999,
+                ),
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return ready(tmp_path)(root)
+
+    calls = []
+
+    summary = run_b3b(
+        tmp_path,
+        readiness=racing_checker,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["processed_request_identity_mismatch"]
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert calls == []
+    assert read_json(tmp_path / "last_failure.json")["reason"] == (
+        "processed_request_identity_mismatch"
+    )
+    assert_high_risk_safety(summary)
+
+
+def test_b3_second_read_treats_matching_race_record_as_already_processed(tmp_path):
+    def racing_checker(root):
+        (tmp_path / "processed_requests.jsonl").write_text(
+            json.dumps(
+                processed_record(request_id="b3a-151-20260616T080000Z"),
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return ready(tmp_path)(root)
+
+    calls = []
+
+    summary = run_b3b(
+        tmp_path,
+        readiness=racing_checker,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert summary["result"] == "success"
+    assert summary["processed_request_already_seen"] is True
+    assert summary["phase"] == "already_processed"
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert summary["processed_request_written"] is False
+    assert summary["current_failure_recorded"] is False
+    assert not (tmp_path / "last_failure.json").exists()
+    assert calls == []
+    assert_high_risk_safety(summary)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{not-json}\n",
+        json.dumps(processed_record(request_id="b3a-151-20260616T080000Z"), sort_keys=True)
+        + "\n"
+        + json.dumps(processed_record(request_id="b3a-151-20260616T080000Z"), sort_keys=True)
+        + "\n",
+    ],
+)
+def test_b3_second_read_corrupted_state_blocks_without_exception(tmp_path, content):
+    def racing_checker(root):
+        (tmp_path / "processed_requests.jsonl").write_text(content, encoding="utf-8")
+        return ready(tmp_path)(root)
+
+    calls = []
+
+    summary = run_b3b(
+        tmp_path,
+        readiness=racing_checker,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["corrupted_state"]
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert calls == []
+    assert read_json(tmp_path / "last_failure.json")["reason"] == "corrupted_state"
+    assert_high_risk_safety(summary)
+
+
 def test_local_checker_value_error_is_not_mislabeled_as_corrupted_processed_history(tmp_path):
     existing = {
         "protocol": "lawb.bridge_operator_b3_processed_request.v1",
         "request_id": "unrelated-processed",
         "lifecycle_state": "CONSUMED",
+        "target_issue": 151,
+        "target_dispatch_request_id": "dispatch-151",
+        "requested_action": "maybe-status-check",
+        "expected_branch": "feature/bridge-operator-b3a",
+        "expected_head": HEAD,
     }
     (tmp_path / "processed_requests.jsonl").write_text(
         json.dumps(existing, sort_keys=True) + "\n",

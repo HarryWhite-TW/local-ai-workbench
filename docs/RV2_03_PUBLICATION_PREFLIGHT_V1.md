@@ -31,7 +31,7 @@ The protocol is review evidence only. It does not grant publication authority.
 9. Read `processed_requests.jsonl` if present.
 10. Fail closed if processed history is malformed or unreadable.
 11. Call existing B1 lifecycle classification with the same timestamp and
-   consumed request IDs.
+   validated consumed request identity records.
 12. Allow Approval A preview only when publication is safe.
 
 ## TTL
@@ -82,6 +82,10 @@ Publication may be safe only when:
 Consumed and expired historical requests do not block publication.
 
 One or more CURRENT requests block publication.
+
+`processed_request_identity_mismatch` is not a safe wait reason. It means a
+processed record matches the Inbox `request_id` but not the request identity
+fields, so publication must fail closed with `publication_safe=false`.
 
 Any unexpected, partial, contradictory, or structurally inconsistent B1 result
 fails closed.

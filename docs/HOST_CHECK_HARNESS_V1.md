@@ -15,9 +15,11 @@ Codex task.
 ## Entry Points
 
 The PowerShell wrapper is the canonical Windows entry point. It sets
-`PYTHONPATH` for the child Python process only, launches Python with `-B`, sets
+`PYTHONPATH` for the child Python process only, using the wrapper checkout's
+`src` directory as the module source, launches Python with `-B`, sets
 process-local `PYTHONDONTWRITEBYTECODE=1`, restores the previous environment
-values, and preserves the harness exit code.
+values, and preserves the harness exit code. `RepoRoot` is the repository being
+inspected; it is not used as the Python import source.
 
 PowerShell wrapper:
 
@@ -253,7 +255,10 @@ codex.version: non-empty string
 
 Missing or invalid JSON reports `manifest_unreadable`. Valid JSON with an
 invalid schema reports `manifest_invalid`. Neither condition may return
-`operational_readiness=true`.
+`operational_readiness=true`. Invalid `paths.venv` values, including objects,
+arrays, numbers, booleans, `null`, empty strings, and whitespace-only strings,
+report `manifest_invalid` without escaping an exception or being mislabeled as
+an unexpected harness failure.
 
 ## Environment Injection
 

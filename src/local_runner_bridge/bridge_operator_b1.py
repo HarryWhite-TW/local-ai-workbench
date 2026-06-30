@@ -66,13 +66,13 @@ def run_bridge_operator_b1_dry_run(
     github_client: Any | None = None,
     local_checker: Callable[[str | Path], LocalReadiness] | None = None,
     now_utc: datetime | None = None,
-    consumed_request_ids: Iterable[str] | None = None,
+    consumed_request_ids: Iterable[str] | Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate one fixed Bridge Inbox request without delegating execution."""
     summary = _base_summary(repository, inbox_issue, repo_root)
     now_utc = _normalize_now(now_utc)
     summary["evaluated_at_utc"] = _format_time(now_utc)
-    consumed_ids = {str(request_id) for request_id in (consumed_request_ids or ())}
+    consumed_records = _normalize_consumed_request_records(consumed_request_ids)
 
     if repository != DEFAULT_REPOSITORY:
         _block(summary, "unsupported_repository")
@@ -120,7 +120,11 @@ def run_bridge_operator_b1_dry_run(
             _block(summary, "invalid_expiry")
             return summary
         request_id = str(fields["request_id"])
-        if request_id in consumed_ids:
+        if request_id in consumed_records:
+            if not _processed_identity_matches(fields, consumed_records[request_id]):
+                _block(summary, "processed_request_identity_mismatch")
+                summary["processed_request_identity_mismatch_request_id"] = request_id
+                return summary
             lifecycle_state = CONSUMED
         elif expires <= now_utc:
             lifecycle_state = EXPIRED
@@ -221,6 +225,41 @@ def run_bridge_operator_b1_dry_run(
     summary["validations"]["target_issue"] = "passed"
     summary["validations"]["local_readiness"] = "passed"
     return summary
+
+
+def _normalize_consumed_request_records(
+    consumed_request_ids: Iterable[str] | Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, Mapping[str, Any] | None]:
+    if consumed_request_ids is None:
+        return {}
+    if isinstance(consumed_request_ids, Mapping):
+        records: dict[str, Mapping[str, Any] | None] = {}
+        for request_id, record in consumed_request_ids.items():
+            records[str(request_id)] = record if isinstance(record, Mapping) else None
+        return records
+    return {str(request_id): None for request_id in consumed_request_ids}
+
+
+def _processed_identity_matches(
+    fields: Mapping[str, Any], record: Mapping[str, Any] | None
+) -> bool:
+    if not isinstance(record, Mapping):
+        return False
+    expected = {
+        "target_issue": fields.get("target_issue"),
+        "target_dispatch_request_id": fields.get("target_dispatch_request_id"),
+        "requested_action": fields.get("action"),
+        "expected_branch": fields.get("branch"),
+        "expected_head": fields.get("head"),
+    }
+    if not all(key in record for key in expected):
+        return False
+    if type(record.get("target_issue")) is not int:
+        return False
+    for key, value in expected.items():
+        if record.get(key) != value:
+            return False
+    return True
 
 
 def parse_bridge_inbox_request(line: str) -> dict[str, Any]:

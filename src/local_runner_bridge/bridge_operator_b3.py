@@ -377,7 +377,7 @@ def _validate_state_files(state_dir: Path) -> None:
     processed = state_dir / "processed_requests.jsonl"
     if processed.exists():
         try:
-            _read_processed_request_ids(processed)
+            _read_processed_request_records(processed)
         except (OSError, json.JSONDecodeError, ValueError) as error:
             raise ValueError("corrupted_state") from error
 
@@ -422,7 +422,7 @@ def _run_b1_with_bounded_retry(
         processed_path = state_root / "processed_requests.jsonl"
         try:
             consumed_request_ids = (
-                _read_processed_request_ids(processed_path) if processed_path.exists() else set()
+                _read_processed_request_records(processed_path) if processed_path.exists() else {}
             )
         except (OSError, json.JSONDecodeError, ValueError):
             return {"result": "blocked", "blocked_reasons": ["corrupted_state"]}
@@ -521,8 +521,15 @@ def _delegate_b3_request(
 
     processed_path = state_root / "processed_requests.jsonl"
     request_id = str(b1_summary.get("request_id") or "")
-    processed = _read_processed_request_ids(processed_path) if processed_path.exists() else set()
+    try:
+        processed = _read_processed_request_records(processed_path) if processed_path.exists() else {}
+    except (OSError, ValueError):
+        _block(summary, "corrupted_state")
+        return "corrupted_state"
     if request_id in processed:
+        if not _processed_record_matches_b1_identity(processed[request_id], b1_summary):
+            _block(summary, "processed_request_identity_mismatch")
+            return "processed_request_identity_mismatch"
         summary["processed_request_already_seen"] = True
         summary["phase"] = "already_processed"
         return None
@@ -647,16 +654,19 @@ def _read_observed_request_ids(path: Path) -> set[str]:
     return request_ids
 
 
-def _read_processed_request_ids(path: Path) -> set[str]:
-    request_ids: set[str] = set()
+def _read_processed_request_records(path: Path) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
     if not path.exists():
-        return request_ids
+        return records
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         payload = _parse_processed_request_record(line)
-        request_ids.add(payload["request_id"])
-    return request_ids
+        request_id = payload["request_id"]
+        if request_id in records:
+            raise ValueError("invalid_processed_request")
+        records[request_id] = payload
+    return records
 
 
 def _parse_processed_request_record(line: str) -> dict[str, Any]:
@@ -692,11 +702,48 @@ def _validate_processed_request_record(payload: Any) -> None:
         raise ValueError("invalid_processed_request")
     if "result_verified" in payload and payload.get("result_verified") is not True:
         raise ValueError("invalid_processed_request")
+    identity_keys = (
+        "target_issue",
+        "target_dispatch_request_id",
+        "requested_action",
+        "expected_branch",
+        "expected_head",
+    )
+    if not all(key in payload for key in identity_keys):
+        raise ValueError("invalid_processed_request")
+    if type(payload.get("target_issue")) is not int or payload["target_issue"] <= 0:
+        raise ValueError("invalid_processed_request")
+    for key in (
+        "target_dispatch_request_id",
+        "requested_action",
+        "expected_branch",
+        "expected_head",
+    ):
+        if not isinstance(payload.get(key), str) or not payload[key].strip():
+            raise ValueError("invalid_processed_request")
+
+
+def _processed_record_matches_b1_identity(
+    record: dict[str, Any], b1_summary: dict[str, Any]
+) -> bool:
+    return (
+        record.get("target_issue") == b1_summary.get("target_issue")
+        and record.get("target_dispatch_request_id")
+        == b1_summary.get("target_dispatch_request_id")
+        and record.get("requested_action") == b1_summary.get("requested_action")
+        and record.get("expected_branch") == b1_summary.get("expected_branch")
+        and record.get("expected_head") == b1_summary.get("expected_head")
+    )
 
 
 def read_processed_request_ids(path: str | Path) -> set[str]:
     """Read B3 processed request IDs without modifying operator state."""
-    return _read_processed_request_ids(Path(path))
+    return set(_read_processed_request_records(Path(path)))
+
+
+def read_processed_request_records(path: str | Path) -> dict[str, dict[str, Any]]:
+    """Read validated B3 processed request identity records without modifying state."""
+    return _read_processed_request_records(Path(path))
 
 
 def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> None:

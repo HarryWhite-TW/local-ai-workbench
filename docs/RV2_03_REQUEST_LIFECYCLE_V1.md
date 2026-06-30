@@ -50,17 +50,27 @@ JSONL line with:
 - `protocol` exactly `lawb.bridge_operator_b3_processed_request.v1`;
 - `request_id` as a string matching
   `^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$`;
-- no `lifecycle_state` field.
+- no `lifecycle_state` field;
+- the processed request identity fields:
+  `target_issue`, `target_dispatch_request_id`, `requested_action`,
+  `expected_branch`, and `expected_head`.
 
 The accepted current processed-record shape uses the same protocol and
-`request_id` requirements, plus `lifecycle_state=CONSUMED`. When
+`request_id` and identity requirements, plus `lifecycle_state=CONSUMED`. When
 `dispatcher_invoked` or `result_verified` exists, each must be exactly `true`.
 
 Processed-history reading fails closed for malformed JSON, duplicate JSON keys,
 non-object records, wrong protocol, non-string or grammar-invalid request IDs,
-unknown lifecycle states, and explicitly false verification fields. B3 and the
-publication preflight use the same strict processed-history reader. Existing
-state is not deleted, migrated, repaired, or rewritten by this validation.
+duplicate request IDs, unknown lifecycle states, missing or malformed identity
+fields, and explicitly false verification fields. B3 and the publication
+preflight use the same strict processed-history reader. Existing state is not
+deleted, migrated, repaired, or rewritten by this validation.
+
+A processed record consumes an Inbox marker only when both `request_id` and the
+processed identity fields match the current marker. If `request_id` matches but
+any identity field differs, B1 fails closed with
+`processed_request_identity_mismatch`; B3 must not invoke Dispatcher, and the
+publication preflight must not treat the result as a safe wait.
 
 B3 summary lifecycle fields describe the latest B1 evaluation cycle. B3 request
 identity fields describe the last request selected during the current B3 run. A

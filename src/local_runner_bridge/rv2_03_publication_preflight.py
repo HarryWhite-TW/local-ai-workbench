@@ -16,7 +16,7 @@ from local_runner_bridge.bridge_operator_b1 import (
     check_local_readiness,
     run_bridge_operator_b1_dry_run,
 )
-from local_runner_bridge.bridge_operator_b3 import read_processed_request_ids
+from local_runner_bridge.bridge_operator_b3 import read_processed_request_records
 
 PROTOCOL = "lawb.rv2_03_publication_preflight.v1"
 MAX_EXECUTION_TTL_SECONDS = 1200
@@ -88,13 +88,13 @@ def run_publication_preflight(
 
     processed_path = state_root / "processed_requests.jsonl"
     try:
-        consumed_request_ids = (
-            read_processed_request_ids(processed_path) if processed_path.exists() else set()
+        consumed_request_records = (
+            read_processed_request_records(processed_path) if processed_path.exists() else {}
         )
     except (OSError, json.JSONDecodeError, ValueError):
         _block(result, "corrupted_processed_history")
         return result
-    result["processed_request_count"] = len(consumed_request_ids)
+    result["processed_request_count"] = len(consumed_request_records)
 
     try:
         b1_summary = b1_runner(
@@ -104,7 +104,7 @@ def run_publication_preflight(
             github_client=github_client,
             local_checker=lambda _repo_root: readiness,
             now_utc=evaluated_at,
-            consumed_request_ids=consumed_request_ids,
+            consumed_request_ids=consumed_request_records,
         )
     except Exception as error:
         b1_summary = {

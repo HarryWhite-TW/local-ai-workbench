@@ -75,11 +75,58 @@ exit /b {exit_code}
     )
 
     assert result.returncode == exit_code
-    assert pythonpath_log.read_text(encoding="utf-8").startswith(str(tmp_path / "src"))
+    assert pythonpath_log.read_text(encoding="utf-8").startswith(str(ROOT / "src"))
     assert bytecode_log.read_text(encoding="utf-8").strip() == "1"
     assert args_log.read_text(encoding="utf-8").split()[0] == "-B"
     assert "AFTER_PYTHONPATH=ORIGINAL_VALUE" in result.stdout
     assert "AFTER_BYTECODE=ORIGINAL_BYTECODE_VALUE" in result.stdout
+
+
+def test_wrapper_import_source_uses_script_checkout_not_repo_root(tmp_path):
+    fake_python = tmp_path / "python.cmd"
+    pythonpath_log = tmp_path / "pythonpath.log"
+    inspected_repo = tmp_path / "inspected-repo"
+    inspected_repo.mkdir()
+    fake_python.write_text(
+        f"""@echo off
+> "{pythonpath_log}" echo %PYTHONPATH%
+exit /b 0
+""",
+        encoding="utf-8",
+        newline="\r\n",
+    )
+
+    result = subprocess.run(
+        [
+            powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(SCRIPT),
+            "-RepoRoot",
+            str(inspected_repo),
+            "-ExpectedRepository",
+            "HarryWhite-TW/local-ai-workbench",
+            "-ExpectedBranch",
+            "rv2-03-phase-a-host-hardening",
+            "-ExpectedHead",
+            "fcfc7c462aff1cb8df06ec4742567523c72f6473",
+            "-ReviewedPythonPath",
+            str(fake_python),
+            "-ReviewedGhPath",
+            str(tmp_path / "gh.exe"),
+            "-ReviewedCodexPath",
+            str(tmp_path / "codex.cmd"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert pythonpath_log.read_text(encoding="utf-8").startswith(str(ROOT / "src"))
+    assert not pythonpath_log.read_text(encoding="utf-8").startswith(str(inspected_repo / "src"))
 
 
 def test_wrapper_reports_missing_python_path(tmp_path):

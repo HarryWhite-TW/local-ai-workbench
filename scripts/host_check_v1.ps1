@@ -26,7 +26,8 @@ if (-not (Test-Path -LiteralPath $ReviewedPythonPath -PathType Leaf)) {
 
 $oldPythonPath = $env:PYTHONPATH
 $oldDontWriteBytecode = $env:PYTHONDONTWRITEBYTECODE
-$srcPath = Join-Path $RepoRoot "src"
+$wrapperRoot = Split-Path -Parent $PSScriptRoot
+$srcPath = Join-Path $wrapperRoot "src"
 
 try {
     $env:PYTHONPATH = if ($oldPythonPath) { "$srcPath;$oldPythonPath" } else { $srcPath }
