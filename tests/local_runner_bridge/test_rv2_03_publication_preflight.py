@@ -553,6 +553,24 @@ def test_corrupted_processed_history_blocks_before_publication_or_github_read(tm
     assert client.comments_read == []
 
 
+def test_semantically_invalid_processed_history_blocks_before_github_read(tmp_path):
+    payload = {
+        "protocol": "lawb.bridge_operator_b3_processed_request.v1",
+        "request_id": None,
+    }
+    (tmp_path / "processed_requests.jsonl").write_text(
+        json.dumps(payload, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    client = FakeGitHub(inbox_comments=[inbox_comment_from(valid_manifest())])
+
+    summary = run(tmp_path, client=client)
+
+    assert_blocked(summary, "corrupted_processed_history")
+    assert client.issues_read == []
+    assert client.comments_read == []
+
+
 def test_invalid_manifest_blocks_without_github_read(tmp_path):
     manifest = valid_manifest()
     manifest["repo"] = "other/repo"

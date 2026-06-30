@@ -44,6 +44,24 @@ verified, B3 appends one processed record with `lifecycle_state=CONSUMED`.
 Processed records remain append-only. A malformed processed history file fails
 closed before Dispatcher invocation.
 
+The accepted legacy processed-record shape is one JSON object per nonblank
+JSONL line with:
+
+- `protocol` exactly `lawb.bridge_operator_b3_processed_request.v1`;
+- `request_id` as a string matching
+  `^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$`;
+- no `lifecycle_state` field.
+
+The accepted current processed-record shape uses the same protocol and
+`request_id` requirements, plus `lifecycle_state=CONSUMED`. When
+`dispatcher_invoked` or `result_verified` exists, each must be exactly `true`.
+
+Processed-history reading fails closed for malformed JSON, duplicate JSON keys,
+non-object records, wrong protocol, non-string or grammar-invalid request IDs,
+unknown lifecycle states, and explicitly false verification fields. B3 and the
+publication preflight use the same strict processed-history reader. Existing
+state is not deleted, migrated, repaired, or rewritten by this validation.
+
 B3 summary lifecycle fields describe the latest B1 evaluation cycle. B3 request
 identity fields describe the last request selected during the current B3 run. A
 later consumed-only cycle clears current-selection lifecycle fields, but does not

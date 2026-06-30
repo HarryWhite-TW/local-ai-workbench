@@ -3,6 +3,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -11,6 +13,8 @@ from local_runner_bridge.bridge_operator_b3 import (
     B3B_MODE,
     B3C_MODE,
     DEFAULT_INBOX_ISSUE,
+    PROCESSED_REQUEST_PROTOCOL,
+    read_processed_request_ids,
     run_bridge_operator_b3_dry_run_loop,
 )
 from local_runner_bridge.bridge_operator_b2 import DispatcherInvocationResult
@@ -238,6 +242,15 @@ def read_log_events(path):
         for line in Path(path).read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def processed_record(**overrides):
+    payload = {
+        "protocol": "lawb.bridge_operator_b3_processed_request.v1",
+        "request_id": "processed-a",
+    }
+    payload.update(overrides)
+    return payload
 
 
 def assert_b1_failure_blocks(tmp_path, summary, reason):
@@ -1129,6 +1142,125 @@ def test_corrupted_processed_history_fails_closed_before_dispatcher(tmp_path):
     assert calls == []
     assert read_json(tmp_path / "last_failure.json")["reason"] == "corrupted_state"
     assert_high_risk_safety(summary)
+
+
+def test_processed_history_accepts_legacy_and_current_consumed_records(tmp_path):
+    legacy = processed_record()
+    current = processed_record(
+        request_id="b3a-151-20260616T080000Z",
+        lifecycle_state="CONSUMED",
+        dispatcher_invoked=True,
+        result_verified=True,
+    )
+    path = tmp_path / "processed_requests.jsonl"
+    path.write_text(
+        json.dumps(legacy, sort_keys=True) + "\n" + json.dumps(current, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    assert read_processed_request_ids(path) == {
+        "processed-a",
+        "b3a-151-20260616T080000Z",
+    }
+
+
+def test_processed_history_accepts_full_legacy_processed_record(tmp_path):
+    request_id = "legacy-processed-151"
+    path = tmp_path / "processed_requests.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "protocol": PROCESSED_REQUEST_PROTOCOL,
+                "processed_at_utc": "2026-06-16T08:00:00Z",
+                "cycle": 1,
+                "request_id": request_id,
+                "target_issue": 151,
+                "target_dispatch_request_id": "dispatch-151",
+                "requested_action": "maybe-status-check",
+                "expected_branch": "feature/bridge-operator-b3a",
+                "expected_head": HEAD,
+                "target_result_comment_id": 20,
+                "target_result_author": "HarryWhite-TW",
+                "dispatcher_invoked": True,
+                "result_verified": True,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert read_processed_request_ids(path) == {request_id}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        processed_record(protocol="wrong"),
+        processed_record(request_id=None),
+        processed_record(request_id=["processed-a"]),
+        processed_record(request_id=123),
+        processed_record(request_id=""),
+        processed_record(request_id="-bad"),
+        processed_record(lifecycle_state="CURRENT"),
+        processed_record(dispatcher_invoked=False),
+        processed_record(result_verified=False),
+    ],
+)
+def test_processed_history_rejects_semantically_malformed_records(tmp_path, payload):
+    path = tmp_path / "processed_requests.jsonl"
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        read_processed_request_ids(path)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '{"protocol":"lawb.bridge_operator_b3_processed_request.v1","request_id":"processed-a","request_id":"processed-b"}',
+        "{not-json}",
+    ],
+)
+def test_processed_history_rejects_duplicate_keys_and_malformed_json(tmp_path, line):
+    path = tmp_path / "processed_requests.jsonl"
+    path.write_text(line + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        read_processed_request_ids(path)
+
+
+def test_processed_history_rejects_top_level_non_object_before_dispatcher(tmp_path):
+    path = tmp_path / "processed_requests.jsonl"
+    path.write_text("[]\n", encoding="utf-8")
+    calls = []
+
+    with pytest.raises(ValueError):
+        read_processed_request_ids(path)
+
+    summary = run_b3b(tmp_path, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["corrupted_state"]
+    assert summary["dispatcher_invoked"] is False
+    assert calls == []
+    assert read_json(tmp_path / "last_failure.json")["reason"] == "corrupted_state"
+
+
+def test_b3_does_not_invoke_dispatcher_after_processed_history_validation_failure(tmp_path):
+    (tmp_path / "processed_requests.jsonl").write_text(
+        json.dumps(processed_record(dispatcher_invoked=False), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    summary = run_b3b(tmp_path, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["corrupted_state"]
+    assert summary["dispatcher_invoked"] is False
+    assert calls == []
+    assert read_json(tmp_path / "last_failure.json")["reason"] == "corrupted_state"
 
 
 def test_local_checker_value_error_is_not_mislabeled_as_corrupted_processed_history(tmp_path):

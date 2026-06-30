@@ -25,12 +25,15 @@ if (-not (Test-Path -LiteralPath $ReviewedPythonPath -PathType Leaf)) {
 }
 
 $oldPythonPath = $env:PYTHONPATH
+$oldDontWriteBytecode = $env:PYTHONDONTWRITEBYTECODE
 $srcPath = Join-Path $RepoRoot "src"
 
 try {
     $env:PYTHONPATH = if ($oldPythonPath) { "$srcPath;$oldPythonPath" } else { $srcPath }
+    $env:PYTHONDONTWRITEBYTECODE = "1"
 
     $arguments = @(
+        "-B",
         "-m", "local_runner_bridge.host_check",
         "--repo-root", $RepoRoot,
         "--expected-repository", $ExpectedRepository,
@@ -57,4 +60,5 @@ catch {
 }
 finally {
     $env:PYTHONPATH = $oldPythonPath
+    $env:PYTHONDONTWRITEBYTECODE = $oldDontWriteBytecode
 }

@@ -96,6 +96,7 @@ def run_host_check(
     """Inspect the current host without writing, installing, or repairing."""
     root = Path(repo_root).resolve()
     env = dict(os.environ if environment is None else environment)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     runner = command_runner or (lambda command, cwd: _run_command(command, cwd, env))
     fresh_runner = fresh_shell_runner or (lambda name, cwd: _fresh_shell_resolve(name, cwd, env))
 

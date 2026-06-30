@@ -15,8 +15,9 @@ Codex task.
 ## Entry Points
 
 The PowerShell wrapper is the canonical Windows entry point. It sets
-`PYTHONPATH` for the child Python process only, restores the previous value, and
-preserves the harness exit code.
+`PYTHONPATH` for the child Python process only, launches Python with `-B`, sets
+process-local `PYTHONDONTWRITEBYTECODE=1`, restores the previous environment
+values, and preserves the harness exit code.
 
 PowerShell wrapper:
 
@@ -39,8 +40,11 @@ Python module:
 
 ```powershell
 $oldPythonPath = $env:PYTHONPATH
+$oldDontWriteBytecode = $env:PYTHONDONTWRITEBYTECODE
 $env:PYTHONPATH = "C:\Users\admin\Desktop\local-ai-workbench\src;$oldPythonPath"
+$env:PYTHONDONTWRITEBYTECODE = "1"
 & "C:\Users\admin\.venvs\lawb-workflow\Scripts\python.exe" `
+    -B `
     -m local_runner_bridge.host_check `
     --repo-root "C:\Users\admin\Desktop\local-ai-workbench" `
     --expected-repository "HarryWhite-TW/local-ai-workbench" `
@@ -51,11 +55,16 @@ $env:PYTHONPATH = "C:\Users\admin\Desktop\local-ai-workbench\src;$oldPythonPath"
     --reviewed-codex-path "C:\nvm4w\nodejs\codex.cmd" `
     --pretty
 $env:PYTHONPATH = $oldPythonPath
+$env:PYTHONDONTWRITEBYTECODE = $oldDontWriteBytecode
 ```
 
 The direct module form requires the package to be importable, either through a
 process-local `PYTHONPATH` like the example above or another approved import
 setup. Do not install the repository merely to run this check.
+
+For direct Python API or module usage, child probes are also launched with an
+environment containing `PYTHONDONTWRITEBYTECODE=1`. This keeps the no temporary
+repository files assertion independent from bytecode-cache behavior.
 
 Use `-Json` or `--json` for compact machine-readable JSON. Use `-Pretty` or
 `--pretty` for pretty JSON with no surrounding prose.
@@ -122,6 +131,11 @@ head_unavailable
 working_tree_status_unavailable
 final_working_tree_status_unavailable
 ```
+
+The wrapper and Python harness disable Python bytecode writes because ignored
+`__pycache__` directories and `.pyc` files may not appear in `git status`.
+Therefore, a clean Git status alone is not sufficient evidence that no ignored
+temporary repository files were created.
 
 The harness reports `repository_integrity_verified=true` only when the initial
 status read succeeded, the final status read succeeded, and both status outputs

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -43,6 +44,7 @@ DEFAULT_MAX_CYCLES_LIMIT = 100
 DEFAULT_MAX_POLL_INTERVAL_SECONDS = 3600.0
 DEFAULT_READ_RETRY_COUNT = 2
 SAFE_WAIT_B1_REASONS = frozenset({"missing_request", "no_current_request_after_consumption"})
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$")
 
 
 def run_bridge_operator_b3_dry_run_loop(
@@ -652,11 +654,44 @@ def _read_processed_request_ids(path: Path) -> set[str]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        payload = json.loads(line)
-        if not isinstance(payload, dict) or "request_id" not in payload:
-            raise ValueError("invalid_processed_request")
-        request_ids.add(str(payload["request_id"]))
+        payload = _parse_processed_request_record(line)
+        request_ids.add(payload["request_id"])
     return request_ids
+
+
+def _parse_processed_request_record(line: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(line, object_pairs_hook=_reject_duplicate_json_keys)
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid_processed_request") from error
+    _validate_processed_request_record(payload)
+    return payload
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_json_key")
+        result[key] = value
+    return result
+
+
+def _validate_processed_request_record(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_processed_request")
+    if payload.get("protocol") != PROCESSED_REQUEST_PROTOCOL:
+        raise ValueError("invalid_processed_request")
+    request_id = payload.get("request_id")
+    if not isinstance(request_id, str) or not REQUEST_ID_PATTERN.fullmatch(request_id):
+        raise ValueError("invalid_processed_request")
+    lifecycle_state = payload.get("lifecycle_state")
+    if "lifecycle_state" in payload and lifecycle_state != CONSUMED:
+        raise ValueError("invalid_processed_request")
+    if "dispatcher_invoked" in payload and payload.get("dispatcher_invoked") is not True:
+        raise ValueError("invalid_processed_request")
+    if "result_verified" in payload and payload.get("result_verified") is not True:
+        raise ValueError("invalid_processed_request")
 
 
 def read_processed_request_ids(path: str | Path) -> set[str]:

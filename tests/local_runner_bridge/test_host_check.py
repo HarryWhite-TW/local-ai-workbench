@@ -720,7 +720,33 @@ def test_default_fresh_shell_runner_receives_injected_environment(monkeypatch, t
 
     assert summary["fresh_shell"]["python"]["fresh_shell_resolved_path"] == str(py)
     assert captured_envs
-    assert all(env == injected for env in captured_envs)
+    assert all(env["PATH"] == injected["PATH"] for env in captured_envs)
+    assert all(env["COMSPEC"] == injected["COMSPEC"] for env in captured_envs)
+    assert all(env["PYTHONDONTWRITEBYTECODE"] == "1" for env in captured_envs)
+
+
+def test_direct_child_probes_receive_bytecode_disabled_environment(monkeypatch, tmp_path):
+    repo, py, gh, codex = make_paths(tmp_path / "bytecode-env")
+    captured_envs = []
+
+    def fake_run_command(command, cwd, env=None):
+        captured_envs.append(dict(env or {}))
+        return completed(command, stdout="")
+
+    monkeypatch.setattr(host_check, "_run_command", fake_run_command)
+    host_check.run_host_check(
+        repo_root=repo,
+        expected_repository=EXPECTED_REPO,
+        expected_branch=EXPECTED_BRANCH,
+        expected_head=EXPECTED_HEAD,
+        reviewed_python_path=py,
+        reviewed_gh_path=gh,
+        reviewed_codex_path=codex,
+        environment={"PATH": "C:/Injected", "PYTHONDONTWRITEBYTECODE": "0"},
+    )
+
+    assert captured_envs
+    assert all(env["PYTHONDONTWRITEBYTECODE"] == "1" for env in captured_envs)
 
 
 def test_tool_failure_stage_metadata(monkeypatch, tmp_path):
