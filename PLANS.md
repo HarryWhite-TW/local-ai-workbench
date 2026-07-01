@@ -40,8 +40,8 @@ Development workflow tooling is separate from the product runtime.
 - RV2-00: `DONE`.
 - RV2-01: `DONE`.
 - RV2-02: `DONE`.
-- RV2-03: `ACTIVE` — Phase A.
-- Current RV2-03 branch: `rv2-03-phase-a-host-hardening`.
+- RV2-03: `ACTIVE` — Phase B change-control.
+- No next runtime implementation branch is approved; the docs-only truth-sync working branch is not a runtime baseline.
 - Pre-truth-sync Phase A implementation baseline commit: `9749911badec6c4011d17170f55b4305fe47a08c`.
 - Latest reported B4-D focused validation: `78 passed`.
 - Latest reported adjacent validation: `126 passed`.
@@ -53,12 +53,16 @@ Development workflow tooling is separate from the product runtime.
 - Manual `PollOnce` remains the verified recovery path, not the target daily experience.
 - B3 implementation exists, but primary-host operational daily-use acceptance remains to be proven.
 - RV2-03 Phase A implementation evidence now includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening.
-- Repository documentation and canonical GitHub status synchronization are complete.
+- Repository documentation reflects the accepted state after this truth sync; GitHub Issue #175 and tracker #168 remain stale and require a separately approved GitHub truth-sync write.
 - RV2-03 Phase A final acceptance passed on 2026-06-30.
+- RV2-03 Phase B B0 has been accepted under the corrected oracle and requires no rerun; this does not constitute Phase B/B3 operational acceptance.
 - Phase B operational acceptance remains required on the user-designated Primary Operational Host, and RV2-03 is not `DONE`.
 - Current Primary Operational Host: the course Windows computer used for the user's normal project work.
 - Secondary Compatibility Host: the home Windows computer; optional compatibility evidence there does not block RV2-03 completion.
-- Because the current Primary Operational Host may lose local operator state after reset, cross-reset duplicate suppression or fail-closed reconciliation remains a required and unproven Phase B acceptance case.
+- Because the current Primary Operational Host may lose local operator state after reset, cross-reset duplicate suppression or fail-closed reconciliation against trusted durable GitHub request/result evidence remains a required and unproven Phase B acceptance case.
+- Durable-evidence reconciliation is a critical acceptance requirement, not an optional documentation note.
+- PR #177 is merged: `1acfe502271f77b4872d39adf86b687c20fb2396` was the feature head merged through PR #177 into `master@66ad9f64d59718d096dc8a2752e88f8cc44f10d6`; it is historical merge evidence, not a newly approved runtime implementation branch or a separate runtime baseline.
+- Durable-evidence runtime implementation is not authorized by this docs-only task.
 - Phase C ChatGPT App / MCP remains deferred until Phase B is stable and accepted.
 - Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
 - High-risk operations remain separately approval-gated.
@@ -114,7 +118,7 @@ Roadmap v2 default sequence:
 1. `RV2-00` — specification adoption and execution baseline (`DONE`).
 2. `RV2-01` — one supervised B4-D live smoke through the existing path (`DONE`).
 3. `RV2-02` — B4-D closeout, documentation truth synchronization, and repository-separation design (`DONE`).
-4. `RV2-03` — B3 operational acceptance on the user-designated Primary Operational Host, currently the course Windows computer (`ACTIVE` — Phase A).
+4. `RV2-03` — B3 operational acceptance on the user-designated Primary Operational Host, currently the course Windows computer (`ACTIVE` — Phase B change-control).
 5. `RV2-04` — Task Packet v1.1 to runtime execution-contract binding.
 6. `RV2-05` — minimal thin `lawb` CLI facade.
 7. `RV2-06` — execution profiles and evidence-based token control.
@@ -127,13 +131,17 @@ This order may change only through explicit user-approved change control. Comple
 
 ## Immediate Next Gate
 
-Tracker #168 is canonical. RV2-00, RV2-01, and RV2-02 are `DONE`. RV2-03 is the current active node in Phase A on branch `rv2-03-phase-a-host-hardening`.
+Tracker #168 is the designated canonical GitHub Roadmap surface, but it currently remains stale. Repository documentation records RV2-03 as the active node in Phase B change-control. GitHub Issue #175 and tracker #168 require a separately approved GitHub truth-sync write.
 
 Current RV2-03 Phase A evidence is implemented and verified beyond the older repository documentation. The accepted evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening.
 
-Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B operational acceptance on the user-designated Primary Operational Host remains separately gated and required before RV2-03 can be `DONE`. The current designated host is the course Windows computer, while the home Windows computer is a Secondary Compatibility Host. The course host's reset and state-loss behavior must prove duplicate suppression or fail-closed reconciliation before final acceptance. The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
+Repository documentation reflects the accepted state after this truth sync. GitHub Issue #175 and tracker #168 remain stale and require a separately approved GitHub truth-sync write. RV2-03 Phase A final acceptance passed on 2026-06-30. PR #177 is merged: `1acfe502271f77b4872d39adf86b687c20fb2396` was the feature head merged through PR #177 into `master@66ad9f64d59718d096dc8a2752e88f8cc44f10d6`; it is historical merge evidence, not a newly approved runtime implementation branch or a separate runtime baseline. RV2-03 Phase B B0 has been accepted under the corrected oracle and requires no rerun, but Phase B operational acceptance on the user-designated Primary Operational Host remains separately gated and required before RV2-03 can be `DONE`. No next runtime implementation branch is approved. The current designated host is the course Windows computer, while the home Windows computer is a Secondary Compatibility Host. The course host's reset and state-loss behavior must prove duplicate suppression or fail-closed reconciliation against trusted durable GitHub request/result evidence before final acceptance. Durable-evidence runtime implementation is not authorized by this docs-only task.
 
-The RV2-03 truth-sync commit is `b90d56fb5ea08e0ac5036f50af8efc14ad5eab43`. It records the accepted documentation synchronization state and must not be treated as a permanent current HEAD.
+The next controlled gate is durable-evidence reconciliation design. This gate is design and acceptance-contract work only. It is not live execution and does not authorize runtime implementation, request publication, Dispatcher delegation, retry, startup, tray, service, MCP, commit, push, or GitHub writes.
+
+The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
+
+The earlier RV2-03 Phase A truth-sync commit was `b90d56fb5ea08e0ac5036f50af8efc14ad5eab43`. It is historical evidence, not the current HEAD and not the commit that will result from this Phase B truth-sync task.
 
 The approved strategic direction is to prepare the bridge for future repository separation as reusable cross-project development infrastructure. `local-ai-workbench` remains the first validated host and reference host. Physical extraction, a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, startup, tray UX, service behavior, MCP, and authority expansion are not authorized here. A later separately approved migration implementation node is required.
 

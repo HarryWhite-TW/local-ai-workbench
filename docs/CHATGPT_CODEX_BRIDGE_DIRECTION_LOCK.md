@@ -199,9 +199,9 @@ Exactly one B2/Dispatcher/Runner/Codex chain ran. The result was success, Codex 
 
 ## Roadmap And Strategic Direction
 
-Roadmap v2 is active and tracker #168 is canonical. It records `RV2-00`, `RV2-01`, and `RV2-02` as `DONE`. `RV2-03` is the current active node in Phase A on branch `rv2-03-phase-a-host-hardening`.
+Roadmap v2 is active. Tracker #168 is the designated canonical GitHub Roadmap surface, but it currently remains stale. Repository documentation records RV2-03 as the active node in Phase B change-control. GitHub Issue #175 and tracker #168 require a separately approved GitHub truth-sync write.
 
-RV2-03 Phase A implementation evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B operational acceptance on the user-designated Primary Operational Host remains separately gated and required, and RV2-03 is not `DONE`.
+RV2-03 Phase A implementation evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. Repository documentation reflects the accepted state after this truth sync. GitHub Issue #175 and tracker #168 remain stale and require a separately approved GitHub truth-sync write. RV2-03 Phase A final acceptance passed on 2026-06-30. RV2-03 Phase B B0 has been accepted under the corrected oracle and requires no rerun, but this does not constitute Phase B/B3 operational acceptance. Phase B operational acceptance on the user-designated Primary Operational Host remains separately gated and required, and RV2-03 is not `DONE`.
 
 ### Primary Operational Host Model
 
@@ -210,9 +210,11 @@ RV2-03 Phase A implementation evidence includes A0 Windows host compatibility ha
 - The home Windows computer is a Secondary Compatibility Host. Its additional evidence is useful but does not block RV2-03 completion.
 - Host designation does not grant request-publication, execution, retry, startup, GitHub-write, or later-phase authority.
 - When the designated host is ephemeral or restore-card managed, reset or loss of local operator state must not permit a completed request to run again. The system must reconcile trusted durable completion evidence or fail closed before delegation.
-- This state-loss safety requirement remains unproven until separately implemented, tested, and accepted during RV2-03 Phase B.
+- This state-loss safety requirement remains unproven until separately implemented, tested, and accepted during RV2-03 Phase B. Durable-evidence reconciliation against trusted GitHub request/result evidence is a critical acceptance requirement.
 
-The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability. Completion of Phase A evidence does not activate Phase B, RV2-04, startup, tray, service, MCP, or any later node.
+PR #177 is merged: `1acfe502271f77b4872d39adf86b687c20fb2396` was the feature head merged through PR #177 into `master@66ad9f64d59718d096dc8a2752e88f8cc44f10d6`. It is historical merge evidence, not a newly approved runtime implementation branch or a separate runtime baseline. No next runtime implementation branch is approved. Durable-evidence runtime implementation is not authorized by this docs-only task.
+
+The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability. Completion of Phase A evidence and acceptance of Phase B B0 do not activate full Phase B operational acceptance, RV2-04, startup, tray, service, MCP, or any later node.
 
 The bridge is intended to become reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host, not the permanent repository boundary. Physical extraction has not started. The current in-repository implementation remains the proven baseline until migration acceptance passes.
 
