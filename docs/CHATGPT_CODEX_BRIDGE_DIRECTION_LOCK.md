@@ -201,7 +201,16 @@ Exactly one B2/Dispatcher/Runner/Codex chain ran. The result was success, Codex 
 
 Roadmap v2 is active and tracker #168 is canonical. It records `RV2-00`, `RV2-01`, and `RV2-02` as `DONE`. `RV2-03` is the current active node in Phase A on branch `rv2-03-phase-a-host-hardening`.
 
-RV2-03 Phase A implementation evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B home-host operational acceptance remains separately gated and required, and RV2-03 is not `DONE`.
+RV2-03 Phase A implementation evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B operational acceptance on the user-designated Primary Operational Host remains separately gated and required, and RV2-03 is not `DONE`.
+
+### Primary Operational Host Model
+
+- The Primary Operational Host is the Windows computer explicitly designated by the user for current normal Bridge operation and formal operational acceptance.
+- The current Primary Operational Host is the course Windows computer.
+- The home Windows computer is a Secondary Compatibility Host. Its additional evidence is useful but does not block RV2-03 completion.
+- Host designation does not grant request-publication, execution, retry, startup, GitHub-write, or later-phase authority.
+- When the designated host is ephemeral or restore-card managed, reset or loss of local operator state must not permit a completed request to run again. The system must reconcile trusted durable completion evidence or fail closed before delegation.
+- This state-loss safety requirement remains unproven until separately implemented, tested, and accepted during RV2-03 Phase B.
 
 The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability. Completion of Phase A evidence does not activate Phase B, RV2-04, startup, tray, service, MCP, or any later node.
 
@@ -214,7 +223,7 @@ The default ordered direction is:
 1. `RV2-00`: specification adoption and execution baseline (`DONE`).
 2. `RV2-01`: one explicitly approved B4-D supervised live smoke through the existing path (`DONE`).
 3. `RV2-02`: B4-D closeout, documentation truth synchronization, and repository-separation design.
-4. `RV2-03`: B3 operational acceptance on the primary home Windows host.
+4. `RV2-03`: B3 operational acceptance on the user-designated Primary Operational Host, currently the course Windows computer.
 5. `RV2-04`: Task Packet to execution-manifest runtime contract binding.
 6. `RV2-05`: minimal thin `lawb` CLI facade over proven contracts.
 7. `RV2-06`: execution profiles and evidence-based token control.

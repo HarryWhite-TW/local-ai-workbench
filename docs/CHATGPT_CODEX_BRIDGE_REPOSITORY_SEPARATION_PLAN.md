@@ -6,7 +6,9 @@ The ChatGPT-Codex bridge is intended to become reusable cross-project developmen
 
 Roadmap v2 tracker #168 is canonical. RV2-00, RV2-01, and RV2-02 are `DONE`. RV2-03 is the current active node in Phase A on branch `rv2-03-phase-a-host-hardening`. The accepted RV2-01 smoke ran one successful B2/Dispatcher/Runner/Codex chain on clean `master` at `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`, with manifest SHA-256 `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080`. Evidence comments are dispatch `4795080463`, Inbox `4795082149`, Runner review bundle `4795131449`, and matching `LAWBRUNNER-RESULT` `4795131543`.
 
-The smoke succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree. It proves one supervised path, not daily B3 operational readiness. RV2-03 Phase A implementation evidence has progressed, repository documentation and canonical GitHub status synchronization are complete, and RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B home-host operational acceptance remains separately gated and required, RV2-03 is not `DONE`, and the experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
+The smoke succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree. It proves one supervised path, not daily B3 operational readiness. RV2-03 Phase A implementation evidence has progressed, repository documentation and canonical GitHub status synchronization are complete, and RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B operational acceptance on the user-designated Primary Operational Host remains separately gated and required, RV2-03 is not `DONE`, and the experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
+
+The current Primary Operational Host is the course Windows computer. The home Windows computer is a Secondary Compatibility Host. Because the course host may lose local operator state after reset, cross-reset duplicate suppression or fail-closed reconciliation remains a required and unproven RV2-03 acceptance condition.
 
 ## Current Coupling Inventory
 
@@ -76,10 +78,10 @@ Still deferred to RV2-04 or Phase B where not fully proven:
 - each versioned Host Profile must explicitly carry reviewed executable paths for `gh`/`gh.exe` and Codex;
 - B1 and B2 must provide safe, stage-specific diagnostic information instead of only `github_read_unavailable` or a generic `RuntimeError`;
 - Runner evidence must propagate consistently into the outer result, including `changed_files`, `review_id`, `diff_fingerprint`, and `files_fingerprint`, where still deferred;
-- Phase B daily B3 operational acceptance on the home host;
+- Phase B daily B3 operational acceptance on the user-designated Primary Operational Host, including state-loss safety when that host is ephemeral;
 - startup, tray, service, and MCP remain separate future nodes.
 
-RV2-03 owns operational acceptance, including Phase B home-host evidence. RV2-04 owns the versioned Host Profile, distinct expiry fields, any remaining shared resolver contract, diagnostic schema, and Runner-to-outer-result evidence contract not already proven by Phase A.
+RV2-03 owns operational acceptance on the user-designated Primary Operational Host, including cross-reset duplicate suppression or fail-closed reconciliation when local state can be lost. RV2-04 owns the versioned Host Profile, distinct expiry fields, any remaining shared resolver contract, diagnostic schema, and Runner-to-outer-result evidence contract not already proven by Phase A.
 
 These requirements must be accepted before repository separation or cross-project portability may be considered operationally credible. Documentation of the target boundary alone is not evidence that the current bridge can be safely extracted or reused across hosts.
 

@@ -353,7 +353,7 @@ This node also records the approved design direction for eventual repository sep
 
 Objective:
 
-Prove that the existing B3 foreground bounded loop can serve as a safe daily foreground operator on the primary home Windows host without requiring manual `PollOnce` for every normal task.
+Prove that the existing B3 foreground bounded loop can serve as a safe daily foreground operator on the user-designated Primary Operational Host without requiring manual `PollOnce` for every normal task. The current designated host is the course Windows computer; the home Windows computer is a Secondary Compatibility Host.
 
 Required acceptance cases:
 
@@ -365,7 +365,11 @@ Required acceptance cases:
 - active and stale lock recovery is documented and tested;
 - Dispatcher or Codex failure does not cause an automatic execution retry;
 - local state and logs do not dirty the repository;
-- manual `PollOnce` remains a working recovery path.
+- manual `PollOnce` remains a working recovery path;
+- the explicitly designated Primary Operational Host passes the applicable environment, fresh-shell, reset, recovery, and readiness checks;
+- when that host may lose local operator state, reset or state loss does not cause an already completed request to rerun;
+- if trusted durable completion evidence cannot be reconciled after state loss, delegation fails closed;
+- optional compatibility evidence from the home Windows computer does not block RV2-03 completion.
 
 High-priority future defect acceptance requirements:
 
@@ -379,7 +383,7 @@ High-priority future defect acceptance requirements:
 
 RV2-03 is now the current active Roadmap v2 node in Phase A. Phase A evidence has implemented or partially proven A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening on branch `rv2-03-phase-a-host-hardening`.
 
-Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. This does not mark RV2-03 `DONE` and does not claim Phase B home-host operational acceptance. Phase B remains separately gated and required. Startup, tray, service, MCP, authority expansion, and RV2-04 remain deferred.
+Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. This does not mark RV2-03 `DONE` and does not claim Phase B operational acceptance on the user-designated Primary Operational Host. The current designated host is the course Windows computer, and its cross-reset state-loss and duplicate-suppression safety remains unproven. Phase B remains separately gated and required. Startup, tray, service, MCP, authority expansion, and RV2-04 remain deferred.
 
 This node does not authorize visible UX, login startup, MCP, or authority expansion.
 
@@ -530,7 +534,7 @@ Boundaries:
 
 Objective:
 
-After prior acceptance tests pass, optionally start the visible operator in the primary home Windows user's logged-in session.
+After prior acceptance tests pass, optionally start the visible operator in the logged-in user session on the user-designated Primary Operational Host, only when that host's persistence and startup behavior are separately accepted.
 
 Requirements:
 

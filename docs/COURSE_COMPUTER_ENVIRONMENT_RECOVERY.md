@@ -55,14 +55,25 @@ version probe. It does not prove interactive ChatGPT sign-in.
 It does not invoke Dispatcher, Runner, Codex tasks, commits, pushes, Issue
 close, labels, PRs, merges, or approvals.
 
-## Home Computer Versus Course Computer
+## Primary Operational Host And Secondary Compatibility Host
 
-The home computer is the expected persistent Bridge Host. It may retain GitHub
-CLI auth, Codex sign-in, local logs, and operator state.
+The course Windows computer is the current user-designated Primary Operational
+Host for RV2-03 operational acceptance. This designation does not mean its
+environment is persistent or already operationally accepted.
 
-A restore-card course computer is a fallback environment. Do not assume it keeps
+The home Windows computer is a Secondary Compatibility Host. It may retain
+GitHub CLI auth, Codex sign-in, local logs, and operator state, but its additional
+evidence does not block RV2-03 completion.
+
+The restore-card course computer remains ephemeral. Do not assume it keeps
 authentication, installed Codex, portable GitHub CLI, Python environment,
 startup tasks, local operator state, or logs after reboot.
+
+After every reset or restore, rerun environment recovery and readiness checks.
+Missing local operator state must not be interpreted as proof that a request has
+not run. Live delegation must reconcile trusted durable completion evidence or
+fail closed when prior execution cannot be ruled out. Cross-reset duplicate
+suppression remains unproven until separately implemented, tested, and accepted.
 
 ## Manual Fallback Steps
 

@@ -193,11 +193,13 @@ Course-computer assumptions:
 - do not assume tools survive restart unless rechecked
 - do not assume local state or logs survive restart
 
-Future primary host:
+Primary Operational Host designation:
 
-- primary home Windows computer is the planned persistent Bridge Host
-- no home-computer paths are verified or documented here
-- do not invent home paths during handoff
+- the current user-designated Primary Operational Host is the course Windows computer
+- the home Windows computer is a Secondary Compatibility Host and does not block RV2-03 completion
+- the course host remains restore-card managed, so authentication, tools, local state, and logs must be revalidated after reset
+- loss of local operator state must not allow a completed request to rerun; trusted durable completion evidence must be reconciled or delegation must fail closed
+- cross-reset duplicate suppression remains an unproven RV2-03 Phase B acceptance requirement
 
 ## 7. Readiness And Recovery Checks
 
