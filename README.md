@@ -38,7 +38,9 @@ Current baseline:
 - `RV2-03` is the current active Roadmap v2 node in Phase A on branch `rv2-03-phase-a-host-hardening`
 - repository documentation and canonical GitHub status synchronization are complete
 - RV2-03 Phase A final acceptance passed on 2026-06-30
-- Phase B home-host operational acceptance remains separately gated and required before RV2-03 can be `DONE`
+- Phase B operational acceptance remains separately gated and required on the user-designated Primary Operational Host before RV2-03 can be `DONE`; the current designated host is the course Windows computer, and the home Windows computer is a Secondary Compatibility Host
+- because the current Primary Operational Host is a restore-card environment, Phase B must prove that reset or loss of local operator state cannot silently rerun a completed request; missing or ambiguous durable completion evidence must fail closed
+- optional compatibility evidence from the home Windows computer does not block RV2-03 completion
 - one supervised B4-D `run-reviewbundle` smoke succeeded on clean `master` at full HEAD `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`
 - the successful smoke used manifest SHA-256 `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080` and produced dispatch comment `4795080463`, Inbox comment `4795082149`, Runner review-bundle comment `4795131449`, and matching `LAWBRUNNER-RESULT` comment `4795131543`
 - exactly one B2/Dispatcher/Runner/Codex chain ran; it succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree
@@ -131,7 +133,7 @@ Manual `PollOnce` is the verified Lv4.5 baseline and future recovery path:
 
 Manual `PollOnce` remains a recovery path, not the target daily experience. The existing Bridge Operator, Dispatcher, Runner, and Codex chain has completed one supervised B4-D smoke, but B3 daily operational acceptance remains unproven.
 
-RV2-03 Phase A has implemented and verified host-hardening evidence through A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B home-host operational acceptance remains separately gated and required, and RV2-03 is not `DONE`. The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
+RV2-03 Phase A has implemented and verified host-hardening evidence through A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. Repository documentation and canonical GitHub status synchronization are complete. RV2-03 Phase A final acceptance passed on 2026-06-30. Phase B operational acceptance on the user-designated Primary Operational Host remains separately gated and required, and RV2-03 is not `DONE`. The current designated host is the course Windows computer; the home Windows computer is a Secondary Compatibility Host and does not block completion. Because the course host may lose local operator state after reset, cross-reset duplicate suppression or fail-closed reconciliation remains an unproven Phase B acceptance requirement. The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
 
 Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
 

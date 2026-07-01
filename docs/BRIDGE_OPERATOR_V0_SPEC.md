@@ -71,7 +71,7 @@ Manual recovery command:
 
 ### Phase B: Local Bridge Operator
 
-Build `Bridge Operator v0` as a visible, bounded local process on the primary home Windows computer.
+Build `Bridge Operator v0` as a visible, bounded local process on the user-designated Primary Operational Host.
 
 Core flow:
 
@@ -281,9 +281,13 @@ The operator must never hide partial failure. Logs must state whether Dispatcher
 
 ## Windows Deployment Model
 
-### Primary Host
+### Primary Operational Host
 
-The primary home Windows computer is the persistent Bridge Host.
+The Primary Operational Host is the Windows computer explicitly designated by the user for current normal Bridge operation and operational acceptance.
+
+The current Primary Operational Host is the course Windows computer. The home Windows computer is a Secondary Compatibility Host and may provide optional cross-host evidence without blocking RV2-03 completion.
+
+Designation is not an operational-readiness claim and does not grant startup, request-publication, execution, retry, or other authority.
 
 Initial deployment order:
 
@@ -295,9 +299,9 @@ Initial deployment order:
 
 Automatic startup must not be enabled until the operator has passed dry-run, one-shot, bounded-loop, pause/stop, restart, auth-loss, network-loss, dirty-repo, and duplicate-request smokes.
 
-### Course Computer
+### Current Course-Computer Primary Host
 
-A restore-card course computer remains a portable/manual fallback environment.
+The restore-card course Windows computer is the current Primary Operational Host. It remains an ephemeral environment and must be treated as untrusted after every reset, restore, or machine handoff.
 
 Do not assume persistent:
 
@@ -309,7 +313,15 @@ Do not assume persistent:
 - local operator state;
 - logs.
 
-Use manual `PollOnce` recovery there unless persistence is separately proven.
+Before live B3 operation after a reset, environment recovery, authentication, executable resolution, repository identity, branch, HEAD, clean-tree state, and operator-state continuity must be revalidated.
+
+Loss or absence of local operator state must never be treated as evidence that a request has not run. Before delegation, the operator must reconcile trusted durable completion evidence or fail closed when prior execution cannot be ruled out. Cross-reset duplicate suppression remains unproven until it is separately implemented, tested, and accepted.
+
+Manual `PollOnce` remains a recovery path and requires its existing separate authority.
+
+### Secondary Compatibility Host
+
+The home Windows computer is the current Secondary Compatibility Host. It may retain authentication, tools, logs, and operator state more reliably, but evidence from that host is supplementary and does not block RV2-03 completion.
 
 ## Phase C: ChatGPT App / MCP
 
