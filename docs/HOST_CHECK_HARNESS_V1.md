@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`lawb.rv2_03_host_check.v1` is a read-only RV2-03 Phase A diagnostic harness.
+`lawb.rv2_03_host_check.v1` is a read-only RV2-03 diagnostic harness created during Phase A and still useful during Phase B change-control.
 It characterizes the current Windows host, reviewed absolute tool paths, fresh
 shell tool visibility, and bootstrap contract drift before later operational
 acceptance work.
@@ -27,7 +27,7 @@ PowerShell wrapper:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\host_check_v1.ps1 `
     -RepoRoot "C:\Users\admin\Desktop\local-ai-workbench" `
     -ExpectedRepository "HarryWhite-TW/local-ai-workbench" `
-    -ExpectedBranch "rv2-03-phase-a-host-hardening" `
+    -ExpectedBranch "<approved-branch-from-current-task>" `
     -ExpectedHead "<approved-full-head>" `
     -ReviewedPythonPath "C:\Users\admin\.venvs\lawb-workflow\Scripts\python.exe" `
     -ReviewedGhPath "C:\Users\admin\tools\gh-portable\bin\gh.exe" `
@@ -50,7 +50,7 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
     -m local_runner_bridge.host_check `
     --repo-root "C:\Users\admin\Desktop\local-ai-workbench" `
     --expected-repository "HarryWhite-TW/local-ai-workbench" `
-    --expected-branch "rv2-03-phase-a-host-hardening" `
+    --expected-branch "<approved-branch-from-current-task>" `
     --expected-head "<approved-full-head>" `
     --reviewed-python-path "C:\Users\admin\.venvs\lawb-workflow\Scripts\python.exe" `
     --reviewed-gh-path "C:\Users\admin\tools\gh-portable\bin\gh.exe" `
@@ -147,7 +147,7 @@ match exactly. If the final status read fails, `working_tree_clean_after=null`,
 the result is `BLOCKED` with `working_tree_changed_during_check`.
 
 The harness deliberately keeps repository readiness fail-closed during local
-development. The expected A1 acceptance sequence is:
+development. The historical A1 acceptance sequence was:
 
 ```text
 uncommitted A1 files
@@ -160,8 +160,8 @@ pushed and synchronized A1 HEAD
 -> final full Host Check may become operationally ready
 ```
 
-Do not add an option to ignore the current A1 files. Final clean-host acceptance
-belongs after separate commit and push approvals.
+Do not add an option to ignore current task files. Final clean-host acceptance
+belongs after the applicable separate commit and push approvals for that task.
 
 The reported origin URL is sanitized before output. URL userinfo, query
 strings, and fragments are not included. The harness never reads or emits Git

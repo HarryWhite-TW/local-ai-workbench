@@ -43,7 +43,7 @@ Use this loop for current Lv4.5 work:
 
 Today, the user remains the operator. `PollOnce` is manually invoked each time and stops after one selected issue.
 
-After Bridge Operator Phase B becomes operational, manual `PollOnce` becomes the recovery path rather than the target daily experience. Bridge Operator v0 is approved future development-workflow tooling, but it is not yet implemented. Automatic polling, bounded operator loops, tray behavior, and login startup are not currently available.
+After Bridge Operator Phase B becomes operational, manual `PollOnce` becomes the recovery path rather than the target daily experience. Bridge Operator v0 B1/B2/B3 implementation slices exist, but RV2-03 Phase B operational acceptance remains incomplete. Automatic polling and bounded operator loops must not be treated as accepted daily operation until the remaining Phase B cases pass. Tray behavior and login startup are not currently available.
 
 ## Workflow Level Selection
 
@@ -389,7 +389,7 @@ Do not treat Lv4.5 or Lv5-safe BoundedPoll as permission to add:
 
 Lv4.5 is complete when the manual dispatch bridge can safely carry one bounded request, one bounded local action, and one structured result back to the same issue for review.
 
-Background watcher and always-on polling remain unimplemented in Lv4.5. Bridge Operator Phase B is now the approved future direction for bounded automatic detection, but it is not implemented or operational here; polling scope, bounded loop behavior, and login startup still require their separately approved implementation phases.
+Background watcher and always-on polling remain unimplemented in Lv4.5. Bridge Operator Phase B is the approved direction for bounded automatic detection, and B1/B2/B3 implementation slices now exist as evidence, but Phase B daily operational acceptance is still incomplete. Polling scope, no-retry behavior, durable-evidence reconciliation, state-loss safety, bounded loop operation on the Primary Operational Host, tray behavior, and login startup still require their applicable separate acceptance or implementation phases.
 
 ## Runner Capability
 

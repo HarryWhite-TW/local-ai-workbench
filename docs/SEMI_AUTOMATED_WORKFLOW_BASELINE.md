@@ -5,7 +5,7 @@
 - version: v0.1
 - status: Active Operational Baseline
 - owner: 駿弘
-- current phase: Governance Reset through Issue #135
+- current phase: RV2-03 Phase B change-control
 - repository: HarryWhite-TW/local-ai-workbench
 - branch at creation: workflow-codex-task-discipline
 - verified HEAD at creation: 75c193f71bdd2a5fb077eb62d88ed895ad9a3b00
@@ -95,12 +95,16 @@ VERIFIED:
 - npm `codex.cmd` launcher compatibility
 - GitHub CLI PATH / Program Files / portable resolution
 
+IMPLEMENTED SLICES / NOT FULLY OPERATIONALLY ACCEPTED:
+
+- Bridge Operator Phase B B1/B2/B3 bounded slices
+- fixed Bridge Inbox Issue `#147`
+- one-shot delegation and bounded-loop foundations
+- automatic low-risk request detection is implemented in bounded slices but not accepted as daily operation
+- foreground bounded loop exists as implementation evidence, but Phase B operational acceptance remains incomplete
+
 APPROVED DIRECTION, NOT IMPLEMENTED:
 
-- Bridge Operator Phase B
-- fixed Bridge Inbox
-- automatic low-risk request detection
-- foreground bounded loop
 - tray/status UX
 - login startup after separate approval
 
@@ -112,8 +116,11 @@ CURRENT PHASE SUMMARY:
 
 ```text
 B0: complete
-Governance Reset: active through Issue #135
-B1: not started
+Governance Reset: complete
+B1/B2/B3 bounded implementation slices: integrated
+RV2-03: active in Phase B change-control
+Phase B B0: accepted under the corrected oracle and requires no rerun
+Phase B daily operational acceptance: incomplete
 Phase C / MCP: deferred
 PollOnce: recovery path
 ```
@@ -159,7 +166,7 @@ This is operational today, but it is not the final target user experience. The D
 
 ## 5. Approved Future Flow
 
-APPROVED DIRECTION, NOT IMPLEMENTED:
+APPROVED FUTURE FLOW / NOT FULLY OPERATIONALLY ACCEPTED:
 
 ```text
 User talks to ChatGPT
@@ -171,7 +178,7 @@ User talks to ChatGPT
 -> user handles only key direction and high-risk approvals
 ```
 
-Phase B comes first. Phase C MCP / ChatGPT App integration comes later after Phase B is stable. The approved direction does not include a replacement local chat UI. Manual `PollOnce` remains the recovery path.
+Phase B comes first. B1/B2/B3 implementation slices and one supervised chain are now evidence, but Phase B daily operational acceptance remains incomplete. Phase C MCP / ChatGPT App integration comes later after Phase B is stable. The approved direction does not include a replacement local chat UI. Manual `PollOnce` remains the recovery path.
 
 ## 6. Environment Matrix
 
@@ -180,7 +187,7 @@ Verified course-computer example paths:
 | Item | Verified example |
 | --- | --- |
 | repository | `C:\Users\admin\Desktop\local-ai-workbench` |
-| branch | `workflow-codex-task-discipline` |
+| branch | `<expected branch from the current task>` |
 | external Python environment | `C:\Users\admin\.venvs\lawb-workflow\Scripts\python.exe` |
 | portable GitHub CLI | `C:\Users\admin\tools\gh-portable\bin\gh.exe` |
 | Windows npm Codex launcher | `C:\nvm4w\nodejs\codex.cmd` |
@@ -217,7 +224,7 @@ git status --short
 $branch = git branch --show-current
 $expectedHead = '<expected SHA from the current task>'
 $head = (git rev-parse HEAD).Trim()
-if ($branch -ne 'workflow-codex-task-discipline') { throw "Wrong branch: $branch" }
+if ($branch -ne '<expected branch from the current task>') { throw "Wrong branch: $branch" }
 if ($head -ne $expectedHead) {
     throw "Wrong HEAD. Expected $expectedHead but found $head"
 }
@@ -315,9 +322,9 @@ General forbidden recovery examples:
 
 ## 11. Local State And Future Logs
 
-APPROVED DIRECTION, NOT IMPLEMENTED:
+APPROVED DIRECTION / PHASE B CONTRACT:
 
-Future Bridge Operator Phase B local state should live outside the repo:
+Bridge Operator Phase B local state should live outside the repo:
 
 ```text
 %LOCALAPPDATA%\LocalAIWorkbench\BridgeOperator\
@@ -334,7 +341,7 @@ Planned files:
 - `pause.flag`
 - `stop.flag`
 
-These files are planned for Phase B. They are not currently implemented by this baseline document.
+These files are Phase B operator-state artifacts, not repository files. On restore-card or otherwise ephemeral hosts, loss of these files must not be interpreted as proof that a request has not already completed. The operator must reconcile trusted durable GitHub request/result evidence or fail closed before delegation when prior execution cannot be ruled out.
 
 ## 12. Verified Milestone Log
 
@@ -376,15 +383,15 @@ B0 ISSUE CLEANUP:
 
 B0 reconciliation, verification, completed/superseded Issue cleanup, and PR #134 integration into `master` are complete.
 
-The old boundary-layer expansion and local-repair loop is frozen. Current activity is Workflow Governance Reset through Issue #135. Issue #114 is historical roadmap evidence, not the active task source.
+The old boundary-layer expansion and local-repair loop is frozen. Current activity is RV2-03 Phase B change-control. Issue #135 and Issue #114 are historical governance/roadmap evidence, not the active task source.
 
-Bridge Operator Phase B implementation has not started. B1 requires a separately approved implementation task.
+Bridge Operator Phase B implementation slices B1, B2, and B3 have been integrated, and one supervised B2/Dispatcher/Runner/Codex chain has succeeded. RV2-03 Phase B B0 has been accepted under the corrected oracle and requires no rerun. This does not constitute Phase B/B3 operational acceptance: durable-evidence reconciliation, state-loss safety, no-retry behavior, and the remaining Primary Operational Host operational cases still require separate acceptance. PR #177 is merged: `1acfe502271f77b4872d39adf86b687c20fb2396` was the feature head merged through PR #177 into `master@66ad9f64d59718d096dc8a2752e88f8cc44f10d6`. It is historical merge evidence, not a newly approved runtime implementation branch or a separate runtime baseline. No next runtime implementation branch is approved. Durable-evidence runtime implementation is not authorized by this docs-only task.
 
 Manual `PollOnce` remains the verified current baseline and future recovery path, not the final daily UX. Phase C ChatGPT App / MCP remains deferred until Phase B is stable.
 
 SEPARATE APPROVAL:
 
-- B1 requires a separate approved implementation task
+- remaining Phase B operational acceptance, durable-evidence runtime implementation, and any new authority expansion require separate approval
 
 ## 14. Conversation Handoff Rule
 
