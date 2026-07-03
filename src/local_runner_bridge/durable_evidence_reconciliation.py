@@ -277,13 +277,19 @@ def _parse_comment(
     comment: EvidenceComment,
     expected_protocol: str,
 ) -> dict[str, Any]:
-    body = comment.body.strip()
-    marker_index = body.find(RESULT_MARKER)
-    if marker_index < 0:
+    lines = comment.body.splitlines()
+    header_index = None
+    for index, line in enumerate(lines):
+        if line.strip():
+            header_index = index
+            break
+    if header_index is None:
         return {"kind": "ordinary", "diagnostics": ()}
 
-    marked_body = body[marker_index:]
-    header, separator, json_text = marked_body.partition("\n")
+    header = lines[header_index]
+    if not header.startswith(RESULT_MARKER):
+        return {"kind": "ordinary", "diagnostics": ()}
+
     header_parts = header.split()
     if len(header_parts) != 2 or header_parts[0] != RESULT_MARKER:
         return {
@@ -307,7 +313,8 @@ def _parse_comment(
             "kind": "unsupported",
             "diagnostics": (f"header_protocol_unsupported:{comment.evidence_id}",),
         }
-    if not separator or not json_text.strip():
+    json_text = "\n".join(lines[header_index + 1 :])
+    if not json_text.strip():
         return {
             "kind": "malformed",
             "diagnostics": (f"payload_missing:{comment.evidence_id}",),
@@ -326,8 +333,12 @@ def _parse_comment(
             "diagnostics": (f"payload_not_object:{comment.evidence_id}",),
         }
 
-    payload_protocol = payload.get("protocol", payload.get("schema"))
-    if payload_protocol != expected_protocol:
+    payload_protocol_values = [
+        payload[key] for key in ("schema", "protocol") if key in payload
+    ]
+    if not payload_protocol_values or any(
+        protocol_value != expected_protocol for protocol_value in payload_protocol_values
+    ):
         return {
             "kind": "unsupported",
             "diagnostics": (f"protocol_unsupported:{comment.evidence_id}",),

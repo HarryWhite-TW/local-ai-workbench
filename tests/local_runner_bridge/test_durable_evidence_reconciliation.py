@@ -103,6 +103,10 @@ def make_comment(
     )
 
 
+def make_body(**kwargs: object) -> str:
+    return make_comment("body", **kwargs).body
+
+
 def read_result(
     status: ProviderStatus = ProviderStatus.COMPLETE,
     comments: tuple[EvidenceComment, ...] = (),
@@ -471,6 +475,129 @@ CASES = [
         ReconciliationReason.UNSUPPORTED_PROTOCOL,
         ("c1",),
         id="D1-043",
+    ),
+    pytest.param(
+        read_result(
+            comments=(
+                make_comment(
+                    "c1",
+                    body_override=(
+                        "Documentation mentions LAWBRUNNER-RESULT "
+                        "protocol=lawb.runner_result.v1 for troubleshooting."
+                    ),
+                ),
+            )
+        ),
+        ReconciliationDecision.NOT_FOUND,
+        ReconciliationReason.ZERO_MATCHING_COMPLETIONS,
+        (),
+        id="D1-044",
+    ),
+    pytest.param(
+        read_result(
+            comments=(
+                make_comment(
+                    "c1",
+                    body_override="Notes before evidence:\n" + make_body(),
+                ),
+            )
+        ),
+        ReconciliationDecision.NOT_FOUND,
+        ReconciliationReason.ZERO_MATCHING_COMPLETIONS,
+        (),
+        id="D1-045",
+    ),
+    pytest.param(
+        read_result(
+            comments=(
+                make_comment(
+                    "c1",
+                    body_override="```text\n" + make_body() + "\n```",
+                ),
+            )
+        ),
+        ReconciliationDecision.NOT_FOUND,
+        ReconciliationReason.ZERO_MATCHING_COMPLETIONS,
+        (),
+        id="D1-046",
+    ),
+    pytest.param(
+        read_result(
+            comments=(
+                make_comment(
+                    "c1",
+                    body_override="    " + make_body().replace("\n", "\n    "),
+                ),
+            )
+        ),
+        ReconciliationDecision.NOT_FOUND,
+        ReconciliationReason.ZERO_MATCHING_COMPLETIONS,
+        (),
+        id="D1-047",
+    ),
+    pytest.param(
+        read_result(
+            comments=(
+                make_comment(
+                    "c1",
+                    body_override="> " + make_body().replace("\n", "\n> "),
+                ),
+            )
+        ),
+        ReconciliationDecision.NOT_FOUND,
+        ReconciliationReason.ZERO_MATCHING_COMPLETIONS,
+        (),
+        id="D1-048",
+    ),
+    pytest.param(
+        read_result(
+            comments=(
+                make_comment(
+                    "c1",
+                    body_override="- " + make_body().replace("\n", "\n  "),
+                ),
+            )
+        ),
+        ReconciliationDecision.NOT_FOUND,
+        ReconciliationReason.ZERO_MATCHING_COMPLETIONS,
+        (),
+        id="D1-049",
+    ),
+    pytest.param(
+        read_result(comments=(make_comment("c1", body_override="\n\n" + make_body()),)),
+        ReconciliationDecision.COMPLETED,
+        ReconciliationReason.EXACTLY_ONE_TRUSTED_MATCH,
+        ("c1",),
+        id="D1-050",
+    ),
+    pytest.param(
+        read_result(comments=(make_comment("c1", extra_payload={"protocol": REQUEST.expected_result_protocol}),)),
+        ReconciliationDecision.COMPLETED,
+        ReconciliationReason.EXACTLY_ONE_TRUSTED_MATCH,
+        ("c1",),
+        id="D1-051",
+    ),
+    pytest.param(
+        read_result(
+            comments=(
+                make_comment(
+                    "c1",
+                    protocol_value="lawb.runner_result.v2",
+                    extra_payload={"protocol": REQUEST.expected_result_protocol},
+                ),
+            )
+        ),
+        ReconciliationDecision.BLOCKED,
+        ReconciliationReason.UNSUPPORTED_PROTOCOL,
+        ("c1",),
+        id="D1-052",
+    ),
+    pytest.param(
+        read_result(comments=(make_comment("c1", extra_payload={"protocol": "lawb.runner_result.v2"}),)),
+        ReconciliationDecision.BLOCKED,
+        ReconciliationReason.UNSUPPORTED_PROTOCOL,
+        ("c1",),
+        id="D1-053",
     ),
 ]
 
