@@ -9,12 +9,14 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from local_runner_bridge.bridge_operator_b1 import CommentRecord, IssueRecord, LocalReadiness
+import local_runner_bridge.bridge_operator_b3 as bridge_operator_b3
 from local_runner_bridge.bridge_operator_b3 import (
     B3B_MODE,
     B3C_MODE,
     DEFAULT_INBOX_ISSUE,
     PROCESSED_REQUEST_PROTOCOL,
     read_processed_request_ids,
+    read_processed_request_records,
     run_bridge_operator_b3_dry_run_loop,
 )
 from local_runner_bridge.bridge_operator_b2 import DispatcherInvocationResult
@@ -138,31 +140,43 @@ def run(tmp_path, client=None, readiness=None, **kwargs):
 
 
 def run_b3b(tmp_path, client=None, readiness=None, dispatcher_invoker=None, **kwargs):
+    created_default_client = client is None
+    if client is None:
+        client = FakeGitHub(
+            target_comments=[
+                CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+            ]
+        )
+    base_invoker = dispatcher_invoker or (
+        lambda **_: DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+    )
+
+    def invoker(**call_kwargs):
+        result = base_invoker(**call_kwargs)
+        if created_default_client and result.returncode == 0 and not result.timed_out:
+            client.target_comments.append(
+                CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW")
+            )
+        return result
+
     return run_bridge_operator_b3_dry_run_loop(
         repo_root=ROOT_PATH,
         state_dir=tmp_path,
-        github_client=client or FakeGitHub(
-            target_comments=[
-                CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
-                CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"),
-            ]
-        ),
+        github_client=client,
         local_checker=readiness or ready(tmp_path),
         now_utc=NOW,
         sleeper=lambda seconds: None,
         mode=B3B_MODE,
-        dispatcher_invoker=dispatcher_invoker
-        or (lambda **_: DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")),
+        dispatcher_invoker=invoker,
         timeout_seconds=30,
         **kwargs,
     )
 
 
 def run_b3c(tmp_path, client=None, readiness=None, dispatcher_invoker=None, **kwargs):
-    return run_bridge_operator_b3_dry_run_loop(
-        repo_root=ROOT_PATH,
-        state_dir=tmp_path,
-        github_client=client or FakeGitHub(
+    created_default_client = client is None
+    if client is None:
+        client = FakeGitHub(
             inbox_comments=[
                 CommentRecord(
                     id=1,
@@ -176,19 +190,33 @@ def run_b3c(tmp_path, client=None, readiness=None, dispatcher_invoker=None, **kw
                     body=dispatch_marker(action="run-reviewbundle"),
                     author="HarryWhite-TW",
                 ),
+            ],
+        )
+    base_invoker = dispatcher_invoker or (
+        lambda **_: DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+    )
+
+    def invoker(**call_kwargs):
+        result = base_invoker(**call_kwargs)
+        if created_default_client and result.returncode == 0 and not result.timed_out:
+            client.target_comments.append(
                 CommentRecord(
                     id=20,
                     body=result_comment(action="run-reviewbundle"),
                     author="HarryWhite-TW",
-                ),
-            ],
-        ),
+                )
+            )
+        return result
+
+    return run_bridge_operator_b3_dry_run_loop(
+        repo_root=ROOT_PATH,
+        state_dir=tmp_path,
+        github_client=client,
         local_checker=readiness or ready(tmp_path),
         now_utc=NOW,
         sleeper=lambda seconds: None,
         mode=B3C_MODE,
-        dispatcher_invoker=dispatcher_invoker
-        or (lambda **_: DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")),
+        dispatcher_invoker=invoker,
         timeout_seconds=30,
         **kwargs,
     )
@@ -314,6 +342,11 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
         "operator_direct_runner_invoked": False,
         "operator_direct_codex_invoked": False,
         "github_result_writeback_observed": True,
+        "durable_reconciliation_performed": True,
+        "durable_reconciliation_decision": "NOT_FOUND",
+        "durable_reconciliation_reason": "ZERO_MATCHING_COMPLETIONS",
+        "durable_reconciliation_matched_evidence_ids": [],
+        "durable_completion_reconciled": False,
         "current_failure_recorded": False,
         "current_failure_reason": None,
         "last_failure_json_applies_to_current_run": False,
@@ -369,7 +402,6 @@ def test_b3b_processed_a_plus_new_b_dispatches_only_b_and_appends_one_record(tmp
         ],
         target_comments=[
             CommentRecord(id=10, body=dispatch_marker(request_id="dispatch-b"), author="HarryWhite-TW"),
-            CommentRecord(id=20, body=result_comment(request_id="dispatch-b"), author="HarryWhite-TW"),
         ],
     )
 
@@ -377,6 +409,13 @@ def test_b3b_processed_a_plus_new_b_dispatches_only_b_and_appends_one_record(tmp
         tmp_path,
         client,
         dispatcher_invoker=lambda **kwargs: calls.append(kwargs)
+        or client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(request_id="dispatch-b"),
+                author="HarryWhite-TW",
+            )
+        )
         or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
     )
 
@@ -515,6 +554,200 @@ def test_b3c_run_reviewbundle_invokes_dispatcher_once_and_processes_request(tmp_
     assert payload["dispatcher_invoked"] is True
     assert payload["result_verified"] is True
     assert payload["lifecycle_state"] == "CONSUMED"
+    assert_high_risk_safety(summary)
+
+
+def test_b3b_preexisting_matching_durable_completion_reconciles_without_dispatcher(tmp_path):
+    calls = []
+    client = FakeGitHub(
+        target_comments=[
+            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+            CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"),
+        ]
+    )
+
+    summary = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert summary["result"] == "success"
+    assert summary["phase"] == "reconciled_completed"
+    assert summary["durable_reconciliation_performed"] is True
+    assert summary["durable_reconciliation_decision"] == "COMPLETED"
+    assert summary["durable_reconciliation_reason"] == "EXACTLY_ONE_TRUSTED_MATCH"
+    assert summary["durable_reconciliation_matched_evidence_ids"] == ["20"]
+    assert summary["durable_completion_reconciled"] is True
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert summary["operator_direct_execution_performed"] is False
+    assert summary["runner_invoked"] is False
+    assert summary["codex_invoked"] is False
+    assert summary["github_write_performed"] is False
+    assert calls == []
+    processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(processed) == 1
+    payload = json.loads(processed[0])
+    assert payload["request_id"] == "b3a-151-20260616T080000Z"
+    assert payload["target_dispatch_request_id"] == "dispatch-151"
+    assert payload["completion_source"] == "durable_evidence_reconciliation"
+    assert payload["dispatcher_invoked"] is False
+    assert payload["result_verified"] is True
+    assert payload["reconciliation_decision"] == "COMPLETED"
+    assert payload["reconciliation_reason"] == "EXACTLY_ONE_TRUSTED_MATCH"
+    assert payload["reconciliation_matched_evidence_ids"] == ["20"]
+    log = read_log_events(tmp_path / "operator.log")[-1]
+    assert log["event"] == "reconciled"
+    assert log["reason"] == "durable_completion_reconciled"
+    assert log["dispatcher_invoked"] is False
+    assert log["durable_completion_reconciled"] is True
+    assert_high_risk_safety(summary)
+
+
+def test_b3b_reconciled_restart_uses_local_processed_state_before_provider_read(tmp_path):
+    client = FakeGitHub(
+        target_comments=[
+            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+            CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"),
+        ]
+    )
+    first_calls = []
+
+    first = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: first_calls.append(kwargs),
+    )
+
+    class CountingProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def read_result_comments(self, request):
+            self.calls += 1
+            raise AssertionError("provider must not be called")
+
+    second_calls = []
+    provider = CountingProvider()
+    second = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: second_calls.append(kwargs),
+        durable_evidence_provider=provider,
+    )
+
+    assert first["result"] == "success"
+    assert first["durable_completion_reconciled"] is True
+    assert first_calls == []
+    assert second["result"] == "success"
+    assert second["processed_request_already_seen"] is True
+    assert second["dispatcher_invoked"] is False
+    assert second["dispatcher_invocation_count"] == 0
+    assert second["current_failure_recorded"] is False
+    assert provider.calls == 0
+    assert second_calls == []
+    processed = (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(processed) == 1
+    assert not (tmp_path / "last_failure.json").exists()
+    assert_high_risk_safety(second)
+
+
+def test_b3b_preexisting_blocked_durable_evidence_fails_before_dispatcher(tmp_path):
+    calls = []
+    client = FakeGitHub(
+        target_comments=[
+            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+            CommentRecord(id=20, body=result_comment(result="failure"), author="HarryWhite-TW"),
+        ]
+    )
+
+    summary = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["durable_reconciliation_blocked"]
+    assert summary["durable_reconciliation_decision"] == "BLOCKED"
+    assert summary["durable_reconciliation_reason"] == "NON_SUCCESS_RESULT"
+    assert summary["durable_reconciliation_matched_evidence_ids"] == ["20"]
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert calls == []
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+    failure = read_json(tmp_path / "last_failure.json")
+    assert failure["reason"] == "durable_reconciliation_blocked"
+    assert failure["dispatcher_reached"] is False
+    assert failure["durable_reconciliation_reason"] == "NON_SUCCESS_RESULT"
+    assert_high_risk_safety(summary)
+
+
+def test_b3b_durable_provider_error_fails_before_dispatcher(tmp_path):
+    calls = []
+    client = FakeGitHub(target_comments=[CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW")])
+
+    class ErrorProvider:
+        def read_result_comments(self, request):
+            raise RuntimeError("provider exploded")
+
+    summary = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+        durable_evidence_provider=ErrorProvider(),
+    )
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["durable_reconciliation_error"]
+    assert summary["durable_reconciliation_decision"] == "ERROR"
+    assert summary["durable_reconciliation_reason"] == "PROVIDER_ERROR"
+    assert summary["dispatcher_invoked"] is False
+    assert calls == []
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+    assert read_json(tmp_path / "last_failure.json")["dispatcher_reached"] is False
+    assert_high_risk_safety(summary)
+
+
+def test_b3b_unexpected_durable_reconciliation_decision_fails_before_dispatcher(
+    tmp_path, monkeypatch
+):
+    class Value:
+        def __init__(self, value):
+            self.value = value
+
+    class UnknownDecisionResult:
+        decision = Value("UNKNOWN")
+        reason = Value("UNKNOWN_REASON")
+        matched_evidence_ids = ("20",)
+        diagnostics = ("unknown_decision_for_test",)
+
+    monkeypatch.setattr(
+        bridge_operator_b3,
+        "resolve_durable_completion",
+        lambda request, provider, trusted_authors: UnknownDecisionResult(),
+    )
+    calls = []
+
+    summary = run_b3b(tmp_path, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["durable_reconciliation_unexpected_decision"]
+    assert summary["durable_reconciliation_decision"] == "UNKNOWN"
+    assert summary["durable_reconciliation_reason"] == "UNKNOWN_REASON"
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert summary["operator_direct_execution_performed"] is False
+    assert calls == []
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+    failure = read_json(tmp_path / "last_failure.json")
+    assert failure["reason"] == "durable_reconciliation_unexpected_decision"
+    assert failure["dispatcher_reached"] is False
+    assert failure["current_run"]["dispatcher_invoked"] is False
+    log = read_log_events(tmp_path / "operator.log")[-1]
+    assert log["reason"] == "durable_reconciliation_unexpected_decision"
+    assert log["dispatcher_invoked"] is False
     assert_high_risk_safety(summary)
 
 
@@ -774,30 +1007,28 @@ def test_b3b_dirty_repo_and_wrong_head_fail_before_dispatcher(tmp_path):
 
 
 def test_b3b_untrusted_or_failure_result_reaches_writeback_but_is_not_verified(tmp_path):
-    untrusted = run_b3b(
-        tmp_path / "untrusted",
-        FakeGitHub(
-            target_comments=[
-                CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
-                CommentRecord(id=20, body=result_comment(), author="other-user"),
-            ]
-        ),
-    )
-    failure_result = run_b3b(
-        tmp_path / "failure-result",
-        FakeGitHub(
-            target_comments=[
-                CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
-                CommentRecord(id=20, body=result_comment(result="failure"), author="HarryWhite-TW"),
-            ]
-        ),
-    )
-
     cases = (
-        (untrusted, tmp_path / "untrusted", "untrusted_result_author"),
-        (failure_result, tmp_path / "failure-result", "target_result_not_success"),
+        (tmp_path / "untrusted", "untrusted_result_author", "other-user", "success"),
+        (tmp_path / "failure-result", "target_result_not_success", "HarryWhite-TW", "failure"),
     )
-    for summary, case_dir, reason in cases:
+    for case_dir, reason, author, result_value in cases:
+        client = FakeGitHub(
+            target_comments=[
+                CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+            ]
+        )
+        summary = run_b3b(
+            case_dir,
+            client,
+            dispatcher_invoker=lambda **_: client.target_comments.append(
+                CommentRecord(
+                    id=20,
+                    body=result_comment(result=result_value),
+                    author=author,
+                )
+            )
+            or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
+        )
         assert summary["blocked_reasons"] == [reason]
         assert summary["dispatcher_invocation_count"] == 1
         assert summary["dispatcher_result_writeback_reached"] is True
@@ -1208,6 +1439,41 @@ def test_processed_history_accepts_full_legacy_processed_record(tmp_path):
     assert read_processed_request_ids(path) == {request_id}
 
 
+def test_processed_history_accepts_reconciled_consumed_record(tmp_path):
+    request_id = "reconciled-151"
+    path = tmp_path / "processed_requests.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "protocol": PROCESSED_REQUEST_PROTOCOL,
+                "processed_at_utc": "2026-06-16T08:00:00Z",
+                "cycle": 1,
+                "request_id": request_id,
+                "target_issue": 151,
+                "target_dispatch_request_id": "dispatch-151",
+                "requested_action": "maybe-status-check",
+                "expected_branch": "feature/bridge-operator-b3a",
+                "expected_head": HEAD,
+                "lifecycle_state": "CONSUMED",
+                "completion_source": "durable_evidence_reconciliation",
+                "dispatcher_invoked": False,
+                "result_verified": True,
+                "reconciliation_decision": "COMPLETED",
+                "reconciliation_reason": "EXACTLY_ONE_TRUSTED_MATCH",
+                "reconciliation_matched_evidence_ids": ["20"],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    records = read_processed_request_records(path)
+
+    assert set(records) == {request_id}
+    assert records[request_id]["completion_source"] == "durable_evidence_reconciliation"
+
+
 def test_processed_history_rejects_identityless_minimal_legacy_record(tmp_path):
     path = tmp_path / "processed_requests.jsonl"
     path.write_text(
@@ -1251,6 +1517,88 @@ def test_processed_history_rejects_duplicate_request_id_records(tmp_path):
         processed_record(request_id="-bad"),
         processed_record(lifecycle_state="CURRENT"),
         processed_record(dispatcher_invoked=False),
+        processed_record(completion_source="unknown"),
+        processed_record(
+            completion_source="durable_evidence_reconciliation",
+            dispatcher_invoked=True,
+            result_verified=True,
+            lifecycle_state="CONSUMED",
+            reconciliation_decision="COMPLETED",
+            reconciliation_reason="EXACTLY_ONE_TRUSTED_MATCH",
+            reconciliation_matched_evidence_ids=["20"],
+        ),
+        processed_record(
+            completion_source="durable_evidence_reconciliation",
+            dispatcher_invoked=False,
+            result_verified=True,
+            lifecycle_state="CONSUMED",
+            reconciliation_decision="BLOCKED",
+            reconciliation_reason="EXACTLY_ONE_TRUSTED_MATCH",
+            reconciliation_matched_evidence_ids=["20"],
+        ),
+        processed_record(
+            completion_source="durable_evidence_reconciliation",
+            dispatcher_invoked=False,
+            result_verified=True,
+            lifecycle_state="CONSUMED",
+            reconciliation_decision="COMPLETED",
+            reconciliation_reason="NON_SUCCESS_RESULT",
+            reconciliation_matched_evidence_ids=["20"],
+        ),
+        processed_record(
+            completion_source="durable_evidence_reconciliation",
+            dispatcher_invoked=False,
+            result_verified=True,
+            lifecycle_state="CONSUMED",
+            reconciliation_decision="COMPLETED",
+            reconciliation_reason="EXACTLY_ONE_TRUSTED_MATCH",
+            reconciliation_matched_evidence_ids=[],
+        ),
+        processed_record(
+            completion_source="durable_evidence_reconciliation",
+            dispatcher_invoked=False,
+            result_verified=True,
+            lifecycle_state="CONSUMED",
+            reconciliation_decision="COMPLETED",
+            reconciliation_reason="EXACTLY_ONE_TRUSTED_MATCH",
+            reconciliation_matched_evidence_ids=["20", "21"],
+        ),
+        processed_record(
+            completion_source="durable_evidence_reconciliation",
+            dispatcher_invoked=False,
+            result_verified=True,
+            lifecycle_state="CONSUMED",
+            reconciliation_decision="COMPLETED",
+            reconciliation_reason="EXACTLY_ONE_TRUSTED_MATCH",
+            reconciliation_matched_evidence_ids=[""],
+        ),
+        processed_record(
+            completion_source="durable_evidence_reconciliation",
+            dispatcher_invoked=False,
+            result_verified=True,
+            lifecycle_state="CONSUMED",
+            reconciliation_decision="COMPLETED",
+            reconciliation_reason="EXACTLY_ONE_TRUSTED_MATCH",
+            reconciliation_matched_evidence_ids=[123],
+        ),
+        processed_record(
+            completion_source="durable_evidence_reconciliation",
+            dispatcher_invoked=False,
+            result_verified=True,
+            lifecycle_state="CONSUMED",
+            reconciliation_decision="COMPLETED",
+            reconciliation_reason="EXACTLY_ONE_TRUSTED_MATCH",
+            reconciliation_matched_evidence_ids="20",
+        ),
+        processed_record(
+            completion_source="durable_evidence_reconciliation",
+            dispatcher_invoked=False,
+            result_verified=True,
+            lifecycle_state="CONSUMED",
+            reconciliation_decision="COMPLETED",
+            reconciliation_reason="EXACTLY_ONE_TRUSTED_MATCH",
+            reconciliation_matched_evidence_ids=None,
+        ),
         processed_record(result_verified=False),
         processed_record(target_issue="151"),
         processed_record(target_issue=True),

@@ -26,6 +26,12 @@ from local_runner_bridge.bridge_operator_b2 import (
     default_dispatcher_invoker,
     _read_matching_results,
 )
+from local_runner_bridge.durable_evidence_provider import GitHubIssueCommentEvidenceProvider
+from local_runner_bridge.durable_evidence_reconciliation import (
+    RequestIdentity,
+    ReconciliationDecision,
+    resolve_durable_completion,
+)
 
 SUMMARY_PROTOCOL = "lawb.bridge_operator_b3_dry_run_loop_summary.v1"
 HEARTBEAT_PROTOCOL = "lawb.bridge_operator_b3_heartbeat.v1"
@@ -63,6 +69,7 @@ def run_bridge_operator_b3_dry_run_loop(
     mode: str = B3A_MODE,
     dispatcher_invoker: Any | None = None,
     timeout_seconds: int | None = None,
+    durable_evidence_provider: Any | None = None,
 ) -> dict[str, Any]:
     """Run a visible bounded loop, dry-run by default."""
     summary = _base_summary(repository, inbox_issue, repo_root, mode)
@@ -188,12 +195,40 @@ def run_bridge_operator_b3_dry_run_loop(
                             summary=summary,
                             dispatcher_invoker=dispatcher_invoker,
                             timeout_seconds=timeout_seconds,
+                            durable_evidence_provider=durable_evidence_provider,
                         )
                         if reason is not None:
                             _record_failure(state_root, summary, reason, _now(now_utc))
                             _write_log(state_root, "failed", reason, summary)
                             break
-                        _write_log(state_root, "processed", "verified_dispatcher_result", summary)
+                        if summary.get("durable_completion_reconciled"):
+                            _write_log(
+                                state_root,
+                                "reconciled",
+                                "durable_completion_reconciled",
+                                summary,
+                            )
+                        elif (
+                            summary.get("phase") == "already_processed"
+                            or (
+                                summary.get("processed_request_already_seen")
+                                and not summary.get("dispatcher_invoked")
+                            )
+                        ):
+                            _write_log(
+                                state_root,
+                                "already_processed",
+                                "local_processed_request_already_seen",
+                                summary,
+                            )
+                        elif (
+                            summary.get("dispatcher_invoked")
+                            and summary.get("dispatcher_result_writeback_verified")
+                            and summary.get("target_result_verified")
+                        ):
+                            _write_log(state_root, "processed", "verified_dispatcher_result", summary)
+                        else:
+                            _write_log(state_root, "completed", "no_dispatcher_result_verified", summary)
                 elif _is_github_read_failure(b1_summary):
                     _block(summary, "github_read_unavailable")
                     _record_failure(state_root, summary, "github_read_unavailable", _now(now_utc))
@@ -262,6 +297,13 @@ def _base_summary(
         "dry_run_duplicate_observation": False,
         "processed_request_written": False,
         "processed_request_already_seen": False,
+        "durable_reconciliation_performed": False,
+        "durable_reconciliation_read_attempts": 0,
+        "durable_reconciliation_decision": None,
+        "durable_reconciliation_reason": None,
+        "durable_reconciliation_matched_evidence_ids": [],
+        "durable_reconciliation_diagnostics": [],
+        "durable_completion_reconciled": False,
         "request_id": None,
         "inbox_comment_id": None,
         "target_issue": None,
@@ -506,6 +548,7 @@ def _delegate_b3_request(
     summary: dict[str, Any],
     dispatcher_invoker: Any | None,
     timeout_seconds: int | None,
+    durable_evidence_provider: Any | None,
 ) -> str | None:
     action = b1_summary.get("requested_action")
     if summary.get("mode") == B3B_MODE and action != B3B_ALLOWED_ACTION:
@@ -533,6 +576,49 @@ def _delegate_b3_request(
         summary["processed_request_already_seen"] = True
         summary["phase"] = "already_processed"
         return None
+
+    reconciliation_provider = durable_evidence_provider or GitHubIssueCommentEvidenceProvider(
+        client,
+        repository=repository,
+    )
+    request_identity = RequestIdentity(
+        repository=repository,
+        issue_number=int(b1_summary["target_issue"]),
+        surface="issue_comment",
+        request_id=str(b1_summary["target_dispatch_request_id"]),
+        action=str(b1_summary["requested_action"]),
+        branch=str(b1_summary["expected_branch"]),
+        head=str(b1_summary["expected_head"]),
+    )
+    summary["durable_reconciliation_performed"] = True
+    summary["durable_reconciliation_read_attempts"] += 1
+    reconciliation = resolve_durable_completion(
+        request_identity,
+        reconciliation_provider,
+        frozenset(TRUSTED_ACTORS),
+    )
+    _copy_reconciliation_result(summary, reconciliation)
+    if reconciliation.decision == ReconciliationDecision.COMPLETED:
+        _append_reconciled_processed_request(
+            state_root,
+            b1_summary,
+            reconciliation,
+            cycle,
+            now,
+        )
+        summary["processed_request_written"] = True
+        summary["durable_completion_reconciled"] = True
+        summary["phase"] = "reconciled_completed"
+        return None
+    if reconciliation.decision == ReconciliationDecision.BLOCKED:
+        _block(summary, "durable_reconciliation_blocked")
+        return "durable_reconciliation_blocked"
+    if reconciliation.decision == ReconciliationDecision.ERROR:
+        _block(summary, "durable_reconciliation_error")
+        return "durable_reconciliation_error"
+    if reconciliation.decision != ReconciliationDecision.NOT_FOUND:
+        _block(summary, "durable_reconciliation_unexpected_decision")
+        return "durable_reconciliation_unexpected_decision"
 
     invoker = dispatcher_invoker or default_dispatcher_invoker
     timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
@@ -640,6 +726,37 @@ def _append_processed_request(
         handle.write("\n")
 
 
+def _append_reconciled_processed_request(
+    state_dir: Path,
+    b1_summary: dict[str, Any],
+    reconciliation: Any,
+    cycle: int,
+    now: datetime,
+) -> None:
+    path = state_dir / "processed_requests.jsonl"
+    payload = {
+        "protocol": PROCESSED_REQUEST_PROTOCOL,
+        "processed_at_utc": _format_time(now),
+        "cycle": cycle,
+        "request_id": b1_summary.get("request_id"),
+        "target_issue": b1_summary.get("target_issue"),
+        "target_dispatch_request_id": b1_summary.get("target_dispatch_request_id"),
+        "requested_action": b1_summary.get("requested_action"),
+        "expected_branch": b1_summary.get("expected_branch"),
+        "expected_head": b1_summary.get("expected_head"),
+        "lifecycle_state": CONSUMED,
+        "completion_source": "durable_evidence_reconciliation",
+        "dispatcher_invoked": False,
+        "result_verified": True,
+        "reconciliation_decision": reconciliation.decision.value,
+        "reconciliation_reason": reconciliation.reason.value,
+        "reconciliation_matched_evidence_ids": list(reconciliation.matched_evidence_ids),
+    }
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        json.dump(payload, handle, sort_keys=True)
+        handle.write("\n")
+
+
 def _read_observed_request_ids(path: Path) -> set[str]:
     request_ids: set[str] = set()
     if not path.exists():
@@ -698,7 +815,12 @@ def _validate_processed_request_record(payload: Any) -> None:
     lifecycle_state = payload.get("lifecycle_state")
     if "lifecycle_state" in payload and lifecycle_state != CONSUMED:
         raise ValueError("invalid_processed_request")
-    if "dispatcher_invoked" in payload and payload.get("dispatcher_invoked") is not True:
+    completion_source = payload.get("completion_source")
+    if completion_source is not None and completion_source != "durable_evidence_reconciliation":
+        raise ValueError("invalid_processed_request")
+    if completion_source == "durable_evidence_reconciliation":
+        _validate_reconciled_processed_record(payload)
+    elif "dispatcher_invoked" in payload and payload.get("dispatcher_invoked") is not True:
         raise ValueError("invalid_processed_request")
     if "result_verified" in payload and payload.get("result_verified") is not True:
         raise ValueError("invalid_processed_request")
@@ -721,6 +843,26 @@ def _validate_processed_request_record(payload: Any) -> None:
     ):
         if not isinstance(payload.get(key), str) or not payload[key].strip():
             raise ValueError("invalid_processed_request")
+
+
+def _validate_reconciled_processed_record(payload: dict[str, Any]) -> None:
+    if payload.get("dispatcher_invoked") is not False:
+        raise ValueError("invalid_processed_request")
+    if payload.get("result_verified") is not True:
+        raise ValueError("invalid_processed_request")
+    if payload.get("lifecycle_state") != CONSUMED:
+        raise ValueError("invalid_processed_request")
+    if payload.get("reconciliation_decision") != "COMPLETED":
+        raise ValueError("invalid_processed_request")
+    if payload.get("reconciliation_reason") != "EXACTLY_ONE_TRUSTED_MATCH":
+        raise ValueError("invalid_processed_request")
+    evidence_ids = payload.get("reconciliation_matched_evidence_ids")
+    if (
+        not isinstance(evidence_ids, list)
+        or len(evidence_ids) != 1
+        or not all(isinstance(evidence_id, str) and evidence_id.strip() for evidence_id in evidence_ids)
+    ):
+        raise ValueError("invalid_processed_request")
 
 
 def _processed_record_matches_b1_identity(
@@ -789,6 +931,15 @@ def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
             summary.get("dispatcher_result_writeback_reached")
             or summary.get("github_write_performed")
         ),
+        "durable_reconciliation_performed": bool(
+            summary.get("durable_reconciliation_performed")
+        ),
+        "durable_reconciliation_decision": summary.get("durable_reconciliation_decision"),
+        "durable_reconciliation_reason": summary.get("durable_reconciliation_reason"),
+        "durable_reconciliation_matched_evidence_ids": list(
+            summary.get("durable_reconciliation_matched_evidence_ids", [])
+        ),
+        "durable_completion_reconciled": bool(summary.get("durable_completion_reconciled")),
         "current_failure_recorded": bool(summary.get("current_failure_recorded")),
         "current_failure_reason": summary.get("current_failure_reason"),
         "last_failure_json_applies_to_current_run": bool(
@@ -870,6 +1021,18 @@ def _record_failure(state_dir: Path, summary: dict[str, Any], reason: str, now: 
         "dispatcher_result_writeback_verified": bool(
             summary.get("dispatcher_result_writeback_verified")
         ),
+        "durable_reconciliation_performed": bool(
+            summary.get("durable_reconciliation_performed")
+        ),
+        "durable_reconciliation_decision": summary.get("durable_reconciliation_decision"),
+        "durable_reconciliation_reason": summary.get("durable_reconciliation_reason"),
+        "durable_reconciliation_matched_evidence_ids": list(
+            summary.get("durable_reconciliation_matched_evidence_ids", [])
+        ),
+        "durable_reconciliation_diagnostics": list(
+            summary.get("durable_reconciliation_diagnostics", [])
+        ),
+        "durable_completion_reconciled": bool(summary.get("durable_completion_reconciled")),
         "runner_reached": False,
         "codex_reached": False,
         "github_write_reached": bool(summary.get("github_write_performed")),
@@ -905,6 +1068,18 @@ def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]
         "dispatcher_result_writeback_verified": bool(
             summary.get("dispatcher_result_writeback_verified")
         ),
+        "durable_reconciliation_performed": bool(
+            summary.get("durable_reconciliation_performed")
+        ),
+        "durable_reconciliation_decision": summary.get("durable_reconciliation_decision"),
+        "durable_reconciliation_reason": summary.get("durable_reconciliation_reason"),
+        "durable_reconciliation_matched_evidence_ids": list(
+            summary.get("durable_reconciliation_matched_evidence_ids", [])
+        ),
+        "durable_reconciliation_diagnostics": list(
+            summary.get("durable_reconciliation_diagnostics", [])
+        ),
+        "durable_completion_reconciled": bool(summary.get("durable_completion_reconciled")),
         "runner_invoked": False,
         "codex_invoked": False,
         "github_write_performed": False,
@@ -926,6 +1101,15 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
         json.dump(payload, handle, sort_keys=True)
         handle.write("\n")
     temp.replace(path)
+
+
+def _copy_reconciliation_result(summary: dict[str, Any], result: Any) -> None:
+    summary["durable_reconciliation_decision"] = result.decision.value
+    summary["durable_reconciliation_reason"] = result.reason.value
+    summary["durable_reconciliation_matched_evidence_ids"] = list(
+        result.matched_evidence_ids
+    )
+    summary["durable_reconciliation_diagnostics"] = list(result.diagnostics)
 
 
 def _block(summary: dict[str, Any], reason: str) -> None:
