@@ -201,31 +201,22 @@ def run_bridge_operator_b3_dry_run_loop(
                             _record_failure(state_root, summary, reason, _now(now_utc))
                             _write_log(state_root, "failed", reason, summary)
                             break
-                        if summary.get("durable_completion_reconciled"):
+                        current_outcome = summary.get("current_delegation_outcome")
+                        if current_outcome == "durable_completion_reconciled":
                             _write_log(
                                 state_root,
                                 "reconciled",
                                 "durable_completion_reconciled",
                                 summary,
                             )
-                        elif (
-                            summary.get("phase") == "already_processed"
-                            or (
-                                summary.get("processed_request_already_seen")
-                                and not summary.get("dispatcher_invoked")
-                            )
-                        ):
+                        elif current_outcome == "local_processed_request_already_seen":
                             _write_log(
                                 state_root,
                                 "already_processed",
                                 "local_processed_request_already_seen",
                                 summary,
                             )
-                        elif (
-                            summary.get("dispatcher_invoked")
-                            and summary.get("dispatcher_result_writeback_verified")
-                            and summary.get("target_result_verified")
-                        ):
+                        elif current_outcome == "verified_dispatcher_result":
                             _write_log(state_root, "processed", "verified_dispatcher_result", summary)
                         else:
                             _write_log(state_root, "completed", "no_dispatcher_result_verified", summary)
@@ -297,6 +288,7 @@ def _base_summary(
         "dry_run_duplicate_observation": False,
         "processed_request_written": False,
         "processed_request_already_seen": False,
+        "current_delegation_outcome": None,
         "durable_reconciliation_performed": False,
         "durable_reconciliation_read_attempts": 0,
         "durable_reconciliation_decision": None,
@@ -550,6 +542,7 @@ def _delegate_b3_request(
     timeout_seconds: int | None,
     durable_evidence_provider: Any | None,
 ) -> str | None:
+    summary["current_delegation_outcome"] = None
     action = b1_summary.get("requested_action")
     if summary.get("mode") == B3B_MODE and action != B3B_ALLOWED_ACTION:
         _block(summary, "run_reviewbundle_not_enabled_in_b3b")
@@ -575,6 +568,7 @@ def _delegate_b3_request(
             return "processed_request_identity_mismatch"
         summary["processed_request_already_seen"] = True
         summary["phase"] = "already_processed"
+        summary["current_delegation_outcome"] = "local_processed_request_already_seen"
         return None
 
     reconciliation_provider = durable_evidence_provider or GitHubIssueCommentEvidenceProvider(
@@ -609,6 +603,7 @@ def _delegate_b3_request(
         summary["processed_request_written"] = True
         summary["durable_completion_reconciled"] = True
         summary["phase"] = "reconciled_completed"
+        summary["current_delegation_outcome"] = "durable_completion_reconciled"
         return None
     if reconciliation.decision == ReconciliationDecision.BLOCKED:
         _block(summary, "durable_reconciliation_blocked")
@@ -694,6 +689,7 @@ def _delegate_b3_request(
     summary["dispatcher_result_writeback_verified"] = True
     _append_processed_request(state_root, b1_summary, match, cycle, now)
     summary["processed_request_written"] = True
+    summary["current_delegation_outcome"] = "verified_dispatcher_result"
     return None
 
 
@@ -1080,6 +1076,7 @@ def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]
             summary.get("durable_reconciliation_diagnostics", [])
         ),
         "durable_completion_reconciled": bool(summary.get("durable_completion_reconciled")),
+        "current_delegation_outcome": summary.get("current_delegation_outcome"),
         "runner_invoked": False,
         "codex_invoked": False,
         "github_write_performed": False,

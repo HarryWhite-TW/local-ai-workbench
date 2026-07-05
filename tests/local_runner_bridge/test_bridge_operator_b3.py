@@ -605,6 +605,96 @@ def test_b3b_preexisting_matching_durable_completion_reconciles_without_dispatch
     assert_high_risk_safety(summary)
 
 
+def test_b3b_multi_cycle_reconciliation_does_not_misclassify_later_dispatcher_log(
+    tmp_path,
+):
+    calls = []
+    client = FakeGitHub(
+        target_comments=[
+            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+            CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"),
+        ]
+    )
+
+    def sleeper(seconds):
+        client.inbox_comments.append(
+            CommentRecord(
+                id=2,
+                body=inbox_marker(
+                    request_id="b3b-second-20260616T080001Z",
+                    target_dispatch_request_id="dispatch-second",
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        client.target_comments.append(
+            CommentRecord(
+                id=30,
+                body=dispatch_marker(request_id="dispatch-second"),
+                author="HarryWhite-TW",
+            )
+        )
+
+    def invoker(**kwargs):
+        calls.append(kwargs)
+        client.target_comments.append(
+            CommentRecord(
+                id=40,
+                body=result_comment(request_id="dispatch-second"),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=ROOT_PATH,
+        state_dir=tmp_path,
+        github_client=client,
+        local_checker=ready(tmp_path),
+        now_utc=NOW,
+        sleeper=sleeper,
+        mode=B3B_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        max_cycles=2,
+    )
+
+    assert summary["result"] == "success"
+    assert summary["dispatcher_invocation_count"] == 1
+    assert len(calls) == 1
+    assert calls[0]["args"][calls[0]["args"].index("-IssueNumber") + 1] == "151"
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "processed_requests.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["request_id"] for record in records] == [
+        "b3a-151-20260616T080000Z",
+        "b3b-second-20260616T080001Z",
+    ]
+    assert records[0]["completion_source"] == "durable_evidence_reconciliation"
+    assert records[0]["dispatcher_invoked"] is False
+    assert records[1]["dispatcher_invoked"] is True
+    assert records[1]["target_dispatch_request_id"] == "dispatch-second"
+    assert records[1]["result_verified"] is True
+
+    relevant_logs = [
+        event
+        for event in read_log_events(tmp_path / "operator.log")
+        if event["event"] in {"processed", "reconciled"}
+    ]
+    assert [(event["event"], event["reason"]) for event in relevant_logs] == [
+        ("reconciled", "durable_completion_reconciled"),
+        ("processed", "verified_dispatcher_result"),
+    ]
+    assert relevant_logs[0]["request_id"] == "b3a-151-20260616T080000Z"
+    assert relevant_logs[1]["request_id"] == "b3b-second-20260616T080001Z"
+    assert relevant_logs[0]["current_delegation_outcome"] == "durable_completion_reconciled"
+    assert relevant_logs[1]["current_delegation_outcome"] == "verified_dispatcher_result"
+    assert not (tmp_path / "last_failure.json").exists()
+    assert_high_risk_safety(summary)
+
+
 def test_b3b_reconciled_restart_uses_local_processed_state_before_provider_read(tmp_path):
     client = FakeGitHub(
         target_comments=[
