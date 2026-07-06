@@ -65,6 +65,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $IssueNumber = 83
             $IssueNumbers = @()
             $PostResultComment = $false
+            $ReviewedCodexPath = ""
             $script:Branch = "master"
             $script:Head = "{HEAD}"
             $script:GitStatus = ""
@@ -81,6 +82,9 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $script:RunnerStdout = "runner v1 review bundle ok"
             $script:RunnerStderr = ""
             $script:RunnerExitCode = 0
+            $script:RunnerPreflightCalls = 0
+            $script:RunnerPreflightStdout = '{json.dumps(_dispatcher_nested_runner())}'
+            $script:RunnerPreflightExitCode = 0
             Set-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1") -Value "# runner stub" -Encoding UTF8
 
             function New-TestComment {{
@@ -149,6 +153,14 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             }}
             function Invoke-ReadOnlyCommand {{
                 param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+                if ($Action -eq "runner ToolResolutionPreflight") {{
+                    $script:RunnerPreflightCalls += 1
+                    return [pscustomobject]@{{
+                        ExitCode = $script:RunnerPreflightExitCode
+                        Stdout = $script:RunnerPreflightStdout
+                        Stderr = ""
+                    }}
+                }}
                 $requestedIssue = [int]$Arguments[2]
                 $sourceMarkers = $script:Markers
                 if ($script:IssueMarkers.ContainsKey($requestedIssue)) {{
@@ -213,6 +225,7 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
             $IssueNumber = 83
             $IssueNumbers = @()
             $PostResultComment = $false
+            $ReviewedCodexPath = ""
             $script:ForbiddenCalls = @()
             function git {{ $script:ForbiddenCalls += "git" }}
             function gh {{ $script:ForbiddenCalls += "gh" }}
@@ -379,8 +392,7 @@ def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
     assert_success(result)
     assert "CASE_RESULT=success" in result.stdout
     assert "RUNNER_CALLS=1" in result.stdout
-    assert "RUNNER_ARGS=83|ReviewBundle" in result.stdout
-    assert "RUNNER_ARGS=-IssueNumber|83|-Mode|ReviewBundle" not in result.stdout
+    assert r"RUNNER_ARGS=-IssueNumber|83|-Mode|ReviewBundle|-ReviewedCodexPath|C:\Tools\codex.cmd" in result.stdout
     assert "local_runner_v1.ps1" in result.stdout
     assert "runner v1 review bundle ok" in result.stdout
 
@@ -392,6 +404,20 @@ def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
     assert summary["result"] == "success"
     assert summary["validations"]["git_status_clean"]["status"] == "passed"
     assert summary["safety"]["no_commit"] is True
+
+
+def test_run_reviewbundle_fails_closed_when_reviewed_codex_path_mismatches_preflight(tmp_path):
+    result = run_case(
+        tmp_path,
+        r'''
+        $ReviewedCodexPath = "C:\WindowsApps\codex.exe"
+        $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-rb-mismatch-83")))
+        ''',
+    )
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "reviewed_codex_path_mismatch" in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
 
 
 def test_run_reviewbundle_runner_failure_posts_dispatcher_failure_result(tmp_path):

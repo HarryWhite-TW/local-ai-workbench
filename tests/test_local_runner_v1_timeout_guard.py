@@ -231,7 +231,7 @@ def test_resolve_codex_command_prefers_cmd_over_ps1(tmp_path):
     assert_success(result)
 
 
-def test_resolve_codex_command_prefers_exe_over_cmd(tmp_path):
+def test_resolve_codex_command_prefers_cmd_over_exe(tmp_path):
     result = run_timeout_guard_script(
         tmp_path,
         """
@@ -240,14 +240,14 @@ def test_resolve_codex_command_prefers_exe_over_cmd(tmp_path):
             [pscustomobject]@{ CommandType = "Application"; Source = "C:/fake/codex.exe"; Definition = "C:/fake/codex.exe" }
         )
         $resolved = Resolve-CodexCommand -Commands $commands
-        if ($resolved.Source -ne "C:/fake/codex.exe") {
-            throw "Expected codex.exe, got $($resolved.Source)"
+        if ($resolved.Source -ne "C:/fake/codex.cmd") {
+            throw "Expected codex.cmd, got $($resolved.Source)"
         }
-        if ($resolved.FilePath -ne "C:/fake/codex.exe") {
-            throw "Expected direct exe FilePath, got $($resolved.FilePath)"
+        if ($resolved.FilePath -ne $env:COMSPEC) {
+            throw "Expected cmd.exe FilePath, got $($resolved.FilePath)"
         }
-        if (@($resolved.ArgumentPrefix).Count -ne 0) {
-            throw "Direct exe must not have an argument prefix."
+        if (@($resolved.ArgumentPrefix).Count -ne 5) {
+            throw "Batch launcher must have cmd.exe argument prefix."
         }
         """,
     )
@@ -360,14 +360,14 @@ def test_resolve_codex_command_uses_safe_priority_independent_of_input_order(tmp
             [pscustomobject]@{ CommandType = "Application"; Source = "C:/fake/codex.exe"; Definition = "C:/fake/codex.exe" }
         )
         $resolved = Resolve-CodexCommand -Commands $commands
-        if ($resolved.Source -ne "C:/fake/codex.exe") {
-            throw "Expected codex.exe, got $($resolved.Source)"
-        }
-
-        $withoutExe = @($commands | Where-Object { $_.Source -notlike "*.exe" })
-        $resolved = Resolve-CodexCommand -Commands $withoutExe
         if ($resolved.Source -ne "C:/fake/codex.cmd") {
             throw "Expected codex.cmd, got $($resolved.Source)"
+        }
+
+        $onlyExe = @($commands | Where-Object { $_.Source -like "*.exe" })
+        $resolved = Resolve-CodexCommand -Commands $onlyExe
+        if ($resolved.Source -ne "C:/fake/codex.exe") {
+            throw "Expected codex.exe when it is the only safe launcher, got $($resolved.Source)"
         }
 
         $withoutExeOrCmd = @($commands | Where-Object {
@@ -376,6 +376,405 @@ def test_resolve_codex_command_uses_safe_priority_independent_of_input_order(tmp
         $resolved = Resolve-CodexCommand -Commands $withoutExeOrCmd
         if ($resolved.Source -ne "C:/fake/codex.bat") {
             throw "Expected codex.bat, got $($resolved.Source)"
+        }
+        """,
+    )
+    assert_success(result)
+
+
+def test_resolve_codex_command_uses_reviewed_cmd_even_when_path_contains_exe(tmp_path):
+    reviewed_cmd = tmp_path / "npm" / "codex.cmd"
+    reviewed_cmd.parent.mkdir()
+    reviewed_cmd.write_text("@echo off\n", encoding="ascii")
+    windowsapps_exe = tmp_path / "WindowsApps" / "codex.exe"
+    windowsapps_exe.parent.mkdir()
+    windowsapps_exe.write_text("fake exe", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $commands = @(
+            [pscustomobject]@{{ CommandType = "Application"; Source = {windowsapps_exe.as_posix()!r}; Definition = {windowsapps_exe.as_posix()!r} }},
+            [pscustomobject]@{{ CommandType = "Application"; Source = {reviewed_cmd.as_posix()!r}; Definition = {reviewed_cmd.as_posix()!r} }}
+        )
+        $resolved = Resolve-CodexCommand -Commands $commands -ReviewedCodexPath {reviewed_cmd.as_posix()!r}
+        $expected = [System.IO.Path]::GetFullPath({reviewed_cmd.as_posix()!r})
+        if ($resolved.Source -ne $expected) {{
+            throw "Expected reviewed codex.cmd, got $($resolved.Source)"
+        }}
+        if ($resolved.FilePath -ne $env:COMSPEC) {{
+            throw "Expected reviewed cmd to launch through COMSPEC, got $($resolved.FilePath)"
+        }}
+        if ($resolved.LauncherType -ne "cmd") {{
+            throw "Expected cmd launcher type, got $($resolved.LauncherType)"
+        }}
+        if (-not $resolved.PathBindingMatch) {{
+            throw "Expected reviewed path binding to match."
+        }}
+        if ((@($resolved.ArgumentPrefix) -join "|") -notmatch [regex]::Escape($expected)) {{
+            throw "Expected exact reviewed path in argument prefix: $($resolved.ArgumentPrefix -join '|')"
+        }}
+        """,
+    )
+    assert_success(result)
+
+
+def test_resolve_codex_command_rejects_invalid_reviewed_path_before_path_fallback(tmp_path):
+    unsafe_ps1 = tmp_path / "codex.ps1"
+    unsafe_ps1.write_text("Write-Output bad", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        foreach ($path in @("codex.cmd", {unsafe_ps1.as_posix()!r}, {str(tmp_path / 'missing.cmd')!r})) {{
+            $failed = $false
+            try {{
+                Resolve-CodexCommand -ReviewedCodexPath $path -Commands @(
+                    [pscustomobject]@{{ CommandType = "Application"; Source = "C:/fallback/codex.exe"; Definition = "C:/fallback/codex.exe" }}
+                ) | Out-Null
+            }}
+            catch {{
+                $failed = $true
+            }}
+            if (-not $failed) {{
+                throw "Expected invalid reviewed path to fail closed before fallback: $path"
+            }}
+        }}
+        """,
+    )
+    assert_success(result)
+
+
+def test_reviewed_codex_cmd_version_probe_and_task_share_launch_spec(tmp_path):
+    reviewed_cmd = tmp_path / "npm" / "codex.cmd"
+    reviewed_cmd.parent.mkdir()
+    reviewed_cmd.write_text("@echo off\n", encoding="ascii")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:ProbeCalls = 0
+        $script:TaskCalls = 0
+        $script:ProbeFilePath = ""
+        $script:TaskFilePath = ""
+        $script:ProbeArgs = @()
+        $script:TaskArgs = @()
+        function New-FakeNativeResult {{
+            param([string]$FilePath, [string[]]$Arguments, [int]$ExitCode = 0, [bool]$TimedOut = $false)
+            return [pscustomobject]@{{
+                ExitCode = $ExitCode; Stdout = ""; Stderr = ""; TimedOut = $TimedOut; TimeoutSeconds = 30
+                FilePath = $FilePath; Arguments = @($Arguments); CommandLine = "fake"
+                LastStdoutLine = ""; LastStderrLine = ""; ProcessId = 10; StopAttempted = $false; StoppedProcessIds = @()
+            }}
+        }}
+        function Invoke-CapturedNativeProcess {{
+            param(
+                [string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory, [string]$StandardInput,
+                [System.Text.Encoding]$StandardInputEncoding, [System.Text.Encoding]$StandardOutputEncoding,
+                [System.Text.Encoding]$StandardErrorEncoding, [int]$TimeoutSeconds, [string]$Action
+            )
+            if ($Action -eq "codex --version reviewed exact launcher") {{
+                $script:ProbeCalls += 1; $script:ProbeFilePath = $FilePath; $script:ProbeArgs = @($Arguments)
+                return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments
+            }}
+            if ($Action -eq "codex ReviewBundle candidate generation") {{
+                $script:TaskCalls += 1; $script:TaskFilePath = $FilePath; $script:TaskArgs = @($Arguments)
+                return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments
+            }}
+            throw "unexpected action $Action"
+        }}
+        $codexCommand = Resolve-CodexCommand -ReviewedCodexPath {reviewed_cmd.as_posix()!r}
+        $probe = Invoke-ReviewedCodexVersionProbe -CodexCommand $codexCommand -TimeoutSeconds 30
+        if (-not $probe.Passed) {{ throw "Probe should pass: $($probe.FailureReason)" }}
+        $taskArguments = @($codexCommand.ArgumentPrefix) + @("--ask-for-approval", "never")
+        Invoke-CapturedNativeProcess `
+            -FilePath $codexCommand.FilePath `
+            -Arguments $taskArguments `
+            -WorkingDirectory $script:RepoPath `
+            -StandardInput "" `
+            -StandardInputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+            -StandardOutputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+            -StandardErrorEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+            -TimeoutSeconds 10 `
+            -Action "codex ReviewBundle candidate generation" | Out-Null
+
+        $expectedSource = [System.IO.Path]::GetFullPath({reviewed_cmd.as_posix()!r})
+        if ($script:ProbeCalls -ne 1 -or $script:TaskCalls -ne 1) {{ throw "Expected one probe and one task." }}
+        if ($script:ProbeFilePath -ne $env:COMSPEC -or $script:TaskFilePath -ne $env:COMSPEC) {{ throw "Expected COMSPEC for cmd launcher." }}
+        foreach ($prefix in @("/d", "/s", "/c", "call", $expectedSource)) {{
+            if ($script:ProbeArgs -notcontains $prefix) {{ throw "Probe missing prefix $prefix" }}
+            if ($script:TaskArgs -notcontains $prefix) {{ throw "Task missing prefix $prefix" }}
+        }}
+        if ($script:ProbeArgs[-1] -ne "--version") {{ throw "Probe must end with --version." }}
+        if (-not (Test-StringArrayEqual -Left ([string[]]$script:ProbeArgs[0..4]) -Right ([string[]]$script:TaskArgs[0..4]))) {{
+            throw "Probe and task cmd prefix differ."
+        }}
+        """,
+    )
+    assert_success(result)
+
+
+def test_reviewed_codex_exe_version_probe_and_task_use_exact_exe(tmp_path):
+    reviewed_exe = tmp_path / "bin" / "codex.exe"
+    reviewed_exe.parent.mkdir()
+    reviewed_exe.write_text("fake exe", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:ProbeCalls = 0
+        $script:TaskCalls = 0
+        function New-FakeNativeResult {{
+            param([string]$FilePath, [string[]]$Arguments)
+            return [pscustomobject]@{{
+                ExitCode = 0; Stdout = ""; Stderr = ""; TimedOut = $false; TimeoutSeconds = 30
+                FilePath = $FilePath; Arguments = @($Arguments); CommandLine = "fake"
+                LastStdoutLine = ""; LastStderrLine = ""; ProcessId = 10; StopAttempted = $false; StoppedProcessIds = @()
+            }}
+        }}
+        function Invoke-CapturedNativeProcess {{
+            param(
+                [string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory, [string]$StandardInput,
+                [System.Text.Encoding]$StandardInputEncoding, [System.Text.Encoding]$StandardOutputEncoding,
+                [System.Text.Encoding]$StandardErrorEncoding, [int]$TimeoutSeconds, [string]$Action
+            )
+            if ($Action -eq "codex --version reviewed exact launcher") {{ $script:ProbeCalls += 1; return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments }}
+            if ($Action -eq "codex ReviewBundle candidate generation") {{ $script:TaskCalls += 1; return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments }}
+            throw "unexpected action $Action"
+        }}
+        $codexCommand = Resolve-CodexCommand -ReviewedCodexPath {reviewed_exe.as_posix()!r}
+        $probe = Invoke-ReviewedCodexVersionProbe -CodexCommand $codexCommand -TimeoutSeconds 30
+        if (-not $probe.Passed) {{ throw "Probe should pass: $($probe.FailureReason)" }}
+        Invoke-CapturedNativeProcess `
+            -FilePath $codexCommand.FilePath `
+            -Arguments (@($codexCommand.ArgumentPrefix) + @("--ask-for-approval", "never")) `
+            -WorkingDirectory $script:RepoPath `
+            -StandardInput "" `
+            -StandardInputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+            -StandardOutputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+            -StandardErrorEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+            -TimeoutSeconds 10 `
+            -Action "codex ReviewBundle candidate generation" | Out-Null
+
+        $expected = [System.IO.Path]::GetFullPath({reviewed_exe.as_posix()!r})
+        if ($codexCommand.FilePath -ne $expected) {{ throw "Expected exact exe FilePath." }}
+        if (@($codexCommand.ArgumentPrefix).Count -ne 0) {{ throw "Exe launch spec must not use a prefix." }}
+        if ($probe.ProcessFilePath -ne $expected) {{ throw "Probe did not use exact exe." }}
+        if (($probe.Arguments -join "|") -ne "--version") {{ throw "Probe exe args must be only --version." }}
+        if ($script:ProbeCalls -ne 1 -or $script:TaskCalls -ne 1) {{ throw "Expected one probe and one task." }}
+        """,
+    )
+    assert_success(result)
+
+
+@pytest.mark.parametrize(
+    ("probe_setup", "expected_reason"),
+    [
+        ("return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments -ExitCode 7", "probe_nonzero_exit"),
+        ("return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments -TimedOut $true", "probe_timeout"),
+        ('throw "start failed"', "process_start_exception"),
+    ],
+)
+def test_reviewed_codex_version_probe_failure_blocks_task_without_fallback(
+    tmp_path, probe_setup, expected_reason
+):
+    reviewed_cmd = tmp_path / "npm" / "codex.cmd"
+    reviewed_cmd.parent.mkdir()
+    reviewed_cmd.write_text("@echo off\n", encoding="ascii")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:TaskCalls = 0
+        $script:FallbackCalls = 0
+        function Resolve-ComSpecPath {{ return $env:COMSPEC }}
+        function Get-Command {{ $script:FallbackCalls += 1; throw "PATH fallback must not be used" }}
+        function New-FakeNativeResult {{
+            param([string]$FilePath, [string[]]$Arguments, [int]$ExitCode = 0, [bool]$TimedOut = $false)
+            return [pscustomobject]@{{
+                ExitCode = $ExitCode; Stdout = ""; Stderr = ""; TimedOut = $TimedOut; TimeoutSeconds = 30
+                FilePath = $FilePath; Arguments = @($Arguments); CommandLine = "fake"
+                LastStdoutLine = ""; LastStderrLine = ""; ProcessId = 10; StopAttempted = $false; StoppedProcessIds = @()
+            }}
+        }}
+        function Invoke-CapturedNativeProcess {{
+            param(
+                [string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory, [string]$StandardInput,
+                [System.Text.Encoding]$StandardInputEncoding, [System.Text.Encoding]$StandardOutputEncoding,
+                [System.Text.Encoding]$StandardErrorEncoding, [int]$TimeoutSeconds, [string]$Action
+            )
+            if ($Action -eq "codex --version reviewed exact launcher") {{ {probe_setup} }}
+            if ($Action -eq "codex ReviewBundle candidate generation") {{ $script:TaskCalls += 1; return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments }}
+            throw "unexpected action $Action"
+        }}
+        $codexCommand = Resolve-CodexCommand -ReviewedCodexPath {reviewed_cmd.as_posix()!r}
+        $probe = Invoke-ReviewedCodexVersionProbe -CodexCommand $codexCommand -TimeoutSeconds 30
+        if ($probe.Passed) {{ throw "Probe should fail." }}
+        if ($probe.FailureReason -ne {expected_reason!r}) {{ throw "Wrong failure reason: $($probe.FailureReason)" }}
+        if ($script:TaskCalls -ne 0) {{ throw "Task must not run after failed probe." }}
+        if ($script:FallbackCalls -ne 0) {{ throw "PATH fallback must not be used." }}
+        """,
+    )
+    assert_success(result)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ('$codexCommand.Source = "C:/Other/codex.cmd"; $codexCommand.PathBindingMatch = $true', "probe_launcher_source_mismatch"),
+        ('$script:ProbeFilePathOverride = "C:/Other/cmd.exe"', "probe_file_path_mismatch"),
+        ('$script:ProbeArgumentsOverride = @("--version")', "probe_argument_prefix_mismatch"),
+    ],
+)
+def test_reviewed_codex_version_probe_mismatch_blocks_task(tmp_path, mutation, expected_reason):
+    reviewed_cmd = tmp_path / "npm" / "codex.cmd"
+    reviewed_cmd.parent.mkdir()
+    reviewed_cmd.write_text("@echo off\n", encoding="ascii")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:TaskCalls = 0
+        $script:ProbeFilePathOverride = ""
+        $script:ProbeArgumentsOverride = $null
+        function New-FakeNativeResult {{
+            param([string]$FilePath, [string[]]$Arguments)
+            return [pscustomobject]@{{
+                ExitCode = 0; Stdout = ""; Stderr = ""; TimedOut = $false; TimeoutSeconds = 30
+                FilePath = $FilePath; Arguments = @($Arguments); CommandLine = "fake"
+                LastStdoutLine = ""; LastStderrLine = ""; ProcessId = 10; StopAttempted = $false; StoppedProcessIds = @()
+            }}
+        }}
+        function Invoke-CapturedNativeProcess {{
+            param(
+                [string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory, [string]$StandardInput,
+                [System.Text.Encoding]$StandardInputEncoding, [System.Text.Encoding]$StandardOutputEncoding,
+                [System.Text.Encoding]$StandardErrorEncoding, [int]$TimeoutSeconds, [string]$Action
+            )
+            if ($Action -eq "codex --version reviewed exact launcher") {{
+                $resultFilePath = if ([string]::IsNullOrWhiteSpace($script:ProbeFilePathOverride)) {{ $FilePath }} else {{ $script:ProbeFilePathOverride }}
+                $resultArguments = if ($null -eq $script:ProbeArgumentsOverride) {{ $Arguments }} else {{ @($script:ProbeArgumentsOverride) }}
+                return New-FakeNativeResult -FilePath $resultFilePath -Arguments $resultArguments
+            }}
+            if ($Action -eq "codex ReviewBundle candidate generation") {{ $script:TaskCalls += 1; return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments }}
+            throw "unexpected action $Action"
+        }}
+        $codexCommand = Resolve-CodexCommand -ReviewedCodexPath {reviewed_cmd.as_posix()!r}
+        {mutation}
+        $probe = Invoke-ReviewedCodexVersionProbe -CodexCommand $codexCommand -TimeoutSeconds 30
+        if ($probe.Passed) {{ throw "Probe mismatch should fail." }}
+        if ($probe.FailureReason -ne {expected_reason!r}) {{ throw "Wrong failure reason: $($probe.FailureReason)" }}
+        if ($script:TaskCalls -ne 0) {{ throw "Task must not run after probe mismatch." }}
+        """,
+    )
+    assert_success(result)
+
+
+def test_reviewed_cmd_blocks_windowsapps_exe_during_probe_and_task(tmp_path):
+    reviewed_cmd = tmp_path / "npm" / "codex.cmd"
+    reviewed_cmd.parent.mkdir()
+    reviewed_cmd.write_text("@echo off\n", encoding="ascii")
+    windowsapps_exe = tmp_path / "WindowsApps" / "codex.exe"
+    windowsapps_exe.parent.mkdir()
+    windowsapps_exe.write_text("fake exe", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:WindowsAppsInvocationCount = 0
+        $script:TaskCalls = 0
+        function New-FakeNativeResult {{
+            param([string]$FilePath, [string[]]$Arguments)
+            return [pscustomobject]@{{
+                ExitCode = 0; Stdout = ""; Stderr = ""; TimedOut = $false; TimeoutSeconds = 30
+                FilePath = $FilePath; Arguments = @($Arguments); CommandLine = "fake"
+                LastStdoutLine = ""; LastStderrLine = ""; ProcessId = 10; StopAttempted = $false; StoppedProcessIds = @()
+            }}
+        }}
+        function Invoke-CapturedNativeProcess {{
+            param(
+                [string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory, [string]$StandardInput,
+                [System.Text.Encoding]$StandardInputEncoding, [System.Text.Encoding]$StandardOutputEncoding,
+                [System.Text.Encoding]$StandardErrorEncoding, [int]$TimeoutSeconds, [string]$Action
+            )
+            if ($FilePath -like "*WindowsApps*" -or (($Arguments -join "|") -like "*WindowsApps*")) {{ $script:WindowsAppsInvocationCount += 1 }}
+            if ($Action -eq "codex --version reviewed exact launcher") {{ return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments }}
+            if ($Action -eq "codex ReviewBundle candidate generation") {{ $script:TaskCalls += 1; return New-FakeNativeResult -FilePath $FilePath -Arguments $Arguments }}
+            throw "unexpected action $Action"
+        }}
+        $commands = @(
+            [pscustomobject]@{{ CommandType = "Application"; Source = {windowsapps_exe.as_posix()!r}; Definition = {windowsapps_exe.as_posix()!r} }},
+            [pscustomobject]@{{ CommandType = "Application"; Source = {reviewed_cmd.as_posix()!r}; Definition = {reviewed_cmd.as_posix()!r} }}
+        )
+        $codexCommand = Resolve-CodexCommand -Commands $commands -ReviewedCodexPath {reviewed_cmd.as_posix()!r}
+        $probe = Invoke-ReviewedCodexVersionProbe -CodexCommand $codexCommand -TimeoutSeconds 30
+        if (-not $probe.Passed) {{ throw "Probe should pass: $($probe.FailureReason)" }}
+        Invoke-CapturedNativeProcess `
+            -FilePath $codexCommand.FilePath `
+            -Arguments (@($codexCommand.ArgumentPrefix) + @("--ask-for-approval", "never")) `
+            -WorkingDirectory $script:RepoPath `
+            -StandardInput "" `
+            -StandardInputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+            -StandardOutputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+            -StandardErrorEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+            -TimeoutSeconds 10 `
+            -Action "codex ReviewBundle candidate generation" | Out-Null
+        if ($script:WindowsAppsInvocationCount -ne 0) {{ throw "WindowsApps exe must not be used." }}
+        if ($script:TaskCalls -ne 1) {{ throw "Task should run once after successful reviewed cmd probe." }}
+        """,
+    )
+    assert_success(result)
+
+
+def test_child_process_summary_reports_codex_version_probe_diagnostics(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        """
+        $codexCommand = [pscustomobject]@{
+            Source = "C:/Tools/codex.cmd"
+            FilePath = "C:/Windows/System32/cmd.exe"
+            ArgumentPrefix = @("/d", "/s", "/c", "call", "C:/Tools/codex.cmd")
+            LauncherType = "cmd"
+            PathBindingMatch = $true
+        }
+        $probe = [pscustomobject]@{
+            Attempted = $true
+            Passed = $true
+            ExitCode = 0
+            TimedOut = $false
+            ProcessFilePath = "C:/Windows/System32/cmd.exe"
+            LauncherSource = "C:/Tools/codex.cmd"
+            PathBindingMatch = $true
+        }
+        $task = [pscustomobject]@{
+            ExitCode = 0
+            TimedOut = $false
+            TimeoutSeconds = 1200
+            FilePath = "C:/Windows/System32/cmd.exe"
+            CommandLine = "cmd.exe /d /s /c call C:/Tools/codex.cmd"
+            LastStdoutLine = "ok"
+            LastStderrLine = ""
+            StopAttempted = $false
+            StoppedProcessIds = @()
+        }
+        $summary = New-ChildProcessReviewBundleSummary -Result $task -FinalStatus "" -CodexCommand $codexCommand -ReviewedCodexPath "C:/Tools/codex.cmd" -CodexVersionProbe $probe
+        foreach ($expected in @(
+            "codex_version_probe_attempted=true",
+            "codex_version_probe_exit_code=0",
+            "codex_version_probe_timed_out=false",
+            "codex_version_probe_passed=true",
+            "codex_version_probe_process_file_path=C:/Windows/System32/cmd.exe",
+            "codex_version_probe_launcher_source=C:/Tools/codex.cmd",
+            "codex_version_probe_path_binding_match=true"
+        )) {
+            if (-not $summary.Contains($expected)) {
+                throw "Expected summary to contain $expected. Summary: $summary"
+            }
         }
         """,
     )
