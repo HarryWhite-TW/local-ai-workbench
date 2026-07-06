@@ -96,7 +96,7 @@ Evidence should record the command, exit code, stdout state, and stderr state ex
 
 ### 10. PowerShell archive semantics can be misleading
 
-Using `-LiteralPath` together with a wildcard caused the ZIP step to resolve paths incorrectly.
+Using `-LiteralPath` together with a wildcard is a known PowerShell path-handling pitfall and was a plausible contributing factor in this failure. The exact root cause of this specific command failure was not independently isolated.
 
 For deterministic evidence ZIP creation:
 
@@ -116,7 +116,7 @@ Prefer ASCII sentinel lines and UTF-8 without BOM. Validate structured content t
 
 The focused documentation repair was complete and staged, but Codex could not perform the final commit and evidence write because its escalation quota was exhausted.
 
-When remaining steps are deterministic and already approved, preserve state, verify exact branch/HEAD/staged files, and complete the mechanical Git steps manually. Do not redesign or rerun implementation because of agent quota.
+When remaining steps are deterministic, already approved, already reviewed, and confined to the exact verified scope, preserve state, verify exact branch/HEAD/staged files, and complete the mechanical Git steps manually. Do not redesign or rerun implementation because of agent quota.
 
 ### 13. Agent summaries are claims, not proof
 
