@@ -140,6 +140,7 @@ def run_bridge_operator_b3_dry_run_loop(
         client = github_client or GitHubApiClient(repository)
         for cycle in range(1, max_cycles + 1):
             summary["cycles_started"] = cycle
+            summary["current_delegation_outcome"] = None
             if _flag_exists(state_root, "stop.flag"):
                 summary["stop_requested"] = True
                 summary["phase"] = "stopped"

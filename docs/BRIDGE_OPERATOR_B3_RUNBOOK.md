@@ -101,6 +101,23 @@ Dispatcher failure, timeout, exception, missing result, untrusted result author,
 identity mismatch, dirty repo, wrong HEAD, pause, stop, or active lock.
 Already processed `request_id` values are skipped and do not rerun Dispatcher.
 
+There are two valid processed-record paths:
+
+1. Ordinary verified Dispatcher completion:
+   - Dispatcher exits `0`;
+   - exactly one trusted matching success result exists;
+   - the processed record is written with Dispatcher provenance.
+2. Durable `COMPLETED` reconciliation:
+   - exactly one trusted matching completion exists;
+   - local `CONSUMED` state is reconstructed before Dispatcher delegation;
+   - `dispatcher_invoked=false`;
+   - strict reconciliation provenance is recorded;
+   - no new GitHub write occurs.
+
+Local processed state remains the first duplicate gate. `NOT_FOUND` is the only
+durable reconciliation decision that may proceed to ordinary delegation.
+`BLOCKED` and `ERROR` fail closed.
+
 `github_write_performed=false` means the Bridge Operator itself did not perform
 a direct GitHub write. B3-B records Dispatcher-mediated result publication with
 separate evidence fields:
@@ -115,6 +132,14 @@ becomes true only when a matching `LAWBRUNNER-RESULT` is found on the target
 Issue after Dispatcher execution. `dispatcher_result_writeback_verified` becomes
 true only when that matching result is trusted and successful. Operator logs and
 `last_failure.json` include the same two fields for review.
+
+`current_delegation_outcome` is cycle-local audit evidence. It is reset before
+every loop cycle, then a current-cycle delegation path may set it to
+`durable_completion_reconciled`, `local_processed_request_already_seen`, or
+`verified_dispatcher_result`. Safe-wait, pause, stop, or no-request cycles must
+not reuse a prior cycle's outcome. Cumulative counters such as
+`dispatcher_invocation_count` and `durable_reconciliation_read_attempts` remain
+cumulative across the run.
 
 ## B3-B/B3-C Dispatcher Contract
 
