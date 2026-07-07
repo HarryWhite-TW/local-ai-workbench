@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 import textwrap
@@ -37,6 +38,35 @@ def _decode_process_stream(stream: bytes | None) -> str | None:
     if stream is None:
         return None
     return stream.decode("utf-8", errors="replace")
+
+
+def _normalize_line_endings(stream: str | None) -> str:
+    return (stream or "").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _process_output_contains(
+    result: subprocess.CompletedProcess,
+    token: str,
+    *,
+    allow_single_hard_wrap: bool = False,
+) -> bool:
+    for stream in (result.stdout, result.stderr):
+        normalized = _normalize_line_endings(stream)
+        if token in normalized:
+            return True
+        if not allow_single_hard_wrap:
+            continue
+        for index in range(1, len(token)):
+            if token[index - 1].isspace() or token[index].isspace():
+                continue
+            pattern = (
+                re.escape(token[:index])
+                + r"\n[ \t]*"
+                + re.escape(token[index:])
+            )
+            if re.search(pattern, normalized):
+                return True
+    return False
 
 
 def _run_powershell(command: list[str]) -> subprocess.CompletedProcess:
@@ -269,6 +299,47 @@ def test_extract_summary_rejects_replacement_characters():
 
     with pytest.raises(AssertionError, match="replacement characters"):
         extract_summary(output)
+
+
+def test_process_output_match_does_not_cross_stream_boundary():
+    result = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout="Choos",
+        stderr="e exactly one mode.",
+    )
+
+    assert not _process_output_contains(
+        result,
+        "Choose exactly one mode.",
+        allow_single_hard_wrap=True,
+    )
+
+
+def test_process_output_match_accepts_one_crlf_hard_wrap():
+    result = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout=None,
+        stderr="Choos\r\n    e exactly one mode.",
+    )
+
+    assert _process_output_contains(
+        result,
+        "Choose exactly one mode.",
+        allow_single_hard_wrap=True,
+    )
+
+
+def test_process_output_match_handles_none_streams():
+    result = subprocess.CompletedProcess(
+        args=[],
+        returncode=1,
+        stdout=None,
+        stderr=None,
+    )
+
+    assert not _process_output_contains(result, "Choose exactly one mode.")
 
 
 def extract_posted_body(stdout: str) -> str:
@@ -1579,7 +1650,11 @@ def test_script_entry_rejects_post_result_comment_without_pollonce(tmp_path):
         ]
     )
     assert result.returncode != 0
-    assert any("Missing mode." in stream for stream in (result.stdout or "", result.stderr or ""))
+    assert _process_output_contains(
+        result,
+        "Missing mode.",
+        allow_single_hard_wrap=True,
+    )
 
 
 def test_script_entry_rejects_tool_resolution_preflight_with_other_mode():
@@ -1598,7 +1673,11 @@ def test_script_entry_rejects_tool_resolution_preflight_with_other_mode():
         ]
     )
     assert result.returncode != 0
-    assert any("Choose exactly one mode" in stream for stream in (result.stdout or "", result.stderr or ""))
+    assert _process_output_contains(
+        result,
+        "Choose exactly one mode",
+        allow_single_hard_wrap=True,
+    )
 
 
 def test_tool_resolution_preflight_rejects_issue_arguments_before_reads(tmp_path):
