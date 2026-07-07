@@ -374,6 +374,38 @@ function Get-GitStatusShort {
     return Get-GitOutput -GitArgs @("status", "--short") -Action "git status --short"
 }
 
+function Resolve-CurrentPowerShellHostPath {
+    try {
+        $processPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    }
+    catch {
+        throw "Current PowerShell host path could not be resolved: $($_.Exception.Message)"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($processPath)) {
+        throw "Current PowerShell host path could not be resolved."
+    }
+
+    $fullPath = [System.IO.Path]::GetFullPath($processPath)
+    if ($fullPath -notmatch '^[A-Za-z]:[\\/]' -and $fullPath -notmatch '^\\\\[^\\]+\\[^\\]+\\') {
+        throw "Current PowerShell host path is not absolute: $fullPath"
+    }
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+        throw "Current PowerShell host path does not exist: $fullPath"
+    }
+    if (-not [string]::Equals([System.IO.Path]::GetExtension($fullPath), ".exe", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Current PowerShell host path is not an .exe: $fullPath"
+    }
+
+    $fileName = [System.IO.Path]::GetFileName($fullPath)
+    if (-not [string]::Equals($fileName, "powershell.exe", [System.StringComparison]::OrdinalIgnoreCase) -and
+        -not [string]::Equals($fileName, "pwsh.exe", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Current PowerShell host executable is not powershell.exe or pwsh.exe: $fullPath"
+    }
+
+    return $fullPath
+}
+
 function New-RunnerValidationResult {
     param(
         [Parameter(Mandatory = $true)]
@@ -935,10 +967,11 @@ function Invoke-ReviewBundle {
 
     $runnerScript = Get-RunnerScriptPath
     $codexPathBinding = Resolve-ReviewBundleCodexPathBinding
+    $powerShellHost = Resolve-CurrentPowerShellHostPath
 
     $runnerResult = Invoke-WriteCommand `
-        -FilePath $runnerScript `
-        -Arguments @("-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding) `
+        -FilePath $powerShellHost `
+        -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding) `
         -Action "local_runner_v1.ps1 ReviewBundle"
 
     $result = if ($runnerResult.ExitCode -eq 0) { "success" } else { "failure" }
