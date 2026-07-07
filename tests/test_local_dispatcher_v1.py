@@ -34,6 +34,10 @@ def _powershell() -> str:
     return shell
 
 
+def _powershell_single_quoted_literal() -> str:
+    return "'" + _powershell().replace("'", "''") + "'"
+
+
 def _decode_process_stream(stream: bytes | None) -> str | None:
     if stream is None:
         return None
@@ -115,6 +119,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $script:RunnerPreflightCalls = 0
             $script:RunnerPreflightStdout = '{json.dumps(_dispatcher_nested_runner())}'
             $script:RunnerPreflightExitCode = 0
+            $script:PowerShellHostPath = {_powershell_single_quoted_literal()}
             Set-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1") -Value "# runner stub" -Encoding UTF8
 
             function New-TestComment {{
@@ -173,6 +178,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             function Get-CurrentBranch {{ return $script:Branch }}
             function Get-CurrentFullHead {{ return $script:Head }}
             function Get-GitStatusShort {{ return $script:GitStatus }}
+            function Resolve-CurrentPowerShellHostPath {{ return $script:PowerShellHostPath }}
             function Write-FinalGitStatus {{
                 Write-Host "Final local git status:"
                 if ([string]::IsNullOrWhiteSpace($script:GitStatus)) {{
@@ -463,8 +469,20 @@ def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
     assert_success(result)
     assert "CASE_RESULT=success" in result.stdout
     assert "RUNNER_CALLS=1" in result.stdout
-    assert r"RUNNER_ARGS=-IssueNumber|83|-Mode|ReviewBundle|-ReviewedCodexPath|C:\Tools\codex.cmd" in result.stdout
+    runner_file = extract_value(result.stdout, "RUNNER_FILE=")
+    assert runner_file.lower() == _powershell().lower()
     assert "local_runner_v1.ps1" in result.stdout
+    runner_args = extract_value(result.stdout, "RUNNER_ARGS=").split("|")
+    assert runner_args[:4] == ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+    assert runner_args[4].endswith("local_runner_v1.ps1")
+    assert runner_args[5:] == [
+        "-IssueNumber",
+        "83",
+        "-Mode",
+        "ReviewBundle",
+        "-ReviewedCodexPath",
+        r"C:\Tools\codex.cmd",
+    ]
     assert "runner v1 review bundle ok" in result.stdout
 
     summary = extract_summary(result.stdout)
@@ -475,6 +493,72 @@ def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
     assert summary["result"] == "success"
     assert summary["validations"]["git_status_clean"]["status"] == "passed"
     assert summary["safety"]["no_commit"] is True
+
+
+def test_run_reviewbundle_real_stub_runner_binds_named_parameters(tmp_path):
+    runner = tmp_path / "local_runner_v1.ps1"
+    reviewed = tmp_path / "Reviewed Codex Path" / "codex launcher.exe"
+    reviewed.parent.mkdir()
+    reviewed.write_text("fake codex", encoding="utf-8")
+    runner.write_text(
+        textwrap.dedent(
+            """
+            param(
+                [ValidateRange(0, [int]::MaxValue)]
+                [int]$IssueNumber = 0,
+                [ValidateSet("ReviewBundle")]
+                [string]$Mode = "ReviewBundle",
+                [string]$ReviewedCodexPath = ""
+            )
+
+            $payload = [ordered]@{
+                issue_number = $IssueNumber
+                issue_type = $IssueNumber.GetType().FullName
+                mode = $Mode
+                reviewed_codex_path = $ReviewedCodexPath
+            }
+            Write-Output ("STUB_BINDING_JSON=" + ($payload | ConvertTo-Json -Compress))
+            exit 0
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    result = run_dispatcher_core_script(
+        tmp_path,
+        f"""
+        function Get-GitStatusShort {{ return "" }}
+        function Get-RunnerScriptPath {{ return {runner.as_posix()!r} }}
+        function Resolve-ReviewBundleCodexPathBinding {{ return {reviewed.as_posix()!r} }}
+
+        $result = Invoke-ReviewBundle -Selection ([pscustomobject]@{{}}) -Issue 83
+        Write-Host "PARENT_SENTINEL=continued"
+        Write-Host "RESULT=$($result.Result)"
+        Write-Host "RUNNER_EXIT=$($result.RunnerExitCode)"
+        $stdoutBytes = [System.Text.Encoding]::UTF8.GetBytes($result.Stdout)
+        Write-Host "CAPTURED_STDOUT_HEX=$([System.BitConverter]::ToString($stdoutBytes).Replace('-', '').ToLowerInvariant())"
+        Write-Host "CAPTURED_STDERR=$($result.Stderr)"
+        """,
+    )
+
+    assert_success(result)
+    assert "PARENT_SENTINEL=continued" in result.stdout
+    assert "RESULT=success" in result.stdout
+    assert "RUNNER_EXIT=0" in result.stdout
+    captured_stdout = bytes.fromhex(
+        extract_value(result.stdout, "CAPTURED_STDOUT_HEX=")
+    ).decode("utf-8")
+    payload_line = next(
+        line
+        for line in captured_stdout.splitlines()
+        if line.startswith("STUB_BINDING_JSON=")
+    )
+    payload = json.loads(payload_line.split("=", 1)[1])
+    assert payload["issue_number"] == 83
+    assert payload["issue_type"] == "System.Int32"
+    assert payload["mode"] == "ReviewBundle"
+    assert payload["reviewed_codex_path"] == reviewed.as_posix()
+    assert "Cannot process argument transformation" not in result.stdout
+    assert "Cannot convert value \"-IssueNumber\"" not in result.stdout
 
 
 def test_run_reviewbundle_fails_closed_when_reviewed_codex_path_mismatches_preflight(tmp_path):
