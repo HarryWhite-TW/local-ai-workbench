@@ -265,6 +265,8 @@ def test_success_invokes_dispatcher_once_and_verifies_matching_result():
         target_issue=148,
         repository="HarryWhite-TW/local-ai-workbench",
     )
+    assert summary["tool_resolution_preflight_codex_path_binding"] is None
+    assert summary["dispatcher_codex_path_binding_propagated"] is False
     assert "-BoundedPoll" not in calls[0]["args"]
     assert "-DryRunBoundedPoll" not in calls[0]["args"]
     assert_safety(summary)
@@ -308,7 +310,10 @@ def test_run_reviewbundle_preflight_propagates_action_before_dispatch():
         repo_root=ROOT_PATH,
         target_issue=148,
         repository="HarryWhite-TW/local-ai-workbench",
+        reviewed_codex_path=r"C:\Tools\codex.cmd",
     )
+    assert summary["tool_resolution_preflight_codex_path_binding"] == r"C:\Tools\codex.cmd"
+    assert summary["dispatcher_codex_path_binding_propagated"] is True
 
 
 def test_b1_blocked_does_not_invoke_dispatcher():
@@ -397,6 +402,22 @@ def test_structured_blocked_preflight_blocks_without_dispatch():
         (DispatcherInvocationResult(2, preflight_payload(result="blocked", blocked_reasons=["   "]), ""), "tool_resolution_preflight_invalid_blocked_reasons"),
         (DispatcherInvocationResult(0, preflight_payload(nested_runner=nested_runner_payload()), ""), "tool_resolution_preflight_unexpected_nested_runner"),
         (DispatcherInvocationResult(0, preflight_payload(required_action="run-reviewbundle"), ""), "tool_resolution_preflight_nested_runner_missing"),
+        (
+            DispatcherInvocationResult(
+                0,
+                preflight_payload(
+                    required_action="run-reviewbundle",
+                    nested_runner=nested_runner_payload(
+                        tools={
+                            "runner_gh": tool_entry(),
+                            "codex": tool_entry("codex.cmd", ".cmd"),
+                        }
+                    ),
+                ),
+                "",
+            ),
+            "tool_resolution_preflight_nested_runner_codex_selected_path_not_absolute",
+        ),
         (
             DispatcherInvocationResult(
                 0,

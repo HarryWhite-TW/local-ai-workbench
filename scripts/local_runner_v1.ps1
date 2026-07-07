@@ -21,6 +21,7 @@ param(
     [string]$Mode = "ReviewBundle",
     [switch]$ToolResolutionPreflight,
     [string]$RequiredAction = "",
+    [string]$ReviewedCodexPath = "",
     [string]$ApprovalToken = ""
 )
 
@@ -307,8 +308,14 @@ function Resolve-ComSpecPath {
 
 function Resolve-CodexCommand {
     param(
-        [object[]]$Commands = $null
+        [object[]]$Commands = $null,
+        [string]$ReviewedCodexPath = ""
     )
+
+    if (-not [string]::IsNullOrWhiteSpace($ReviewedCodexPath)) {
+        $source = Resolve-ReviewedCodexPath -ReviewedCodexPath $ReviewedCodexPath
+        return New-CodexLaunchSpec -Source $source -SelectionSource "reviewed_exact_path" -ReviewedCodexPath $source
+    }
 
     if ($null -eq $Commands) {
         $Commands = @(Get-Command codex -All -ErrorAction SilentlyContinue)
@@ -344,16 +351,16 @@ function Resolve-CodexCommand {
     }
 
     $selected = @($candidates | Where-Object {
-        $_.CommandType -eq "Application" -and $_.Extension -eq ".exe"
+        $_.CommandType -eq "Application" -and $_.Extension -eq ".cmd"
     } | Select-Object -First 1)
     if ($selected.Count -eq 0) {
         $selected = @($candidates | Where-Object {
-            $_.CommandType -eq "Application" -and $_.Extension -eq ".cmd"
+            $_.CommandType -eq "Application" -and $_.Extension -eq ".bat"
         } | Select-Object -First 1)
     }
     if ($selected.Count -eq 0) {
         $selected = @($candidates | Where-Object {
-            $_.CommandType -eq "Application" -and $_.Extension -eq ".bat"
+            $_.CommandType -eq "Application" -and $_.Extension -eq ".exe"
         } | Select-Object -First 1)
     }
     if ($selected.Count -eq 0) {
@@ -365,25 +372,85 @@ function Resolve-CodexCommand {
         throw "codex command was found, but only PowerShell script wrappers or other unsafe launchers were available. Refusing to directly launch codex.ps1 or another shell wrapper; ensure codex.exe, codex.cmd, or codex.bat is available on PATH."
     }
 
-    $source = [string]$selected[0].Source
-    $extension = [string]$selected[0].Extension
+    return New-CodexLaunchSpec -Source ([string]$selected[0].Source) -SelectionSource "path" -Command $selected[0].Command
+}
+
+function Test-AbsoluteCodexLauncherPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    return ($Path -match '^[A-Za-z]:[\\/]' -or $Path -match '^\\\\[^\\]+\\[^\\]+\\')
+}
+
+function Resolve-ReviewedCodexPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ReviewedCodexPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ReviewedCodexPath)) {
+        throw "ReviewedCodexPath is required before launching codex."
+    }
+    if (-not (Test-AbsoluteCodexLauncherPath -Path $ReviewedCodexPath)) {
+        throw "ReviewedCodexPath must be an absolute Windows path."
+    }
+    $fullPath = [System.IO.Path]::GetFullPath($ReviewedCodexPath)
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+        throw "ReviewedCodexPath does not exist: $fullPath"
+    }
+    $extension = [System.IO.Path]::GetExtension($fullPath).ToLowerInvariant()
+    if ($extension -notin @(".exe", ".cmd", ".bat", ".com")) {
+        throw "ReviewedCodexPath has an unsafe launcher suffix '$extension'."
+    }
+    return $fullPath
+}
+
+function New-CodexLaunchSpec {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Source,
+        [Parameter(Mandatory = $true)]
+        [string]$SelectionSource,
+        [AllowNull()]
+        [object]$Command = $null,
+        [string]$ReviewedCodexPath = ""
+    )
+
+    $extension = [System.IO.Path]::GetExtension($Source).ToLowerInvariant()
+    if ($extension -notin @(".exe", ".cmd", ".bat", ".com")) {
+        throw "codex command was found, but only PowerShell script wrappers or other unsafe launchers were available. Refusing to directly launch codex.ps1 or another shell wrapper; ensure codex.exe, codex.cmd, or codex.bat is available on PATH."
+    }
     if ($extension -in @(".cmd", ".bat")) {
         $filePath = Resolve-ComSpecPath
         $argumentPrefix = @("/d", "/s", "/c", "call", $source)
         $reason = "resolved safe batch launcher through cmd.exe"
+        $launcherType = "cmd"
     }
     else {
         $filePath = $source
         $argumentPrefix = @()
         $reason = "resolved direct executable launcher"
+        $launcherType = "direct"
     }
+    $pathBindingMatch = [string]::IsNullOrWhiteSpace($ReviewedCodexPath) -or
+        [string]::Equals(
+            [System.IO.Path]::GetFullPath($Source),
+            [System.IO.Path]::GetFullPath($ReviewedCodexPath),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
 
     return [pscustomobject]@{
         Source = $source
         FilePath = $filePath
         ArgumentPrefix = @($argumentPrefix)
-        Command = $selected[0].Command
+        Command = $Command
         Reason = $reason
+        SelectionSource = $SelectionSource
+        ReviewedCodexPath = if ([string]::IsNullOrWhiteSpace($ReviewedCodexPath)) { "" } else { [System.IO.Path]::GetFullPath($ReviewedCodexPath) }
+        LauncherType = $launcherType
+        PathBindingMatch = $pathBindingMatch
     }
 }
 
@@ -653,6 +720,8 @@ function Invoke-CapturedNativeProcess {
             Stderr = $stderr.TrimEnd()
             TimedOut = $timedOut
             TimeoutSeconds = $TimeoutSeconds
+            FilePath = $FilePath
+            Arguments = @($Arguments)
             CommandLine = $commandLine
             LastStdoutLine = Get-LastNonEmptyLine -Text $stdout
             LastStderrLine = Get-LastNonEmptyLine -Text $stderr
@@ -668,6 +737,8 @@ function Invoke-CapturedNativeProcess {
         Stderr = if ($null -eq $stderr) { "" } else { $stderr.TrimEnd() }
         TimedOut = $timedOut
         TimeoutSeconds = $TimeoutSeconds
+        FilePath = $FilePath
+        Arguments = @($Arguments)
         CommandLine = $commandLine
         LastStdoutLine = Get-LastNonEmptyLine -Text $stdout
         LastStderrLine = Get-LastNonEmptyLine -Text $stderr
@@ -715,6 +786,131 @@ function New-ToolResolutionNativeProbe {
         exit_code = $probe.ExitCode
         ok = ($probe.ExitCode -eq 0)
         safe_message = if ($probe.ExitCode -eq 0) { "ok" } elseif ($probe.TimedOut) { "version_probe_timeout" } else { "version_probe_failed" }
+    }
+}
+
+function Test-StringArrayEqual {
+    param(
+        [AllowEmptyCollection()]
+        [string[]]$Left,
+        [AllowEmptyCollection()]
+        [string[]]$Right
+    )
+
+    $leftValues = @($Left)
+    $rightValues = @($Right)
+    if ($leftValues.Count -ne $rightValues.Count) {
+        return $false
+    }
+    for ($index = 0; $index -lt $leftValues.Count; $index += 1) {
+        if (-not [string]::Equals([string]$leftValues[$index], [string]$rightValues[$index], [System.StringComparison]::Ordinal)) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Invoke-ReviewedCodexVersionProbe {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$CodexCommand,
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$TimeoutSeconds = 30
+    )
+
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $probeArguments = @($CodexCommand.ArgumentPrefix) + @("--version")
+    $probe = $null
+    $failureReason = "none"
+    try {
+        $probe = Invoke-CapturedNativeProcess `
+            -FilePath ([string]$CodexCommand.FilePath) `
+            -Arguments $probeArguments `
+            -WorkingDirectory $RepoPath `
+            -StandardInput "" `
+            -StandardInputEncoding $utf8 `
+            -StandardOutputEncoding $utf8 `
+            -StandardErrorEncoding $utf8 `
+            -TimeoutSeconds $TimeoutSeconds `
+            -Action "codex --version reviewed exact launcher"
+    }
+    catch {
+        $failureReason = "process_start_exception"
+    }
+
+    $probeFilePath = ""
+    $probeArgumentsValue = @()
+    $exitCode = $null
+    $timedOut = $false
+    if ($null -ne $probe) {
+        $filePathProperty = $probe.PSObject.Properties["FilePath"]
+        $argumentsProperty = $probe.PSObject.Properties["Arguments"]
+        $exitCodeProperty = $probe.PSObject.Properties["ExitCode"]
+        $timedOutProperty = $probe.PSObject.Properties["TimedOut"]
+        $probeFilePath = if ($null -eq $filePathProperty) { "" } else { [string]$filePathProperty.Value }
+        $probeArgumentsValue = if ($null -eq $argumentsProperty) { @() } else { @($argumentsProperty.Value) }
+        $exitCode = if ($null -eq $exitCodeProperty) { $null } else { [int]$exitCodeProperty.Value }
+        $timedOut = if ($null -eq $timedOutProperty) { $false } else { [bool]$timedOutProperty.Value }
+    }
+
+    $filePathMatches = $false
+    if (-not [string]::IsNullOrWhiteSpace($probeFilePath)) {
+        $filePathMatches = [string]::Equals(
+            [System.IO.Path]::GetFullPath($probeFilePath),
+            [System.IO.Path]::GetFullPath([string]$CodexCommand.FilePath),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    }
+    $reviewedCodexPathValue = [string]$CodexCommand.ReviewedCodexPath
+    $launcherSourceMatchesReviewedPath = -not [string]::IsNullOrWhiteSpace($reviewedCodexPathValue) -and [string]::Equals(
+        [System.IO.Path]::GetFullPath([string]$CodexCommand.Source),
+        [System.IO.Path]::GetFullPath($reviewedCodexPathValue),
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+    $argumentsMatch = Test-StringArrayEqual -Left ([string[]]$probeArgumentsValue) -Right ([string[]]$probeArguments)
+    $pathBindingMatch = [bool]$CodexCommand.PathBindingMatch
+    $passed = $false
+    if ([string]::Equals($failureReason, "none", [System.StringComparison]::Ordinal)) {
+        if ($null -eq $probe) {
+            $failureReason = "probe_result_missing"
+        }
+        elseif ($timedOut) {
+            $failureReason = "probe_timeout"
+        }
+        elseif ($null -eq $exitCode -or $exitCode -ne 0) {
+            $failureReason = "probe_nonzero_exit"
+        }
+        elseif (-not $filePathMatches) {
+            $failureReason = "probe_file_path_mismatch"
+        }
+        elseif (-not $launcherSourceMatchesReviewedPath) {
+            $failureReason = "probe_launcher_source_mismatch"
+        }
+        elseif (-not $argumentsMatch) {
+            $failureReason = "probe_argument_prefix_mismatch"
+        }
+        elseif (-not $pathBindingMatch) {
+            $failureReason = "probe_path_binding_mismatch"
+        }
+        else {
+            $passed = $true
+        }
+    }
+
+    return [pscustomobject]@{
+        Attempted = $true
+        Passed = $passed
+        FailureReason = $failureReason
+        ExitCode = $exitCode
+        TimedOut = $timedOut
+        ProcessFilePath = $probeFilePath
+        LauncherSource = [string]$CodexCommand.Source
+        ReviewedCodexPath = $reviewedCodexPathValue
+        LauncherType = [string]$CodexCommand.LauncherType
+        ArgumentPrefix = @($CodexCommand.ArgumentPrefix)
+        Arguments = @($probeArguments)
+        PathBindingMatch = $pathBindingMatch
+        ProcessResult = $probe
     }
 }
 
@@ -796,7 +992,10 @@ function Invoke-ToolResolutionPreflight {
             -FilePath $codexCommand.FilePath `
             -Arguments (@($codexCommand.ArgumentPrefix) + @("--version")) `
             -Action "codex --version"
-        $tools["codex"] = New-ToolEntry -SelectedPath $codexCommand.Source -SelectionSource "path" -VersionProbe $codexProbe
+        $selectionSourceProperty = $codexCommand.PSObject.Properties["SelectionSource"]
+        $selectionSourceValue = if ($null -eq $selectionSourceProperty) { "" } else { [string]$selectionSourceProperty.Value }
+        $selectionSource = if ([string]::IsNullOrWhiteSpace($selectionSourceValue)) { "path" } else { $selectionSourceValue }
+        $tools["codex"] = New-ToolEntry -SelectedPath $codexCommand.Source -SelectionSource $selectionSource -VersionProbe $codexProbe
         if (-not $codexProbe.ok) {
             $blocked += "codex_version_probe_failed"
         }
@@ -829,7 +1028,12 @@ function New-ChildProcessReviewBundleSummary {
         [Parameter(Mandatory = $true)]
         [object]$Result,
         [AllowNull()]
-        [string]$FinalStatus
+        [string]$FinalStatus,
+        [AllowNull()]
+        [object]$CodexCommand = $null,
+        [string]$ReviewedCodexPath = "",
+        [AllowNull()]
+        [object]$CodexVersionProbe = $null
     )
 
     $partialCandidateExists = (-not [string]::IsNullOrWhiteSpace($FinalStatus)).ToString().ToLowerInvariant()
@@ -839,9 +1043,35 @@ function New-ChildProcessReviewBundleSummary {
     if ([string]::IsNullOrWhiteSpace($stoppedIds)) {
         $stoppedIds = "none"
     }
+    $actualSource = if ($null -eq $CodexCommand) { "" } else { [string]$CodexCommand.Source }
+    $resultFilePathProperty = $Result.PSObject.Properties["FilePath"]
+    $resultFilePath = if ($null -eq $resultFilePathProperty) { "" } else { [string]$resultFilePathProperty.Value }
+    $actualFilePath = if ($null -eq $CodexCommand) { $resultFilePath } else { [string]$CodexCommand.FilePath }
+    $launcherType = if ($null -eq $CodexCommand) { "" } else { [string]$CodexCommand.LauncherType }
+    $bindingMatch = if ($null -eq $CodexCommand) { $false } else { [bool]$CodexCommand.PathBindingMatch }
+    $bindingMatchText = $bindingMatch.ToString().ToLowerInvariant()
+    $probeAttempted = if ($null -eq $CodexVersionProbe) { $false } else { [bool]$CodexVersionProbe.Attempted }
+    $probePassed = if ($null -eq $CodexVersionProbe) { $false } else { [bool]$CodexVersionProbe.Passed }
+    $probeTimedOut = if ($null -eq $CodexVersionProbe) { $false } else { [bool]$CodexVersionProbe.TimedOut }
+    $probeExitCode = if ($null -eq $CodexVersionProbe -or $null -eq $CodexVersionProbe.ExitCode) { "missing" } else { [string]$CodexVersionProbe.ExitCode }
+    $probeProcessFilePath = if ($null -eq $CodexVersionProbe) { "" } else { [string]$CodexVersionProbe.ProcessFilePath }
+    $probeLauncherSource = if ($null -eq $CodexVersionProbe) { "" } else { [string]$CodexVersionProbe.LauncherSource }
+    $probePathBindingMatch = if ($null -eq $CodexVersionProbe) { $false } else { [bool]$CodexVersionProbe.PathBindingMatch }
 
     return @"
 child_process_command=$($Result.CommandLine)
+reviewed_codex_path=$(Format-Block -Text $ReviewedCodexPath -EmptyText "(none)")
+actual_child_process_source=$(Format-Block -Text $actualSource -EmptyText "(unknown)")
+actual_process_file_path=$(Format-Block -Text $actualFilePath -EmptyText "(unknown)")
+launcher_type=$(Format-Block -Text $launcherType -EmptyText "(unknown)")
+path_binding_match=$bindingMatchText
+codex_version_probe_attempted=$($probeAttempted.ToString().ToLowerInvariant())
+codex_version_probe_exit_code=$probeExitCode
+codex_version_probe_timed_out=$($probeTimedOut.ToString().ToLowerInvariant())
+codex_version_probe_passed=$($probePassed.ToString().ToLowerInvariant())
+codex_version_probe_process_file_path=$(Format-Block -Text $probeProcessFilePath -EmptyText "(unknown)")
+codex_version_probe_launcher_source=$(Format-Block -Text $probeLauncherSource -EmptyText "(unknown)")
+codex_version_probe_path_binding_match=$($probePathBindingMatch.ToString().ToLowerInvariant())
 child_process_timeout_seconds=$($Result.TimeoutSeconds)
 child_process_timed_out=$timedOut
 child_process_exit_code=$($Result.ExitCode)
@@ -1959,7 +2189,17 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
     exit 3
 }
 
-$codexCommand = Resolve-CodexCommand
+if ([string]::IsNullOrWhiteSpace($ReviewedCodexPath)) {
+    throw "ReviewedCodexPath is required for ReviewBundle execution; refusing to re-resolve codex from PATH."
+}
+$codexCommand = Resolve-CodexCommand -ReviewedCodexPath $ReviewedCodexPath
+if (-not [bool]$codexCommand.PathBindingMatch) {
+    throw "ReviewedCodexPath binding mismatch; refusing to launch codex."
+}
+$codexVersionProbe = Invoke-ReviewedCodexVersionProbe -CodexCommand $codexCommand -TimeoutSeconds 30
+if (-not [bool]$codexVersionProbe.Passed) {
+    throw "Reviewed Codex version probe failed closed before task invocation: $($codexVersionProbe.FailureReason)"
+}
 $codexUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
 $codexArguments = @(
     "--ask-for-approval",
@@ -2010,7 +2250,7 @@ $modifiedFiles = Get-ModifiedFilesFromStatus -Status $finalStatus
 $codexFinalReport = Truncate-Text -Text $codexResult.Stdout -MaxChars $MaxCodexStdoutChars -Label "Codex final report"
 $stderrSummaryAfter = Get-StderrSummary -Text $codexResult.Stderr -ExitCode ([string]$codexResult.ExitCode)
 $commandsSummary = "Review the Codex final report below for commands and verification results reported by Codex. The runner also captured final git status, git diff --stat, and git diff --cached --stat. The runner did not run stage, commit, push, issue close, label edit, or PR commands."
-$childProcessSummary = New-ChildProcessReviewBundleSummary -Result $codexResult -FinalStatus $finalStatus
+$childProcessSummary = New-ChildProcessReviewBundleSummary -Result $codexResult -FinalStatus $finalStatus -CodexCommand $codexCommand -ReviewedCodexPath $ReviewedCodexPath -CodexVersionProbe $codexVersionProbe
 if ($codexResult.TimedOut) {
     $commandsSummary = "$commandsSummary Codex child process timed out after $($codexResult.TimeoutSeconds) second(s); runner stopped the child process tree when possible and did not continue into any higher-risk action."
 }

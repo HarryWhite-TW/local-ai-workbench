@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -140,6 +141,7 @@ def run_bridge_operator_b2_once(
         repo_root=repo_root,
         target_issue=int(summary["target_issue"]),
         repository=repository,
+        reviewed_codex_path=preflight_validation.get("codex_path_binding"),
     )
     summary["dispatcher_invocation_args"] = args
     summary["dispatcher_invoked"] = True
@@ -209,8 +211,9 @@ def build_dispatcher_command(
     repo_root: str | Path,
     target_issue: int,
     repository: str = DEFAULT_REPOSITORY,
+    reviewed_codex_path: str | None = None,
 ) -> list[str]:
-    return [
+    args = [
         "powershell.exe",
         "-NoProfile",
         "-ExecutionPolicy",
@@ -224,6 +227,9 @@ def build_dispatcher_command(
         repository,
         "-PostResultComment",
     ]
+    if reviewed_codex_path:
+        args.extend(["-ReviewedCodexPath", reviewed_codex_path])
+    return args
 
 
 def build_dispatcher_preflight_command(
@@ -368,6 +374,13 @@ def _validate_tool_resolution_preflight(
             nested_error = _validate_nested_runner_tool_resolution_preflight(nested_runner)
             if nested_error is not None:
                 return {**base, "reason": f"tool_resolution_preflight_nested_runner_{nested_error}", "payload": payload}
+            codex_path_binding = _extract_nested_runner_codex_path(nested_runner)
+            if codex_path_binding is None:
+                return {
+                    **base,
+                    "reason": "tool_resolution_preflight_nested_runner_codex_missing_selected_path",
+                    "payload": payload,
+                }
 
     safety = payload.get("safety")
     if not isinstance(safety, dict):
@@ -387,7 +400,13 @@ def _validate_tool_resolution_preflight(
             "structured_blocked": True,
             "payload": payload,
         }
-    return {"ok": True, "reason": "none", "structured_blocked": False, "payload": payload}
+    return {
+        "ok": True,
+        "reason": "none",
+        "structured_blocked": False,
+        "payload": payload,
+        "codex_path_binding": _extract_nested_runner_codex_path(payload.get("nested_runner")),
+    }
 
 
 def _validate_nested_runner_tool_resolution_preflight(payload: Any) -> str | None:
@@ -419,6 +438,11 @@ def _validate_nested_runner_tool_resolution_preflight(payload: Any) -> str | Non
         tool_error = _validate_tool_resolution_tool_entry(tools.get(tool_name))
         if tool_error is not None:
             return f"{tool_name}_{tool_error}"
+    codex_path = _extract_nested_runner_codex_path(payload)
+    if codex_path is None:
+        return "codex_missing_selected_path"
+    if not _is_absolute_windows_path(codex_path):
+        return "codex_selected_path_not_absolute"
     return None
 
 
@@ -462,6 +486,25 @@ def _validate_tool_resolution_tool_entry(tool: Any) -> str | None:
     if version_probe.get("safe_message") != "ok":
         return "version_probe_unsafe_message"
     return None
+
+
+def _extract_nested_runner_codex_path(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    tools = payload.get("tools")
+    if not isinstance(tools, dict):
+        return None
+    codex = tools.get("codex")
+    if not isinstance(codex, dict):
+        return None
+    selected_path = codex.get("selected_path")
+    if not isinstance(selected_path, str) or not selected_path.strip():
+        return None
+    return selected_path.strip()
+
+
+def _is_absolute_windows_path(path: str) -> bool:
+    return bool(re.match(r"^[A-Za-z]:[\\/]", path) or re.match(r"^\\\\[^\\]+\\[^\\]+\\", path))
 
 
 def _read_matching_results(client: Any, summary: dict[str, Any]) -> dict[str, Any]:
@@ -573,6 +616,11 @@ def _copy_preflight_validation(summary: dict[str, Any], validation: dict[str, An
     )
     safety = payload.get("safety")
     summary["tool_resolution_preflight_safety"] = safety if isinstance(safety, dict) else None
+    codex_path_binding = validation.get("codex_path_binding")
+    summary["tool_resolution_preflight_codex_path_binding"] = (
+        codex_path_binding if isinstance(codex_path_binding, str) and codex_path_binding.strip() else None
+    )
+    summary["dispatcher_codex_path_binding_propagated"] = isinstance(codex_path_binding, str) and bool(codex_path_binding.strip())
 
 
 def _block(summary: dict[str, Any], reason: str) -> None:

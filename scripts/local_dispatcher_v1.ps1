@@ -27,6 +27,7 @@ param(
     [switch]$PostResultComment,
     [int]$IssueNumber = 0,
     [int[]]$IssueNumbers = @(),
+    [string]$ReviewedCodexPath = "",
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench"
 )
@@ -932,14 +933,12 @@ function Invoke-ReviewBundle {
         throw "run-reviewbundle requires a clean repo before dispatch. Current git status: $status"
     }
 
-    $runnerScript = Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1"
-    if (-not (Test-Path -LiteralPath $runnerScript -PathType Leaf)) {
-        throw "Runner v1 script not found at $runnerScript."
-    }
+    $runnerScript = Get-RunnerScriptPath
+    $codexPathBinding = Resolve-ReviewBundleCodexPathBinding
 
     $runnerResult = Invoke-WriteCommand `
         -FilePath $runnerScript `
-        -Arguments @("$Issue", "ReviewBundle") `
+        -Arguments @("-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding) `
         -Action "local_runner_v1.ps1 ReviewBundle"
 
     $result = if ($runnerResult.ExitCode -eq 0) { "success" } else { "failure" }
@@ -1108,6 +1107,22 @@ function Test-ToolResolutionSafety {
     }
 }
 
+function Get-ReviewedCodexPathValue {
+    $valueVariable = Get-Variable -Name ReviewedCodexPath -ErrorAction SilentlyContinue
+    if ($null -eq $valueVariable) {
+        return ""
+    }
+    return [string]$valueVariable.Value
+}
+
+function Get-RunnerScriptPath {
+    $runnerScript = Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1"
+    if (-not (Test-Path -LiteralPath $runnerScript -PathType Leaf)) {
+        throw "Runner v1 script not found at $runnerScript."
+    }
+    return $runnerScript
+}
+
 function ConvertFrom-ToolResolutionJson {
     param(
         [Parameter(Mandatory = $true)]
@@ -1182,6 +1197,72 @@ function ConvertFrom-ToolResolutionJson {
     return $payload
 }
 
+function Invoke-RunnerToolResolutionPreflight {
+    $runnerScript = Get-RunnerScriptPath
+    $runnerResult = Invoke-ReadOnlyCommand `
+        -FilePath "powershell.exe" `
+        -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-ToolResolutionPreflight", "-RequiredAction", "run-reviewbundle") `
+        -Action "runner ToolResolutionPreflight"
+    if ($runnerResult.ExitCode -notin @(0, 2)) {
+        throw "runner_preflight_process_failed"
+    }
+    return ConvertFrom-ToolResolutionJson -JsonText $runnerResult.Stdout -ExitCode $runnerResult.ExitCode
+}
+
+function Get-RunnerCodexSelectedPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RunnerPreflight
+    )
+
+    $toolsProperty = $RunnerPreflight.PSObject.Properties["tools"]
+    if ($null -eq $toolsProperty -or $null -eq $toolsProperty.Value) {
+        throw "runner_preflight_missing_tools"
+    }
+    $codexProperty = $toolsProperty.Value.PSObject.Properties["codex"]
+    if ($null -eq $codexProperty -or $null -eq $codexProperty.Value) {
+        throw "runner_preflight_codex_missing"
+    }
+    $selectedPath = Get-ObjectPropertyText -Object $codexProperty.Value -PropertyName "selected_path"
+    if ([string]::IsNullOrWhiteSpace($selectedPath)) {
+        throw "runner_preflight_codex_missing_selected_path"
+    }
+    return [System.IO.Path]::GetFullPath($selectedPath)
+}
+
+function Test-ReviewedCodexPathShape {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if ($Path -notmatch '^[A-Za-z]:[\\/]' -and $Path -notmatch '^\\\\[^\\]+\\[^\\]+\\') {
+        throw "reviewed_codex_path_not_absolute"
+    }
+    $suffix = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($suffix -notin @(".exe", ".cmd", ".bat", ".com")) {
+        throw "reviewed_codex_path_unsafe_suffix"
+    }
+}
+
+function Resolve-ReviewBundleCodexPathBinding {
+    $runnerPreflight = Invoke-RunnerToolResolutionPreflight
+    if (-not [string]::Equals((Get-ObjectPropertyText -Object $runnerPreflight -PropertyName "result"), "success", [System.StringComparison]::Ordinal)) {
+        throw "runner_preflight_blocked"
+    }
+    $selectedCodexPath = Get-RunnerCodexSelectedPath -RunnerPreflight $runnerPreflight
+    $reviewedPath = Get-ReviewedCodexPathValue
+    if ([string]::IsNullOrWhiteSpace($reviewedPath)) {
+        return $selectedCodexPath
+    }
+    Test-ReviewedCodexPathShape -Path $reviewedPath
+    $reviewedFullPath = [System.IO.Path]::GetFullPath($reviewedPath)
+    if (-not [string]::Equals($reviewedFullPath, $selectedCodexPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "reviewed_codex_path_mismatch"
+    }
+    return $reviewedFullPath
+}
+
 function Invoke-ToolResolutionPreflight {
     if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
         throw "ToolResolutionPreflight supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
@@ -1213,38 +1294,26 @@ function Invoke-ToolResolutionPreflight {
     }
 
     if ([string]::Equals($RequiredAction, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
-        $runnerScript = Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1"
-        if (-not (Test-Path -LiteralPath $runnerScript -PathType Leaf)) {
-            $blocked += "runner_script_missing"
+        try {
+            $nestedRunner = Invoke-RunnerToolResolutionPreflight
+            if ([string]$nestedRunner.result -eq "blocked") {
+                $blocked += "runner_preflight_blocked"
+                foreach ($nestedReason in @($nestedRunner.blocked_reasons)) {
+                    if ($nestedReason -is [string] -and -not [string]::IsNullOrWhiteSpace($nestedReason)) {
+                        $blocked += [string]$nestedReason
+                    }
+                }
+            }
         }
-        else {
-            $runnerResult = Invoke-ReadOnlyCommand `
-                -FilePath "powershell.exe" `
-                -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-ToolResolutionPreflight", "-RequiredAction", "run-reviewbundle") `
-                -Action "runner ToolResolutionPreflight"
-            if ($runnerResult.ExitCode -notin @(0, 2)) {
-                $blocked += "runner_preflight_process_failed"
+        catch {
+            $knownReason = [string]$_.Exception.Message
+            if ($knownReason -match '^Runner v1 script not found') {
+                $knownReason = "runner_script_missing"
             }
-            else {
-                try {
-                    $nestedRunner = ConvertFrom-ToolResolutionJson -JsonText $runnerResult.Stdout -ExitCode $runnerResult.ExitCode
-                    if ([string]$nestedRunner.result -eq "blocked") {
-                        $blocked += "runner_preflight_blocked"
-                        foreach ($nestedReason in @($nestedRunner.blocked_reasons)) {
-                            if ($nestedReason -is [string] -and -not [string]::IsNullOrWhiteSpace($nestedReason)) {
-                                $blocked += [string]$nestedReason
-                            }
-                        }
-                    }
-                }
-                catch {
-                    $knownReason = [string]$_.Exception.Message
-                    if ($knownReason -notmatch '^runner_preflight_[A-Za-z0-9_]+$') {
-                        $knownReason = "runner_preflight_contract_failure"
-                    }
-                    $blocked += $knownReason
-                }
+            elseif ($knownReason -notmatch '^runner_preflight_[A-Za-z0-9_]+$') {
+                $knownReason = "runner_preflight_contract_failure"
             }
+            $blocked += $knownReason
         }
     }
 
