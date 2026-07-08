@@ -1,0 +1,124 @@
+{
+  "schema_version": "lawb.workflow_optimization_benchmark.opt03.v0.1",
+  "example_only_or_benchmark_scope_note": "OPT-03 qualitative benchmark for this repository and recent local workflow only; not universal metrics.",
+  "baseline_commit": "e0cee9547ed75d60dba6d55d44800a5a05369a7b",
+  "benchmark_cases": [
+    {
+      "case_id": "case_a",
+      "name": "Course environment restore / host readiness",
+      "manual_workflow_observations": [
+        "long repeated starting-state checks",
+        "tool path confusion",
+        "Host Check versus bootstrap READY distinction",
+        "false blocker from execution-context mismatch",
+        "large terminal evidence"
+      ],
+      "collector_assisted_observations": [
+        "command results and artifacts can be grouped in one review packet",
+        "stdout and stderr paths make raw output easier to locate",
+        "empty stderr artifacts and hashes reduce ambiguity",
+        "human review remains required for host readiness interpretation"
+      ]
+    },
+    {
+      "case_id": "case_b",
+      "name": "RV2-03 final acceptance",
+      "manual_workflow_observations": [
+        "Host readiness blocker needed multiple follow-ups",
+        "sandbox GitHub or Codex context created false blocker risk",
+        "final manifest/input source had to be traced",
+        "preflight JSON needed raw review"
+      ],
+      "collector_assisted_observations": [
+        "read-only command outputs can be captured in command result records",
+        "failed command records would preserve exit code and artifact paths",
+        "compact summaries reduce transcript bulk",
+        "semantic acceptance remains outside collector authority"
+      ]
+    },
+    {
+      "case_id": "case_c",
+      "name": "OPT-02 implementation review",
+      "manual_workflow_observations": [
+        "untracked files did not show in normal git diff",
+        "raw diff retrieval required extra follow-up",
+        "tests and CLI smoke evidence were separate from code review",
+        "denylist blocker required focused repair"
+      ],
+      "collector_assisted_observations": [
+        "test and JSON validation output can be grouped in one review packet",
+        "command result records preserve argv, cwd, exit code, timing, and artifact paths",
+        "untracked-file raw diff still requires explicit no-index handling",
+        "code safety review remains required"
+      ]
+    }
+  ],
+  "manual_workflow_observations": {
+    "summary": "Manual evidence collection worked but repeated starting-state, validation, raw output, and final-report material across tasks.",
+    "main_costs": [
+      "scattered stdout/stderr",
+      "large terminal transcripts",
+      "repeated evidence narration",
+      "extra follow-up for raw untracked diffs",
+      "false blocker classification effort"
+    ]
+  },
+  "collector_assisted_observations": {
+    "evidence_root": "C:\\Users\\admin\\AppData\\Local\\Temp\\opt03_ab_benchmark_evidence",
+    "session_path": "C:\\Users\\admin\\AppData\\Local\\Temp\\opt03_ab_benchmark_evidence\\session.json",
+    "review_packet_path": "C:\\Users\\admin\\AppData\\Local\\Temp\\opt03_ab_benchmark_evidence\\review_packet.json",
+    "result": "success",
+    "command_count": 2,
+    "failed_command_count": 0,
+    "artifact_examples": [
+      "commands\\001-opt01-json-validate\\stdout.txt",
+      "commands\\001-opt01-json-validate\\stderr.txt",
+      "commands\\002-opt02-tests\\stdout.txt",
+      "commands\\002-opt02-tests\\stderr.txt"
+    ],
+    "limitations": [
+      "collector does not decide semantic acceptance",
+      "collector does not replace raw diff review",
+      "collector is not a sandbox",
+      "src-layout local execution requires process-local PYTHONPATH=src"
+    ]
+  },
+  "metrics": {
+    "prompt_bulk_reduction": "improved",
+    "evidence_locality": "improved",
+    "raw_evidence_availability": "improved",
+    "false_blocker_reduction": "improved",
+    "reviewer_burden": "improved",
+    "semantic_safety_preserved": "improved",
+    "authority_boundary_preserved": "improved",
+    "raw_diff_handling_for_untracked_files": "unchanged",
+    "semantic_review_replacement": "unchanged",
+    "complexity_movement": "partly_moved"
+  },
+  "go_no_go": {
+    "recommendation": "go_bounded",
+    "next_step": "OPT-04 UI Mockup-First Small Benchmark",
+    "conditions": [
+      "one small benchmark only",
+      "no live Bridge",
+      "no GitHub write",
+      "no RV2-04 activation",
+      "no semantic acceptance delegation to the collector"
+    ]
+  },
+  "safety": {
+    "contains_secrets": false,
+    "contains_tokens": false,
+    "live_bridge_invoked": false,
+    "dispatcher_invoked": false,
+    "runner_invoked": false,
+    "codex_runtime_task_invoked": false,
+    "github_write_performed": false,
+    "git_write_performed": false,
+    "issue_mutation_performed": false,
+    "dependency_or_tool_install_performed": false,
+    "permanent_path_or_config_modified": false,
+    "claims_universal_metrics": false,
+    "claims_semantic_acceptance": false
+  }
+}
