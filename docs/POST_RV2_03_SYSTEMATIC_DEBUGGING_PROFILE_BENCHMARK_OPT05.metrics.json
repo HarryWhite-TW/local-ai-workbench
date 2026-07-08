@@ -1,0 +1,146 @@
+{
+  "schema_version": "lawb.systematic_debugging_profile_benchmark.opt05.v0.1",
+  "baseline_commit": "bfd5091f12dc3d62a13a8d9d823a37217b0d0b8a",
+  "benchmark_scope_note": "OPT-05 qualitative benchmark for a systematic debugging profile only. It does not authorize source changes, test changes, script changes, Git writes, GitHub writes, Issue mutation, live Bridge, Dispatcher, Runner, Codex runtime task execution, dependency installation, RV2-04, or OPT-06.",
+  "benchmark_cases": [
+    {
+      "case_id": "case_a",
+      "name": "Course host restore false blockers",
+      "manual_debugging_observations": [
+        "host readiness symptoms could be confused with repository defects",
+        "execution-context mismatch could produce false blockers",
+        "tool or path state needed explicit classification"
+      ],
+      "profile_assisted_observations": [
+        "current_truth_gate separates host state from repository state",
+        "blocker taxonomy distinguishes environment_blocker from execution_context_mismatch",
+        "stop_or_escalate prevents unauthorized config or PATH repair"
+      ]
+    },
+    {
+      "case_id": "case_b",
+      "name": "RV2-03 manifest/input recovery",
+      "manual_debugging_observations": [
+        "stale generated artifacts could be mistaken for current truth",
+        "missing input evidence could invite speculative recovery",
+        "acceptance and implementation authority could blur"
+      ],
+      "profile_assisted_observations": [
+        "current_truth_gate requires fresh source-of-truth reads",
+        "evidence_requirements classify missing artifacts as evidence_gap",
+        "scope_boundary_check preserves live Bridge and GitHub write boundaries"
+      ]
+    },
+    {
+      "case_id": "case_c",
+      "name": "OPT-02 denylist blocker and second repair",
+      "manual_debugging_observations": [
+        "passing smoke evidence did not prove semantic safety",
+        "subtle denylist behavior required reviewer detection",
+        "a second repair needed explicit user approval"
+      ],
+      "profile_assisted_observations": [
+        "hypothesis_list keeps semantic safety and test coverage possibilities visible",
+        "root_cause_selection separates source_contract_blocker from test_coverage_blocker",
+        "repair_budget_rules make second_repair_required explicit"
+      ]
+    },
+    {
+      "case_id": "case_d",
+      "name": "OPT-04 raw evidence review of untracked files",
+      "manual_debugging_observations": [
+        "normal git diff does not show untracked file content",
+        "reviewers need raw content before approval",
+        "status evidence alone can look complete while raw evidence is missing"
+      ],
+      "profile_assisted_observations": [
+        "evidence_requirements call for no-index raw diff evidence for untracked files",
+        "final_reviewer_packet separates status from raw content",
+        "missing raw diff is classified as evidence_gap rather than implementation failure"
+      ]
+    }
+  ],
+  "manual_debugging_observations": {
+    "summary": "Recent debugging and review follow-ups worked but often required extra turns to classify whether a symptom was environment, evidence, scope, source contract, or approval related.",
+    "main_costs": [
+      "chaotic investigation order",
+      "false blocker risk",
+      "stale current-truth risk",
+      "unclear repair budget state",
+      "raw evidence follow-up for untracked files",
+      "semantic safety issues hidden behind passing smoke checks"
+    ]
+  },
+  "profile_assisted_observations": {
+    "summary": "A fixed debugging profile makes investigation order and blocker labels explicit while preserving reviewer judgment and approval gates.",
+    "profile_path": "docs/POST_RV2_03_SYSTEMATIC_DEBUGGING_PROFILE_BENCHMARK_OPT05.profile.json",
+    "limitations": [
+      "profile does not fix defects",
+      "profile does not replace source review",
+      "profile does not replace reviewer judgment",
+      "profile does not authorize repairs",
+      "profile does not provide precise timing or percentage metrics",
+      "profile can add overhead to simple deterministic tasks"
+    ]
+  },
+  "metrics": {
+    "chaotic_investigation_reduction": "improved",
+    "blocker_classification_clarity": "improved",
+    "symptom_truth_hypothesis_evidence_fix_verification_separation": "improved",
+    "false_blocker_reduction": "improved",
+    "real_risk_visibility": "improved",
+    "reviewer_judgment_preservation": "improved",
+    "user_approval_boundary_preservation": "improved",
+    "raw_evidence_completeness": "improved",
+    "automatic_repair_safety": "unchanged",
+    "semantic_acceptance_replacement": "unchanged",
+    "implementation_evidence": "unknown",
+    "process_overhead": "worse"
+  },
+  "go_no_go": {
+    "recommendation": "go_bounded",
+    "next_step": "OPT-06 Systematic Debugging Profile Follow-Up Planning",
+    "conditions": [
+      "use profile for ambiguous, safety-relevant, environment-sensitive, or evidence-heavy debugging",
+      "do not require profile for tiny deterministic checks",
+      "profile remains example-only unless separately adopted",
+      "fresh current-truth reads remain required",
+      "reviewer judgment remains required",
+      "user approval remains required for high-risk or second-repair actions",
+      "no source, test, script, config, GitHub, Bridge, Dispatcher, Runner, or Codex runtime authority is added"
+    ],
+    "no_go_conditions": [
+      "profile used as permission to repair",
+      "profile labels treated as proof without evidence",
+      "reviewer judgment skipped",
+      "current-source reads skipped",
+      "second repair performed without user approval",
+      "metrics converted into unsupported precise percentages"
+    ]
+  },
+  "safety": {
+    "contains_secrets": false,
+    "contains_tokens": false,
+    "claims_precise_percentages": false,
+    "claims_current_repo_truth": false,
+    "claims_semantic_acceptance": false,
+    "source_code_changes_performed": false,
+    "test_changes_performed": false,
+    "script_changes_performed": false,
+    "github_write_performed": false,
+    "git_write_performed": false,
+    "issue_write_performed": false,
+    "live_bridge_invoked": false,
+    "dispatcher_invoked": false,
+    "runner_invoked": false,
+    "codex_runtime_task_invoked": false,
+    "dependency_or_tool_install_performed": false,
+    "permanent_path_or_config_modified": false,
+    "service_or_watcher_started": false,
+    "mcp_started": false,
+    "rv2_04_authorized": false,
+    "opt06_authorized": false,
+    "automatic_repair_authorized": false,
+    "automatic_approval_authorized": false
+  }
+}

@@ -1,0 +1,241 @@
+{
+  "schema_version": "lawb.systematic_debugging_profile.opt05.v0.1",
+  "example_only": true,
+  "benchmark_scope_note": "OPT-05 benchmark-only debugging profile. This is not current repo truth, not a debugging tool, not an approval mechanism, and not authorization for source, test, script, GitHub, Bridge, Dispatcher, Runner, Codex runtime, RV2-04, or OPT-06 work.",
+  "profile_name": "LAWB Systematic Debugging Profile",
+  "intended_use": [
+    "ambiguous debugging tasks",
+    "environment-sensitive blockers",
+    "safety-relevant workflow failures",
+    "tasks where current truth, evidence, and repair authority must stay separate",
+    "review packets that need explicit blocker classification"
+  ],
+  "stages": [
+    {
+      "id": "symptom_capture",
+      "purpose": "Record what failed or appears wrong before naming a cause.",
+      "required_outputs": [
+        "symptom statement",
+        "observed command or artifact",
+        "expected behavior",
+        "first known failing point"
+      ]
+    },
+    {
+      "id": "current_truth_gate",
+      "purpose": "Revalidate mutable facts before diagnosis.",
+      "required_outputs": [
+        "git state if relevant",
+        "task packet baseline if relevant",
+        "required governing files read",
+        "stale or missing source-of-truth notes"
+      ]
+    },
+    {
+      "id": "scope_boundary_check",
+      "purpose": "Confirm what files, commands, repairs, and side effects are authorized.",
+      "required_outputs": [
+        "allowed paths",
+        "forbidden operations",
+        "approval boundaries",
+        "stop conditions"
+      ]
+    },
+    {
+      "id": "reproduction_or_evidence_check",
+      "purpose": "Reproduce the issue or classify why reproduction is not possible.",
+      "required_outputs": [
+        "reproduction command or artifact",
+        "exit code if applicable",
+        "stdout and stderr references if applicable",
+        "evidence gap if reproduction is unavailable"
+      ]
+    },
+    {
+      "id": "hypothesis_list",
+      "purpose": "List plausible explanations before choosing one.",
+      "required_outputs": [
+        "environment hypotheses",
+        "source contract hypotheses",
+        "test coverage hypotheses",
+        "execution context hypotheses",
+        "evidence gap hypotheses"
+      ]
+    },
+    {
+      "id": "root_cause_selection",
+      "purpose": "Select the most likely root cause based on evidence rather than convenience.",
+      "required_outputs": [
+        "selected root cause",
+        "supporting evidence",
+        "discarded alternatives",
+        "remaining uncertainty"
+      ]
+    },
+    {
+      "id": "focused_repair_plan",
+      "purpose": "Plan the smallest authorized repair, or state that repair is not authorized.",
+      "required_outputs": [
+        "repair scope",
+        "files to change",
+        "repair budget status",
+        "approval needed if any"
+      ]
+    },
+    {
+      "id": "verification_plan",
+      "purpose": "Choose checks that prove the repair or classification without expanding scope.",
+      "required_outputs": [
+        "validation commands",
+        "expected evidence",
+        "exit-code expectations",
+        "raw evidence needs"
+      ]
+    },
+    {
+      "id": "final_reviewer_packet",
+      "purpose": "Report facts, evidence, residual risk, and safety status without claiming semantic approval.",
+      "required_outputs": [
+        "verdict",
+        "changed files if any",
+        "validation results",
+        "blocker classification",
+        "raw evidence paths",
+        "safety confirmation"
+      ]
+    },
+    {
+      "id": "stop_or_escalate",
+      "purpose": "Stop when the next action requires authority outside the task.",
+      "required_outputs": [
+        "stop reason",
+        "required approval or scope delta",
+        "recommended next bounded action",
+        "unperformed forbidden actions"
+      ]
+    }
+  ],
+  "blocker_taxonomy": [
+    {
+      "id": "environment_blocker",
+      "description": "The local host, tool availability, permissions, filesystem, or runtime environment prevents reliable execution."
+    },
+    {
+      "id": "source_contract_blocker",
+      "description": "The implementation or documentation conflicts with an approved source contract, safety rule, or expected behavior."
+    },
+    {
+      "id": "test_coverage_blocker",
+      "description": "Existing checks cannot prove the required behavior, or a needed regression test is absent for an approved source repair."
+    },
+    {
+      "id": "evidence_gap",
+      "description": "Required raw output, diff, artifact, source read, or validation result is missing or incomplete."
+    },
+    {
+      "id": "execution_context_mismatch",
+      "description": "A command fails or behaves differently because it is run from the wrong shell, path, environment, profile, or process-local setup."
+    },
+    {
+      "id": "approval_required",
+      "description": "The next action requires explicit user approval, such as a high-risk command, second repair, or side-effect boundary crossing."
+    },
+    {
+      "id": "scope_delta",
+      "description": "The needed fix or verification exceeds the approved objective, allowed files, authority, or side-effect boundary."
+    },
+    {
+      "id": "second_repair_required",
+      "description": "The first focused repair was used and another repair is needed, so work must stop unless the user explicitly approves continuation."
+    }
+  ],
+  "evidence_requirements": [
+    "Record command, cwd, exit code, and short output for relevant validations.",
+    "Preserve raw stdout and stderr artifacts when a collector or equivalent evidence path is available.",
+    "Use no-index diffs or equivalent raw content evidence for untracked files when reviewer approval depends on file contents.",
+    "Separate current source reads from stale generated or copied artifacts.",
+    "State when evidence is missing and classify it as an evidence_gap instead of guessing.",
+    "Do not treat a passing smoke as semantic approval.",
+    "Do not treat a blocker label as proof without supporting evidence."
+  ],
+  "stop_conditions": [
+    "baseline or starting gate does not match the task packet",
+    "required source anchor or governing file is missing",
+    "needed repair touches files outside allowed paths",
+    "second repair is required without explicit approval",
+    "next step requires GitHub write, Issue mutation, live Bridge, Dispatcher, Runner, Codex runtime task execution, RV2-04, OPT-06, dependency installation, service, watcher, MCP, or config/PATH modification",
+    "secrets or tokens would need to be displayed",
+    "validation fails after the permitted focused repair"
+  ],
+  "repair_budget_rules": {
+    "default_budget": "one focused repair when the task explicitly allows it",
+    "repair_must_be_authorized": true,
+    "repair_scope_must_match_allowed_files": true,
+    "second_repair_requires_user_approval": true,
+    "no_silent_scope_expansion": true,
+    "doc_only_benchmark_tasks_must_not_repair_source": true
+  },
+  "reviewer_responsibilities": [
+    "Check whether the blocker classification is supported by evidence.",
+    "Confirm raw evidence is available for untracked or newly created files.",
+    "Confirm passing validations do not overclaim semantic acceptance.",
+    "Confirm safety boundaries and user approval boundaries remain explicit.",
+    "Reject profile use if it hides real risk behind a process label."
+  ],
+  "user_approval_boundaries": [
+    "commit",
+    "push",
+    "staging",
+    "PR creation",
+    "Issue write",
+    "GitHub write",
+    "live Bridge execution",
+    "Dispatcher invocation",
+    "Runner invocation",
+    "Codex runtime task execution",
+    "dependency or tool installation",
+    "config or PATH modification",
+    "service, watcher, scheduler, or MCP",
+    "RV2-04",
+    "OPT-06 implementation",
+    "second focused repair when the first repair was already used"
+  ],
+  "non_goals": [
+    "Fix source code in OPT-05",
+    "Modify tests in OPT-05",
+    "Modify scripts in OPT-05",
+    "Implement a debugging tool",
+    "Create a runtime profile loader",
+    "Touch GitHub Issues or PRs",
+    "Run live Bridge, Dispatcher, Runner, or Codex runtime tasks",
+    "Install dependencies or tools",
+    "Modify permanent config or PATH",
+    "Activate RV2-04",
+    "Implement OPT-06",
+    "Replace reviewer judgment",
+    "Pretend this profile is current repo truth"
+  ],
+  "safety": {
+    "contains_secrets": false,
+    "contains_tokens": false,
+    "example_only": true,
+    "claims_current_repo_truth": false,
+    "authorizes_source_changes": false,
+    "authorizes_test_changes": false,
+    "authorizes_script_changes": false,
+    "authorizes_git_write": false,
+    "authorizes_github_write": false,
+    "authorizes_issue_mutation": false,
+    "authorizes_live_bridge": false,
+    "authorizes_dispatcher": false,
+    "authorizes_runner": false,
+    "authorizes_codex_runtime_task": false,
+    "authorizes_dependency_install": false,
+    "authorizes_service_or_watcher": false,
+    "authorizes_mcp": false,
+    "authorizes_rv2_04": false,
+    "authorizes_opt06": false,
+    "automatic_repair_allowed": false,
+    "automatic_approval_allowed": false
+  }
+}
