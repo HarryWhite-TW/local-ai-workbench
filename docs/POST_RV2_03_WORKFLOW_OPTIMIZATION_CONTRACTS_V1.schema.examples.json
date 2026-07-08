@@ -1,0 +1,255 @@
+{
+  "example_only": true,
+  "notice": "Examples only. These records do not claim to represent current repository truth.",
+  "current_state_manifest_v0_1": {
+    "schema": "lawb.current_state_manifest.v0.1",
+    "example_only": true,
+    "generated_at_utc": "2026-07-08T00:00:00Z",
+    "expires_at_utc": "2026-07-08T00:30:00Z",
+    "scope": {
+      "repo": "HarryWhite-TW/local-ai-workbench",
+      "task_id": "OPT-01-example",
+      "profile": "docs"
+    },
+    "observed": {
+      "git": {
+        "branch": "example-branch",
+        "head": "0000000000000000000000000000000000000000",
+        "origin_head": "1111111111111111111111111111111111111111",
+        "divergence": {
+          "ahead": 0,
+          "behind": 0
+        },
+        "working_tree_clean": true,
+        "staged_area_empty": true
+      },
+      "github": {
+        "read_attempted": false,
+        "state": "not_observed_in_example"
+      },
+      "auth": {
+        "github_cli_available": false,
+        "credential_material_captured": false
+      }
+    },
+    "declared": {
+      "allowed_paths": [
+        "docs/POST_RV2_03_WORKFLOW_OPTIMIZATION_CONTRACTS_V1.md",
+        "docs/POST_RV2_03_WORKFLOW_OPTIMIZATION_CONTRACTS_V1.schema.examples.json"
+      ],
+      "forbidden_operations": [
+        "commit",
+        "push",
+        "pr",
+        "issue_write",
+        "live_bridge",
+        "dispatcher",
+        "runner",
+        "codex_runtime_task",
+        "dependency_install"
+      ]
+    },
+    "derived": {
+      "starting_state_matches_declared": false,
+      "allowed_file_scope_valid": true,
+      "reason": "placeholder SHA values are examples only"
+    },
+    "sources": [
+      {
+        "kind": "command",
+        "id": "git-status-example",
+        "captured_at_utc": "2026-07-08T00:00:01Z"
+      }
+    ],
+    "invalidates_on": [
+      "git_head_change",
+      "git_remote_change",
+      "working_tree_change",
+      "staged_area_change",
+      "github_issue_change",
+      "auth_change",
+      "approval_change"
+    ],
+    "safety": {
+      "contains_secrets": false,
+      "manual_edits_allowed": false,
+      "commit_as_current_truth_allowed": false
+    }
+  },
+  "review_packet_v0_1": {
+    "schema": "lawb.review_packet.v0.1",
+    "example_only": true,
+    "task_id": "OPT-01-example",
+    "levels": {
+      "level_1_decision_summary": {
+        "verdict": "DONE_READY_FOR_REVIEW",
+        "changed_files": [
+          "docs/example.md"
+        ],
+        "safety_summary": "No commit, push, PR, Issue write, live Bridge, Dispatcher, Runner, or Codex runtime task."
+      },
+      "level_2_structured_review_packet": {
+        "artifact_path": "artifacts/example/review_packet.json",
+        "validations": [
+          {
+            "command_id": "json-tool-example",
+            "result": "passed"
+          }
+        ],
+        "diff_summary": {
+          "files_changed": 1,
+          "insertions": 10,
+          "deletions": 0
+        }
+      },
+      "level_3_raw_evidence_archive": {
+        "artifact_root": "artifacts/example/raw",
+        "required_artifacts_present": true,
+        "hash_algorithm": "sha256"
+      }
+    },
+    "fail_closed": {
+      "missing_raw_evidence": true,
+      "allowed_scope_violation": true,
+      "summary_evidence_mismatch": true,
+      "stale_manifest_used_as_truth": true
+    }
+  },
+  "command_result_v0_1": {
+    "schema": "lawb.command_result.v0.1",
+    "example_only": true,
+    "command_id": "json-tool-example",
+    "argv": [
+      ".venv-course/Scripts/python.exe",
+      "-m",
+      "json.tool",
+      "docs/example.schema.json"
+    ],
+    "cwd": "C:/example/local-ai-workbench",
+    "start_time_utc": "2026-07-08T00:01:00Z",
+    "end_time_utc": "2026-07-08T00:01:01Z",
+    "exit_code": 0,
+    "timed_out": false,
+    "killed": false,
+    "stdout_artifact_path": "artifacts/example/command/json-tool.stdout.txt",
+    "stderr_artifact_path": "artifacts/example/command/json-tool.stderr.txt",
+    "stdout_byte_count": 128,
+    "stderr_byte_count": 0,
+    "decoding_notes": {
+      "stdout": "utf-8",
+      "stderr": "empty artifact"
+    },
+    "hashes": {
+      "stdout_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "task_packet_layers_v0_1": {
+    "schema": "lawb.task_packet_layers.v0.1",
+    "example_only": true,
+    "layer_a_governance_reference": {
+      "references": [
+        "AGENTS.md",
+        "src/local_runner_bridge/AGENTS.md",
+        "PLANS.md",
+        "docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md",
+        "docs/BRIDGE_OPERATOR_V0_SPEC.md"
+      ],
+      "duplicated_full_text": false
+    },
+    "layer_b_current_state_manifest": {
+      "manifest_artifact_path": "artifacts/example/current_state_manifest.json",
+      "committed_as_truth": false,
+      "manually_edited": false
+    },
+    "layer_c_execution_delta": {
+      "objective": "Create docs-only contract examples.",
+      "allowed_paths": [
+        "docs/example.md",
+        "docs/example.schema.json"
+      ],
+      "validation_commands": [
+        "python -m json.tool docs/example.schema.json"
+      ],
+      "forbidden_operations": [
+        "commit",
+        "push",
+        "issue_write",
+        "live_bridge",
+        "dispatcher",
+        "runner"
+      ]
+    }
+  },
+  "model_tiering_v0_1": {
+    "schema": "lawb.model_tiering.v0.1",
+    "example_only": true,
+    "tiers": [
+      {
+        "tier": 0,
+        "name": "deterministic script/tool",
+        "examples": [
+          "json validation",
+          "diff check",
+          "hash calculation"
+        ]
+      },
+      {
+        "tier": 1,
+        "name": "low-risk semantic formatting",
+        "examples": [
+          "review packet formatting",
+          "summary compaction"
+        ]
+      },
+      {
+        "tier": 2,
+        "name": "bounded engineering execution",
+        "examples": [
+          "small approved code patch",
+          "focused test update"
+        ]
+      },
+      {
+        "tier": 3,
+        "name": "high-risk judgment and complex engineering",
+        "examples": [
+          "authority boundary design",
+          "live workflow acceptance",
+          "architecture decision"
+        ]
+      }
+    ],
+    "upgrade_triggers": [
+      "authority_change_possible",
+      "current_truth_conflict",
+      "live_bridge_or_github_write_involved",
+      "ambiguous_allowed_paths",
+      "second_repair_needed"
+    ],
+    "downgrade_conditions": [
+      "deterministic_validation_only",
+      "fresh_manifest_available",
+      "docs_only_inside_approved_paths",
+      "no_semantic_acceptance_judgment"
+    ],
+    "stage_based_composition": [
+      {
+        "stage": "collect",
+        "suggested_tier": 0
+      },
+      {
+        "stage": "format",
+        "suggested_tier": 1
+      },
+      {
+        "stage": "bounded_patch",
+        "suggested_tier": 2
+      },
+      {
+        "stage": "authority_review",
+        "suggested_tier": 3
+      }
+    ]
+  }
+}
