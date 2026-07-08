@@ -1,0 +1,151 @@
+{
+  "schema_version": "lawb.ui_mockup_first_contract.opt04.v0.1",
+  "example_only": true,
+  "benchmark_scope_note": "OPT-04 benchmark-only UI contract. This does not represent current app truth, does not authorize implementation, and must be refreshed against current source before any future product UI task.",
+  "target_screen": {
+    "name": "Review Packet / Evidence Summary",
+    "kind": "benchmark_mockup_only",
+    "surface": "reviewer-facing evidence summary concept",
+    "not_current_app_truth": true
+  },
+  "user_goal": "Help a reviewer quickly inspect command evidence, changed artifacts, validation status, and safety assertions before making a separate review decision.",
+  "components": [
+    {
+      "id": "screen_header",
+      "name": "Screen header",
+      "purpose": "Show benchmark label, review packet title, result state, and local-only scope.",
+      "required_content": [
+        "benchmark-only label",
+        "result summary",
+        "evidence root reference",
+        "no-authority note"
+      ]
+    },
+    {
+      "id": "validation_summary",
+      "name": "Validation summary",
+      "purpose": "Show command count, failed command count, JSON validation state, and diff-check state.",
+      "required_content": [
+        "command count",
+        "failed command count",
+        "validation chips",
+        "short failure state"
+      ]
+    },
+    {
+      "id": "command_results",
+      "name": "Command results",
+      "purpose": "List command ids with argv summaries, exit codes, stdout/stderr artifact references, and timing.",
+      "required_content": [
+        "command id",
+        "exit code",
+        "stdout artifact",
+        "stderr artifact",
+        "duration"
+      ]
+    },
+    {
+      "id": "changed_artifacts",
+      "name": "Changed artifacts",
+      "purpose": "Show files changed or proposed by a task, with review status and raw evidence expectations.",
+      "required_content": [
+        "file path",
+        "artifact type",
+        "review note",
+        "raw diff requirement"
+      ]
+    },
+    {
+      "id": "safety_assertions",
+      "name": "Safety assertions",
+      "purpose": "Make non-authority claims visible without treating them as semantic approval.",
+      "required_content": [
+        "no GitHub write",
+        "no live Bridge",
+        "no Dispatcher",
+        "no Runner",
+        "no Codex runtime task",
+        "no dependency install"
+      ]
+    }
+  ],
+  "layout_rules": [
+    "Use a compact workbench-style layout rather than a marketing or landing page layout.",
+    "Place result and scope at the top of the screen.",
+    "Keep validation summary visible before command details.",
+    "Keep command results and changed artifacts in adjacent review regions.",
+    "Keep safety assertions visually distinct from semantic acceptance.",
+    "Avoid nested cards and decorative-only layout elements.",
+    "Use stable table and list dimensions so changing status text does not shift the whole screen."
+  ],
+  "states": [
+    {
+      "id": "success",
+      "description": "All recorded validation commands passed, with safety assertions still requiring reviewer verification."
+    },
+    {
+      "id": "command_failed",
+      "description": "At least one command failed; the failed command remains inspectable with stdout and stderr artifacts."
+    },
+    {
+      "id": "missing_artifact",
+      "description": "A referenced stdout, stderr, diff, session, or review packet artifact is missing or unreadable."
+    },
+    {
+      "id": "scope_warning",
+      "description": "Changed files or requested actions appear outside the approved task boundary."
+    },
+    {
+      "id": "empty",
+      "description": "No commands or changed artifacts have been recorded yet."
+    }
+  ],
+  "accessibility_notes": [
+    "Use semantic headings and tables for review structure.",
+    "Do not rely on color alone for success, warning, or failure states.",
+    "Keep contrast high enough for dense reviewer workflows.",
+    "Use descriptive labels for artifact references and status chips.",
+    "Ensure keyboard reading order follows header, validation summary, command results, changed artifacts, safety assertions."
+  ],
+  "acceptance_checks": [
+    "A later implementation task must read current app source before coding.",
+    "A later implementation task must preserve the existing product/runtime authority boundary.",
+    "The screen must distinguish evidence collection success from semantic task approval.",
+    "The screen must expose command exit codes and stdout/stderr artifact references.",
+    "The screen must not imply GitHub write, live Bridge, Dispatcher, Runner, or Codex runtime authority.",
+    "The screen must present safety assertions as review evidence, not as automatic approval.",
+    "The UI must remain usable when one or more commands fail."
+  ],
+  "non_goals": [
+    "Implement product UI in OPT-04",
+    "Modify app source",
+    "Modify tests",
+    "Modify scripts",
+    "Create framework code",
+    "Add dependencies",
+    "Start services, watchers, or MCP",
+    "Authorize GitHub write",
+    "Authorize live Bridge, Dispatcher, Runner, or Codex runtime task execution",
+    "Activate RV2-04",
+    "Implement OPT-05",
+    "Treat this mockup as current app truth"
+  ],
+  "safety": {
+    "contains_secrets": false,
+    "contains_tokens": false,
+    "example_only": true,
+    "claims_current_app_truth": false,
+    "authorizes_product_ui_implementation": false,
+    "source_code_changes_authorized": false,
+    "github_write_authorized": false,
+    "live_bridge_authorized": false,
+    "dispatcher_authorized": false,
+    "runner_authorized": false,
+    "codex_runtime_task_authorized": false,
+    "dependency_install_authorized": false,
+    "service_or_watcher_authorized": false,
+    "mcp_authorized": false,
+    "rv2_04_authorized": false,
+    "opt05_authorized": false
+  }
+}

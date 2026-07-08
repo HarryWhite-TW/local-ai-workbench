@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OPT-04 Benchmark Mockup - Review Packet / Evidence Summary</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #5b6472;
+      --line: #d7dde6;
+      --surface: #ffffff;
+      --surface-alt: #f5f7fa;
+      --success: #1d6b47;
+      --warning: #8a5a00;
+      --danger: #a33a3a;
+      --accent: #245c8f;
+      --accent-soft: #e6f0f8;
+      --focus: #101828;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #eef2f6;
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      padding: 18px 28px;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.2;
+    }
+
+    .subhead {
+      margin-top: 8px;
+      max-width: 980px;
+      color: var(--muted);
+    }
+
+    main {
+      width: min(1220px, calc(100vw - 32px));
+      margin: 18px auto 28px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .summary-bar {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .panel,
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .metric {
+      padding: 14px;
+      min-height: 94px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      margin-top: 7px;
+      font-size: 23px;
+      font-weight: 700;
+    }
+
+    .metric-note {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+      padding: 14px 16px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.3;
+    }
+
+    .panel-body {
+      padding: 16px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-alt);
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .chip.success {
+      border-color: #9bc8b1;
+      background: #e8f5ee;
+      color: var(--success);
+    }
+
+    .chip.warning {
+      border-color: #dfc27a;
+      background: #fff7dc;
+      color: var(--warning);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 11px 10px;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      background: var(--surface-alt);
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      color: #233044;
+      background: #edf1f5;
+      border: 1px solid #d9e0e8;
+      border-radius: 5px;
+      padding: 2px 5px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    .artifact-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .artifact-list li {
+      display: grid;
+      gap: 4px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 10px;
+    }
+
+    .artifact-list li:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .path {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      color: #24364b;
+      overflow-wrap: anywhere;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .callout {
+      border: 1px solid #b9cadb;
+      border-left: 5px solid var(--accent);
+      background: var(--accent-soft);
+      border-radius: 8px;
+      padding: 13px 14px;
+    }
+
+    .safety-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .safety-list li {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-alt);
+      padding: 9px 10px;
+      font-weight: 700;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+      padding-bottom: 2px;
+    }
+
+    :focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 860px) {
+      header {
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 22px;
+      }
+
+      main {
+        width: min(100vw - 20px, 1220px);
+        margin-top: 10px;
+      }
+
+      .summary-bar,
+      .grid,
+      .safety-list {
+        grid-template-columns: 1fr;
+      }
+
+      .panel-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      table {
+        table-layout: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="eyebrow">Benchmark mockup only</div>
+      <h1>Review Packet / Evidence Summary</h1>
+      <div class="subhead">
+        Static OPT-04 concept for reviewing local command evidence. This is not app integration, not current app truth, and not authorization for product UI implementation.
+      </div>
+    </header>
+
+    <main>
+      <section class="summary-bar" aria-label="Evidence summary">
+        <div class="metric">
+          <div class="metric-label">Result</div>
+          <div class="metric-value">Success</div>
+          <div class="metric-note">Reviewer judgment still required</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Commands</div>
+          <div class="metric-value">2</div>
+          <div class="metric-note">0 failed</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Artifacts</div>
+          <div class="metric-value">6</div>
+          <div class="metric-note">stdout, stderr, JSON records</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Scope</div>
+          <div class="metric-value">Docs</div>
+          <div class="metric-note">No runtime authority</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Validation Status</h2>
+          <div class="chips" aria-label="Validation chips">
+            <span class="chip success">JSON valid</span>
+            <span class="chip success">Diff check clean</span>
+            <span class="chip warning">Semantic review pending</span>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="callout">
+            Collector evidence can show commands, paths, exit codes, and safety flags. It does not approve the task, replace raw diff review, or grant GitHub write authority.
+          </div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="panel" aria-labelledby="commands-heading">
+          <div class="panel-header">
+            <h2 id="commands-heading">Command Results</h2>
+            <span class="chip success">shell=False</span>
+          </div>
+          <div class="panel-body">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 24%;">Command</th>
+                  <th style="width: 16%;">Exit</th>
+                  <th>Artifacts</th>
+                  <th style="width: 18%;">Duration</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>ui-contract-json-validate</code></td>
+                  <td><span class="chip success">0</span></td>
+                  <td>
+                    <div class="path">commands/001-ui-contract-json-validate/stdout.txt</div>
+                    <div class="path">commands/001-ui-contract-json-validate/stderr.txt</div>
+                  </td>
+                  <td>local</td>
+                </tr>
+                <tr>
+                  <td><code>metrics-json-validate</code></td>
+                  <td><span class="chip success">0</span></td>
+                  <td>
+                    <div class="path">commands/002-metrics-json-validate/stdout.txt</div>
+                    <div class="path">commands/002-metrics-json-validate/stderr.txt</div>
+                  </td>
+                  <td>local</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="panel" aria-labelledby="artifacts-heading">
+          <div class="panel-header">
+            <h2 id="artifacts-heading">Changed Artifacts</h2>
+            <span class="chip warning">Raw review needed</span>
+          </div>
+          <div class="panel-body">
+            <ul class="artifact-list">
+              <li>
+                <strong>Benchmark report</strong>
+                <span class="path">docs/POST_RV2_03_UI_MOCKUP_FIRST_BENCHMARK_OPT04.md</span>
+                <span class="note">Purpose, method, risks, and Go / No-Go.</span>
+              </li>
+              <li>
+                <strong>UI contract JSON</strong>
+                <span class="path">docs/POST_RV2_03_UI_MOCKUP_FIRST_BENCHMARK_OPT04.ui_contract.json</span>
+                <span class="note">Example-only contract; not current app truth.</span>
+              </li>
+              <li>
+                <strong>Standalone mockup</strong>
+                <span class="path">docs/POST_RV2_03_UI_MOCKUP_FIRST_BENCHMARK_OPT04.mockup.html</span>
+                <span class="note">Static HTML with no external assets or CDN.</span>
+              </li>
+              <li>
+                <strong>Metrics JSON</strong>
+                <span class="path">docs/POST_RV2_03_UI_MOCKUP_FIRST_BENCHMARK_OPT04.metrics.json</span>
+                <span class="note">Qualitative ratings only.</span>
+              </li>
+            </ul>
+          </div>
+        </aside>
+      </div>
+
+      <section class="panel" aria-labelledby="safety-heading">
+        <div class="panel-header">
+          <h2 id="safety-heading">Safety Assertions</h2>
+          <span class="chip warning">Not semantic approval</span>
+        </div>
+        <div class="panel-body">
+          <ul class="safety-list">
+            <li>No GitHub write</li>
+            <li>No live Bridge</li>
+            <li>No Dispatcher</li>
+            <li>No Runner</li>
+            <li>No Codex runtime task</li>
+            <li>No dependency install</li>
+            <li>No service or watcher</li>
+            <li>No RV2-04 or OPT-05</li>
+          </ul>
+        </div>
+      </section>
+
+      <div class="footer-note">
+        OPT-04 benchmark mockup only. A future implementation task must read current source and receive separate approval.
+      </div>
+    </main>
+  </div>
+</body>
+</html>

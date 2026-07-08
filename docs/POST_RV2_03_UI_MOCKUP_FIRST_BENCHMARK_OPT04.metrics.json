@@ -1,0 +1,135 @@
+{
+  "schema_version": "lawb.ui_mockup_first_benchmark.opt04.v0.1",
+  "baseline_commit": "4bf7b08d7ee44dfe0b5022dc39b0abe03eb34381",
+  "benchmark_scope_note": "OPT-04 qualitative benchmark for a mockup-first workflow only. It does not authorize product UI implementation, source changes, GitHub write, live Bridge, Dispatcher, Runner, Codex runtime task execution, dependency installation, RV2-04, or OPT-05.",
+  "benchmark_cases": [
+    {
+      "case_id": "case_a",
+      "name": "Pure prose UI instruction",
+      "manual_ui_prompt_observations": [
+        "reviewer must infer screen hierarchy from prose",
+        "component boundaries may remain implicit",
+        "acceptance criteria can mix layout, behavior, and authority assumptions",
+        "non-goals need repeated restatement"
+      ],
+      "mockup_first_observations": [
+        "layout and information hierarchy are visible before implementation",
+        "component list and non-goals are explicit in the UI contract",
+        "review can separate visual intent from implementation authority",
+        "semantic approval remains outside the mockup"
+      ]
+    },
+    {
+      "case_id": "case_b",
+      "name": "Review Packet / Evidence Summary concept",
+      "manual_ui_prompt_observations": [
+        "review evidence screens can become vague without concrete regions",
+        "safety assertions may be confused with task acceptance",
+        "raw artifacts can be under-emphasized in prose-only descriptions"
+      ],
+      "mockup_first_observations": [
+        "validation summary, command results, changed artifacts, and safety assertions are distinct",
+        "the mockup labels semantic review as pending",
+        "artifact references are visible as first-class review items",
+        "the mockup remains static and disconnected from app runtime"
+      ]
+    },
+    {
+      "case_id": "case_c",
+      "name": "Future implementation task shaping",
+      "manual_ui_prompt_observations": [
+        "future Codex packets may need extra wording to avoid source and authority expansion",
+        "reviewers may ask for clarification about what the UI is allowed to decide",
+        "accessibility and state requirements can be easy to omit"
+      ],
+      "mockup_first_observations": [
+        "the UI contract names states, accessibility notes, acceptance checks, and non-goals",
+        "the mockup can reduce vague instructions while staying subordinate to current app truth",
+        "a later implementation task still requires fresh source review and separate approval"
+      ]
+    }
+  ],
+  "manual_ui_prompt_observations": {
+    "summary": "Pure prose UI instructions can work for small changes but tend to blur layout intent, component boundaries, states, and review acceptance criteria.",
+    "main_costs": [
+      "vague visual hierarchy",
+      "implicit component responsibilities",
+      "repeated non-goal wording",
+      "harder reviewer comparison",
+      "risk that safety assertions and semantic approval are conflated"
+    ]
+  },
+  "mockup_first_observations": {
+    "summary": "A static mockup plus UI contract makes review intent more concrete while preserving separate source review and authority checks.",
+    "mockup_path": "docs/POST_RV2_03_UI_MOCKUP_FIRST_BENCHMARK_OPT04.mockup.html",
+    "ui_contract_path": "docs/POST_RV2_03_UI_MOCKUP_FIRST_BENCHMARK_OPT04.ui_contract.json",
+    "limitations": [
+      "mockup does not represent current app truth",
+      "mockup does not decide implementation architecture",
+      "mockup does not grant authority",
+      "mockup does not replace accessibility or source review",
+      "qualitative benchmark does not provide precise timing or percentage metrics"
+    ]
+  },
+  "metrics": {
+    "vague_ui_instruction_reduction": "improved",
+    "implementation_task_bounding": "improved",
+    "reviewer_acceptance_clarity": "improved",
+    "mockup_as_sole_source_of_truth_risk": "unchanged",
+    "current_truth_preservation": "improved",
+    "accessibility_visibility": "improved",
+    "authority_boundary_preservation": "improved",
+    "semantic_review_replacement": "unchanged",
+    "implementation_evidence": "unknown",
+    "complexity_movement": "unchanged"
+  },
+  "go_no_go": {
+    "recommendation": "go_bounded",
+    "next_step": "OPT-05 UI Mockup-First Follow-Up Planning",
+    "conditions": [
+      "one small next planning step only",
+      "fresh source review before implementation",
+      "mockup remains subordinate to current app truth",
+      "no product UI implementation from OPT-04",
+      "no GitHub write",
+      "no live Bridge",
+      "no Dispatcher",
+      "no Runner",
+      "no Codex runtime task execution",
+      "no RV2-04 activation",
+      "no dependency installation"
+    ],
+    "no_go_conditions": [
+      "mockup treated as sole source of truth",
+      "implementation starts without separate approval",
+      "source, tests, scripts, or config changes are needed",
+      "metrics are converted into unsupported precise percentages",
+      "authority boundaries become unclear"
+    ]
+  },
+  "safety": {
+    "contains_secrets": false,
+    "contains_tokens": false,
+    "example_only": true,
+    "claims_current_app_truth": false,
+    "claims_precise_percentages": false,
+    "claims_semantic_acceptance": false,
+    "product_ui_implementation_performed": false,
+    "source_code_changes_performed": false,
+    "test_changes_performed": false,
+    "script_changes_performed": false,
+    "github_write_performed": false,
+    "git_write_performed": false,
+    "issue_write_performed": false,
+    "live_bridge_invoked": false,
+    "dispatcher_invoked": false,
+    "runner_invoked": false,
+    "codex_runtime_task_invoked": false,
+    "dependency_or_tool_install_performed": false,
+    "permanent_path_or_config_modified": false,
+    "service_or_watcher_started": false,
+    "mcp_started": false,
+    "rv2_04_authorized": false,
+    "opt05_authorized": false
+  }
+}
