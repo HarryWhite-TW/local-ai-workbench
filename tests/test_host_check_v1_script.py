@@ -6,6 +6,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "host_check_v1.ps1"
+DOC = ROOT / "docs" / "HOST_CHECK_HARNESS_V1.md"
 
 
 def powershell():
@@ -209,3 +210,18 @@ def test_wrapper_has_bounded_catch_for_wrapper_failures():
     assert "catch {" in text
     assert "Unexpected host_check_v1 wrapper failure" in text
     assert "exit 3" in text
+
+
+def test_host_check_docs_distinguish_bootstrap_ready_from_operational_ready():
+    text = DOC.read_text(encoding="utf-8")
+
+    required = [
+        "bootstrap READY = tools and dependencies restored according to manifest",
+        "Host Check READY = stricter operational host readiness",
+        "git_identity_missing",
+        "path_*_differs_from_reviewed_*",
+        "fresh_shell_*_differs_from_reviewed_*",
+        "manifest_venv_not_gitignored",
+    ]
+    for phrase in required:
+        assert phrase in text

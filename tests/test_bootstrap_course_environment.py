@@ -69,6 +69,19 @@ exit /b 0
     )
 
 
+def fake_python_with_secret_ensurepip_failure(bin_dir: Path, secret_line: str) -> None:
+    write_cmd(
+        bin_dir / "python.cmd",
+        f"""@echo off
+echo python %*>> "%LAW_BOOTSTRAP_COMMAND_LOG%"
+if "%1"=="--version" echo Python 3.14.3& exit /b 0
+if "%1"=="-m" if "%2"=="pip" if "%3"=="--version" exit /b 1
+if "%1"=="-m" if "%2"=="ensurepip" echo {secret_line}& exit /b 1
+exit /b 0
+""",
+    )
+
+
 def fake_node_npm(bin_dir: Path) -> None:
     write_cmd(
         bin_dir / "node.cmd",
@@ -236,6 +249,30 @@ def test_audit_mode_creates_or_modifies_nothing(tmp_path):
     assert payload["safety"]["gh_login_invoked"] is False
 
 
+def test_bootstrap_safety_fields_remain_false_in_audit(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_python(bin_dir)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env)
+
+    assert result.returncode == 0
+    for key in [
+        "credentials_written",
+        "interactive_codex_invoked",
+        "bridge_operator_invoked",
+        "dispatcher_invoked",
+        "runner_invoked",
+        "github_write_performed",
+        "machine_path_modified",
+    ]:
+        assert payload["safety"][key] is False
+
+
 def test_audit_reports_missing_venv_and_tools_without_installing(tmp_path):
     repo = make_repo(tmp_path)
     bin_dir = tmp_path / "bin"
@@ -353,6 +390,52 @@ def test_apply_reports_venv_pip_repair_failure(tmp_path):
     assert "python -m pip install" not in commands
 
 
+def test_safe_failure_diagnostic_redacts_common_token_patterns_and_truncates(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = command_log(tmp_path)
+    secret_values = [
+        "gho_abcdefghijklmnopqrstuvwxyz012345",
+        "ghp_abcdefghijklmnopqrstuvwxyz012345",
+        "github_pat_abcdefghijklmnopqrstuvwxyz012345",
+        "ghs_abcdefghijklmnopqrstuvwxyz012345",
+        "ghu_abcdefghijklmnopqrstuvwxyz012345",
+        "ghr_abcdefghijklmnopqrstuvwxyz012345",
+        "sk-abcdefghijklmnopqrstuvwxyz012345",
+        "sk-proj-abcdefghijklmnopqrstuvwxyz012345",
+        "BEARERabcdefghijklmnopqrstuvwxyz012345",
+        "TOKENabcdefghijklmnopqrstuvwxyz012345",
+        "AUTHabcdefghijklmnopqrstuvwxyz012345",
+    ]
+    secret_line = (
+        f"gho {secret_values[0]} ghp {secret_values[1]} github {secret_values[2]} "
+        f"ghs {secret_values[3]} ghu {secret_values[4]} ghr {secret_values[5]} "
+        f"openai {secret_values[6]} project {secret_values[7]} "
+        f"Bearer {secret_values[8]} token: {secret_values[9]} Authorization: {secret_values[10]} "
+        + ("X" * 400)
+    )
+    fake_git(bin_dir)
+    fake_python_with_secret_ensurepip_failure(bin_dir, secret_line)
+    fake_node_npm(bin_dir)
+    fake_gh(bin_dir)
+    fake_codex(bin_dir)
+    seed_working_venv(repo, bin_dir)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env, "-Apply")
+    safe_error = payload["diagnostics"]["failure"]["safe_error"]
+
+    assert result.returncode == 2
+    assert payload["diagnostics"]["failure"]["failed_action"] == "repair_venv_pip"
+    assert payload["diagnostics"]["failure"]["failed_stage"] == "dependency_install"
+    assert "[redacted]" in safe_error
+    for secret in secret_values:
+        assert secret not in safe_error
+    assert len(safe_error) == 303
+    assert safe_error.endswith("...")
+
+
 def test_missing_python_is_blocked_and_causes_no_partial_repair(tmp_path):
     repo = make_repo(tmp_path)
     bin_dir = tmp_path / "bin"
@@ -429,6 +512,11 @@ def test_gh_zip_checksum_mismatch_aborts_before_activation(tmp_path):
 
     assert result.returncode == 2
     assert "gh_checksum_mismatch" in payload["blockers"]
+    assert payload["diagnostics"]["failure"]["failed_action"] == "install_gh_2.95.0"
+    assert payload["diagnostics"]["failure"]["failed_stage"] == "checksum_verify"
+    assert payload["diagnostics"]["failure"]["safe_error"]
+    assert payload["diagnostics"]["failure"]["next_manual_action"] == "inspect artifact cache or run focused restore"
+    assert payload["diagnostics"]["failure"]["safe_error"] != "unexpected_bootstrap_failure"
     assert not (tmp_path / "localappdata" / "LocalAIWorkbench" / "gh" / "current" / "gh.exe").exists()
 
 

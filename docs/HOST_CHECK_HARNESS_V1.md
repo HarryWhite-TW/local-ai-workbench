@@ -110,6 +110,25 @@ Exit codes:
 
 Exit code `1` is not used for normal diagnostic findings.
 
+Bootstrap restore readiness and Host Check readiness are different layers:
+
+```text
+bootstrap READY = tools and dependencies restored according to manifest
+Host Check READY = stricter operational host readiness
+```
+
+Common post-restore Host Check reasons include:
+
+```text
+git_identity_missing
+path_*_differs_from_reviewed_*
+fresh_shell_*_differs_from_reviewed_*
+manifest_venv_not_gitignored
+```
+
+These findings should remain visible. Prefer documentation or wrapper summary
+classification over weakening Host Check logic.
+
 ## Read-Only Assertions
 
 The harness reports safety fields asserting that it did not:

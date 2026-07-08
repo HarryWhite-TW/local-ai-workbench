@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "restore_course_computer_environment.ps1"
+REVIEW_SCRIPT = ROOT / "scripts" / "course_environment_restore_review.ps1"
 DOC = ROOT / "docs" / "COURSE_COMPUTER_ENVIRONMENT_RECOVERY.md"
 
 
@@ -402,8 +403,16 @@ def test_recovery_doc_covers_logout_and_authority_boundary():
 
     required = [
         ".\\scripts\\restore_course_computer_environment.ps1",
+        ".\\scripts\\course_environment_restore_review.ps1",
         "what it installs",
         "what it only verifies",
+        "2026-07-08 incident note",
+        "AUDIT -> APPLY -> JSON review -> focused repair -> Host Check -> STOP",
+        "Do not manually activate the venv during recovery",
+        "Bootstrap READY differs from Host Check READY",
+        "git_identity_missing",
+        "must not silently set `git config user.name`",
+        "PATH and fresh-shell drift should be presented separately from tool usability",
         "restore-card course computer",
         "Manual Fallback Steps",
         "%USERPROFILE%\\tools\\gh-portable\\bin\\gh.exe",
@@ -414,3 +423,88 @@ def test_recovery_doc_covers_logout_and_authority_boundary():
     lowered = text.lower()
     for phrase in required:
         assert phrase.lower() in lowered
+
+
+def test_restore_review_wrapper_has_expected_parameters_and_evidence_outputs():
+    text = REVIEW_SCRIPT.read_text(encoding="utf-8")
+
+    required = [
+        "[string]$RepoRoot",
+        "[switch]$Apply",
+        '[string]$ExpectedRepository = "HarryWhite-TW/local-ai-workbench"',
+        "[string]$ExpectedBranch",
+        "[string]$ExpectedHead",
+        "[string]$EvidenceRoot",
+        "bootstrap_audit.json",
+        "bootstrap_apply.json",
+        "bootstrap_post_restore_audit.json",
+        "focused_pytest.stdout.txt",
+        "host_check.json",
+        "course_environment_restore_review_summary.json",
+        "final_git_state",
+        "status_porcelain",
+        "staged_files",
+        "1> $StdoutPath 2> $StderrPath",
+        "--basetemp",
+    ]
+    for phrase in required:
+        assert phrase in text
+
+
+def test_restore_review_wrapper_records_final_git_evidence_in_summary():
+    text = REVIEW_SCRIPT.read_text(encoding="utf-8")
+
+    required = [
+        '$finalGitState = [ordered]@{',
+        '@("status", "--porcelain=v1", "-uall")',
+        '@("diff", "--cached", "--name-only")',
+        '@("rev-parse", "HEAD")',
+        '@("branch", "--show-current")',
+        "final_git_state = $finalGitState",
+    ]
+    for phrase in required:
+        assert phrase in text
+
+
+def test_restore_review_wrapper_stop_marker_and_safety_boundary_are_explicit():
+    text = REVIEW_SCRIPT.read_text(encoding="utf-8")
+
+    required = [
+        "COURSE_ENVIRONMENT_RESTORE_REVIEW_DONE",
+        "NO_LIVE_ACCEPTANCE_NO_DISPATCHER_NO_RUNNER_NO_CODEX_TASK_NO_GITHUB_WRITE",
+        "live_acceptance_invoked = $false",
+        "dispatcher_invoked = $false",
+        "runner_invoked = $false",
+        "codex_task_invoked = $false",
+        "github_write_performed = $false",
+        "gh_auth_token_invoked = $false",
+        "permanent_path_modified = $false",
+        "git_identity_written = $false",
+    ]
+    for phrase in required:
+        assert phrase in text
+
+
+def test_restore_review_wrapper_avoids_power_shell_and_forbidden_command_mistakes():
+    text = REVIEW_SCRIPT.read_text(encoding="utf-8")
+    lowered = text.lower()
+
+    assert "<<EOF" not in text
+    assert "@'" not in text
+    assert '"@' not in text
+    assert "$Host" not in text
+
+    forbidden = [
+        "git commit",
+        "git push",
+        "gh pr create",
+        "gh pr merge",
+        "gh issue close",
+        "gh auth token",
+        "codex exec",
+        "codex review",
+        "local_dispatcher_v1.ps1",
+        "local_runner_v1.ps1",
+    ]
+    for phrase in forbidden:
+        assert phrase not in lowered

@@ -4,7 +4,100 @@ This is bounded environment support for restore-card or temporary course
 computers. It does not expand Bridge Operator authority and does not create a
 background service, startup task, secrets file, or second setup framework.
 
-## One Command
+## 2026-07-08 Incident Note
+
+The 2026-07-08 course-host restore succeeded, but it took too many manual
+iterations. The repository already had recovery assets, yet the process started
+with broad read-only discovery instead of the bootstrap manifest/script
+contract, produced long terminal output that was easy to truncate, and drifted
+into unnecessary virtual-environment activation confusion.
+
+The corrected recovery guidance is to keep the flow short, evidence-producing,
+and bounded. Treat this as engineering recovery guidance, not a complaint about
+the host or tooling.
+
+What went wrong:
+
+- broad discovery happened before reading the bootstrap manifest and script;
+- terminal output was too large and got truncated;
+- manual venv activation was attempted even though the reviewed absolute Python
+  path was sufficient;
+- `bootstrap_course_environment.ps1 -Apply` partially succeeded but surfaced an
+  unclear `unexpected_bootstrap_failure`;
+- Host Check was stricter than bootstrap `READY`;
+- Bash heredoc syntax was mistakenly used in a PowerShell context;
+- `$Host` was mistakenly used as a variable name even though PowerShell reserves
+  it as a read-only automatic variable.
+
+## Future Restore Review Flow
+
+Run the review wrapper from a visible PowerShell window:
+
+```powershell
+.\scripts\course_environment_restore_review.ps1 `
+    -RepoRoot "C:\Users\admin\Desktop\local-ai-workbench" `
+    -ExpectedBranch "master" `
+    -ExpectedHead "<reviewed-full-head>" `
+    -Apply
+```
+
+The intended path is:
+
+```text
+minimal starting-state gate
+-> read manifest/script first
+-> bootstrap AUDIT
+-> one approval package
+-> bootstrap APPLY
+-> JSON review
+-> focused repair only if APPLY fails
+-> Host Check
+-> STOP before live acceptance
+```
+
+Short form: `AUDIT -> APPLY -> JSON review -> focused repair -> Host Check -> STOP`.
+
+The wrapper writes long command output to an evidence root and prints only a
+concise summary: evidence paths, Layer 1 restore status, Layer 2 Host Check
+status, Layer 3 drift reasons, and a stop marker.
+
+Do not manually activate the venv during recovery. Use the reviewed Python
+absolute path, such as:
+
+```powershell
+.\.venv-course\Scripts\python.exe
+```
+
+If the wrapper or bootstrap reports a failed action and stage, inspect the JSON
+diagnostics first. Perform focused repair only for that failing area.
+
+## Readiness Layers
+
+Layer 1: Tool restore readiness.
+
+Bootstrap `READY` means the tools and dependencies were restored according to
+the manifest contract. It does not prove operational host acceptance.
+Bootstrap READY differs from Host Check READY.
+
+Layer 2: Operational Host Check readiness.
+
+Host Check `READY` means the stricter RV2-03 host harness accepted the current
+repository state, reviewed paths, fresh-shell visibility, authentication checks,
+and safety assertions.
+
+Layer 3: Hygiene and drift items.
+
+Some findings are local host setup or drift items rather than bootstrap restore
+failures. Examples include PATH or fresh-shell visibility drift and `.gitignore`
+coverage for `.venv-course`.
+
+`git_identity_missing` is a local host setup issue. Recovery scripts must not silently set `git config user.name` or `git config user.email`. The user should make that host-local decision visibly when needed.
+
+PATH and fresh-shell drift should be presented separately from tool usability.
+A tool may be usable through the reviewed absolute path while still differing
+from current-process or fresh-shell PATH resolution.
+
+## Legacy One Command
 
 Run from the repository root in a visible PowerShell window:
 

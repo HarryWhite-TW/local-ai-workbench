@@ -38,6 +38,12 @@ function New-Result {
             status = $null
             reasons = @()
             raw = $null
+            failure = [ordered]@{
+                failed_action = $null
+                failed_stage = $null
+                safe_error = $null
+                next_manual_action = $null
+            }
         }
         safety = [ordered]@{
             admin_elevation_used = $false
@@ -57,6 +63,33 @@ function Add-Unique([System.Collections.IList]$List, [string]$Value) {
     if ($Value -and -not $List.Contains($Value)) {
         [void]$List.Add($Value)
     }
+}
+
+function ConvertTo-SafeBootstrapError([string]$Message) {
+    if (-not $Message) { return $null }
+    $singleLine = (($Message -split "\r?\n") | Where-Object { $_ } | Select-Object -First 1)
+    if (-not $singleLine) { return $null }
+    $redacted = $singleLine `
+        -replace "(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", "Bearer [redacted]" `
+        -replace "(?i)\b(token|Authorization)\s*:\s*[A-Za-z0-9._~+/=-]{8,}", '$1: [redacted]' `
+        -replace "(?i)\b(?:gho|ghp|ghs|ghu|ghr)_[A-Za-z0-9_]{8,}\b", "[redacted]" `
+        -replace "(?i)\bgithub_pat_[A-Za-z0-9_]{8,}\b", "[redacted]" `
+        -replace "(?i)\bsk-proj-[A-Za-z0-9_-]{8,}\b", "[redacted]" `
+        -replace "(?i)\bsk-[A-Za-z0-9_-]{8,}\b", "[redacted]" `
+        -replace "(?i)(authorization|bearer|token|secret|password|credential)[^ \t;]*", "[redacted]" `
+        -replace "(?i)(gho|ghp|github_pat|sk-proj|sk)-[A-Za-z0-9_\-]+", "[redacted]"
+    if ($redacted.Length -gt 300) {
+        return $redacted.Substring(0, 300) + "..."
+    }
+    return $redacted
+}
+
+function Set-FailureDiagnostic($Summary, [string]$FailedAction, [string]$FailedStage, [string]$SafeError, [string]$NextManualAction) {
+    if ($Summary.diagnostics.failure.failed_action) { return }
+    $Summary.diagnostics.failure.failed_action = $FailedAction
+    $Summary.diagnostics.failure.failed_stage = $FailedStage
+    $Summary.diagnostics.failure.safe_error = ConvertTo-SafeBootstrapError $SafeError
+    $Summary.diagnostics.failure.next_manual_action = $NextManualAction
 }
 
 function Set-FinalStatus($Summary) {
@@ -294,21 +327,26 @@ function Ensure-PathEntry([string]$Entry, [bool]$Persist, $Summary) {
 
 function Install-GhPortable($ExpectedExe, $InstallRoot, $CurrentDir, $Summary) {
     $version = $Manifest.github_cli.version
+    $failedAction = "install_gh_$version"
     $zipName = $Manifest.github_cli.zip_name
     $checksumsName = $Manifest.github_cli.checksums_name
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("lawb-gh-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+    $stage = "download_zip"
     try {
         $zipPath = Join-Path $tempRoot $zipName
         $checksumsPath = Join-Path $tempRoot $checksumsName
         if ($ArtifactCacheDir) {
             Copy-Item -LiteralPath (Join-Path $ArtifactCacheDir $zipName) -Destination $zipPath
+            $stage = "download_checksums"
             Copy-Item -LiteralPath (Join-Path $ArtifactCacheDir $checksumsName) -Destination $checksumsPath
         }
         else {
             Invoke-WebRequest -Uri $Manifest.github_cli.zip_url -OutFile $zipPath
+            $stage = "download_checksums"
             Invoke-WebRequest -Uri $Manifest.github_cli.checksums_url -OutFile $checksumsPath
         }
+        $stage = "checksum_verify"
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
         $checksumLine = Get-Content -LiteralPath $checksumsPath -Encoding UTF8 |
             Where-Object {
@@ -322,29 +360,41 @@ function Install-GhPortable($ExpectedExe, $InstallRoot, $CurrentDir, $Summary) {
         }
         if (-not $checksumToken -or $checksumToken -ne $hash) {
             Add-Unique $Summary.blockers "gh_checksum_mismatch"
+            Set-FailureDiagnostic -Summary $Summary -FailedAction $failedAction -FailedStage $stage -SafeError "GitHub CLI archive checksum did not match the manifest checksum." -NextManualAction "inspect artifact cache or run focused restore"
             return $false
         }
+        $stage = "expand_archive"
         $extractRoot = Join-Path $tempRoot "extract"
         Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
         $newGh = Get-ChildItem -LiteralPath $extractRoot -Recurse -Filter "gh.exe" | Select-Object -First 1
         if (-not $newGh) {
             Add-Unique $Summary.blockers "gh_archive_missing_exe"
+            Set-FailureDiagnostic -Summary $Summary -FailedAction $failedAction -FailedStage $stage -SafeError "GitHub CLI archive did not contain gh.exe." -NextManualAction "inspect artifact cache or run focused restore"
             return $false
         }
         $staging = Join-Path $tempRoot "stage"
         New-Item -ItemType Directory -Force -Path $staging | Out-Null
+        $stage = "copy_exe"
         Copy-Item -LiteralPath $newGh.FullName -Destination (Join-Path $staging "gh.exe") -Force
+        $stage = "version_probe"
         $versionLine = Get-VersionLine -CommandPath (Join-Path $staging "gh.exe") -WorkingDirectory $tempRoot
         if (-not (Test-ExactVersion -Text $versionLine -Expected $version)) {
             Add-Unique $Summary.blockers "gh_staged_version_invalid"
+            Set-FailureDiagnostic -Summary $Summary -FailedAction $failedAction -FailedStage $stage -SafeError "Staged GitHub CLI version probe did not match the manifest version." -NextManualAction "inspect artifact cache or run focused restore"
             return $false
         }
+        $stage = "copy_exe"
         New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
         New-Item -ItemType Directory -Force -Path $CurrentDir | Out-Null
         Copy-Item -LiteralPath (Join-Path $staging "gh.exe") -Destination (Join-Path $InstallRoot "gh.exe") -Force
         Copy-Item -LiteralPath (Join-Path $staging "gh.exe") -Destination $ExpectedExe -Force
         Add-Unique $Summary.actions_performed "installed_gh_2.95.0"
         return $true
+    }
+    catch {
+        Add-Unique $Summary.blockers "gh_install_failed"
+        Set-FailureDiagnostic -Summary $Summary -FailedAction $failedAction -FailedStage $stage -SafeError $_.Exception.Message -NextManualAction "inspect artifact cache or run focused restore"
+        return $false
     }
     finally {
         if (Test-Path -LiteralPath $tempRoot) {
@@ -502,6 +552,7 @@ try {
         else {
             $Summary.venv.status = "pip_repair_failed"
             Add-Unique $Summary.blockers "venv_pip_repair_failed"
+            Set-FailureDiagnostic -Summary $Summary -FailedAction "repair_venv_pip" -FailedStage "dependency_install" -SafeError $repairResult.text -NextManualAction "inspect venv pip or recreate the reviewed course venv"
         }
     }
     elseif ($venvPython) {
@@ -535,6 +586,7 @@ try {
         }
         else {
             Add-Unique $Summary.blockers "dependency_install_failed"
+            Set-FailureDiagnostic -Summary $Summary -FailedAction "install_requirements_course" -FailedStage "dependency_install" -SafeError $installResult.text -NextManualAction "inspect requirements install output or run focused restore"
         }
     }
     else {
@@ -598,6 +650,7 @@ try {
         }
         else {
             Add-Unique $Summary.attention "codex_install_failed"
+            Set-FailureDiagnostic -Summary $Summary -FailedAction "install_codex_0.141.0" -FailedStage "npm_install" -SafeError $installCodex.text -NextManualAction "inspect npm/node setup or run focused restore"
         }
     }
     else {
@@ -626,7 +679,7 @@ try {
 }
 catch {
     Add-Unique $Summary.blockers "unexpected_bootstrap_failure"
-    $Summary.error = $_.Exception.Message
+    Set-FailureDiagnostic -Summary $Summary -FailedAction "bootstrap_course_environment" -FailedStage "unexpected_failure" -SafeError $_.Exception.Message -NextManualAction "inspect bootstrap JSON diagnostics and run focused restore"
     Set-FinalStatus $Summary
     if ($Json) {
         $Summary | ConvertTo-Json -Depth 20
