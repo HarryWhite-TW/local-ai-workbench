@@ -20,6 +20,8 @@ The product application itself does not call an external AI service in the curre
 
 ## Current Project Status
 
+For the safest current engineering status, use `PLANS.md` and `docs/ENGINEERING_RECORDS_INDEX.md`. README is a public overview and may lag behind active Roadmap/Issue closeout details.
+
 Current baseline:
 
 - `M1` through `M9` complete

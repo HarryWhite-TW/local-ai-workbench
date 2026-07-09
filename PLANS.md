@@ -22,6 +22,8 @@ The public product mainline remains the Local Document-to-Knowledge Workbench. I
 
 Development workflow tooling is separate from the product runtime.
 
+Engineering record navigation and OPT-series artifacts are indexed in `docs/ENGINEERING_RECORDS_INDEX.md`. The index helps locate records but does not replace `PLANS.md`, active Roadmap Issues, or fresh Git/GitHub verification.
+
 - The verified Lv4.5 recovery baseline uses ChatGPT-authored `CHATGPT-DISPATCH` requests, Dispatcher v1 `PollOnce`, Runner v1 ReviewBundle, Codex, and `LAWBRUNNER-RESULT` readback.
 - B0 bridge discipline was integrated through PR #134.
 - Governance Reset #135 is completed.

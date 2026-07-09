@@ -115,5 +115,6 @@ needs user approval.
 - Do not inspect unrelated files.
 - Do not summarize the whole repository unless explicitly asked.
 - Use `README.md`, `AGENTS.md`, scoped `AGENTS.md` files, `PLANS.md`, and explicit task documents as the primary context.
+- For engineering-record navigation and post-RV2-03 workflow artifacts, read `docs/ENGINEERING_RECORDS_INDEX.md`. The index is a navigation aid, not a replacement for fresh current-state verification.
 - Prefer targeted file reads over broad repository exploration.
 - Keep final reports short and structured according to the user's requested format when one is provided.
