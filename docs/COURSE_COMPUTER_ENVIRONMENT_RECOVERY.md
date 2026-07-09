@@ -4,6 +4,13 @@ This is bounded environment support for restore-card or temporary course
 computers. It does not expand Bridge Operator authority and does not create a
 background service, startup task, secrets file, or second setup framework.
 
+## Daily Quick Restore Entry
+
+For the compressed daily reset workflow, start with:
+
+    docs/COURSE_HOST_QUICK_RESTORE_RUNBOOK.md
+
+That runbook is the preferred short-path entry for routine course-computer resets. This file remains the detailed recovery reference.
 ## 2026-07-08 Incident Note
 
 The 2026-07-08 course-host restore succeeded, but it took too many manual

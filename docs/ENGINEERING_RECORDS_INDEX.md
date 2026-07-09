@@ -66,6 +66,12 @@ Recommended future session read order:
 - Local raw evidence, temp evidence roots, command logs, and host-specific artifacts should not be committed unless specifically approved.
 - Summaries must not replace raw evidence for review.
 
+## Course Host Quick Restore
+
+- `docs/COURSE_HOST_QUICK_RESTORE_RUNBOOK.md` is the daily quick-restore runbook for reset course machines.
+- `docs/COURSE_COMPUTER_ENVIRONMENT_RECOVERY.md` remains the detailed recovery reference.
+- `scripts/course_environment_restore_review.ps1` is the preferred wrapper entry point.
+- `scripts/bootstrap_course_environment.ps1` is the lower-level bootstrap script and should not be the first daily manual entry unless the wrapper fails.
 ## Deferred Candidate Nodes
 
 These are candidates only and are not activated by this index:
