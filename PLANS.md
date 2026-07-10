@@ -43,7 +43,7 @@ Engineering record navigation and OPT-series artifacts are indexed in `docs/ENGI
 - RV2-01: `DONE`.
 - RV2-02: `DONE`.
 - RV2-03: `DONE` — formal Primary Operational Host acceptance passed on 2026-07-10.
-- RV2-04 is not automatically activated or authorized by RV2-03 completion. REC-02 is not automatically activated. Issue #188 remains a deferred planning node, and OPT-01 through OPT-06 remain inactive unless separately approved.
+- RV2-04 remains inactive and unauthorized. REC-02 is `ACTIVE` under explicit user approval for the Course Host Complete Recovery v2 implementation; it is not `DONE` until final acceptance. Issue #188 remains deferred, OPT-06 remains unstarted, and OPT-01 through OPT-05 historical/local evidence status is unchanged. No next node is automatically activated.
 - Pre-truth-sync Phase A implementation baseline commit: `9749911badec6c4011d17170f55b4305fe47a08c`.
 - Latest reported B4-D focused validation: `78 passed`.
 - Latest reported adjacent validation: `126 passed`.
@@ -130,7 +130,7 @@ This order may change only through explicit user-approved change control. Comple
 
 RV2-03 is `DONE`. The accepted Primary Operational Host evidence is recorded above and on Issue #184. GitHub Issue #168 and Issue #175 retain historical bodies; this repository closeout does not mutate them.
 
-No next Roadmap v2 execution node is activated by this closeout. RV2-04 remains a future candidate and is not authorized. REC-02 is not activated. Issue #188 remains deferred planning, and OPT-01 through OPT-06 remain inactive unless separately approved. Startup, tray, service, MCP, automatic commit/push/close/merge, approval chaining, trusted-actor changes, and allowlist expansion remain out of scope.
+REC-02 is the explicitly approved active recovery implementation node. It provides one bounded course-host complete-recovery transaction and does not activate RV2-04, Issue #188, OPT-06, or any later node. Startup, tray, service, MCP, automatic commit/push/close/merge, approval chaining, trusted-actor changes, and allowlist expansion remain out of scope.
 
 The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
 
@@ -177,6 +177,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-07-10: Activated REC-02 under explicit approval for Course Host Complete Recovery v2 implementation; final acceptance remains required and no later node is activated.
 - 2026-07-10: Closed RV2-03 after formal Primary Operational Host acceptance passed: exactly one normal Dispatcher/Runner/Codex execution succeeded, complete local state loss reconciled durably without rerun, the duplicate gate blocked later execution, and no automatic retry or unexpected GitHub write occurred. RV2-04, REC-02, Issue #188, and OPT nodes remain inactive unless separately approved.
 - 2026-06-25: Recorded RV2-01/B4-D supervised smoke success, closed stale readiness language, and added the bounded repository-separation design while keeping physical extraction unauthorized.
 - 2026-06-24: Began RV2-01 readiness truth synchronization while keeping the node planned and the live smoke separately gated.

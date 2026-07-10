@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`lawb.rv2_03_host_check.v1` is a read-only RV2-03 diagnostic harness created during Phase A and still useful during Phase B change-control.
+`lawb.rv2_03_host_check.v1` is a strict read-only RV2-03 diagnostic harness. After RV2-03 closeout, REC-02 uses it as the operational host readiness harness.
 It characterizes the current Windows host, reviewed absolute tool paths, fresh
 shell tool visibility, and bootstrap contract drift before later operational
 acceptance work.

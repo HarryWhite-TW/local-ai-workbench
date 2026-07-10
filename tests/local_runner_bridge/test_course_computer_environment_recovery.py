@@ -407,7 +407,9 @@ def test_recovery_doc_covers_logout_and_authority_boundary():
         "what it installs",
         "what it only verifies",
         "2026-07-08 incident note",
-        "AUDIT -> APPLY -> JSON review -> focused repair -> Host Check -> STOP",
+        "REC-02 Complete Recovery v2",
+        "conditional restore only when Layer 1 is not READY",
+        "Audit-only mode remains read-only",
         "Do not manually activate the venv during recovery",
         "Bootstrap READY differs from Host Check READY",
         "git_identity_missing",
@@ -466,7 +468,7 @@ def test_restore_review_wrapper_records_final_git_evidence_in_summary():
         assert phrase in text
 
 
-def test_restore_review_wrapper_stop_marker_and_safety_boundary_are_explicit():
+def test_restore_review_wrapper_stop_marker_and_mode_aware_safety_boundary_are_explicit():
     text = REVIEW_SCRIPT.read_text(encoding="utf-8")
 
     required = [
@@ -479,10 +481,13 @@ def test_restore_review_wrapper_stop_marker_and_safety_boundary_are_explicit():
         "github_write_performed = $false",
         "gh_auth_token_invoked = $false",
         "permanent_path_modified = $false",
-        "git_identity_written = $false",
+        "global_git_identity_modified = $false",
     ]
     for phrase in required:
         assert phrase in text
+    assert "if ($CompleteRecovery -and ($gitIdentityBefore.name" in text
+    assert 'git_identity_written = ($gitIdentityAction -ne "none")' in text
+    assert "if ($CompleteRecovery) {" in text
 
 
 def test_restore_review_wrapper_avoids_power_shell_and_forbidden_command_mistakes():
