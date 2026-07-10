@@ -10,6 +10,8 @@ param(
 
     [string]$GitUserEmail = "harry061892@gmail.com",
 
+    [string]$ExpectedGitHubLogin = "HarryWhite-TW",
+
     [string]$ExpectedRepository = "HarryWhite-TW/local-ai-workbench",
 
     [string]$ExpectedBranch,
@@ -107,6 +109,23 @@ function Get-ActionFailures($Payload) {
     return @()
 }
 
+function Add-CurrentBlocker([System.Collections.IList]$Blockers, [string]$Value) {
+    if ($Value -and -not $Blockers.Contains($Value)) { [void]$Blockers.Add($Value) }
+}
+
+function Read-FirstLine([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    $line = Get-Content -LiteralPath $Path -Encoding UTF8 | Select-Object -First 1
+    if (-not $line) { return $null }
+    return ([string]$line).Trim()
+}
+
+function Read-RepositoryName([string]$Path) {
+    $payload = Read-JsonFileIfPossible $Path
+    if ($payload -and $payload.nameWithOwner) { return ([string]$payload.nameWithOwner).Trim() }
+    return $null
+}
+
 function Invoke-GitText([string]$GitPath, [string[]]$Arguments, [string]$WorkingDirectory) {
     Push-Location $WorkingDirectory
     try {
@@ -125,7 +144,7 @@ function Invoke-GitText([string]$GitPath, [string[]]$Arguments, [string]$Working
 function Read-JsonFileIfPossible([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
     $text = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
-    if (-not $text.Trim()) { return $null }
+    if (-not $text -or -not $text.Trim()) { return $null }
     try {
         return $text | ConvertFrom-Json
     }
@@ -142,7 +161,6 @@ function Test-RepositoryUrl([string]$Url, [string]$Expected) {
 
 function Get-LayerOneStatus($AuditPayload, $ApplyPayload, $PostAuditPayload) {
     if ($PostAuditPayload -and $PostAuditPayload.overall_status) { return [string]$PostAuditPayload.overall_status }
-    if ($AuditPayload -and $AuditPayload.overall_status) { return [string]$AuditPayload.overall_status }
     return "UNKNOWN"
 }
 
@@ -235,11 +253,18 @@ $reviewedCodexPath = Join-Path (Join-Path $localAppData "LocalAIWorkbench\npm") 
 
 $historicalActionFailures = Get-ActionFailures $applyPayload
 $supersededActionFailures = @()
-$currentBlockers = @()
-if ($postAuditPayload -and $postAuditPayload.overall_status -ne "READY") {
-    $currentBlockers += @($postAuditPayload.blockers)
+$currentBlockers = [System.Collections.ArrayList]::new()
+if ($auditRun.exit_code -ne 0) { Add-CurrentBlocker $currentBlockers "initial_audit_failed" }
+if (-not $auditPayload -or -not $auditPayload.overall_status) { Add-CurrentBlocker $currentBlockers "initial_audit_invalid" }
+if ($postAuditRun.exit_code -ne 0) { Add-CurrentBlocker $currentBlockers "post_audit_failed" }
+if (-not $postAuditPayload -or -not $postAuditPayload.overall_status) {
+    Add-CurrentBlocker $currentBlockers "post_audit_invalid"
 }
-elseif ($historicalActionFailures.Count -gt 0) {
+elseif ($postAuditPayload.overall_status -ne "READY") {
+    foreach ($reason in @($postAuditPayload.blockers)) { Add-CurrentBlocker $currentBlockers ([string]$reason) }
+    Add-CurrentBlocker $currentBlockers "layer_1_not_ready"
+}
+elseif ($postAuditRun.exit_code -eq 0 -and $historicalActionFailures.Count -gt 0) {
     $supersededActionFailures = $historicalActionFailures
 }
 
@@ -261,7 +286,10 @@ $gitIdentityAfter = [ordered]@{ name = (Invoke-GitText -GitPath $gitPath -Argume
 $gitIdentityReady = ($gitIdentityAfter.name -eq $GitUserName -and $gitIdentityAfter.email -eq $GitUserEmail)
 
 $authRun = $null
+$identityRun = $null
 $repoReadRun = $null
+$observedGitHubLogin = $null
+$repositoryReadName = $null
 $needsUserInteraction = $null
 if ($CompleteRecovery -and (Test-Path -LiteralPath $reviewedGhPath -PathType Leaf)) {
     $authRun = Invoke-SafeAuthStatus -GhPath $reviewedGhPath -WorkingDirectory $resolvedRepoRoot -StdoutPath (Join-Path $evidenceRootPath "gh_auth.stdout.txt") -StderrPath (Join-Path $evidenceRootPath "gh_auth.stderr.txt")
@@ -271,11 +299,17 @@ if ($CompleteRecovery -and (Test-Path -LiteralPath $reviewedGhPath -PathType Lea
         if ($LASTEXITCODE -eq 0) { $authRun = Invoke-SafeAuthStatus -GhPath $reviewedGhPath -WorkingDirectory $resolvedRepoRoot -StdoutPath (Join-Path $evidenceRootPath "gh_auth_recheck.stdout.txt") -StderrPath (Join-Path $evidenceRootPath "gh_auth_recheck.stderr.txt") }
     }
     if ($authRun.exit_code -eq 0) {
+        $identityRun = Invoke-FileCapturedCommand -CommandPath $reviewedGhPath -Arguments @("api", "user", "--jq", ".login") -WorkingDirectory $resolvedRepoRoot -StdoutPath (Join-Path $evidenceRootPath "gh_identity.stdout.txt") -StderrPath (Join-Path $evidenceRootPath "gh_identity.stderr.txt")
+        $observedGitHubLogin = Read-FirstLine $identityRun.stdout_path
+        if ($identityRun.exit_code -ne 0 -or $observedGitHubLogin -ne $ExpectedGitHubLogin) { Add-CurrentBlocker $currentBlockers "gh_account_mismatch" }
         $repoReadRun = Invoke-FileCapturedCommand -CommandPath $reviewedGhPath -Arguments @("repo", "view", $ExpectedRepository, "--json", "nameWithOwner") -WorkingDirectory $resolvedRepoRoot -StdoutPath (Join-Path $evidenceRootPath "gh_repo_read.stdout.txt") -StderrPath (Join-Path $evidenceRootPath "gh_repo_read.stderr.txt")
-        if ($repoReadRun.exit_code -ne 0) { $currentBlockers += "gh_repository_read_failed" }
+        $repositoryReadName = Read-RepositoryName $repoReadRun.stdout_path
+        if ($repoReadRun.exit_code -ne 0) { Add-CurrentBlocker $currentBlockers "gh_repository_read_failed" }
+        elseif ($repositoryReadName -ne $ExpectedRepository) { Add-CurrentBlocker $currentBlockers "gh_repository_mismatch" }
     }
-    else { $currentBlockers += "gh_auth_failed" }
+    else { Add-CurrentBlocker $currentBlockers "gh_auth_failed" }
 }
+elseif ($CompleteRecovery) { Add-CurrentBlocker $currentBlockers "reviewed_gh_missing" }
 
 $pytestStdout = Join-Path $evidenceRootPath "focused_pytest.stdout.txt"
 $pytestStderr = Join-Path $evidenceRootPath "focused_pytest.stderr.txt"
@@ -303,6 +337,7 @@ else {
     Set-Content -LiteralPath $pytestStdout -Value "" -Encoding UTF8
     Set-Content -LiteralPath $pytestStderr -Value "reviewed_python_missing" -Encoding UTF8
 }
+if ($pytestRun.exit_code -ne 0) { Add-CurrentBlocker $currentBlockers "focused_pytest_failed" }
 
 $hostCheckStdout = Join-Path $evidenceRootPath "host_check.json"
 $hostCheckStderr = Join-Path $evidenceRootPath "host_check.stderr.txt"
@@ -342,6 +377,11 @@ else {
     Set-Content -LiteralPath $hostCheckStderr -Value ($missingReviewedPaths -join "`n") -Encoding UTF8
 }
 
+$hostCheckOperational = ($hostCheckPayload -and $hostCheckPayload.operational_readiness -eq $true -and $hostCheckPayload.status -in @("READY", "ATTENTION"))
+if ($hostCheckRun.exit_code -ne 0) { Add-CurrentBlocker $currentBlockers "host_check_failed" }
+if (-not $hostCheckPayload -or -not $hostCheckPayload.status) { Add-CurrentBlocker $currentBlockers "host_check_invalid" }
+elseif (-not $hostCheckOperational) { Add-CurrentBlocker $currentBlockers "host_check_blocked" }
+
 $summaryPath = Join-Path $evidenceRootPath "course_environment_restore_review_summary.json"
 $layerOneStatus = Get-LayerOneStatus -AuditPayload $auditPayload -ApplyPayload $applyPayload -PostAuditPayload $postAuditPayload
 $layerTwoStatus = Get-HostCheckStatus -CheckPayload $hostCheckPayload -SkipReason $hostCheckRun.skipped_reason
@@ -352,6 +392,20 @@ $finalGitState = [ordered]@{
     head = (Invoke-GitText -GitPath $gitPath -Arguments @("rev-parse", "HEAD") -WorkingDirectory $resolvedRepoRoot)
     branch = (Invoke-GitText -GitPath $gitPath -Arguments @("branch", "--show-current") -WorkingDirectory $resolvedRepoRoot)
 }
+
+$pythonReady = ((Test-Path -LiteralPath $reviewedPythonPath -PathType Leaf) -and $postAuditPayload -and $postAuditPayload.venv.pip_ready -eq $true)
+$dependenciesReady = ($postAuditPayload -and $postAuditPayload.dependencies.ready -eq $true)
+$ghReady = ($postAuditPayload -and $postAuditPayload.detected.gh.ready -eq $true)
+$codexReady = ($postAuditPayload -and $postAuditPayload.detected.codex.ready -eq $true)
+if (-not $pythonReady) { Add-CurrentBlocker $currentBlockers "reviewed_python_not_ready" }
+if (-not $dependenciesReady) { Add-CurrentBlocker $currentBlockers "dependencies_not_ready" }
+if (-not $ghReady) { Add-CurrentBlocker $currentBlockers "reviewed_gh_not_ready" }
+if (-not $codexReady) { Add-CurrentBlocker $currentBlockers "reviewed_codex_not_ready" }
+if (-not $gitIdentityReady) { Add-CurrentBlocker $currentBlockers "git_identity_not_ready" }
+if ($finalGitState.status_porcelain.exit_code -ne 0 -or $finalGitState.status_porcelain.text) { Add-CurrentBlocker $currentBlockers "final_working_tree_unsafe" }
+if ($finalGitState.staged_files.exit_code -ne 0 -or $finalGitState.staged_files.text) { Add-CurrentBlocker $currentBlockers "final_staged_area_unsafe" }
+if ($ExpectedHead -and ($finalGitState.head.exit_code -ne 0 -or $finalGitState.head.text -ne $ExpectedHead)) { Add-CurrentBlocker $currentBlockers "final_head_mismatch" }
+if ($ExpectedBranch -and ($finalGitState.branch.exit_code -ne 0 -or $finalGitState.branch.text -ne $ExpectedBranch)) { Add-CurrentBlocker $currentBlockers "final_branch_mismatch" }
 
 $summary = [ordered]@{
     protocol = "lawb.course_environment_restore_review.v2"
@@ -387,12 +441,12 @@ $summary = [ordered]@{
         layer_3_drift_reasons = $driftReasons
     }
     components = [ordered]@{
-        python = if (Test-Path -LiteralPath $reviewedPythonPath) { "READY" } else { "BLOCKED" }
-        dependencies = if ($postAuditPayload -and $postAuditPayload.dependencies.ready) { "READY" } else { "BLOCKED" }
-        gh = if (Test-Path -LiteralPath $reviewedGhPath) { "READY" } else { "BLOCKED" }
+        python = if ($pythonReady) { "READY" } else { "BLOCKED" }
+        dependencies = if ($dependenciesReady) { "READY" } else { "BLOCKED" }
+        gh = if ($ghReady) { "READY" } else { "BLOCKED" }
         gh_auth = if ($authRun -and $authRun.exit_code -eq 0) { "READY" } elseif ($CompleteRecovery) { "BLOCKED" } else { "NOT_CHECKED" }
-        gh_repository_read = if ($repoReadRun -and $repoReadRun.exit_code -eq 0) { "READY" } elseif ($CompleteRecovery) { "NOT_CHECKED" } else { "NOT_CHECKED" }
-        codex = if (Test-Path -LiteralPath $reviewedCodexPath) { "READY" } else { "BLOCKED" }
+        gh_repository_read = if ($repoReadRun -and $repoReadRun.exit_code -eq 0 -and $repositoryReadName -eq $ExpectedRepository) { "READY" } elseif ($repoReadRun) { "BLOCKED" } else { "NOT_CHECKED" }
+        codex = if ($codexReady) { "READY" } else { "BLOCKED" }
         git_identity = if ($gitIdentityReady) { "READY" } else { "BLOCKED" }
         path = if ($pathActions.Count -eq 0) { "UNCHANGED" } else { "CURRENT_PROCESS_UPDATED" }
     }
@@ -400,6 +454,13 @@ $summary = [ordered]@{
     git_identity_action = $gitIdentityAction
     git_identity_after = $gitIdentityAfter
     git_identity_ready = $gitIdentityReady
+    github_identity = [ordered]@{
+        expected_login = $ExpectedGitHubLogin
+        observed_login = $observedGitHubLogin
+        login_matches = ($observedGitHubLogin -eq $ExpectedGitHubLogin)
+        auth_ready = ($authRun -and $authRun.exit_code -eq 0)
+        repository_read_ready = ($repoReadRun -and $repoReadRun.exit_code -eq 0 -and $repositoryReadName -eq $ExpectedRepository)
+    }
     historical_action_failures = $historicalActionFailures
     superseded_action_failures = $supersededActionFailures
     current_blockers = $currentBlockers

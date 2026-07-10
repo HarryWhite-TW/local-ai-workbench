@@ -95,9 +95,9 @@ Omit `-CompleteRecovery` to run the read-only audit path. It creates no venv, in
 
 ### Case D: GitHub authentication is missing
 
-Do not run `gh auth login` unless explicitly approved.
+Without an explicitly approved complete-recovery package that includes conditional browser authentication, `gh auth login --web` remains a separately approved, user-visible operation.
 
-Authentication repair is a separate user-visible operation.
+When that authority is included, as in the approved REC-02 package, `-CompleteRecovery` may invoke browser authentication conditionally inside the same transaction. It must recheck authentication and verify the exact expected account before continuing. This does not grant standing authentication authority to future recovery runs.
 
 ### Case E: Codex launcher check is confusing
 
