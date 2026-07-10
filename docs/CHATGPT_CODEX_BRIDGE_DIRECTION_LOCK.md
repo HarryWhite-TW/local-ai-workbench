@@ -199,9 +199,11 @@ Exactly one B2/Dispatcher/Runner/Codex chain ran. The result was success, Codex 
 
 ## Roadmap And Strategic Direction
 
-Roadmap v2 is active. Tracker #168 is the designated canonical GitHub Roadmap surface. GitHub Issue #168 and Issue #175 bodies were synchronized earlier, and append-only D2 publication closeout comments were added on 2026-07-06. Those comments are the latest GitHub current-truth layer for PR #183 merge, D2 current truth, and RV2-03 `ACTIVE`; body normalization remains deferred to RV2-03 final closeout.
+Roadmap v2 is active. Tracker #168 remains the designated canonical GitHub Roadmap surface. RV2-03 formal Primary Operational Host acceptance passed on 2026-07-10, and RV2-03 is `DONE`.
 
-RV2-03 Phase A implementation evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. GitHub Issue #168 and Issue #175 bodies retain older text from earlier synchronization; the 2026-07-06 append-only comments are the latest GitHub current-truth layer, and canonical body normalization remains deferred to RV2-03 final closeout. The canonical repository branch is `master`; current `master` HEAD is mutable current-state data that must be revalidated from Git at the beginning of each engineering task. PR #179 records `853e341d6a32cdbad5fdb7f77b05353187beccf2` as pre-merge master, `649212b665264f80c95f940ec713f93dfb9ef0ca` as feature head, and `cd22eb73a1ea3f8ccd7efe146a49f567b78f7ea1` as the accepted merge commit. PR #183 merged durable reconciliation runtime implementation at `master@0cffe7cb4f28ea24691f69bce32d60f8d66ef681`, including the durable evidence provider, pre-Dispatcher reconciliation, local `CONSUMED` reconstruction, and delegation outcome tracking. Issue #184 completed the first normal live Dispatcher / Runner / Codex chain once, with one trusted result, Runner exit code `0`, Codex exit code `0`, no changed files, and a clean repository. The outer evidence wrapper timed out after nested completion. This is normal-chain evidence only: state-loss reconciliation and reset-time duplicate suppression remain unaccepted until the controlled state-loss reconciliation and local duplicate-gate acceptance after PR #185 merges. RV2-03 Phase B B0 has been accepted under the corrected oracle and requires no rerun, but this does not constitute Phase B/B3 operational acceptance. Phase B operational acceptance on the user-designated Primary Operational Host remains separately gated and required, and RV2-03 is not `DONE`.
+The accepted course Windows computer result at `master@180d966e46194c0cd0d542d90376c52e84dda05b` used manifest SHA-256 `50d7a481987c16e052e47d635d338c16afdf5a117ed48a2c513733e28382078c`, Inbox request `rv2-03-final-primary-inbox-20260710T044049Z-1b1bd31e`, and dispatch request `rv2-03-final-primary-dispatch-20260710T044049Z-1b1bd31e`. Evidence is dispatch marker `4932081797`, Inbox marker `4932081856`, Runner review bundle `4932108053`, and trusted matching success result `4932108148`. One normal request ran exactly once: one Dispatcher, one Runner, one Codex execution, one trusted matching success, and one local `CONSUMED` record.
+
+The state-loss safety requirement has been proven for the accepted RV2-03 contract. Complete local operator-state loss did not rerun the request: durable trusted completion reconstructed one `CONSUMED` record without Dispatcher, Runner, or Codex rerun, and the subsequent local duplicate gate prevented further execution. No automatic retry or unexpected GitHub write occurred, and the repository remained clean.
 
 ### Primary Operational Host Model
 
@@ -210,15 +212,15 @@ RV2-03 Phase A implementation evidence includes A0 Windows host compatibility ha
 - The home Windows computer is a Secondary Compatibility Host. Its additional evidence is useful but does not block RV2-03 completion.
 - Host designation does not grant request-publication, execution, retry, startup, GitHub-write, or later-phase authority.
 - When the designated host is ephemeral or restore-card managed, reset or loss of local operator state must not permit a completed request to run again. The system must reconcile trusted durable completion evidence or fail closed before delegation.
-- This state-loss safety requirement remains unproven until separately implemented, tested, and accepted during RV2-03 Phase B. Durable-evidence reconciliation against trusted GitHub request/result evidence is a critical acceptance requirement.
+- The accepted RV2-03 contract proved this state-loss safety requirement through durable trusted completion reconciliation and the later local duplicate gate.
 
 PR #177 is merged: `1acfe502271f77b4872d39adf86b687c20fb2396` was the feature head merged through PR #177 into `master@66ad9f64d59718d096dc8a2752e88f8cc44f10d6`. It is historical merge evidence, not the current canonical baseline. D2 durable-evidence runtime implementation is merged through PR #183, but that merge and the first normal live chain do not imply startup, tray, service, MCP, trusted-actor, allowlist, commit, push, close, merge, or later-node authority.
 
-The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability. Completion of Phase A evidence and acceptance of Phase B B0 do not activate full Phase B operational acceptance, RV2-04, startup, tray, service, MCP, or any later node.
+The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability. RV2-03 completion does not authorize RV2-04, startup, tray, service, MCP, or any later node.
 
 The bridge is intended to become reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host, not the permanent repository boundary. Physical extraction has not started. The current in-repository implementation remains the proven baseline until migration acceptance passes.
 
-This direction does not authorize a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, startup behavior, tray UX, service behavior, MCP, automatic commit/push/close/merge, or approval chaining. A later separately approved migration implementation node is required. The bounded design is recorded in `docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md`.
+This direction does not authorize a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, startup behavior, tray UX, service behavior, MCP, automatic commit/push/close/merge, trusted-actor expansion, allowlist expansion, approval chaining, or automatic retry. A later separately approved migration implementation node is required. The bounded design is recorded in `docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md`.
 
 The default ordered direction is:
 
@@ -240,7 +242,7 @@ This order remains bounded and auditable. It must not implement automatic commit
 
 The manually started, explicit, issue-scoped Dispatcher/Runner path remains the verified Lv4.5 recovery baseline.
 
-Bridge Operator Phase B implementation now includes B1, B2, and B3 code slices. Operational daily-use acceptance remains to be proven separately; implementation presence must not be described as full operational readiness.
+Bridge Operator Phase B implementation includes B1, B2, and B3 code slices. RV2-03 formal Primary Operational Host acceptance is complete; implementation presence alone must not be described as granting later-node or authority expansion.
 
 `B4-D` is the course-computer recovery and fresh-reboot smoke milestone. `Phase B4` remains the optional future visible tray/status UX. These names must not be conflated.
 

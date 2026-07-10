@@ -42,8 +42,8 @@ Engineering record navigation and OPT-series artifacts are indexed in `docs/ENGI
 - RV2-00: `DONE`.
 - RV2-01: `DONE`.
 - RV2-02: `DONE`.
-- RV2-03: `ACTIVE` — Phase B change-control.
-- No next runtime implementation branch is approved; the docs-only truth-sync working branch is not a runtime baseline.
+- RV2-03: `DONE` — formal Primary Operational Host acceptance passed on 2026-07-10.
+- RV2-04 is not automatically activated or authorized by RV2-03 completion. REC-02 is not automatically activated. Issue #188 remains a deferred planning node, and OPT-01 through OPT-06 remain inactive unless separately approved.
 - Pre-truth-sync Phase A implementation baseline commit: `9749911badec6c4011d17170f55b4305fe47a08c`.
 - Latest reported B4-D focused validation: `78 passed`.
 - Latest reported adjacent validation: `126 passed`.
@@ -53,32 +53,14 @@ Engineering record navigation and OPT-series artifacts are indexed in `docs/ENGI
 - Evidence comments: dispatch `4795080463`, Inbox `4795082149`, Runner review bundle `4795131449`, matching `LAWBRUNNER-RESULT` `4795131543`.
 - Exactly one B2/Dispatcher/Runner/Codex chain ran. It succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree.
 - Manual `PollOnce` remains the verified recovery path, not the target daily experience.
-- B3 implementation exists, but primary-host operational daily-use acceptance remains to be proven.
+- B3 implementation and the RV2-03 Primary Operational Host acceptance are complete; manual `PollOnce` remains the recovery path, not the target daily experience.
 - RV2-03 Phase A implementation evidence now includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening.
-- GitHub Issue #168 and Issue #175 bodies retain older pre-D2 text from the 2026-07-02 synchronization.
-- Append-only comments added on 2026-07-06 record PR #183 merge, D2 current truth, and RV2-03 `ACTIVE`.
-- Those comments supersede the older Issue body statements for current status.
-- Canonical Issue body cleanup remains part of RV2-03 final closeout, and this focused documentation repair does not modify either Issue.
-- RV2-03 Phase A final acceptance passed on 2026-06-30.
-- RV2-03 Phase B B0 has been accepted under the corrected oracle and requires no rerun; this does not constitute Phase B/B3 operational acceptance.
-- Phase B operational acceptance remains required on the user-designated Primary Operational Host, and RV2-03 is not `DONE`.
-- D2 merge baseline used by this repair: `master@0cffe7cb4f28ea24691f69bce32d60f8d66ef681`.
-- PR #181 accepted D1 as the standalone durable-evidence reconciliation prerequisite; feature head `74de2c0818ef6d957aa1498d2330dcfe68ced829` merged as `de37562670416950a999fae1b46a5efa78bca2a7`.
-- D1 focused resolver verification reported `59 passed`; final related verification reported `158 passed`.
-- PR #183 implemented and merged D2 as `master@0cffe7cb4f28ea24691f69bce32d60f8d66ef681`, adding the durable evidence provider, pre-Dispatcher reconciliation, local `CONSUMED` reconstruction, and delegation outcome tracking.
-- PR #183 verification reported provider + B3 tests at `93 passed`, D1 resolver tests at `59 passed`, and the final `tests/local_runner_bridge` suite at `662 passed`.
-- Current Primary Operational Host: the course Windows computer used for the user's normal project work.
-- Secondary Compatibility Host: the home Windows computer; optional compatibility evidence there does not block RV2-03 completion.
-- Issue #184 completed one trusted Dispatcher / Runner / Codex chain against `master@0cffe7cb4f28ea24691f69bce32d60f8d66ef681`; one trusted matching result was published, Runner and Codex exited `0`, no files changed, and the repository remained clean.
-- The Issue #184 outer evidence wrapper timed out after nested completion. This is accepted normal-chain evidence, not final Phase B acceptance.
-- PR #185 carries the safe-wait per-cycle outcome-isolation repair for B3 audit logging.
-- Because the current Primary Operational Host may lose local operator state after reset, cross-reset duplicate suppression or fail-closed reconciliation against trusted durable GitHub request/result evidence remains a required and unaccepted Phase B acceptance case.
-- Durable-evidence reconciliation is a critical acceptance requirement, not an optional documentation note.
-- PR #177 is merged: `1acfe502271f77b4872d39adf86b687c20fb2396` was the feature head merged through PR #177 into `master@66ad9f64d59718d096dc8a2752e88f8cc44f10d6`; it is historical merge evidence, not a newly approved runtime implementation branch or a separate runtime baseline.
-- D2 runtime implementation is merged, but Primary Operational Host state-loss durable reconciliation has not been accepted.
-- The next operational gate after PR #185 merges is the controlled state-loss reconciliation and local duplicate-gate acceptance.
-- RV2-03 remains `ACTIVE`; RV2-04 remains unauthorized.
-- Phase C ChatGPT App / MCP remains deferred until Phase B is stable and accepted.
+- RV2-03 accepted outcome: on the course Windows computer at `master@180d966e46194c0cd0d542d90376c52e84dda05b`, formal acceptance used manifest SHA-256 `50d7a481987c16e052e47d635d338c16afdf5a117ed48a2c513733e28382078c`, Inbox request `rv2-03-final-primary-inbox-20260710T044049Z-1b1bd31e`, and dispatch request `rv2-03-final-primary-dispatch-20260710T044049Z-1b1bd31e`.
+- Durable GitHub evidence: dispatch marker `4932081797`, Inbox marker `4932081856`, Runner review bundle `4932108053`, and trusted matching result `4932108148`.
+- The normal request ran exactly once: one Dispatcher, one Runner, one Codex execution, one trusted matching success result, and one local `CONSUMED` record.
+- Complete local BridgeOperator state loss was accepted. Durable `COMPLETED` reconciliation reconstructed one `CONSUMED` record without Dispatcher, Runner, or Codex rerun; the subsequent duplicate gate prevented another execution.
+- No automatic retry or unexpected GitHub write occurred, and the repository remained clean.
+- Phase C ChatGPT App / MCP remains deferred pending separate approval.
 - Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
 - High-risk operations remain separately approval-gated.
 - Raw local audit packets may remain local; durable conclusions and canonical references belong in GitHub and repository documentation.
@@ -133,7 +115,7 @@ Roadmap v2 default sequence:
 1. `RV2-00` — specification adoption and execution baseline (`DONE`).
 2. `RV2-01` — one supervised B4-D live smoke through the existing path (`DONE`).
 3. `RV2-02` — B4-D closeout, documentation truth synchronization, and repository-separation design (`DONE`).
-4. `RV2-03` — B3 operational acceptance on the user-designated Primary Operational Host, currently the course Windows computer (`ACTIVE` — Phase B change-control).
+4. `RV2-03` — B3 operational acceptance on the user-designated Primary Operational Host, the course Windows computer (`DONE` — formal acceptance passed 2026-07-10).
 5. `RV2-04` — Task Packet v1.1 to runtime execution-contract binding.
 6. `RV2-05` — minimal thin `lawb` CLI facade.
 7. `RV2-06` — execution profiles and evidence-based token control.
@@ -146,13 +128,9 @@ This order may change only through explicit user-approved change control. Comple
 
 ## Immediate Next Gate
 
-Tracker #168 is the designated canonical GitHub Roadmap surface. GitHub Issue #168 and Issue #175 bodies retain older pre-D2 text from the 2026-07-02 synchronization. Append-only comments added on 2026-07-06 record PR #183 merge, D2 current truth, and RV2-03 `ACTIVE`; those comments supersede the older body statements for current status. Canonical Issue body cleanup remains part of RV2-03 final closeout, and this focused documentation repair does not modify either Issue.
+RV2-03 is `DONE`. The accepted Primary Operational Host evidence is recorded above and on Issue #184. GitHub Issue #168 and Issue #175 retain historical bodies; this repository closeout does not mutate them.
 
-Current RV2-03 Phase A evidence is implemented and verified beyond the older repository documentation. The accepted evidence includes A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening.
-
-GitHub Issue #168 and Issue #175 bodies retain older pre-D2 text, while append-only comments added on 2026-07-06 record PR #183 merge, D2 current truth, and RV2-03 `ACTIVE`; those comments supersede the older body statements for current status until canonical body cleanup in RV2-03 final closeout. RV2-03 Phase A final acceptance passed on 2026-06-30. PR #177 is merged: `1acfe502271f77b4872d39adf86b687c20fb2396` was the feature head merged through PR #177 into `master@66ad9f64d59718d096dc8a2752e88f8cc44f10d6`. PR #179 records `853e341d6a32cdbad5fdb7f77b05353187beccf2` as pre-merge master, `649212b665264f80c95f940ec713f93dfb9ef0ca` as feature head, and `cd22eb73a1ea3f8ccd7efe146a49f567b78f7ea1` as the accepted merge commit. Those SHAs remain historical evidence, not the current canonical baseline. The canonical repository branch is `master`; current `master` HEAD is mutable current-state data that must be revalidated from Git at the beginning of each engineering task. D2 merge baseline used by this repair: `master@0cffe7cb4f28ea24691f69bce32d60f8d66ef681`. PR #181 accepted D1 as a standalone durable-evidence reconciliation prerequisite: feature head `74de2c0818ef6d957aa1498d2330dcfe68ced829` merged as `de37562670416950a999fae1b46a5efa78bca2a7`, with reported focused resolver verification of `59 passed` and final related verification of `158 passed`. PR #183 implemented and merged D2 as `master@0cffe7cb4f28ea24691f69bce32d60f8d66ef681`, adding the durable evidence provider, pre-Dispatcher reconciliation, local `CONSUMED` reconstruction, and delegation outcome tracking. Issue #184 completed one trusted Dispatcher / Runner / Codex chain with one trusted result, no changed files, and a clean repository; the outer evidence wrapper timed out after nested completion. This is accepted normal-chain evidence, not final Phase B acceptance. RV2-03 Phase B B0 has been accepted under the corrected oracle and requires no rerun, but Phase B operational acceptance on the user-designated Primary Operational Host remains separately gated and required before RV2-03 can be `DONE`. No next runtime implementation branch is approved. The current designated host is the course Windows computer, while the home Windows computer is a Secondary Compatibility Host. The course host's reset and state-loss behavior must prove duplicate suppression or fail-closed reconciliation against trusted durable GitHub request/result evidence before final acceptance. PR #185 carries the safe-wait per-cycle outcome-isolation repair, and state-loss durable reconciliation remains unaccepted.
-
-The next operational gate after PR #185 merges is the controlled state-loss reconciliation and local duplicate-gate acceptance. D2 local implementation is merged, but D2 completion does not authorize additional live GitHub access, request or result publication, Dispatcher, Runner, Codex delegation, Primary Operational Host execution, automatic retry, startup, tray, service, MCP, trusted-actor or allowlist changes, authority expansion, commit, push, or GitHub writes beyond separately approved tasks. Current D2 decision mapping is implemented as: `COMPLETED` reconstructs or records local `CONSUMED` state and does not invoke Dispatcher; `NOT_FOUND` does not create `CONSUMED` state and may proceed only through existing ordinary delegation gates; `BLOCKED` does not invoke Dispatcher and records a reviewable fail-closed reason; `ERROR` does not invoke Dispatcher and records provider or evidence-read failure. RV2-03 remains `ACTIVE`; RV2-04 remains unauthorized.
+No next Roadmap v2 execution node is activated by this closeout. RV2-04 remains a future candidate and is not authorized. REC-02 is not activated. Issue #188 remains deferred planning, and OPT-01 through OPT-06 remain inactive unless separately approved. Startup, tray, service, MCP, automatic commit/push/close/merge, approval chaining, trusted-actor changes, and allowlist expansion remain out of scope.
 
 The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
 
@@ -160,7 +138,7 @@ The earlier RV2-03 Phase A truth-sync commit was `b90d56fb5ea08e0ac5036f50af8efc
 
 The approved strategic direction is to prepare the bridge for future repository separation as reusable cross-project development infrastructure. `local-ai-workbench` remains the first validated host and reference host. Physical extraction, a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, startup, tray UX, service behavior, MCP, and authority expansion are not authorized here. A later separately approved migration implementation node is required.
 
-Deferred items still include distinct `manifest_review_expires` and `execution_request_expires` fields, a versioned Host Profile, the full shared Bootstrap/runtime resolver contract where not already proven, the outer Runner result evidence contract where not already proven, Phase B daily B3 operational acceptance, startup, tray, service, and MCP.
+Deferred items still include distinct `manifest_review_expires` and `execution_request_expires` fields, a versioned Host Profile, the full shared Bootstrap/runtime resolver contract where not already proven, the outer Runner result evidence contract where not already proven, startup, tray, service, and MCP.
 
 The current in-repository implementation remains the proven baseline until migration acceptance passes. Cross-project portability cannot be claimed until the extracted design is validated with at least two different repositories.
 
@@ -199,6 +177,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-07-10: Closed RV2-03 after formal Primary Operational Host acceptance passed: exactly one normal Dispatcher/Runner/Codex execution succeeded, complete local state loss reconciled durably without rerun, the duplicate gate blocked later execution, and no automatic retry or unexpected GitHub write occurred. RV2-04, REC-02, Issue #188, and OPT nodes remain inactive unless separately approved.
 - 2026-06-25: Recorded RV2-01/B4-D supervised smoke success, closed stale readiness language, and added the bounded repository-separation design while keeping physical extraction unauthorized.
 - 2026-06-24: Began RV2-01 readiness truth synchronization while keeping the node planned and the live smoke separately gated.
 - 2026-06-24: Adopted Bridge Roadmap v2 execution governance through squash-merged PR #167, created tracker #168 and planned node #169, and kept live B4-D separately gated.
