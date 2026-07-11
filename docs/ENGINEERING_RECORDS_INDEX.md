@@ -40,13 +40,16 @@ Recommended future session read order:
 - OPT-03: `docs/POST_RV2_03_WORKFLOW_OPTIMIZATION_BENCHMARK_OPT03.md` records the historical A/B workflow benchmark.
 - OPT-04: `docs/POST_RV2_03_UI_MOCKUP_FIRST_BENCHMARK_OPT04.md` records the mockup-first benchmark and UI contract pattern.
 - OPT-05: `docs/POST_RV2_03_SYSTEMATIC_DEBUGGING_PROFILE_BENCHMARK_OPT05.md` records the systematic debugging profile benchmark.
+- OPT-06: completed as a Chat-only REC-02 retrospective; result `GO — conditional default` for ambiguous, safety-relevant, environment-sensitive, or evidence-heavy debugging. It created no repository artifact and added no authority.
+- OPT-07: `docs/POST_RV2_03_CODEBASE_MEMORY_BENCHMARK_OPT07.md` records the isolated `codebase-memory-mcp` v0.9.0 CLI benchmark; result `DONE / NO-GO`, with `13.04%` exploration-cost reduction, incomplete safety-critical relations, complete rollback, and no adoption for the current workflow.
 
-## OPT-06 Status
+## OPT-06 / OPT-07 Status
 
-- OPT-06 is not authorized.
-- The current repo handoff from OPT-05 proposes systematic debugging profile follow-up planning.
-- Older external research used OPT-06 for a codebase-memory CLI benchmark.
-- A future planner must resolve naming and scope before using OPT-06.
+- OPT-06 resolved the earlier naming ambiguity by keeping the repository-native systematic-debugging follow-up as OPT-06.
+- The older external codebase-memory benchmark concept was renumbered to OPT-07 before execution.
+- OPT-06 is complete as a read-only retrospective and is a conditional workflow recommendation, not mandatory process.
+- OPT-07 is complete and accepted as `NO-GO`; `codebase-memory-mcp` is not adopted as a required or default Local AI Workbench exploration tool.
+- Neither result activates RV2-04, Issue #188, another OPT node, MCP, watchers, services, or new authority.
 
 ## RV2 / Product Checkpoint Warning
 
@@ -72,12 +75,12 @@ Recommended future session read order:
 - `docs/COURSE_COMPUTER_ENVIRONMENT_RECOVERY.md` remains the detailed recovery reference.
 - `scripts/course_environment_restore_review.ps1` is the preferred wrapper entry point.
 - `scripts/bootstrap_course_environment.ps1` is the lower-level bootstrap script and should not be the first daily manual entry unless the wrapper fails.
+
 ## Deferred Candidate Nodes
 
 These are candidates only and are not activated by this index:
 
 - REC-01 full records closeout
 - OPS-01 Course Host Quick Restore Compression
-- OPT-06 scope-resolution / follow-up planning
 - RV2-P1 product checkpoint
 - RV2-04 runtime contract binding
