@@ -43,7 +43,7 @@ Engineering record navigation and OPT-series artifacts are indexed in `docs/ENGI
 - RV2-01: `DONE`.
 - RV2-02: `DONE`.
 - RV2-03: `DONE` — formal Primary Operational Host acceptance passed on 2026-07-10.
-- RV2-04 remains inactive and unauthorized. REC-02 is `DONE`: final semantic acceptance passed, PR #192 merged, and the canonical merge commit is `9d458becce35d1098244b15b4fe7044d78c8f4c9`. Final-state verification passed across 111 unique REC-02 related tests. The combined one-shot suite was environment-blocked by PC-cillin antivirus interference with temporary fake `python.exe` / `gh.exe` test executables and nested-process hangs, so equivalent split-module final-state evidence was used. Issue #188 remains deferred, OPT-06 remains unstarted, OPT-01 through OPT-05 historical/local evidence status is unchanged, and no next node is automatically activated.
+- RV2-04 remains inactive and unauthorized. REC-02 is `DONE`: final semantic acceptance passed, PR #192 merged, and the canonical merge commit is `9d458becce35d1098244b15b4fe7044d78c8f4c9`. OPT-06 is complete as a Chat-only REC-02 retrospective with `GO — conditional default` for ambiguous, safety-relevant, environment-sensitive, or evidence-heavy debugging. OPT-07 is `DONE / NO-GO`: the isolated `codebase-memory-mcp` v0.9.0 benchmark achieved only `13.04%` exploration-cost reduction, missed safety-critical Dispatcher/Runner and durable-evidence relations, completed full rollback, and was not adopted for the current workflow. Issue #188 remains deferred, and no next node is automatically activated.
 - Pre-truth-sync Phase A implementation baseline commit: `9749911badec6c4011d17170f55b4305fe47a08c`.
 - Latest reported B4-D focused validation: `78 passed`.
 - Latest reported adjacent validation: `126 passed`.
@@ -130,7 +130,9 @@ This order may change only through explicit user-approved change control. Comple
 
 RV2-03 is `DONE`. The accepted Primary Operational Host evidence is recorded above and on Issue #184. GitHub Issue #168 and Issue #175 retain historical bodies; this repository closeout does not mutate them.
 
-REC-02 is `DONE`. Course Host Complete Recovery v2 passed final semantic acceptance, merged through PR #192, and was post-merge verified at canonical merge commit `9d458becce35d1098244b15b4fe7044d78c8f4c9`. Its completion does not activate RV2-04, Issue #188, OPT-06, or any later node. Startup, tray, service, MCP, automatic commit/push/close/merge, approval chaining, trusted-actor changes, and allowlist expansion remain out of scope.
+REC-02 is `DONE`. Course Host Complete Recovery v2 passed final semantic acceptance, merged through PR #192, and was post-merge verified at canonical merge commit `9d458becce35d1098244b15b4fe7044d78c8f4c9`. Its completion does not activate RV2-04, Issue #188, or any later node. Startup, tray, service, MCP, automatic commit/push/close/merge, approval chaining, trusted-actor changes, and allowlist expansion remain out of scope.
+
+OPT-06 is complete as a read-only REC-02 retrospective and is adopted only as a conditional debugging-profile recommendation for ambiguous, safety-relevant, environment-sensitive, or evidence-heavy work. OPT-07 is complete and accepted as `NO-GO`; `codebase-memory-mcp` is not adopted as a required or default Local AI Workbench exploration tool because it reduced comparable exploration operations by only `13.04%` and missed safety-critical relations. These outcomes do not activate RV2-04, Issue #188, another OPT node, MCP, watchers, services, or new authority.
 
 The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
 
@@ -177,6 +179,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-07-11: Closed OPT-06 and OPT-07 workflow experiments. OPT-06 produced a `GO — conditional default` recommendation for systematic debugging on ambiguous, safety-relevant, environment-sensitive, or evidence-heavy work. OPT-07 was accepted as `NO-GO` after `codebase-memory-mcp` v0.9.0 reduced comparable exploration operations by only `13.04%`, missed safety-critical Dispatcher/Runner and durable-evidence relations, and completed full rollback without repository or configuration residue. No later node was activated.
 - 2026-07-11: Closed REC-02 after final semantic acceptance and PR #192 merge at canonical commit `9d458becce35d1098244b15b4fe7044d78c8f4c9`; 111 unique related tests passed on the final code state. The combined one-shot suite was environment-blocked by antivirus interference with temporary fake executables and nested-process hangs, so split-module final-state evidence was used. RV2-04, Issue #188, OPT-06, and all later nodes remain inactive unless separately approved.
 - 2026-07-10: Activated REC-02 under explicit approval for Course Host Complete Recovery v2 implementation; final acceptance remains required and no later node is activated.
 - 2026-07-10: Closed RV2-03 after formal Primary Operational Host acceptance passed: exactly one normal Dispatcher/Runner/Codex execution succeeded, complete local state loss reconciled durably without rerun, the duplicate gate blocked later execution, and no automatic retry or unexpected GitHub write occurred. RV2-04, REC-02, Issue #188, and OPT nodes remain inactive unless separately approved.
