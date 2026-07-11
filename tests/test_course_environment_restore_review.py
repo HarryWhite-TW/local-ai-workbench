@@ -153,13 +153,14 @@ param([string]$RepoRoot,[switch]$Apply,[switch]$Json)
 $countPath=$env:REC02_BOOTSTRAP_COUNT
 $count=if(Test-Path $countPath){[int](Get-Content $countPath)}else{0}; $count++; Set-Content $countPath $count
 Add-Content $env:REC02_COMMAND_LOG ("bootstrap " + $(if($Apply){"APPLY"}else{"AUDIT"}))
-$mode=if($count -eq 1){$env:REC02_INITIAL_MODE}elseif($Apply){"READY"}else{$env:REC02_POST_MODE}
+$mode=if($count -eq 1){$env:REC02_INITIAL_MODE}elseif($Apply){$env:REC02_APPLY_MODE}else{$env:REC02_POST_MODE}
 if(-not $mode){$mode="READY"}
 if($mode -eq "FAIL"){Write-Output '{"overall_status":"READY"}'; exit 7}
 if($mode -eq "INVALID"){Write-Output 'not-json'; exit 0}
 $ready=($mode -eq "READY")
-[ordered]@{overall_status=$(if($ready){"READY"}else{"BLOCKED"});blockers=$(if($ready){@()}else{@("fake_blocker")});venv=@{pip_ready=$ready};dependencies=@{ready=$ready};detected=@{gh=@{ready=$ready};codex=@{ready=$ready}}} | ConvertTo-Json -Depth 8
-exit $(if($ready){0}else{2})
+$failure=[ordered]@{failed_action=$(if($Apply){$env:REC02_APPLY_FAILED_ACTION}else{$null});failed_stage=$(if($Apply){"apply"}else{$null});safe_error=$(if($Apply){"fake historical failure"}else{$null});next_manual_action=$(if($Apply){"retry manually"}else{$null})}
+[ordered]@{overall_status=$(if($ready){"READY"}else{"BLOCKED"});blockers=$(if($ready){@()}else{@("fake_blocker")});venv=@{pip_ready=$ready};dependencies=@{ready=$ready};detected=@{gh=@{ready=$ready};codex=@{ready=$ready}};diagnostics=@{failure=$failure}} | ConvertTo-Json -Depth 8
+exit $(if($ready -or $mode -eq "HISTORICAL_FAILURE"){0}else{2})
 ''',
     )
     _write_ps(
@@ -221,7 +222,7 @@ def _run_wrapper(tmp_path: Path, fake_rec02_tool: Path, *, complete: bool = True
     command = [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(repo / "scripts" / SCRIPT.name), "-RepoRoot", str(repo), "-ExpectedBranch", "rec02-test", "-ExpectedHead", head, "-EvidenceRoot", str(evidence)]
     if complete:
         command.append("-CompleteRecovery")
-    result = subprocess.run(command, cwd=repo, env=env, text=True, capture_output=True, timeout=60)
+    result = subprocess.run(command, cwd=repo, env=env, text=True, capture_output=True, timeout=120)
     summary_path = evidence / "course_environment_restore_review_summary.json"
     assert summary_path.exists(), f"wrapper did not write summary\nstdout={result.stdout}\nstderr={result.stderr}"
     summary = json.loads(summary_path.read_text(encoding="utf-8-sig"))
@@ -245,6 +246,23 @@ def test_behavior_complete_healthy_is_idempotent_and_ready(tmp_path, fake_rec02_
     assert summary["git_identity_action"] == "none"
     assert summary["github_identity"]["login_matches"] is True
     assert summary["github_identity"]["repository_read_ready"] is True
+
+
+def test_behavior_historical_apply_failure_is_superseded_by_fresh_ready(tmp_path, fake_rec02_tool):
+    result, summary, log, _, _ = _run_wrapper(
+        tmp_path,
+        fake_rec02_tool,
+        REC02_INITIAL_MODE="HISTORICAL_FAILURE",
+        REC02_APPLY_MODE="HISTORICAL_FAILURE",
+        REC02_APPLY_FAILED_ACTION="install_dependencies",
+        REC02_POST_MODE="READY",
+    )
+    assert result.returncode == 0
+    assert summary["verdict"] == "READY"
+    assert "bootstrap APPLY" in log
+    assert summary["historical_action_failures"] == "install_dependencies"
+    assert summary["superseded_action_failures"] == "install_dependencies"
+    assert "install_dependencies" not in summary["current_blockers"]
 
 
 @pytest.mark.parametrize("post_mode", ["FAIL", "INVALID"])

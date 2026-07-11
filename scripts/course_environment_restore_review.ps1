@@ -104,8 +104,8 @@ function Invoke-SafeAuthStatus([string]$GhPath, [string]$WorkingDirectory, [stri
 }
 
 function Get-ActionFailures($Payload) {
-    if (-not $Payload -or -not $Payload.failure) { return @() }
-    if ($Payload.failure.failed_action) { return @([string]$Payload.failure.failed_action) }
+    if (-not $Payload -or -not $Payload.diagnostics -or -not $Payload.diagnostics.failure) { return @() }
+    if ($Payload.diagnostics.failure.failed_action) { return @([string]$Payload.diagnostics.failure.failed_action) }
     return @()
 }
 
