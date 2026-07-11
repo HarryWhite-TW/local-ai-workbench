@@ -36,7 +36,7 @@ What went wrong:
 - `$Host` was mistakenly used as a variable name even though PowerShell reserves
   it as a read-only automatic variable.
 
-## Future Restore Review Flow
+## REC-02 Complete Recovery v2
 
 Run the review wrapper from a visible PowerShell window:
 
@@ -45,24 +45,22 @@ Run the review wrapper from a visible PowerShell window:
     -RepoRoot "C:\Users\admin\Desktop\local-ai-workbench" `
     -ExpectedBranch "master" `
     -ExpectedHead "<reviewed-full-head>" `
-    -Apply
+    -CompleteRecovery
 ```
 
 The intended path is:
 
 ```text
-minimal starting-state gate
--> read manifest/script first
--> bootstrap AUDIT
--> one approval package
--> bootstrap APPLY
--> JSON review
--> focused repair only if APPLY fails
--> Host Check
+initial audit
+-> conditional restore only when Layer 1 is not READY
+-> fresh post-audit and stale-failure reconciliation
+-> current-process reviewed PATH and repo-local identity hygiene
+-> conditional browser GitHub authentication, auth recheck, and repository read
+-> focused tests, Host Check, compact result
 -> STOP before live acceptance
 ```
 
-Short form: `AUDIT -> APPLY -> JSON review -> focused repair -> Host Check -> STOP`.
+Audit-only mode remains read-only. Complete recovery never persists PATH, changes global Git identity, performs GitHub writes, or invokes live Bridge runtime.
 
 The wrapper writes long command output to an evidence root and prints only a
 concise summary: evidence paths, Layer 1 restore status, Layer 2 Host Check
@@ -157,9 +155,7 @@ close, labels, PRs, merges, or approvals.
 
 ## Primary Operational Host And Secondary Compatibility Host
 
-The course Windows computer is the current user-designated Primary Operational
-Host for RV2-03 operational acceptance. This designation does not mean its
-environment is persistent or already operationally accepted.
+The course Windows computer was the user-designated Primary Operational Host for RV2-03, whose formal acceptance is complete. REC-02 remains recovery tooling, not live Bridge authority.
 
 The home Windows computer is a Secondary Compatibility Host. It may retain
 GitHub CLI auth, Codex sign-in, local logs, and operator state, but its additional
@@ -170,10 +166,7 @@ authentication, installed Codex, portable GitHub CLI, Python environment,
 startup tasks, local operator state, or logs after reboot.
 
 After every reset or restore, rerun environment recovery and readiness checks.
-Missing local operator state must not be interpreted as proof that a request has
-not run. Live delegation must reconcile trusted durable completion evidence or
-fail closed when prior execution cannot be ruled out. Cross-reset duplicate
-suppression remains unproven until separately implemented, tested, and accepted.
+Missing local operator state must not be interpreted as proof that a request has not run. The accepted RV2-03 contract proved durable reconciliation and duplicate suppression; REC-02 does not invoke that runtime path.
 
 ## Manual Fallback Steps
 

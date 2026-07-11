@@ -6,12 +6,7 @@ This runbook defines the short daily recovery path for reset or restore-card cou
 
 It exists because course-host recovery is a recurring operational workflow, not an occasional troubleshooting event.
 
-Normal target:
-
-    1. Run the quick audit wrapper.
-    2. Review Layer 1, Layer 2, and Layer 3 status.
-    3. Apply the smallest approved repair only when needed.
-    4. Stop before live acceptance, Dispatcher, Runner, Codex task, or GitHub write.
+Normal target: one approved complete-recovery package, one repository-native command, conditional browser interaction only if needed, then paste the compact result back for ChatGPT adjudication. The command stops before live acceptance, Dispatcher, Runner, Codex task, or GitHub write.
 
 ## When To Use
 
@@ -34,7 +29,7 @@ This runbook does not authorize:
 - Dispatcher, Runner, PollOnce, or Codex runtime task execution;
 - RV2-04, OPT-06, or later Roadmap activation.
 
-## Daily Quick Restore: Audit-Only First
+## Daily Quick Restore: Complete Recovery
 
 From the repository root:
 
@@ -49,7 +44,8 @@ From the repository root:
         -RepoRoot "C:\Users\admin\Desktop\local-ai-workbench" `
         -ExpectedBranch "master" `
         -ExpectedHead $expectedHead `
-        -EvidenceRoot $evidenceRoot
+        -EvidenceRoot $evidenceRoot `
+        -CompleteRecovery
 
     Write-Output "===== wrapper exit ====="
     Write-Output $LASTEXITCODE
@@ -93,19 +89,15 @@ It must not use:
     -PersistUserPath
     -Apply
 
-### Case C: Layer 1 is not READY
+### Audit-Only Mode
 
-Do not guess.
-
-Review `bootstrap_audit.json` and decide whether an approved `-Apply` restore package is needed.
-
-`-Apply` may create `.venv-course`, install requirements, install portable GitHub CLI, install Codex, and modify current-process PATH. It therefore requires explicit approval.
+Omit `-CompleteRecovery` to run the read-only audit path. It creates no venv, installs nothing, changes no Git identity or PATH, and does not start browser authentication.
 
 ### Case D: GitHub authentication is missing
 
-Do not run `gh auth login` unless explicitly approved.
+Without an explicitly approved complete-recovery package that includes conditional browser authentication, `gh auth login --web` remains a separately approved, user-visible operation.
 
-Authentication repair is a separate user-visible operation.
+When that authority is included, as in the approved REC-02 package, `-CompleteRecovery` may invoke browser authentication conditionally inside the same transaction. It must recheck authentication and verify the exact expected account before continuing. This does not grant standing authentication authority to future recovery runs.
 
 ### Case E: Codex launcher check is confusing
 
