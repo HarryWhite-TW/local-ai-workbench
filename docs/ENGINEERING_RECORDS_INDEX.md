@@ -40,6 +40,12 @@ Recommended future session read order:
 
 These records are durable navigation and evidence surfaces. They do not replace `PLANS.md`, fresh Git/GitHub verification, or task-specific authority. They do not activate Phase 5.4, RV2-04, repository separation, or any later node.
 
+## WF-REENTRY Durable Record
+
+- `docs/WF_REENTRY_NATIVE_CAPABILITY_OVERLAP_REVIEW.md` — accepted capability-overlap adjudication and native-vs-Bridge strategy checkpoint, including `KEEP`, `THIN`, `REPLACE_BY_NATIVE CANDIDATE`, and `DEFER` classifications.
+
+This entry is navigation, not implementation authority or a replacement for current-state verification. Fresh platform, Git, GitHub, authentication, and task-specific authority verification remains required.
+
 ## OPT Records
 
 - OPT-01: `docs/POST_RV2_03_WORKFLOW_OPTIMIZATION_CONTRACTS_V1.md` defines workflow optimization contracts.
