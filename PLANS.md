@@ -150,6 +150,14 @@ Product-facing demo, onboarding, reliability, architecture evidence, and portfol
 
 Bridge work must not indefinitely displace the Local Document-to-Knowledge Workbench. After `RV2-03` or `RV2-04`, the `RV2-P1` checkpoint must evaluate whether additional bridge work produces enough real reduction in risk or manual friction to justify continuing before product-facing work.
 
+## Ecosystem Strategy Checkpoint
+
+The ecosystem-level strategy is recorded in `docs/ECOSYSTEM_CURRENT_STRATEGY_CHECKPOINT.md`. The ecosystem is the Human-Governed AI Work System: one ecosystem with multiple bounded products and tools. The Semi-Automated AI Engineering Workflow remains the first-priority ecosystem mainline and receives preferential Agentic quota. Reverb, the Human Approval Automation Gateway/n8n integration surface, Local AI Workbench, and Portfolio/Brand Website remain bounded parallel components.
+
+The repository's Local AI Workbench product mainline and the ecosystem-global priority are distinct: `repo-local product mainline != ecosystem-global strategic priority`. Workbench Phase 5.4 is not an upper-level gate for Workflow continuation. The Workflow separation design remains valid, but physical extraction, a new repository, migration, and cutover remain unauthorized.
+
+Phase 5.1–5.3 product-validation evidence is durably recorded in `docs/LOCAL_AI_WORKBENCH_PRODUCT_VALIDATION_PHASE5_1_TO_5_3.md`. Its exact final verdict is `PASS WITH SMALL GAPS — BOUNDED FOLLOW-UP JUSTIFIED`; the five-minute continuous timing claim remains unproven, summary usefulness is a small gap, and encoding/rendering anomalies are a non-blocking gap. This record does not activate Phase 5.4 or any later implementation node.
+
 ## Historical M1 Baseline
 
 The original M1 plan is retained here as historical baseline evidence.
@@ -179,6 +187,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-07-12: Added the ECO-DOC-01 durable strategy and product-validation records. Reaffirmed Workflow Mainline as the ecosystem first priority, preserved n8n/Gateway as a bounded ecosystem component, recorded Phase 5.1–5.3 as `PASS WITH SMALL GAPS — BOUNDED FOLLOW-UP JUSTIFIED`, and did not activate Phase 5.4, RV2-04, repository separation, or any later node.
 - 2026-07-11: Closed OPT-06 and OPT-07 workflow experiments. OPT-06 produced a `GO — conditional default` recommendation for systematic debugging on ambiguous, safety-relevant, environment-sensitive, or evidence-heavy work. OPT-07 was accepted as `NO-GO` after `codebase-memory-mcp` v0.9.0 reduced comparable exploration operations by only `13.04%`, missed safety-critical Dispatcher/Runner and durable-evidence relations, and completed full rollback without repository or configuration residue. No later node was activated.
 - 2026-07-11: Closed REC-02 after final semantic acceptance and PR #192 merge at canonical commit `9d458becce35d1098244b15b4fe7044d78c8f4c9`; 111 unique related tests passed on the final code state. The combined one-shot suite was environment-blocked by antivirus interference with temporary fake executables and nested-process hangs, so split-module final-state evidence was used. RV2-04, Issue #188, OPT-06, and all later nodes remain inactive unless separately approved.
 - 2026-07-10: Activated REC-02 under explicit approval for Course Host Complete Recovery v2 implementation; final acceptance remains required and no later node is activated.

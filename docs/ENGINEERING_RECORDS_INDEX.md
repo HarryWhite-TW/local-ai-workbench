@@ -33,6 +33,13 @@ Recommended future session read order:
 - RV2-03 lessons publication lane: PR `#186`
 - Canonical branch: `master`, with HEAD always requiring fresh verification
 
+## ECO-DOC-01 Durable Records
+
+- `docs/ECOSYSTEM_CURRENT_STRATEGY_CHECKPOINT.md` — ECO-01 strategy checkpoint for the Human-Governed AI Work System, including Workflow Mainline first priority, n8n/Gateway role, bounded Workbench role, dual-track strategy, and unauthorized separation boundary.
+- `docs/LOCAL_AI_WORKBENCH_PRODUCT_VALIDATION_PHASE5_1_TO_5_3.md` — ECO-02 product-validation evidence record for Workbench Phase 5.1–5.3, including the exact `PASS WITH SMALL GAPS — BOUNDED FOLLOW-UP JUSTIFIED` verdict and its limitations.
+
+These records are durable navigation and evidence surfaces. They do not replace `PLANS.md`, fresh Git/GitHub verification, or task-specific authority. They do not activate Phase 5.4, RV2-04, repository separation, or any later node.
+
 ## OPT Records
 
 - OPT-01: `docs/POST_RV2_03_WORKFLOW_OPTIMIZATION_CONTRACTS_V1.md` defines workflow optimization contracts.
