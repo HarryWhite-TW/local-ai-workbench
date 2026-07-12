@@ -162,7 +162,7 @@ Phase 5.1–5.3 product-validation evidence is durably recorded in `docs/LOCAL_A
 
 The accepted WF-REENTRY capability adjudication is recorded in `docs/WF_REENTRY_NATIVE_CAPABILITY_OVERLAP_REVIEW.md`. The Workflow is repositioned as the Human-Governed AI Engineering Control Layer: its governance, evidence, authority, and current-truth core is `KEEP`, while transport-only custom infrastructure is `THIN`. Native Chat -> Codex dispatch is a replacement candidate, not an unconditional default, because reliable full-result readback is not fully proven in this user's App environment. Specialized Bridge safety and durable reconciliation remain valuable.
 
-Direction Lock v1.2 remains authoritative for current Bridge work, while its transport strategy is `REVIEW_REQUIRED`. Repository separation remains `DEFER`; no RV2-04, Phase 5.4, benchmark, or implementation node is activated. A Native-vs-Bridge Reliability Benchmark is the next recommended review only.
+Direction Lock v1.2 remains authoritative and operative for current Bridge work; `REVIEW_REQUIRED` is the WF-REENTRY classification for future explicit change-control review, not a Direction Lock mutation. The existing bounded fixed-Inbox polling baseline remains governed; only expanded/unattended polling beyond that contract, plus startup, tray, service, and MCP, is `DEFER`. Repository separation remains `DEFER`; no RV2-04, Phase 5.4, benchmark, or implementation node is activated. RV2-P1 must be explicitly considered after RV2-03, and a Native-vs-Bridge Reliability Benchmark is only a candidate evidence input within or after that consideration.
 
 ## Historical M1 Baseline
 

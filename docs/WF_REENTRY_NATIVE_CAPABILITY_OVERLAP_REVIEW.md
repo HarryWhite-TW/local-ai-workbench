@@ -106,7 +106,7 @@ Native ChatGPT/Codex does not yet have a separately proven, user-verifiable equi
 
 ### DEFER
 
-Automatic polling, startup, tray, service, and MCP are **DEFER**. Physical repository separation is **DEFER**. RV2-04 automatic continuation is **NOT AUTHORIZED**.
+The existing bounded fixed-Inbox polling path governed by Bridge Operator v0 remains part of the current governed Bridge baseline and is not deauthorized by this record. Expanded or broader unattended polling beyond that fixed-Inbox contract is **DEFER**. Startup, tray, service, and MCP are **DEFER**. Physical repository separation is **DEFER**. RV2-04 automatic continuation is **NOT AUTHORIZED**.
 
 These items are not cancelled forever and are not automatically next. Each requires new evidence and an explicit engineering node. Native overlap must be considered before further Bridge investment, and physical extraction must not begin merely because a separation plan exists.
 
@@ -120,9 +120,9 @@ Direction Lock v1.2 is:
 
 - historically valid;
 - still authoritative for existing Bridge work;
-- transport strategy is now **REVIEW_REQUIRED**.
+- its transport strategy is classified by WF-REENTRY as **REVIEW_REQUIRED** for future explicit change-control review.
 
-The Direction Lock was designed around an auditable custom ChatGPT -> GitHub -> Dispatcher/Runner/Codex -> GitHub -> ChatGPT path. Current native platform integration creates a genuine overlap question, but native readback and recovery equivalence is not proven in this user's real environment. The safe status is review-required, not immediate replacement. The Direction Lock is not revoked, obsolete, superseded, or no longer authoritative.
+The Direction Lock remains operative for current Bridge work until separately approved change control actually updates it. WF-REENTRY does not modify, override, revoke, supersede, or deactivate the Direction Lock. The Direction Lock was designed around an auditable custom ChatGPT -> GitHub -> Dispatcher/Runner/Codex -> GitHub -> ChatGPT path. Current native platform integration creates a genuine overlap question, but native readback and recovery equivalence is not proven in this user's real environment. The safe status is future review-required, not immediate replacement.
 
 ## Current classification
 
@@ -150,12 +150,15 @@ The Direction Lock was designed around an auditable custom ChatGPT -> GitHub -> 
 | Dispatcher/Runner transport role | THIN |
 | Dispatcher/Runner safety role | KEEP SPECIALIZED |
 | Durable reconciliation / duplicate suppression | KEEP |
-| Automatic polling / startup / tray / service / MCP | DEFER |
+| Expanded/unattended polling beyond existing bounded fixed-Inbox baseline | DEFER |
+| Startup / tray / service / MCP | DEFER |
 | Physical repository separation | DEFER |
 | codebase-memory | NO-GO |
 
 ## Recommended next review
 
-The recommended next review is a **Native-vs-Bridge Reliability Benchmark** comparing task-dispatch friction, execution reliability, full-result readback, raw-evidence availability, reviewer reconstruction cost, failure and interruption recovery, durable identity, duplicate suppression, cross-reset behavior, authority boundaries, user interaction burden, and quota/token/time cost.
+Current Roadmap v2 governance requires explicit consideration of `RV2-P1` after RV2-03. The **Native-vs-Bridge Reliability Benchmark** is a recommended evidence input, sub-review, or candidate review within or after that explicit RV2-P1 consideration. It must not become an alternate next-step queue that bypasses RV2-P1.
 
-This is a recommendation only. This record does not activate the benchmark, create an implementation task, activate RV2-04 or Phase 5.4, begin repository separation, start Gateway implementation, or authorize any other implementation node.
+Possible comparison dimensions are task-dispatch friction, execution reliability, full-result readback, raw-evidence availability, reviewer reconstruction cost, failure and interruption recovery, durable identity, duplicate suppression, cross-reset behavior, authority boundaries, user interaction burden, and quota/token/time cost.
+
+Neither RV2-P1 nor the benchmark is activated by this record. The benchmark requires explicit engineering-node approval and this record does not create an implementation task, activate RV2-04 or Phase 5.4, begin repository separation, start Gateway implementation, or authorize any other implementation node.
