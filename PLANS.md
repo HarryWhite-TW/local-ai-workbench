@@ -137,7 +137,7 @@ Workflow v1 completion consists of four mandatory nodes:
 1. `RV2-P1-SYNC` — Workflow v1 Completion Boundary & Roadmap Rebaseline: `DONE`.
 2. `RV2-04N` — Minimal Runtime Contract Closure: `DONE`.
 3. Cross-Repository Bounded Proof: `DONE`.
-4. Workflow v1 Final Closeout: `REVIEW` — local candidate prepared; final `DONE` remains pending ChatGPT acceptance, publication, merge, post-merge canonical verification, tracker synchronization, and final residual-task review.
+4. Workflow v1 Final Closeout: `DONE` — accepted publication commit `368934f5c93d210c485d49180bc1c347d7d3647c`, PR #203, canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`, post-merge canonical verification `PASS`, and final hidden residual review `NO_HIDDEN_RESIDUAL_TASK_FOUND`.
 
 RV2-04N's accepted implementation commit is `4e6e3e8becbd99b2da0b8ffd089136995168d649`; PR #200 merged at canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`. Accepted evidence recorded 36 targeted validator/runtime-binding tests, 52 Runner-integration tests, and a final related suite of 203 passed, 0 failed, 0 skipped. The single focused repair was used; the repair budget is exhausted and Repair-2 was not used. RV2-04N proved normalized v1.1 contract data, fail-closed invalid present packets, logical-Issue/repository/branch/full-HEAD pre-execution binding, allowed-files and maximum-file-count post-execution enforcement, machine-readable binding evidence, and the rule that Codex exit 0 or a DONE summary cannot override a contract violation. `verification_commands` remain metadata only and are not automatically executed. No live Bridge execution, cross-repository portability proof, or Native-vs-Bridge benchmark was performed.
 
@@ -145,7 +145,7 @@ The Cross-Repository Bounded Proof reused the core Workflow governance method on
 
 The proof modified exactly `.github/workflows/core-smoke.yml` with 73 additions and 0 deletions, and the focused repair remained unused. Target-native GitHub Actions `Core Smoke` run #5, run ID `29230659271`, concluded `success` for `pytest-and-cli`, `source-install-smoke`, `wheel-install-smoke`, and `sdist-install-smoke`. ChatGPT independently reviewed the local evidence, remote diff, CI evidence, PR and merge state, and post-merge canonical content. The task used an explicit bounded acceptance contract and authority boundary, and it did not copy local-ai-workbench-specific Bridge machinery into Reverb.
 
-This proves bounded reuse of the core Workflow governance method once; it does not prove universal portability, all-repository compatibility, Bridge portability, physical repository separation, autonomous engineering, Reverb production readiness, SDK completeness, package-release readiness, Native-vs-Bridge benchmark completion, or live Bridge execution for the proof. The approved Workflow v1 Final Closeout local candidate is now in `REVIEW`; it does not become canonically `DONE` until ChatGPT acceptance, publication, merge, post-merge verification, tracker synchronization, and final residual-task review all pass.
+This proves bounded reuse of the core Workflow governance method once; it does not prove universal portability, all-repository compatibility, Bridge portability, physical repository separation, autonomous engineering, Reverb production readiness, SDK completeness, package-release readiness, Native-vs-Bridge benchmark completion, or live Bridge execution for the proof. Workflow v1 Final Closeout and Workflow v1 are now `DONE`: publication commit `368934f5c93d210c485d49180bc1c347d7d3647c` was accepted through PR #203 and canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`; post-merge canonical verification passed and the final hidden residual review returned `NO_HIDDEN_RESIDUAL_TASK_FOUND`.
 
 Current Roadmap classifications:
 
@@ -160,7 +160,7 @@ Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, M
 
 Direction Lock v1.2 remains authoritative and operative for current Bridge work. WF-REENTRY classifies its transport strategy as `REVIEW_REQUIRED` for future explicit change-control review; that classification does not modify, revoke, supersede, or deactivate the Direction Lock.
 
-Cross-Repository Bounded Proof is `DONE`. Workflow v1 Final Closeout is `REVIEW` as a local documentation candidate under the explicitly approved node. This candidate creates no publication, merge, tracker-mutation, Issue #188, benchmark, startup, tray, service, MCP, repository-separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic Git/GitHub authority. No later node is activated.
+Cross-Repository Bounded Proof, Workflow v1 Final Closeout, and Workflow v1 are `DONE`. The current active Roadmap node is none. This completion creates no tracker-mutation, Issue #188, benchmark, startup, tray, service, MCP, repository-separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic Git/GitHub authority. No later node is activated.
 
 ## Immediate Next Gate
 
@@ -227,6 +227,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-07-13: Marked Workflow v1 Final Closeout and Workflow v1 `DONE` after acceptance of publication commit `368934f5c93d210c485d49180bc1c347d7d3647c` through PR #203 and canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`; post-merge canonical verification passed and the final review returned `NO_HIDDEN_RESIDUAL_TASK_FOUND`. The current active Roadmap node remains none, and no later node, deferred scope, or authority was activated.
 - 2026-07-13: Prepared the Workflow v1 Final Closeout local candidate and final architecture/evidence record. Final Closeout is `REVIEW`, not canonical `DONE`; acceptance still requires ChatGPT review, publication, merge, post-merge verification, tracker #168 synchronization, and confirmation that no hidden residual task remains. No deferred scope or authority was activated.
 - 2026-07-13: Recorded the accepted Cross-Repository Bounded Proof on `HarryWhite-TW/reverb-core`: one bounded sdist-install smoke change, PR #1 merge at `c5e8747eb1db519837944e81e4c77c5da9a628f0`, and successful target-native Core Smoke run #5. Cross-Repository Bounded Proof is `DONE`; Workflow v1 Final Closeout is next but remains inactive and unauthorized, and no Bridge portability or universal-portability claim is made.
 - 2026-07-13: Recorded RV2-04N durable status reconciliation: accepted implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200 merge at canonical `aa633ec00de90249ed2c611d84165038d6ff732e`, and its bounded runtime-contract closure evidence. RV2-P1-SYNC and RV2-04N are `DONE`; Cross-Repository Bounded Proof is next but not activated, and no authority expanded.

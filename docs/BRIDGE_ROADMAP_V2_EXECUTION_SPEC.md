@@ -644,7 +644,7 @@ Workflow v1 completion consists of four mandatory nodes:
 1. `RV2-P1-SYNC` — this Workflow v1 completion-boundary and Roadmap-rebaseline documentation node: `DONE`.
 2. `RV2-04N — Minimal Runtime Contract Closure`: `DONE`.
 3. Cross-Repository Bounded Proof: `DONE`.
-4. Workflow v1 Final Closeout: `REVIEW` — local candidate prepared; canonical `DONE` remains pending the close rule below.
+4. Workflow v1 Final Closeout: `DONE` — the close rule passed through accepted publication commit `368934f5c93d210c485d49180bc1c347d7d3647c`, PR #203, canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`, post-merge canonical verification `PASS`, and final hidden residual review `NO_HIDDEN_RESIDUAL_TASK_FOUND`.
 
 RV2-04N acceptance is bounded to implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200, canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`, and the accepted test/repair evidence recorded above.
 
@@ -656,9 +656,9 @@ The accepted claim is intentionally bounded: the core Workflow governance method
 
 #### Workflow v1 Final Closeout Acceptance Contract
 
-The local Final Closeout candidate records the final architecture, role and authority model, core governance contract, execution surfaces, evidence hierarchy, four-node completion matrix, accepted evidence ledger, demonstrations, Reverb case study, Parallel Agent Trial 01, limitations, non-claims, deferred scope, operational guidance, durable truth surfaces, and final no-auto-activation boundary.
+The accepted Final Closeout records the final architecture, role and authority model, core governance contract, execution surfaces, evidence hierarchy, four-node completion matrix, accepted evidence ledger, demonstrations, Reverb case study, Parallel Agent Trial 01, limitations, non-claims, deferred scope, operational guidance, durable truth surfaces, and final no-auto-activation boundary.
 
-The candidate remains `REVIEW`. Canonical `DONE` requires ChatGPT local semantic acceptance, separately authorized publication, PR merge, post-merge canonical verification, tracker #168 synchronization, and confirmation that no hidden residual task remains for the stated Workflow v1 objective. Candidate existence, commit, PR, or merge alone is insufficient. Final Closeout does not activate a later node or expand authority.
+The repository close rule is complete. ChatGPT semantic acceptance passed; publication commit `368934f5c93d210c485d49180bc1c347d7d3647c` was accepted through PR #203 and canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`; post-merge canonical verification is `PASS`; and the final residual-task review is `NO_HIDDEN_RESIDUAL_TASK_FOUND`. Workflow v1 Final Closeout and Workflow v1 are `DONE`. Final tracker #168 status synchronization remains a separate ChatGPT GitHub truth-sync action and does not activate a later node or expand authority.
 
 ### Historical-node classifications
 
@@ -673,7 +673,7 @@ The candidate remains `REVIEW`. Canonical `DONE` requires ChatGPT local semantic
 
 Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use for every task, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
 
-Cross-Repository Bounded Proof is `DONE`. Workflow v1 Final Closeout is `REVIEW` as a local documentation candidate under the explicitly approved node. This status creates no publication, merge, tracker mutation, Issue #188 implementation, benchmark, startup, tray, service, MCP, repository separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic commit/push/PR/merge authority. No later node is activated.
+Cross-Repository Bounded Proof, Workflow v1 Final Closeout, and Workflow v1 are `DONE`. The current active Roadmap node is none. This completion creates no Issue #188 implementation, benchmark, startup, tray, service, MCP, repository separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic commit/push/PR/merge authority. No later node is activated.
 
 ## Auth And Dependency Preflight Policy
 
