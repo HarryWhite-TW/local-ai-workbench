@@ -391,7 +391,7 @@ The accepted request identities are Inbox `rv2-03-final-primary-inbox-20260710T0
 
 The normal request succeeded exactly once: one Dispatcher, one Runner, one Codex execution, one trusted matching success, and one local `CONSUMED` record. Complete local operator-state loss did not rerun the request. Durable `COMPLETED` reconciliation reconstructed one `CONSUMED` record without Dispatcher, Runner, or Codex rerun, and the later local duplicate gate prevented another execution. No automatic retry or unexpected GitHub write occurred, and the repository remained clean.
 
-RV2-03 completion does not automatically authorize or activate RV2-04. RV2-04 remains a future candidate. This closeout authorizes no startup, tray, service, MCP, automatic Git/GitHub mutation, trusted-actor expansion, allowlist expansion, or approval chaining.
+RV2-03 completion did not automatically authorize or activate RV2-04. The later user-approved `RV2-P1-SYNC` rebaseline classifies historical RV2-04 as `MODIFY + NARROW` into inactive `RV2-04N`; neither is activated by this closeout. This closeout authorizes no startup, tray, service, MCP, automatic Git/GitHub mutation, trusted-actor expansion, allowlist expansion, or approval chaining.
 
 ### RV2-04 — Runtime Contract Binding
 
@@ -580,9 +580,9 @@ Integration rules:
 
 Objective:
 
-Prevent bridge work from indefinitely displacing visible Local Document-to-Knowledge Workbench value.
+Perform an explicit strategic checkpoint after RV2-03 without making the repository-local product mainline an ecosystem-global gate. The user-approved `RV2-P1-SYNC` adjudication records the Workflow v1 completion boundary and Roadmap rebaseline below.
 
-This checkpoint may be evaluated after RV2-03 and again after RV2-04. Candidate product priorities include:
+Historically, this checkpoint could be evaluated after RV2-03 and again after RV2-04. The accepted post-RV2-03 adjudication is now recorded by `RV2-P1-SYNC`. Candidate product priorities include:
 
 - core scan, index, search, summary, preview, destination-check, export, and readback reliability;
 - demo dataset and guided walkthrough;
@@ -592,9 +592,11 @@ This checkpoint may be evaluated after RV2-03 and again after RV2-04. Candidate 
 
 Product work must remain separate from Bridge Operator runtime and authority.
 
+Current status: `RV2-P1-SYNC` is the approved documentation/governance rebaseline. It does not activate product implementation, `RV2-04N`, or another execution node.
+
 ## Roadmap Entry Sequence
 
-Default sequence:
+Historical default sequence:
 
 ```text
 RV2-00 specification adoption
@@ -609,9 +611,47 @@ RV2-00 specification adoption
 -> RV2-09 MCP feasibility and integration
 ```
 
-`RV2-P1` is a parallel checkpoint and must be considered after RV2-03 or earlier if bridge effort begins displacing product value.
+`RV2-P1` is a parallel checkpoint and had to be considered after RV2-03 or earlier if bridge effort began displacing product value.
 
-The sequence may change only through explicit user-approved change control. A changed sequence must document why the previous entry criteria or risk ordering no longer applies.
+The sequence may change only through explicit user-approved change control. The following rebaseline is that approved change control and documents why the historical sequence is no longer the Workflow v1 completion queue.
+
+## Post-RV2-03 RV2-P1 Workflow v1 Rebaseline
+
+### Change-control basis and strategic role
+
+The user explicitly approved `RV2-P1-SYNC — Workflow v1 Completion Boundary & Roadmap Rebaseline` after RV2-03 reached `DONE`. The historical default `RV2-04 -> RV2-09` sequence remains durable context, but mechanical completion of every historical node is no longer required for Workflow v1.
+
+The Workflow is the **Human-Governed AI Engineering Control Layer**. It governs who does the work, execution-surface selection, scope, authority, approvals, risk delta, governance truth, observed current truth, evidence, semantic review, recovery, and durable truth across possible paths including Chat direct answer, Chat -> Codex, Chat -> Work, the specialized high-assurance Bridge, and manual relay fallback. It is not reduced to one mandatory transport.
+
+Workflow Mainline remains the ecosystem first priority while the Local Document-to-Knowledge Workbench remains this repository's public product mainline. `repo-local product mainline != ecosystem-global strategic priority`; Workbench Phase 5.4 is not an upper-level gate for Workflow continuation. This rebaseline does not automatically stop Workflow work or resume Workbench implementation.
+
+Direction Lock v1.2 remains authoritative and operative for current Bridge work. WF-REENTRY's `REVIEW_REQUIRED` classification identifies its transport strategy for future explicit change-control review; it does not modify, revoke, supersede, or deactivate the Direction Lock. The governing precedence remains Direction Lock -> Bridge Operator specification -> Roadmap v2 -> tracker -> node-specific task.
+
+### Workflow v1 completion boundary
+
+Workflow v1 has four mandatory remaining closeout nodes:
+
+1. `RV2-P1-SYNC` — this Workflow v1 completion-boundary and Roadmap-rebaseline documentation node.
+2. `RV2-04N — Minimal Runtime Contract Closure`.
+3. Cross-Repository Bounded Proof — prove the governance model on one other bounded repository or project without silently relying on `local-ai-workbench`-specific assumptions.
+4. Workflow v1 Final Closeout — final architecture, evidence, limitations, demo, case study, durable status, and explicit Workflow v1 `DONE` checkpoint.
+
+Documenting this boundary does not activate nodes 2-4 and does not claim that they are implemented or complete. A bounded cross-repository proof is mandatory before a strong reusable-workflow claim. Reverb may be considered only as a candidate proof target; this specification makes no claim about its current branch, HEAD, tests, API, or repository state.
+
+### Historical-node classifications
+
+- `RV2-04`: `MODIFY + NARROW` into `RV2-04N — Minimal Runtime Contract Closure`. Its mandatory v1 scope is the smallest contract gap required to prove that bounded-execution claims are backed by runtime and post-execution evidence. Candidate minimum semantics are task mode, objective, allowed files, maximum allowed-file count when applicable, explicit verification commands or policy, `scope_expansion_allowed=false`, repository/branch/HEAD/request identity, post-execution changed-file enforcement, and the rule that no Codex completion summary overrides an execution-contract violation. Exact code scope must be defined after fresh source, tests, and call-site inspection in a separately approved node. Historical RV2-04 candidates do not silently become mandatory v1 scope.
+- `RV2-05`: `DEFER`. The thin `lawb` CLI remains a possible future concept, not a mandatory Workflow v1 requirement, and is not activated.
+- `RV2-06`: `PARTIALLY ABSORBED`. Accepted OPT and WF-REENTRY outcomes partly address thin task packets, conditional current-state manifests, conditional evidence collection, model/execution-surface routing, conditional systematic debugging, and evidence-based token/control discipline. This does not claim every RV2-06 candidate feature is implemented; RV2-06 is not a mandatory standalone Workflow v1 node.
+- `RV2-07`, `RV2-08`, and `RV2-09`: `DEFER`. Visible tray/operator UX, Windows login startup, and MCP / ChatGPT App connector work are not mandatory Workflow v1 completion requirements. They remain future candidates requiring separate evidence, exact engineering nodes, and explicit approval.
+- Issue `#188`: `CONDITIONAL / PARTIALLY ABSORBED`. It retains value as a deferred planning anchor for possible repository-native project execution-gate work, while OPT-series and WF-REENTRY decisions address parts of its original problem. Fresh read-only verification for this rebaseline found `implementation_started=false`. It is inactive, is not mandatory for Workflow v1, and requires a separate bounded node and approval before any implementation.
+- Native-vs-Bridge Reliability Benchmark: `CONDITIONAL`. It may be an evidence input, bounded sub-review, or future candidate review only when existing evidence cannot responsibly resolve a real routing decision. It is not automatically required for Workflow v1, is not activated by this rebaseline, and cannot bypass `RV2-P1` sequencing.
+
+### Completion exclusions and non-activation
+
+Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use for every task, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
+
+The exact next code-node candidate is `RV2-04N`, but it remains inactive and unauthorized. This rebaseline creates no authority for `RV2-04N` implementation, Issue #188 implementation, benchmark execution, startup, tray, service, MCP, repository separation, dependency changes, live Bridge execution, trusted-actor changes, allowlist changes, automatic commit/push/PR/merge, or GitHub Issue mutation.
 
 ## Auth And Dependency Preflight Policy
 

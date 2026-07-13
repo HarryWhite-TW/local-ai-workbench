@@ -110,7 +110,7 @@ Completed baseline:
 12. B4-D smoke plan and local-only manifest validator.
 13. Roadmap v2 execution-governance adoption through PR #167.
 
-Roadmap v2 default sequence:
+Historical Roadmap v2 default sequence:
 
 1. `RV2-00` — specification adoption and execution baseline (`DONE`).
 2. `RV2-01` — one supervised B4-D live smoke through the existing path (`DONE`).
@@ -124,7 +124,37 @@ Roadmap v2 default sequence:
 10. `RV2-09` — Phase C MCP feasibility and bounded integration.
 11. `RV2-P1` — parallel product-mainline checkpoint after operational or runtime-binding milestones.
 
-This order may change only through explicit user-approved change control. Completion or merge of one node does not automatically authorize the next node.
+This was the adopted default sequence before the user-approved post-RV2-03 `RV2-P1-SYNC` rebaseline. It remains historical Roadmap context, not the current Workflow v1 completion queue. Completion or merge of one node does not automatically authorize the next node.
+
+## Workflow v1 Completion Rebaseline
+
+`RV2-P1-SYNC` records the explicit post-RV2-03 adjudication. The Workflow's formal role is the **Human-Governed AI Engineering Control Layer**: it governs who does the work, execution-surface selection, scope, authority, approvals, risk delta, governance truth, observed current truth, evidence, semantic review, recovery, and durable truth. It may govern Chat direct answers, Chat -> Codex, Chat -> Work, the specialized high-assurance Bridge, or manual relay fallback. No single transport is mandatory for every task.
+
+Workflow Mainline remains the ecosystem first priority. This does not alter the repository's Local Document-to-Knowledge Workbench product identity: `repo-local product mainline != ecosystem-global strategic priority`. Workbench Phase 5.4 is not an upper-level gate for Workflow continuation, and this checkpoint does not automatically stop Workflow work or resume Workbench implementation.
+
+Workflow v1 has exactly four mandatory remaining closeout nodes:
+
+1. `RV2-P1-SYNC` — Workflow v1 Completion Boundary & Roadmap Rebaseline; this documentation/governance node.
+2. `RV2-04N` — Minimal Runtime Contract Closure.
+3. Cross-Repository Bounded Proof — prove the governance model on one other bounded repository or project without silently relying on `local-ai-workbench` assumptions.
+4. Workflow v1 Final Closeout — record final architecture, evidence, limitations, demo, case study, durable status, and the explicit Workflow v1 `DONE` checkpoint.
+
+This record activates none of the later three nodes and does not claim that they are implemented or complete. A later bounded cross-repository proof is mandatory before making a strong reusable-workflow claim. Reverb is only a candidate proof target; no Reverb branch, HEAD, tests, API, or repository state is asserted here.
+
+Current Roadmap classifications:
+
+- `RV2-04`: `MODIFY + NARROW` into `RV2-04N — Minimal Runtime Contract Closure`. Its mandatory v1 purpose is only the smallest contract gap needed to prove that bounded-execution claims are backed by runtime and post-execution evidence. Candidate minimum semantics are task mode, objective, allowed files, maximum allowed-file count when applicable, explicit verification commands or policy, `scope_expansion_allowed=false`, repository/branch/HEAD/request identity, post-execution changed-file enforcement, and the rule that a Codex completion summary cannot override an execution-contract violation. Exact code scope requires fresh source, test, and call-site inspection in a separately approved node; historical RV2-04 candidates are not silently inherited.
+- `RV2-05`: `DEFER`. The thin `lawb` CLI remains a future candidate, not a Workflow v1 requirement.
+- `RV2-06`: `PARTIALLY ABSORBED`. Accepted OPT and WF-REENTRY outcomes already cover parts of thin task packets, conditional current-state manifests and evidence collection, model/surface routing, conditional systematic debugging, and evidence-based token/control discipline. This does not claim every historical RV2-06 candidate is implemented, and RV2-06 is not a mandatory standalone Workflow v1 node.
+- `RV2-07`, `RV2-08`, and `RV2-09`: `DEFER`. Tray/operator UX, Windows login startup, and MCP / ChatGPT App connector work remain future candidates requiring separate evidence, exact engineering nodes, and explicit approval; they are not Workflow v1 requirements.
+- Issue `#188`: `CONDITIONAL / PARTIALLY ABSORBED`. It remains a deferred planning anchor for possible repository-native project execution-gate work. OPT-series and WF-REENTRY decisions address parts of its original problem. Fresh read-only verification for this rebaseline found `implementation_started=false`; it is not activated or mandatory for Workflow v1, and any implementation requires a separate bounded node and approval.
+- Native-vs-Bridge Reliability Benchmark: `CONDITIONAL`. It may supply evidence, a bounded sub-review, or a future candidate review only when a real unresolved routing decision cannot be responsibly adjudicated from existing evidence. It is not automatically required, is not activated here, and cannot bypass `RV2-P1` sequencing.
+
+Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
+
+Direction Lock v1.2 remains authoritative and operative for current Bridge work. WF-REENTRY classifies its transport strategy as `REVIEW_REQUIRED` for future explicit change-control review; that classification does not modify, revoke, supersede, or deactivate the Direction Lock.
+
+The exact next code-node candidate is `RV2-04N`. It is defined but inactive and unauthorized. This rebaseline creates no authority for its implementation, Issue #188 implementation, benchmark execution, startup, tray, service, MCP, repository separation, dependency changes, live Bridge execution, trusted-actor or allowlist changes, automatic Git/GitHub actions, or Issue mutation.
 
 ## Immediate Next Gate
 
@@ -142,13 +172,11 @@ The approved strategic direction is to prepare the bridge for future repository 
 
 Deferred items still include distinct `manifest_review_expires` and `execution_request_expires` fields, a versioned Host Profile, the full shared Bootstrap/runtime resolver contract where not already proven, the outer Runner result evidence contract where not already proven, startup, tray, service, and MCP.
 
-The current in-repository implementation remains the proven baseline until migration acceptance passes. Cross-project portability cannot be claimed until the extracted design is validated with at least two different repositories.
+The current in-repository implementation remains the proven baseline. A strong reusable-workflow claim requires the separately approved bounded proof on at least one other repository or project; physical extraction or migration is not a Workflow v1 prerequisite and remains deferred.
 
 ## Product Parallel Priority
 
-Product-facing demo, onboarding, reliability, architecture evidence, and portfolio work remain valid parallel priorities.
-
-Bridge work must not indefinitely displace the Local Document-to-Knowledge Workbench. After `RV2-03` or `RV2-04`, the `RV2-P1` checkpoint must evaluate whether additional bridge work produces enough real reduction in risk or manual friction to justify continuing before product-facing work.
+The required post-`RV2-03` `RV2-P1` consideration is now recorded by `RV2-P1-SYNC`. It rebaselines the Workflow v1 completion path without automatically stopping Workflow work, resuming Workbench implementation, or making Workbench Phase 5.4 an upper-level gate. Product-facing demo, onboarding, reliability, architecture evidence, and portfolio work remain valid parallel priorities.
 
 ## Ecosystem Strategy Checkpoint
 
@@ -162,7 +190,7 @@ Phase 5.1–5.3 product-validation evidence is durably recorded in `docs/LOCAL_A
 
 The accepted WF-REENTRY capability adjudication is recorded in `docs/WF_REENTRY_NATIVE_CAPABILITY_OVERLAP_REVIEW.md`. The Workflow is repositioned as the Human-Governed AI Engineering Control Layer: its governance, evidence, authority, and current-truth core is `KEEP`, while transport-only custom infrastructure is `THIN`. Native Chat -> Codex dispatch is a replacement candidate, not an unconditional default, because reliable full-result readback is not fully proven in this user's App environment. Specialized Bridge safety and durable reconciliation remain valuable.
 
-Direction Lock v1.2 remains authoritative and operative for current Bridge work; `REVIEW_REQUIRED` is the WF-REENTRY classification for future explicit change-control review, not a Direction Lock mutation. The existing bounded fixed-Inbox polling baseline remains governed; only expanded/unattended polling beyond that contract, plus startup, tray, service, and MCP, is `DEFER`. Repository separation remains `DEFER`; no RV2-04, Phase 5.4, benchmark, or implementation node is activated. RV2-P1 must be explicitly considered after RV2-03, and a Native-vs-Bridge Reliability Benchmark is only a candidate evidence input within or after that consideration.
+Direction Lock v1.2 remains authoritative and operative for current Bridge work; `REVIEW_REQUIRED` is the WF-REENTRY classification for future explicit change-control review, not a Direction Lock mutation. The existing bounded fixed-Inbox polling baseline remains governed; only expanded/unattended polling beyond that contract, plus startup, tray, service, and MCP, is `DEFER`. Repository separation remains `DEFER`; no RV2-04N, Phase 5.4, benchmark, or implementation node is activated. The required post-RV2-03 RV2-P1 consideration is recorded by `RV2-P1-SYNC`, and a Native-vs-Bridge Reliability Benchmark remains only a conditional evidence input that cannot bypass that sequencing.
 
 ## Historical M1 Baseline
 
@@ -193,6 +221,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-07-13: Recorded the user-approved `RV2-P1-SYNC` post-RV2-03 rebaseline. Defined the four-node Workflow v1 completion boundary, narrowed the next code-node candidate to inactive `RV2-04N`, classified RV2-05/07/08/09 as `DEFER`, RV2-06 as `PARTIALLY ABSORBED`, Issue #188 as `CONDITIONAL / PARTIALLY ABSORBED`, and the Native-vs-Bridge benchmark as conditional, without activating implementation or expanding authority.
 - 2026-07-12: Recorded the accepted WF-REENTRY native-capability overlap adjudication. Repositioned the Workflow as the Human-Governed AI Engineering Control Layer, retained the governance and specialized safety core, thinned universal transport assumptions, marked native dispatch as a replacement candidate with readback still unproven, classified Direction Lock transport strategy as `REVIEW_REQUIRED` for future explicit change-control review without modifying the Direction Lock, and activated no implementation node.
 - 2026-07-12: Added the ECO-DOC-01 durable strategy and product-validation records. Reaffirmed Workflow Mainline as the ecosystem first priority, preserved n8n/Gateway as a bounded ecosystem component, recorded Phase 5.1–5.3 as `PASS WITH SMALL GAPS — BOUNDED FOLLOW-UP JUSTIFIED`, and did not activate Phase 5.4, RV2-04, repository separation, or any later node.
 - 2026-07-11: Closed OPT-06 and OPT-07 workflow experiments. OPT-06 produced a `GO — conditional default` recommendation for systematic debugging on ambiguous, safety-relevant, environment-sensitive, or evidence-heavy work. OPT-07 was accepted as `NO-GO` after `codebase-memory-mcp` v0.9.0 reduced comparable exploration operations by only `13.04%`, missed safety-critical Dispatcher/Runner and durable-evidence relations, and completed full rollback without repository or configuration residue. No later node was activated.
