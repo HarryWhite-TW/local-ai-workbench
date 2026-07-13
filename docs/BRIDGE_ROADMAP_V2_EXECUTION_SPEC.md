@@ -391,7 +391,7 @@ The accepted request identities are Inbox `rv2-03-final-primary-inbox-20260710T0
 
 The normal request succeeded exactly once: one Dispatcher, one Runner, one Codex execution, one trusted matching success, and one local `CONSUMED` record. Complete local operator-state loss did not rerun the request. Durable `COMPLETED` reconciliation reconstructed one `CONSUMED` record without Dispatcher, Runner, or Codex rerun, and the later local duplicate gate prevented another execution. No automatic retry or unexpected GitHub write occurred, and the repository remained clean.
 
-RV2-03 completion did not automatically authorize or activate RV2-04. The later user-approved `RV2-P1-SYNC` rebaseline classifies historical RV2-04 as `MODIFY + NARROW` into inactive `RV2-04N`; neither is activated by this closeout. This closeout authorizes no startup, tray, service, MCP, automatic Git/GitHub mutation, trusted-actor expansion, allowlist expansion, or approval chaining.
+RV2-03 completion did not automatically authorize RV2-04. The later user-approved `RV2-P1-SYNC` rebaseline narrowed historical RV2-04 into RV2-04N; RV2-04N was subsequently accepted and merged through PR #200 at canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`. That completed node does not activate Cross-Repository Bounded Proof, Workflow v1 Final Closeout, startup, tray, service, MCP, automatic Git/GitHub mutation, trusted-actor expansion, allowlist expansion, or approval chaining.
 
 ### RV2-04 — Runtime Contract Binding
 
@@ -429,7 +429,7 @@ High-priority future defect contract requirements:
 - B1 and B2 must emit a safe, stage-specific diagnostic schema rather than only `github_read_unavailable` or a generic `RuntimeError`;
 - Runner evidence must propagate consistently to the outer result, including `changed_files`, `review_id`, `diff_fingerprint`, and `files_fingerprint`.
 
-These are future RV2-04 contract requirements only. This specification update does not mark RV2-04 active, ready, started, or done, and does not claim that any requirement is implemented.
+Historical RV2-04 was narrowed into RV2-04N and is complete only for the accepted bounded runtime-contract closure described below. The remaining historical RV2-04 candidates are not silently activated or inherited as future scope.
 
 Pre-execution enforcement:
 
@@ -449,6 +449,16 @@ Post-execution enforcement:
 - a claimed Codex success does not override an execution-contract violation.
 
 This node must preserve existing Dispatcher and Runner authority boundaries and must not add commit, push, merge, retry, repair-loop, or approval-chaining authority.
+
+#### RV2-04N Accepted Outcome
+
+`RV2-04N — Minimal Runtime Contract Closure` is `DONE` from the repository-documentation perspective. Its accepted implementation commit is `4e6e3e8becbd99b2da0b8ffd089136995168d649`; PR #200 merged at canonical commit `aa633ec00de90249ed2c611d84165038d6ff732e`, and post-merge verification passed.
+
+Accepted evidence: targeted validator/runtime-binding tests `36 passed`; Runner integration `52 passed`; final related suite `203 passed, 0 failed, 0 skipped`. One focused repair was used, its budget is exhausted, and Repair-2 was not used.
+
+The accepted closure exposes normalized Task Packet v1.1 runtime-contract data; fails closed for malformed or invalid present packets; binds logical Issue, repository, branch, and full HEAD before execution; enforces `allowed_files` and `max_allowed_files` after execution; emits machine-readable runtime binding evidence; and ensures Codex exit 0 or a DONE summary cannot override a runtime contract violation. `verification_commands` remain metadata only and are not automatically executed. No new execution authority was introduced.
+
+Non-claims remain explicit: RV2-04N did not perform a real live Bridge execution, prove cross-repository portability, or perform a Native-vs-Bridge benchmark.
 
 ### RV2-05 — Minimal `lawb` CLI Facade
 
@@ -592,7 +602,7 @@ Historically, this checkpoint could be evaluated after RV2-03 and again after RV
 
 Product work must remain separate from Bridge Operator runtime and authority.
 
-Current status: `RV2-P1-SYNC` is the approved documentation/governance rebaseline. It does not activate product implementation, `RV2-04N`, or another execution node.
+Current status: `RV2-P1-SYNC` is `DONE` as the approved documentation/governance rebaseline. RV2-04N is also `DONE`; neither completion activates product implementation or another execution node.
 
 ## Roadmap Entry Sequence
 
@@ -629,18 +639,18 @@ Direction Lock v1.2 remains authoritative and operative for current Bridge work.
 
 ### Workflow v1 completion boundary
 
-Workflow v1 has four mandatory remaining closeout nodes:
+Workflow v1 completion consists of four mandatory nodes:
 
-1. `RV2-P1-SYNC` — this Workflow v1 completion-boundary and Roadmap-rebaseline documentation node.
-2. `RV2-04N — Minimal Runtime Contract Closure`.
-3. Cross-Repository Bounded Proof — prove the governance model on one other bounded repository or project without silently relying on `local-ai-workbench`-specific assumptions.
-4. Workflow v1 Final Closeout — final architecture, evidence, limitations, demo, case study, durable status, and explicit Workflow v1 `DONE` checkpoint.
+1. `RV2-P1-SYNC` — this Workflow v1 completion-boundary and Roadmap-rebaseline documentation node: `DONE`.
+2. `RV2-04N — Minimal Runtime Contract Closure`: `DONE`.
+3. Cross-Repository Bounded Proof — next mandatory node candidate, not activated; it must prove the governance model on one other bounded repository or project without silently relying on `local-ai-workbench`-specific assumptions.
+4. Workflow v1 Final Closeout — later mandatory node, not activated; it records final architecture, evidence, limitations, demo, case study, durable status, and the explicit Workflow v1 `DONE` checkpoint.
 
-Documenting this boundary does not activate nodes 2-4 and does not claim that they are implemented or complete. A bounded cross-repository proof is mandatory before a strong reusable-workflow claim. Reverb may be considered only as a candidate proof target; this specification makes no claim about its current branch, HEAD, tests, API, or repository state.
+RV2-04N acceptance is bounded to implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200, canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`, and the accepted test/repair evidence recorded above. A bounded cross-repository proof remains mandatory before a strong reusable-workflow claim. Reverb may be considered only as a candidate proof target; this specification makes no claim about its current branch, HEAD, tests, API, or repository state.
 
 ### Historical-node classifications
 
-- `RV2-04`: `MODIFY + NARROW` into `RV2-04N — Minimal Runtime Contract Closure`. Its mandatory v1 scope is the smallest contract gap required to prove that bounded-execution claims are backed by runtime and post-execution evidence. Candidate minimum semantics are task mode, objective, allowed files, maximum allowed-file count when applicable, explicit verification commands or policy, `scope_expansion_allowed=false`, repository/branch/HEAD/request identity, post-execution changed-file enforcement, and the rule that no Codex completion summary overrides an execution-contract violation. Exact code scope must be defined after fresh source, tests, and call-site inspection in a separately approved node. Historical RV2-04 candidates do not silently become mandatory v1 scope.
+- `RV2-04`: historical `MODIFY + NARROW` into `RV2-04N — Minimal Runtime Contract Closure`, now `DONE` through accepted implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649` and PR #200 merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`. Historical RV2-04 candidates do not silently become mandatory future scope.
 - `RV2-05`: `DEFER`. The thin `lawb` CLI remains a possible future concept, not a mandatory Workflow v1 requirement, and is not activated.
 - `RV2-06`: `PARTIALLY ABSORBED`. Accepted OPT and WF-REENTRY outcomes partly address thin task packets, conditional current-state manifests, conditional evidence collection, model/execution-surface routing, conditional systematic debugging, and evidence-based token/control discipline. This does not claim every RV2-06 candidate feature is implemented; RV2-06 is not a mandatory standalone Workflow v1 node.
 - `RV2-07`, `RV2-08`, and `RV2-09`: `DEFER`. Visible tray/operator UX, Windows login startup, and MCP / ChatGPT App connector work are not mandatory Workflow v1 completion requirements. They remain future candidates requiring separate evidence, exact engineering nodes, and explicit approval.
@@ -651,7 +661,7 @@ Documenting this boundary does not activate nodes 2-4 and does not claim that th
 
 Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use for every task, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
 
-The exact next code-node candidate is `RV2-04N`, but it remains inactive and unauthorized. This rebaseline creates no authority for `RV2-04N` implementation, Issue #188 implementation, benchmark execution, startup, tray, service, MCP, repository separation, dependency changes, live Bridge execution, trusted-actor changes, allowlist changes, automatic commit/push/PR/merge, or GitHub Issue mutation.
+Cross-Repository Bounded Proof is the next mandatory Workflow v1 node candidate, but it is not activated. No repository is selected as current truth: Reverb remains only a candidate pending fresh verification. This status sync creates no authority for Cross-Repository implementation, Workflow v1 Final Closeout, Issue #188 implementation, benchmark execution, startup, tray, service, MCP, repository separation, dependency changes, live Bridge execution, trusted-actor changes, allowlist changes, automatic commit/push/PR/merge, or GitHub Issue mutation.
 
 ## Auth And Dependency Preflight Policy
 
