@@ -1,11 +1,13 @@
 # Semi-Automated Workflow Operational Baseline
 
+> **Historical status banner:** This file is an RV2-03-era operational baseline snapshot. Its embedded phase and current-status language is historical and must not be used as current Workflow v1 completion truth. Current durable status is governed by `PLANS.md` and, after canonical acceptance, `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`. Historical commands and evidence remain useful where still applicable, but repository, environment, authentication, tool, and authority assumptions require fresh verification.
+
 ## Document Identity
 
 - version: v0.1
-- status: Active Operational Baseline
+- status: Historical Operational Baseline Snapshot
 - owner: 駿弘
-- current phase: RV2-03 Phase B change-control
+- current phase at snapshot: RV2-03 Phase B change-control
 - repository: HarryWhite-TW/local-ai-workbench
 - branch at creation: workflow-codex-task-discipline
 - verified HEAD at creation: 75c193f71bdd2a5fb077eb62d88ed895ad9a3b00

@@ -644,7 +644,7 @@ Workflow v1 completion consists of four mandatory nodes:
 1. `RV2-P1-SYNC` — this Workflow v1 completion-boundary and Roadmap-rebaseline documentation node: `DONE`.
 2. `RV2-04N — Minimal Runtime Contract Closure`: `DONE`.
 3. Cross-Repository Bounded Proof: `DONE`.
-4. Workflow v1 Final Closeout — next mandatory node candidate, not activated; it records final architecture, evidence, limitations, demo, case study, durable status, and the explicit Workflow v1 `DONE` checkpoint.
+4. Workflow v1 Final Closeout: `REVIEW` — local candidate prepared; canonical `DONE` remains pending the close rule below.
 
 RV2-04N acceptance is bounded to implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200, canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`, and the accepted test/repair evidence recorded above.
 
@@ -653,6 +653,12 @@ The accepted Cross-Repository Bounded Proof target was `HarryWhite-TW/reverb-cor
 Exactly one Reverb file changed: `.github/workflows/core-smoke.yml`, with 73 additions and 0 deletions. The focused repair was unused. Target-native GitHub Actions `Core Smoke` run #5, run ID `29230659271`, concluded `success` for `pytest-and-cli`, `source-install-smoke`, `wheel-install-smoke`, and `sdist-install-smoke`. ChatGPT independently reviewed local evidence, the remote diff, CI evidence, PR state, merge state, and post-merge canonical content. No local-ai-workbench-specific Bridge machinery was copied into Reverb.
 
 The accepted claim is intentionally bounded: the core Workflow governance method was successfully reused on one other real repository for one bounded, reviewable, target-native engineering node. This does not prove universal portability, all-repository compatibility, full autonomous engineering, Bridge portability, physical repository separation, Reverb production readiness, SDK completeness, package-release readiness, Native-vs-Bridge benchmark completion, or live Bridge execution for the proof.
+
+#### Workflow v1 Final Closeout Acceptance Contract
+
+The local Final Closeout candidate records the final architecture, role and authority model, core governance contract, execution surfaces, evidence hierarchy, four-node completion matrix, accepted evidence ledger, demonstrations, Reverb case study, Parallel Agent Trial 01, limitations, non-claims, deferred scope, operational guidance, durable truth surfaces, and final no-auto-activation boundary.
+
+The candidate remains `REVIEW`. Canonical `DONE` requires ChatGPT local semantic acceptance, separately authorized publication, PR merge, post-merge canonical verification, tracker #168 synchronization, and confirmation that no hidden residual task remains for the stated Workflow v1 objective. Candidate existence, commit, PR, or merge alone is insufficient. Final Closeout does not activate a later node or expand authority.
 
 ### Historical-node classifications
 
@@ -667,7 +673,7 @@ The accepted claim is intentionally bounded: the core Workflow governance method
 
 Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use for every task, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
 
-Cross-Repository Bounded Proof is `DONE`. Workflow v1 Final Closeout is the next mandatory Workflow v1 node candidate, but it remains inactive, unimplemented, and not automatically authorized. This status sync creates no authority for Final Closeout implementation, Issue #188 implementation, benchmark execution, startup, tray, service, MCP, repository separation, dependency changes, live Bridge execution, trusted-actor changes, allowlist changes, automatic commit/push/PR/merge, or GitHub Issue mutation.
+Cross-Repository Bounded Proof is `DONE`. Workflow v1 Final Closeout is `REVIEW` as a local documentation candidate under the explicitly approved node. This status creates no publication, merge, tracker mutation, Issue #188 implementation, benchmark, startup, tray, service, MCP, repository separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic commit/push/PR/merge authority. No later node is activated.
 
 ## Auth And Dependency Preflight Policy
 
