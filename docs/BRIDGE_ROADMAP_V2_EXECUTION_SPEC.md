@@ -643,10 +643,16 @@ Workflow v1 completion consists of four mandatory nodes:
 
 1. `RV2-P1-SYNC` — this Workflow v1 completion-boundary and Roadmap-rebaseline documentation node: `DONE`.
 2. `RV2-04N — Minimal Runtime Contract Closure`: `DONE`.
-3. Cross-Repository Bounded Proof — next mandatory node candidate, not activated; it must prove the governance model on one other bounded repository or project without silently relying on `local-ai-workbench`-specific assumptions.
-4. Workflow v1 Final Closeout — later mandatory node, not activated; it records final architecture, evidence, limitations, demo, case study, durable status, and the explicit Workflow v1 `DONE` checkpoint.
+3. Cross-Repository Bounded Proof: `DONE`.
+4. Workflow v1 Final Closeout — next mandatory node candidate, not activated; it records final architecture, evidence, limitations, demo, case study, durable status, and the explicit Workflow v1 `DONE` checkpoint.
 
-RV2-04N acceptance is bounded to implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200, canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`, and the accepted test/repair evidence recorded above. A bounded cross-repository proof remains mandatory before a strong reusable-workflow claim. Reverb may be considered only as a candidate proof target; this specification makes no claim about its current branch, HEAD, tests, API, or repository state.
+RV2-04N acceptance is bounded to implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200, canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`, and the accepted test/repair evidence recorded above.
+
+The accepted Cross-Repository Bounded Proof target was `HarryWhite-TW/reverb-core`, a real independent repository with no root `AGENTS.md` or `PLANS.md`. The proof used fresh observed truth, one explicit bounded engineering node, and an explicit acceptance contract and authority boundary. It was bound to pre-implementation baseline `dc5ee548606ca0e1038294709718c797944def72`; implementation commit `a6ddbfb72d296cfa72e0e286ffc769f3641d9d45`; Reverb PR #1; and canonical merge commit `c5e8747eb1db519837944e81e4c77c5da9a628f0`.
+
+Exactly one Reverb file changed: `.github/workflows/core-smoke.yml`, with 73 additions and 0 deletions. The focused repair was unused. Target-native GitHub Actions `Core Smoke` run #5, run ID `29230659271`, concluded `success` for `pytest-and-cli`, `source-install-smoke`, `wheel-install-smoke`, and `sdist-install-smoke`. ChatGPT independently reviewed local evidence, the remote diff, CI evidence, PR state, merge state, and post-merge canonical content. No local-ai-workbench-specific Bridge machinery was copied into Reverb.
+
+The accepted claim is intentionally bounded: the core Workflow governance method was successfully reused on one other real repository for one bounded, reviewable, target-native engineering node. This does not prove universal portability, all-repository compatibility, full autonomous engineering, Bridge portability, physical repository separation, Reverb production readiness, SDK completeness, package-release readiness, Native-vs-Bridge benchmark completion, or live Bridge execution for the proof.
 
 ### Historical-node classifications
 
@@ -661,7 +667,7 @@ RV2-04N acceptance is bounded to implementation commit `4e6e3e8becbd99b2da0b8ffd
 
 Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use for every task, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
 
-Cross-Repository Bounded Proof is the next mandatory Workflow v1 node candidate, but it is not activated. No repository is selected as current truth: Reverb remains only a candidate pending fresh verification. This status sync creates no authority for Cross-Repository implementation, Workflow v1 Final Closeout, Issue #188 implementation, benchmark execution, startup, tray, service, MCP, repository separation, dependency changes, live Bridge execution, trusted-actor changes, allowlist changes, automatic commit/push/PR/merge, or GitHub Issue mutation.
+Cross-Repository Bounded Proof is `DONE`. Workflow v1 Final Closeout is the next mandatory Workflow v1 node candidate, but it remains inactive, unimplemented, and not automatically authorized. This status sync creates no authority for Final Closeout implementation, Issue #188 implementation, benchmark execution, startup, tray, service, MCP, repository separation, dependency changes, live Bridge execution, trusted-actor changes, allowlist changes, automatic commit/push/PR/merge, or GitHub Issue mutation.
 
 ## Auth And Dependency Preflight Policy
 
