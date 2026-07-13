@@ -644,7 +644,7 @@ Workflow v1 completion consists of four mandatory nodes:
 1. `RV2-P1-SYNC` — this Workflow v1 completion-boundary and Roadmap-rebaseline documentation node: `DONE`.
 2. `RV2-04N — Minimal Runtime Contract Closure`: `DONE`.
 3. Cross-Repository Bounded Proof: `DONE`.
-4. Workflow v1 Final Closeout: `DONE` — the close rule passed through accepted publication commit `368934f5c93d210c485d49180bc1c347d7d3647c`, PR #203, canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`, post-merge canonical verification `PASS`, and final hidden residual review `NO_HIDDEN_RESIDUAL_TASK_FOUND`.
+4. Workflow v1 Final Closeout: `REVIEW — CORRECTION REQUIRED`. PR #203 published the candidate; PR #204 attempted the final `DONE` transition; later post-merge automated P2 findings invalidated final reviewer acceptance and activated the explicitly approved Workflow v1 Closeout Integrity Correction.
 
 RV2-04N acceptance is bounded to implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200, canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`, and the accepted test/repair evidence recorded above.
 
@@ -656,9 +656,11 @@ The accepted claim is intentionally bounded: the core Workflow governance method
 
 #### Workflow v1 Final Closeout Acceptance Contract
 
-The accepted Final Closeout records the final architecture, role and authority model, core governance contract, execution surfaces, evidence hierarchy, four-node completion matrix, accepted evidence ledger, demonstrations, Reverb case study, Parallel Agent Trial 01, limitations, non-claims, deferred scope, operational guidance, durable truth surfaces, and final no-auto-activation boundary.
+The Final Closeout candidate records the final architecture, role and authority model, core governance contract, execution surfaces, evidence hierarchy, four-node completion matrix, evidence ledger, demonstrations, Reverb case study, Parallel Agent Trial 01, limitations, non-claims, deferred scope, operational guidance, durable truth surfaces, and final no-auto-activation boundary.
 
-The repository close rule is complete. ChatGPT semantic acceptance passed; publication commit `368934f5c93d210c485d49180bc1c347d7d3647c` was accepted through PR #203 and canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`; post-merge canonical verification is `PASS`; and the final residual-task review is `NO_HIDDEN_RESIDUAL_TASK_FOUND`. Workflow v1 Final Closeout and Workflow v1 are `DONE`. Final tracker #168 status synchronization remains a separate ChatGPT GitHub truth-sync action and does not activate a later node or expand authority.
+PR #203 published the Final Closeout candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; its own acceptance boundary did not declare canonical Workflow v1 `DONE`. PR #204 then attempted the final status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Asynchronous post-merge automated P2 findings on those PRs exposed remaining integrity defects, so ChatGPT final reviewer acceptance is withheld.
+
+The close rule remains operative: final `DONE` requires this integrity correction to pass semantic review, publication, asynchronous review completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 is currently stale and unsynchronized. The current active engineering node is `Workflow v1 Closeout Integrity Correction`; one-node discipline remains in force, and no later node or authority is activated.
 
 ### Historical-node classifications
 
@@ -673,7 +675,7 @@ The repository close rule is complete. ChatGPT semantic acceptance passed; publi
 
 Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use for every task, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
 
-Cross-Repository Bounded Proof, Workflow v1 Final Closeout, and Workflow v1 are `DONE`. The current active Roadmap node is none. This completion creates no Issue #188 implementation, benchmark, startup, tray, service, MCP, repository separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic commit/push/PR/merge authority. No later node is activated.
+The first three mandatory Workflow v1 nodes remain `DONE`. Workflow v1 Final Closeout is `REVIEW — CORRECTION REQUIRED`, and Workflow v1 final `DONE` acceptance is withheld. The active correction creates no Issue #188 implementation, benchmark, startup, tray, service, MCP, repository separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic commit/push/PR/merge authority. No later node is activated.
 
 ## Auth And Dependency Preflight Policy
 
@@ -765,7 +767,7 @@ After merge and post-merge verification:
 4. set `RV2-01` to `PLANNED` or `READY` only after checking its entry criteria;
 5. do not publish smoke markers or execute B4-D until the required separate approvals are obtained.
 
-This section records the historical activation procedure. Tracker #168 is the designated canonical GitHub Roadmap surface. GitHub Issue #168 and Issue #175 were last synchronized on 2026-07-02 and still record the pre-D1 gate and baseline. They have not yet been synchronized with PR #181 or D1 completion, and their update requires a separately approved GitHub truth-sync operation. No other Roadmap v2 node is active.
+This section records the historical activation procedure. Tracker #168 is the designated canonical GitHub Roadmap surface. Fresh read-only verification for this correction found tracker #168 still records Workflow v1 Final Closeout as the next inactive candidate and retains an old canonical repository baseline. It is stale and pending a separately authorized final truth synchronization; this task does not mutate it. The only current active engineering node is the explicitly approved `Workflow v1 Closeout Integrity Correction`; no later Roadmap node is activated.
 
 ## Current Authority Boundary
 

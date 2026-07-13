@@ -3,20 +3,23 @@
 ## 1. Document Identity
 
 - title: Workflow v1 Final Closeout
-- status: `DONE` — final acceptance and publication close rule complete
+- status: `REVIEW` — Closeout Integrity Correction in progress
 - repository: `HarryWhite-TW/local-ai-workbench`
 - candidate baseline: `43195ace509089c8ccfa6e7f14d79bb3238b4f22`
 - publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
 - publication PR: #203
-- canonical merge commit: `c36a1b820e6f6786267057aa05d25697b9f1deca`
+- publication canonical merge: `c36a1b820e6f6786267057aa05d25697b9f1deca`
+- attempted DONE-transition commit: `240e47a77da753c9ffb619e79be1c15e20b23e7a`
+- attempted DONE-transition PR: #204
+- attempted DONE-transition canonical merge: `b20a12c07cd2de7105b94b34ed2996b06f59b84a`
 - scope: final Workflow v1 architecture, governance contract, evidence, demonstrations, limitations, and durable-status record
 - authority boundary: documentation only; no runtime or Git/GitHub authority expansion
 
 ## 2. Executive Verdict
 
-The evidence supports the canonical Final Closeout verdict: Workflow v1 Final Closeout is `DONE`, all four mandatory Workflow v1 nodes are `DONE`, and Workflow v1 is `DONE`.
+The Final Closeout is in `REVIEW — Closeout Integrity Correction in progress`. The first three mandatory Workflow v1 nodes remain `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
 
-Publication commit `368934f5c93d210c485d49180bc1c347d7d3647c` was accepted through PR #203 and canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`. Post-merge canonical verification is `PASS`, and the final residual-task review is `NO_HIDDEN_RESIDUAL_TASK_FOUND`. Final tracker #168 status synchronization remains a separate ChatGPT GitHub truth-sync action.
+PR #203 published this candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; it explicitly did not declare canonical Workflow v1 `DONE`. PR #204 later attempted the `REVIEW` -> `DONE` status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Both transitions remain historical evidence, but asynchronous post-merge automated P2 findings exposed integrity defects and invalidated final reviewer acceptance. Tracker #168 remains stale and unsynchronized.
 
 ## 3. Workflow v1 Final Architecture
 
@@ -73,7 +76,7 @@ Governance truth and observed current truth are different. Mutable Git, GitHub, 
 
 - **CORE:** engineering nodes, acceptance contracts, bounded scope, risk packages, authority boundaries, risk delta, current-truth verification, evidence-first review, focused-repair limits, durable truth, and final semantic adjudication.
 - **SPECIALIZED:** Direction Lock and Bridge Operator rules for existing Bridge work; fixed Inbox, Dispatcher/Runner safety, trusted actors, clean-tree checks, request/branch/HEAD binding, no automatic retry, durable reconciliation, and duplicate suppression.
-- **CONDITIONAL:** Chat direct, Codex, Work, native Chat-to-Codex routing, formal manifests, evidence collectors, systematic debugging, manual relay fallback, a Native-vs-Bridge benchmark when a real unresolved decision requires it, and optional parallel agents.
+- **CONDITIONAL:** Chat direct, Codex, Work, native Chat-to-Codex routing, formal manifests, evidence collectors, systematic debugging, manual relay fallback, a Native-vs-Bridge benchmark when a real unresolved decision requires it, and optional parallel agents when explicitly authorized by the applicable current task-local scope, risk package, or user approval.
 - **DEFERRED:** expanded unattended polling, startup, tray, service, MCP, physical repository separation, universal GitHub Issue or Bridge transport, Issue #188 implementation, historical RV2-05/07/08/09, unabsorbed RV2-06 work, and full autonomous engineering.
 - **HISTORICAL:** superseded Roadmap queues, old phase statements, early proof reports, and earlier Away/Home assumptions unless freshly reaffirmed.
 
@@ -99,7 +102,7 @@ Raw evidence may remain local when appropriate, but accepted conclusions and can
 | `RV2-P1-SYNC` | `DONE` | Established the Human-Governed AI Engineering Control Layer, four-node completion boundary, Roadmap rebaseline, and deferred-scope preservation. |
 | `RV2-04N` | `DONE` | Closed the minimum runtime-contract gap with fail-closed pre/post-execution binding and machine-readable evidence. |
 | Cross-Repository Bounded Proof | `DONE` | Reused the core governance method on one real independent repository for one bounded target-native engineering node. |
-| Workflow v1 Final Closeout | `DONE` | Publication commit `368934f5c93d210c485d49180bc1c347d7d3647c` accepted through PR #203 and canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`; post-merge verification `PASS`; final residual review `NO_HIDDEN_RESIDUAL_TASK_FOUND`. |
+| Workflow v1 Final Closeout | `REVIEW / INTEGRITY CORRECTION REQUIRED` | PR #203 published the candidate; PR #204 attempted the `DONE` transition; post-merge P2 findings invalidated final acceptance. Correction publication, review completion, merge, post-merge verification, tracker sync, and final residual review remain open. |
 
 ## 9. Accepted Evidence Ledger
 
@@ -143,13 +146,16 @@ Accepted bounded claim: the core Workflow governance method was successfully reu
 
 ### Workflow v1 Final Closeout
 
-- implementation commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
-- PR: #203
-- canonical merge commit: `c36a1b820e6f6786267057aa05d25697b9f1deca`
-- PR remote review: `PASS`
-- post-merge canonical verification: `PASS`
-- final hidden residual review: `NO_HIDDEN_RESIDUAL_TASK_FOUND`
-- accepted outcome: Workflow v1 Final Closeout and Workflow v1 are `DONE`; current active Roadmap node is none; no later node or authority is activated
+- candidate-publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
+- candidate-publication PR: #203
+- candidate-publication canonical merge: `c36a1b820e6f6786267057aa05d25697b9f1deca`
+- PR #203 evidence: it merged before asynchronous automated review completed; later post-merge review produced two unresolved P2 findings concerning historical baseline authority and Parallel Agent task-local authorization
+- attempted DONE-transition commit: `240e47a77da753c9ffb619e79be1c15e20b23e7a`
+- attempted DONE-transition PR: #204
+- attempted DONE-transition canonical merge: `b20a12c07cd2de7105b94b34ed2996b06f59b84a`
+- PR #204 evidence: it merged before asynchronous automated review completed; later post-merge review produced three unresolved P2 findings concerning tracker synchronization, PR #203 review attribution, and PR #203/PR #204 evidence attribution
+- review conclusion: PR #203 remains historical publication evidence, not a clean no-finding review gate; PR #204 remains historical attempted-transition evidence, not accepted final `DONE`
+- current status: final ChatGPT `DONE` acceptance is withheld; tracker #168 is stale and unsynchronized; the final residual review remains open
 
 ## 10. Demonstration Paths
 
@@ -207,7 +213,7 @@ Unknown or incomplete evidence:
 - a precise serial baseline;
 - quota and token cost.
 
-Classification: **OPTIONAL / CONDITIONAL OPERATING MODE**. Parallel agents are not a mandatory Workflow v1 dependency, do not imply three-times throughput, and do not receive permanent autonomous or concurrent-write authority.
+Classification: **OPTIONAL / CONDITIONAL OPERATING MODE**. It creates no standing authority. Every use must be explicitly authorized within the applicable current task-local scope, risk package, or user approval. Subagents cannot approve a node or risk, expand scope or authority, delegate further agents without authorization, or create approval chains. Concurrent write access is not automatically authorized. Read-only parallel evidence work may be useful only when explicitly authorized. Parallel agents are not a mandatory Workflow v1 dependency and do not imply three-times throughput or permanent autonomous multi-agent operation.
 
 ## 13. Limitations
 
@@ -259,34 +265,32 @@ The following remain deferred or separately gated:
 
 ## 17. Durable Truth Surfaces
 
-After canonical acceptance, current truth is distributed intentionally:
+After final canonical acceptance, current truth is distributed intentionally:
 
 - `AGENTS.md` and scoped `AGENTS.md`: repository and domain rules;
 - `PLANS.md`: current project and Workflow status authority;
 - `docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md`: Roadmap execution and close-rule contract;
-- `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`: primary final Workflow v1 architecture, evidence, limitation, demo, and case-study record;
+- `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`: candidate final Workflow v1 architecture, evidence, limitation, demo, and case-study record; it becomes the primary final record only after final acceptance;
 - `docs/ENGINEERING_RECORDS_INDEX.md`: navigation only;
 - tracker #168: GitHub status surface requiring fresh verification;
 - accepted PRs, commits, CI runs, and runtime evidence: durable supporting evidence.
 
-The repository-separation plan, old proof report, and earlier operational baseline retain historical and design value, but their embedded phase statements do not override `PLANS.md` or this closeout after acceptance.
+The repository-separation plan, old proof report, and earlier operational baseline retain historical and design value, but their embedded phase statements are not current normative authority and do not override applicable user approval, task-local scope, `AGENTS.md`, scoped rules, `PLANS.md`, Direction Lock, or current specifications.
 
 ## 18. Final DONE Checkpoint
 
-Canonical status: Workflow v1 Final Closeout is `DONE`; Workflow v1 is `DONE`.
+Current status: Workflow v1 Final Closeout is `REVIEW — Closeout Integrity Correction in progress`; Workflow v1 is not yet finally accepted as `DONE`.
 
-The accepted repository close-rule evidence is:
+Historical evidence already completed:
 
-1. ChatGPT accepted the candidate semantically.
-2. Publication commit `368934f5c93d210c485d49180bc1c347d7d3647c` was completed.
-3. PR #203 merged at canonical commit `c36a1b820e6f6786267057aa05d25697b9f1deca`.
-4. Canonical post-merge verification is `PASS`.
-5. The final review is `NO_HIDDEN_RESIDUAL_TASK_FOUND`.
+1. PR #203 published the candidate at canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca` without itself declaring `DONE`.
+2. PR #204 attempted the final status transition at canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`.
+3. Post-merge automated review findings on both PRs triggered this bounded integrity-correction node and invalidated final reviewer acceptance.
 
-Tracker #168 is a separate GitHub status surface. This repository task does not mutate it; final tracker status synchronization remains ChatGPT's external follow-through.
+Final `DONE` remains gated on correction semantic acceptance, correction publication, asynchronous review completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 currently remains stale and unsynchronized; this task does not mutate it. The current active engineering node is `Workflow v1 Closeout Integrity Correction`.
 
-All four mandatory nodes are `DONE`. The current active Roadmap node is none, and no later node is activated.
+The first three mandatory nodes remain `DONE`; the fourth remains `REVIEW / INTEGRITY CORRECTION REQUIRED`. No later node is activated.
 
 ## 19. No-Auto-Activation Statement
 
-Final Closeout, its publication, its merge, and Workflow v1 `DONE` status do not activate another engineering node, product phase, benchmark, migration, runtime path, or authority. Any later work requires fresh evidence, an explicit bounded objective, and applicable approval.
+Final Closeout publication, the attempted PR #204 `DONE` transition, this correction, and any eventual Workflow v1 `DONE` status do not activate another engineering node, product phase, benchmark, migration, runtime path, or authority. Any later work requires fresh evidence, an explicit bounded objective, and applicable approval.
