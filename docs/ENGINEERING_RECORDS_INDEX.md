@@ -27,14 +27,14 @@ Recommended future session read order:
 ## Current Important Anchors
 
 - Roadmap v2 tracker: Issue `#168`
-- Workflow v1 Final Closeout local candidate: `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`; after canonical acceptance it becomes the primary final Workflow v1 architecture, evidence, limitation, demo, and case-study record
+- Workflow v1 Final Closeout accepted canonical record: `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`; it is the primary final Workflow v1 architecture, evidence, limitation, demo, and case-study record
 - RV2-03 accepted historical node: Issue `#175`
 - Deferred workflow-hardening anchor: Issue `#188`
 - Records and closeout planning anchor: Issue `#190`
 - RV2-03 lessons publication lane: PR `#186`
 - Canonical branch: `master`, with HEAD always requiring fresh verification
 
-`PLANS.md` remains the current project-status authority. This index is navigation only, and the Final Closeout candidate remains `REVIEW` until publication, merge, post-merge verification, tracker synchronization, and final residual-task review pass.
+`PLANS.md` remains the current project-status authority. This index is navigation only. Workflow v1 Final Closeout and Workflow v1 are `DONE` through accepted publication commit `368934f5c93d210c485d49180bc1c347d7d3647c`, PR #203, canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`, post-merge canonical verification `PASS`, and final hidden residual review `NO_HIDDEN_RESIDUAL_TASK_FOUND`.
 
 ## ECO-DOC-01 Durable Records
 
@@ -70,9 +70,9 @@ This entry is navigation, not implementation authority or a replacement for curr
 ## RV2 / Product Checkpoint Warning
 
 - RV2-03, RV2-P1-SYNC, RV2-04N, and Cross-Repository Bounded Proof are recorded as `DONE` by current canonical `PLANS.md` and accepted evidence.
-- Workflow v1 Final Closeout is a local `REVIEW` candidate, not canonical `DONE`.
+- Workflow v1 Final Closeout and Workflow v1 are canonically `DONE`; all four mandatory Workflow v1 nodes are `DONE`, and the current active Roadmap node is none.
 - Historical RV2-04 was narrowed into completed RV2-04N; historical RV2-05/07/08/09 remain deferred and RV2-06 remains partially absorbed.
-- No Final Closeout candidate, merge, or future `DONE` checkpoint automatically activates another node, Issue #188, Workbench Phase 5.4, or new authority.
+- Final Closeout completion does not activate another node, Issue #188, Workbench Phase 5.4, deferred scope, or new authority.
 
 ## Stale Surface Warnings
 
