@@ -27,11 +27,14 @@ Recommended future session read order:
 ## Current Important Anchors
 
 - Roadmap v2 tracker: Issue `#168`
-- Active RV2-03 node: Issue `#175`
+- Workflow v1 Final Closeout local candidate: `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`; after canonical acceptance it becomes the primary final Workflow v1 architecture, evidence, limitation, demo, and case-study record
+- RV2-03 accepted historical node: Issue `#175`
 - Deferred workflow-hardening anchor: Issue `#188`
 - Records and closeout planning anchor: Issue `#190`
 - RV2-03 lessons publication lane: PR `#186`
 - Canonical branch: `master`, with HEAD always requiring fresh verification
+
+`PLANS.md` remains the current project-status authority. This index is navigation only, and the Final Closeout candidate remains `REVIEW` until publication, merge, post-merge verification, tracker synchronization, and final residual-task review pass.
 
 ## ECO-DOC-01 Durable Records
 
@@ -66,15 +69,19 @@ This entry is navigation, not implementation authority or a replacement for curr
 
 ## RV2 / Product Checkpoint Warning
 
-- RV2-03 is not `DONE` unless freshly verified otherwise.
-- RV2-04 is not authorized unless explicitly approved later.
-- RV2-P1 product-mainline checkpoint should be considered after RV2-03 or RV2-04 according to `PLANS.md` and Roadmap rules.
+- RV2-03, RV2-P1-SYNC, RV2-04N, and Cross-Repository Bounded Proof are recorded as `DONE` by current canonical `PLANS.md` and accepted evidence.
+- Workflow v1 Final Closeout is a local `REVIEW` candidate, not canonical `DONE`.
+- Historical RV2-04 was narrowed into completed RV2-04N; historical RV2-05/07/08/09 remain deferred and RV2-06 remains partially absorbed.
+- No Final Closeout candidate, merge, or future `DONE` checkpoint automatically activates another node, Issue #188, Workbench Phase 5.4, or new authority.
 
 ## Stale Surface Warnings
 
 - `README.md` may contain stale current-status language.
 - Issue bodies may lag behind append-only comments.
 - Old PR bodies and old handoffs are historical evidence, not current truth.
+- `docs/SEMI_AUTOMATED_WORKFLOW_V1.md` and `docs/SEMI_AUTOMATED_WORKFLOW_V1_PROOF_REPORT.md` are historical operating/proof evidence, not current Workflow v1 completion truth.
+- `docs/SEMI_AUTOMATED_WORKFLOW_BASELINE.md` is a historical RV2-03-era operational snapshot; its commands and evidence require fresh applicability checks.
+- Phase statements in `docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md` are historical design context and do not override current `PLANS.md`; the separation design remains unimplemented and unauthorized.
 - Exact branch, HEAD, auth, and working tree must be freshly verified.
 
 ## Raw Evidence Boundary
@@ -101,5 +108,11 @@ These are candidates only and are not activated by this index:
 
 - REC-01 full records closeout
 - OPS-01 Course Host Quick Restore Compression
-- RV2-P1 product checkpoint
-- RV2-04 runtime contract binding
+- Issue #188 repository-native execution-gate work
+- RV2-05 thin CLI facade
+- unabsorbed RV2-06 execution-profile work
+- RV2-07 visible operator UX
+- RV2-08 login startup
+- RV2-09 connector feasibility
+- Native-vs-Bridge benchmark only if later evidence requires it
+- physical repository separation under a separately approved migration node
