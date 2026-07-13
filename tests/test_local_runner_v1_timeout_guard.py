@@ -1500,3 +1500,160 @@ def test_timeout_summary_reports_fail_closed_partial_candidate_and_no_followup_a
         """,
     )
     assert_success(result)
+
+
+def _binding(status: str, *, contract_present: bool = True) -> dict:
+    stage_status = "passed" if status == "passed" else status
+    return {
+        "status": status,
+        "contract_present": contract_present,
+        "pre_execution": {"status": stage_status, "reasons": []},
+        "post_execution": {"status": stage_status, "reasons": []},
+        "allowed_files": ["src/example.py"] if contract_present else [],
+        "actual_changed_files": ["src/example.py"] if contract_present else [],
+        "reasons": (
+            ["changed_file_outside_allowed_files"]
+            if status == "contract_violation"
+            else []
+        ),
+    }
+
+
+def test_runner_result_explicitly_reports_legacy_runtime_contract_not_present(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        """
+        $binding = New-RuntimeContractNotPresent
+        $json = New-RunnerResultSummaryJson `
+            -IssueNumberText "204" `
+            -Action "run-reviewbundle" `
+            -Result "success" `
+            -Branch "feature/runtime-contract" `
+            -Head ("1" * 40) `
+            -ReviewId "" `
+            -DiffFingerprint "" `
+            -FilesFingerprint "" `
+            -ChangedFilesText "legacy.py" `
+            -FinalStatus " M legacy.py" `
+            -CodexExitCode "0" `
+            -RuntimeContractBinding $binding
+        Write-Output $json
+        """,
+    )
+    assert_success(result)
+    summary = json.loads(result.stdout)
+    assert summary["runtime_contract_binding"]["status"] == "not_present"
+    assert summary["runtime_contract_binding"]["contract_present"] is False
+    assert summary["runtime_contract_binding"]["pre_execution"]["status"] == "not_present"
+
+
+def test_pre_execution_contract_violation_blocks_before_fake_codex(tmp_path):
+    binding = json.dumps(_binding("contract_violation"))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:CodexCalls = 0
+        $binding = '{binding}' | ConvertFrom-Json
+        try {{
+            Assert-RuntimeContractAllowsCodex -RuntimeContractBinding $binding
+            $script:CodexCalls += 1
+        }}
+        catch {{
+            Write-Output "BLOCKED=$($_.Exception.Message)"
+        }}
+        Write-Output "CODEX_CALLS=$script:CodexCalls"
+        """,
+    )
+    assert_success(result)
+    assert "Runtime contract violation blocks Codex execution" in result.stdout
+    assert "CODEX_CALLS=0" in result.stdout
+
+
+def test_codex_exit_zero_cannot_override_runtime_contract_violation(tmp_path):
+    binding = json.dumps(_binding("contract_violation"))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $binding = '{binding}' | ConvertFrom-Json
+        $overall = Get-OverallRunnerResult -CodexExitCode "0" -RuntimeContractBinding $binding
+        if ($overall -ne "failure") {{ throw "Contract violation was overridden: $overall" }}
+        Write-Output "OVERALL=$overall"
+        """,
+    )
+    assert_success(result)
+    assert "OVERALL=failure" in result.stdout
+
+
+def test_codex_exit_zero_with_passed_runtime_contract_may_succeed(tmp_path):
+    binding = json.dumps(_binding("passed"))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $binding = '{binding}' | ConvertFrom-Json
+        $overall = Get-OverallRunnerResult -CodexExitCode "0" -RuntimeContractBinding $binding
+        if ($overall -ne "success") {{ throw "Passed contract did not permit success: $overall" }}
+        Write-Output "OVERALL=$overall"
+        """,
+    )
+    assert_success(result)
+    assert "OVERALL=success" in result.stdout
+
+
+def test_review_bundle_machine_result_contains_violation_and_reports_failure(tmp_path):
+    binding = json.dumps(_binding("contract_violation"))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $binding = '{binding}' | ConvertFrom-Json
+        $stderrSummary = Get-StderrSummary -Text "" -ExitCode "0"
+        $comment = New-ReviewBundleComment `
+            -IssueNumberText "204" `
+            -Branch "feature/runtime-contract" `
+            -HeadBefore "1111111" `
+            -HeadAfter "1111111" `
+            -CodexExitCode "0" `
+            -RepoCleanBefore "yes" `
+            -ReviewId "" `
+            -DiffFingerprint "" `
+            -FilesFingerprint "" `
+            -ApprovalToken "" `
+            -ModifiedFiles "README.md" `
+            -DiffStat "" `
+            -CachedDiffStat "" `
+            -CommandsSummary "fake" `
+            -CodexFinalReport "DONE" `
+            -StderrSummary $stderrSummary `
+            -FinalStatus " M README.md" `
+            -RuntimeContractBinding $binding
+        Write-Output $comment
+        """,
+    )
+    assert_success(result)
+    marker_index = result.stdout.index("LAWBRUNNER-RESULT protocol=lawb.runner_result.v1")
+    json_start = result.stdout.index("{", marker_index)
+    decoder = json.JSONDecoder()
+    summary, _ = decoder.raw_decode(result.stdout[json_start:])
+    assert summary["result"] == "failure"
+    assert summary["validations"]["codex"]["status"] == "passed"
+    assert summary["runtime_contract_binding"]["status"] == "contract_violation"
+    assert summary["runtime_contract_binding"]["actual_changed_files"] == [
+        "src/example.py"
+    ]
+
+
+def test_runner_main_orders_contract_checks_around_codex_invocation():
+    source = RUNNER.read_text(encoding="utf-8")
+    inspect_index = source.index('-Action "inspect"')
+    assert_index = source.index("Assert-RuntimeContractAllowsCodex", inspect_index)
+    codex_index = source.index('-Action "codex ReviewBundle candidate generation"')
+    post_index = source.index('-Action "post"', codex_index)
+    overall_index = source.index("$overallExitCode", post_index)
+
+    assert inspect_index < assert_index < codex_index < post_index < overall_index
+
+
+def test_runtime_contract_integration_does_not_execute_verification_commands():
+    source = RUNNER.read_text(encoding="utf-8")
+
+    assert "verification_commands" not in source
+    assert "Invoke-RuntimeContractEvaluator" in source
