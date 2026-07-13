@@ -136,12 +136,16 @@ Workflow v1 completion consists of four mandatory nodes:
 
 1. `RV2-P1-SYNC` — Workflow v1 Completion Boundary & Roadmap Rebaseline: `DONE`.
 2. `RV2-04N` — Minimal Runtime Contract Closure: `DONE`.
-3. Cross-Repository Bounded Proof — next mandatory node candidate, not activated; it must prove the governance model on one other bounded repository or project without silently relying on `local-ai-workbench` assumptions.
-4. Workflow v1 Final Closeout — later mandatory node, not activated; it records final architecture, evidence, limitations, demo, case study, durable status, and the explicit Workflow v1 `DONE` checkpoint.
+3. Cross-Repository Bounded Proof: `DONE`.
+4. Workflow v1 Final Closeout — next mandatory node candidate, not activated; it records final architecture, evidence, limitations, demo, case study, durable status, and the explicit Workflow v1 `DONE` checkpoint.
 
 RV2-04N's accepted implementation commit is `4e6e3e8becbd99b2da0b8ffd089136995168d649`; PR #200 merged at canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`. Accepted evidence recorded 36 targeted validator/runtime-binding tests, 52 Runner-integration tests, and a final related suite of 203 passed, 0 failed, 0 skipped. The single focused repair was used; the repair budget is exhausted and Repair-2 was not used. RV2-04N proved normalized v1.1 contract data, fail-closed invalid present packets, logical-Issue/repository/branch/full-HEAD pre-execution binding, allowed-files and maximum-file-count post-execution enforcement, machine-readable binding evidence, and the rule that Codex exit 0 or a DONE summary cannot override a contract violation. `verification_commands` remain metadata only and are not automatically executed. No live Bridge execution, cross-repository portability proof, or Native-vs-Bridge benchmark was performed.
 
-This status sync activates neither remaining node. A bounded cross-repository proof remains mandatory before making a strong reusable-workflow claim. Reverb remains only a candidate proof target; no Reverb branch, HEAD, tests, API, or repository state is asserted here.
+The Cross-Repository Bounded Proof reused the core Workflow governance method on one other real repository for one bounded, reviewable, target-native engineering node. The accepted proof target was `HarryWhite-TW/reverb-core`, which has no root `AGENTS.md` or `PLANS.md`. Fresh observed truth was bound to pre-implementation baseline `dc5ee548606ca0e1038294709718c797944def72`; the implementation commit was `a6ddbfb72d296cfa72e0e286ffc769f3641d9d45`, and Reverb PR #1 merged at canonical commit `c5e8747eb1db519837944e81e4c77c5da9a628f0`.
+
+The proof modified exactly `.github/workflows/core-smoke.yml` with 73 additions and 0 deletions, and the focused repair remained unused. Target-native GitHub Actions `Core Smoke` run #5, run ID `29230659271`, concluded `success` for `pytest-and-cli`, `source-install-smoke`, `wheel-install-smoke`, and `sdist-install-smoke`. ChatGPT independently reviewed the local evidence, remote diff, CI evidence, PR and merge state, and post-merge canonical content. The task used an explicit bounded acceptance contract and authority boundary, and it did not copy local-ai-workbench-specific Bridge machinery into Reverb.
+
+This proves bounded reuse of the core Workflow governance method once; it does not prove universal portability, all-repository compatibility, Bridge portability, physical repository separation, autonomous engineering, Reverb production readiness, SDK completeness, package-release readiness, Native-vs-Bridge benchmark completion, or live Bridge execution for the proof. Workflow v1 Final Closeout is now the next mandatory node candidate, but remains inactive, unimplemented, and unauthorized until separately approved.
 
 Current Roadmap classifications:
 
@@ -156,7 +160,7 @@ Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, M
 
 Direction Lock v1.2 remains authoritative and operative for current Bridge work. WF-REENTRY classifies its transport strategy as `REVIEW_REQUIRED` for future explicit change-control review; that classification does not modify, revoke, supersede, or deactivate the Direction Lock.
 
-Cross-Repository Bounded Proof is the next mandatory Workflow v1 node candidate, but is not activated. No repository is selected as current truth: Reverb remains only a candidate pending fresh verification. This sync creates no authority for Cross-Repository implementation, Workflow v1 Final Closeout, Issue #188 implementation, benchmark execution, startup, tray, service, MCP, repository separation, dependency changes, live Bridge execution, trusted-actor or allowlist changes, automatic Git/GitHub actions, or Issue mutation.
+Cross-Repository Bounded Proof is `DONE`. Workflow v1 Final Closeout is the next mandatory Workflow v1 node candidate, but is not activated. This sync creates no authority for Final Closeout implementation, Issue #188 implementation, benchmark execution, startup, tray, service, MCP, repository separation, dependency changes, live Bridge execution, trusted-actor or allowlist changes, automatic Git/GitHub actions, or Issue mutation.
 
 ## Immediate Next Gate
 
@@ -174,7 +178,7 @@ The approved strategic direction is to prepare the bridge for future repository 
 
 Deferred items still include distinct `manifest_review_expires` and `execution_request_expires` fields, a versioned Host Profile, the full shared Bootstrap/runtime resolver contract where not already proven, the outer Runner result evidence contract where not already proven, startup, tray, service, and MCP.
 
-The current in-repository implementation remains the proven baseline. A strong reusable-workflow claim requires the separately approved bounded proof on at least one other repository or project; physical extraction or migration is not a Workflow v1 prerequisite and remains deferred.
+The current in-repository Bridge implementation remains the proven Bridge baseline. The accepted Reverb proof supports only the bounded claim that the core Workflow governance method was successfully reused once on one other real repository; physical extraction or migration is not a Workflow v1 prerequisite and remains deferred.
 
 ## Product Parallel Priority
 
@@ -223,6 +227,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-07-13: Recorded the accepted Cross-Repository Bounded Proof on `HarryWhite-TW/reverb-core`: one bounded sdist-install smoke change, PR #1 merge at `c5e8747eb1db519837944e81e4c77c5da9a628f0`, and successful target-native Core Smoke run #5. Cross-Repository Bounded Proof is `DONE`; Workflow v1 Final Closeout is next but remains inactive and unauthorized, and no Bridge portability or universal-portability claim is made.
 - 2026-07-13: Recorded RV2-04N durable status reconciliation: accepted implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200 merge at canonical `aa633ec00de90249ed2c611d84165038d6ff732e`, and its bounded runtime-contract closure evidence. RV2-P1-SYNC and RV2-04N are `DONE`; Cross-Repository Bounded Proof is next but not activated, and no authority expanded.
 - 2026-07-13: Recorded the user-approved `RV2-P1-SYNC` post-RV2-03 rebaseline. At that time, defined the four-node Workflow v1 completion boundary and narrowed the next code-node candidate to inactive `RV2-04N`; classified RV2-05/07/08/09 as `DEFER`, RV2-06 as `PARTIALLY ABSORBED`, Issue #188 as `CONDITIONAL / PARTIALLY ABSORBED`, and the Native-vs-Bridge benchmark as conditional, without activating implementation or expanding authority.
 - 2026-07-12: Recorded the accepted WF-REENTRY native-capability overlap adjudication. Repositioned the Workflow as the Human-Governed AI Engineering Control Layer, retained the governance and specialized safety core, thinned universal transport assumptions, marked native dispatch as a replacement candidate with readback still unproven, classified Direction Lock transport strategy as `REVIEW_REQUIRED` for future explicit change-control review without modifying the Direction Lock, and activated no implementation node.
