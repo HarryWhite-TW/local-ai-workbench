@@ -82,6 +82,12 @@ This entry is navigation, not implementation authority or a replacement for curr
 - Local raw evidence, temp evidence roots, command logs, and host-specific artifacts should not be committed unless specifically approved.
 - Summaries must not replace raw evidence for review.
 
+## REC-02 Operational Field Evidence
+
+- `docs/REC_02_OPERATIONAL_FIELD_EVIDENCE_COURSE_HOST_QUICK_RESTORE.md` — accepted real-reset field evidence showing the existing REC-02 Quick Restore path converged the course computer from a restored environment to full `READY` state across three bounded wrapper runs, with final focused pytest and Host Check exit `0`, clean Git state, and safety boundaries preserved.
+
+This record does not reopen REC-02, classify the observed stale Layer 1 `ATTENTION` as a proven defect, authorize a script repair, or activate any later node. REC-02 remains `DONE`; single-transaction convergence after conditional browser authentication is preserved only as an improvement candidate.
+
 ## Course Host Quick Restore
 
 - `docs/COURSE_HOST_QUICK_RESTORE_RUNBOOK.md` is the daily quick-restore runbook for reset course machines.
