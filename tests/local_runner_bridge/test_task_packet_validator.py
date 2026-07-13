@@ -198,6 +198,35 @@ def test_v1_1_valid_packet_returns_success_summary():
     assert summary["push_performed"] is False
 
 
+def test_v1_1_valid_packet_returns_normalized_runtime_contract():
+    summary = validate_task_packet(VALID_PACKET_V1_1)
+
+    assert summary["runtime_contract"] == {
+        "protocol": "lawb.local_runner.task_packet.v1.1",
+        "packet_id": "task-138-read-only-validator",
+        "logical_issue": 138,
+        "repository": "HarryWhite-TW/local-ai-workbench",
+        "branch": "master",
+        "expected_head": "427b63c74f83e87aae0745f4ba28a83d2bf72c4d",
+        "task_mode": "PATCH_ONLY",
+        "objective": "Add Task Packet v1.1 structural validation.",
+        "allowed_files": ["src/local_runner_bridge/task_packet_validator.py"],
+        "max_allowed_files": 2,
+        "verification_command_policy": "explicit_only",
+        "verification_commands": [
+            "python -m pytest tests/local_runner_bridge/test_task_packet_validator.py -q -p no:cacheprovider"
+        ],
+        "scope_expansion_allowed": False,
+    }
+
+
+def test_v1_valid_packet_does_not_claim_runtime_contract_binding():
+    summary = validate_task_packet(VALID_PACKET)
+
+    assert summary["result"] == "success"
+    assert "runtime_contract" not in summary
+
+
 def test_v1_1_missing_discipline_field_returns_blocked():
     packet = VALID_PACKET_V1_1.replace("task_mode: PATCH_ONLY\n", "")
 
@@ -206,6 +235,7 @@ def test_v1_1_missing_discipline_field_returns_blocked():
     assert summary["result"] == "blocked"
     assert "required_fields_missing" in summary["errors"]
     assert "task_mode" in summary["missing_fields"]
+    assert "runtime_contract" not in summary
 
 
 def test_v1_1_invalid_task_mode_returns_blocked():
@@ -215,6 +245,7 @@ def test_v1_1_invalid_task_mode_returns_blocked():
 
     assert summary["result"] == "blocked"
     assert "invalid_task_mode" in summary["errors"]
+    assert "runtime_contract" not in summary
 
 
 def test_v1_1_allowed_files_exceeding_max_returns_blocked():

@@ -205,6 +205,25 @@ def _validate_v1_1_discipline(parsed: dict, summary: dict) -> None:
         summary["errors"].append("scope_expansion_allowed_must_be_false")
 
 
+def _normalized_runtime_contract(parsed: dict) -> dict:
+    """Return the bounded v1.1 fields that may constrain Runner execution."""
+    return {
+        "protocol": parsed["protocol"],
+        "packet_id": parsed["packet_id"],
+        "logical_issue": parsed["logical_issue"],
+        "repository": parsed["repository"],
+        "branch": parsed["branch"],
+        "expected_head": parsed["expected_head"],
+        "task_mode": parsed["task_mode"],
+        "objective": parsed["objective"].strip(),
+        "allowed_files": list(parsed["allowed_files"]),
+        "max_allowed_files": parsed["max_allowed_files"],
+        "verification_command_policy": parsed["verification_command_policy"],
+        "verification_commands": list(parsed["verification_commands"]),
+        "scope_expansion_allowed": parsed["scope_expansion_allowed"],
+    }
+
+
 def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict:
     """Validate extracted Task Packet content without executing anything."""
     summary = _base_summary()
@@ -287,6 +306,8 @@ def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict
 
     if not summary["errors"]:
         summary["result"] = "success"
+        if protocol == TASK_PACKET_PROTOCOL_V1_1:
+            summary["runtime_contract"] = _normalized_runtime_contract(parsed)
 
     return summary
 

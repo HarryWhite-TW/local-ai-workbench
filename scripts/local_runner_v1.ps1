@@ -233,6 +233,103 @@ function Convert-FileTextToArray {
     } | ForEach-Object { $_.Trim() } | Sort-Object -Unique)
 }
 
+function New-RuntimeContractNotPresent {
+    return [pscustomobject]@{
+        status = "not_present"
+        contract_present = $false
+        pre_execution = [pscustomobject]@{ status = "not_present"; reasons = @() }
+        post_execution = [pscustomobject]@{ status = "not_run"; reasons = @() }
+        allowed_files = @()
+        actual_changed_files = @()
+        reasons = @()
+    }
+}
+
+function Resolve-PythonRuntimeCommand {
+    $commands = @(Get-Command python -All -CommandType Application -ErrorAction SilentlyContinue)
+    foreach ($command in $commands) {
+        $path = Get-CommandCandidatePath -Command $command
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+        $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+        if ($extension -in @(".exe", ".com") -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+            return [System.IO.Path]::GetFullPath($path)
+        }
+    }
+    throw "Python runtime was not found as a direct executable on PATH."
+}
+
+function Invoke-RuntimeContractEvaluator {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("inspect", "post")]
+        [string]$Action,
+        [Parameter(Mandatory = $true)]
+        [object]$Payload
+    )
+
+    $python = Resolve-PythonRuntimeCommand
+    $bindingScript = Join-Path -Path $RepoPath -ChildPath "src\local_runner_bridge\runtime_contract_binding.py"
+    if (-not (Test-Path -LiteralPath $bindingScript -PathType Leaf)) {
+        throw "Runtime contract binding module was not found: $bindingScript"
+    }
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $payloadJson = $Payload | ConvertTo-Json -Depth 20 -Compress
+    $evaluation = Invoke-CapturedNativeProcess `
+        -FilePath $python `
+        -Arguments @($bindingScript, $Action) `
+        -WorkingDirectory $RepoPath `
+        -StandardInput $payloadJson `
+        -StandardInputEncoding $utf8 `
+        -StandardOutputEncoding $utf8 `
+        -StandardErrorEncoding $utf8 `
+        -TimeoutSeconds 30 `
+        -Action "runtime contract $Action evaluation"
+    if ($evaluation.ExitCode -ne 0) {
+        throw "Runtime contract $Action evaluation failed closed: $($evaluation.Stderr)"
+    }
+    try {
+        $binding = $evaluation.Stdout | ConvertFrom-Json
+    }
+    catch {
+        throw "Runtime contract $Action evaluation returned malformed JSON."
+    }
+    if ($null -eq $binding -or $binding -is [array] -or $binding.status -notin @("passed", "contract_violation", "not_present")) {
+        throw "Runtime contract $Action evaluation returned an invalid binding status."
+    }
+    return $binding
+}
+
+function Assert-RuntimeContractAllowsCodex {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeContractBinding
+    )
+
+    if ([string]::Equals([string]$RuntimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal)) {
+        $reasons = @($RuntimeContractBinding.reasons) -join ","
+        throw "Runtime contract violation blocks Codex execution: $reasons"
+    }
+}
+
+function Get-OverallRunnerResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CodexExitCode,
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeContractBinding
+    )
+
+    if ([string]::Equals([string]$RuntimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal)) {
+        return "failure"
+    }
+    if ($CodexExitCode -eq "0") {
+        return "success"
+    }
+    return "failure"
+}
+
 function New-RunnerValidationResult {
     param(
         [Parameter(Mandatory = $true)]
@@ -1115,8 +1212,14 @@ function New-RunnerResultSummaryJson {
         [AllowEmptyString()]
         [string]$FinalStatus,
         [Parameter(Mandatory = $true)]
-        [string]$CodexExitCode
+        [string]$CodexExitCode,
+        [AllowNull()]
+        [object]$RuntimeContractBinding = $null
     )
+
+    if ($null -eq $RuntimeContractBinding) {
+        $RuntimeContractBinding = New-RuntimeContractNotPresent
+    }
 
     $issueValue = [int]$IssueNumberText
     $changedFiles = @(Convert-FileTextToArray -Text $ChangedFilesText)
@@ -1136,6 +1239,7 @@ function New-RunnerResultSummaryJson {
         diff_fingerprint = if ([string]::IsNullOrWhiteSpace($DiffFingerprint)) { $null } else { $DiffFingerprint }
         files_fingerprint = if ([string]::IsNullOrWhiteSpace($FilesFingerprint)) { $null } else { $FilesFingerprint }
         changed_files = $changedFiles
+        runtime_contract_binding = $RuntimeContractBinding
         validations = [ordered]@{
             git_status_clean = (New-RunnerValidationResult -Status $(if ($finalClean) { "passed" } else { "warning" }) -Summary $(if ($finalClean) { "Final git status is clean." } else { "Final git status reports local changes for review." }))
             codex = (New-RunnerValidationResult -Status $codexStatus -Summary "Codex exit code: $CodexExitCode")
@@ -1614,8 +1718,14 @@ function New-ReviewBundleComment {
         [string]$ChildProcessSummary = "",
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
-        [string]$FinalStatus
+        [string]$FinalStatus,
+        [AllowNull()]
+        [object]$RuntimeContractBinding = $null
     )
+
+    if ($null -eq $RuntimeContractBinding) {
+        $RuntimeContractBinding = New-RuntimeContractNotPresent
+    }
 
     $TextFence = '```text'
     $Fence = '```'
@@ -1625,7 +1735,8 @@ function New-ReviewBundleComment {
     $displayModifiedFiles = Format-Block -Text (Truncate-Text -Text $ModifiedFiles -MaxChars $MaxGitOutputChars -Label "modified files") -EmptyText "(none)"
     $displayFinalReport = Format-Block -Text $CodexFinalReport -EmptyText "(no Codex stdout captured)"
     $displayChildProcessSummary = Format-Block -Text $ChildProcessSummary -EmptyText "child_process_timed_out=false`nno_commit_push_close_after_timeout=true"
-    $runnerResult = if ($CodexExitCode -eq "0") { "success" } else { "failure" }
+    $runnerResult = Get-OverallRunnerResult -CodexExitCode $CodexExitCode -RuntimeContractBinding $RuntimeContractBinding
+    $runtimeContractJson = $RuntimeContractBinding | ConvertTo-Json -Depth 12
     $runnerResultJson = New-RunnerResultSummaryJson `
         -IssueNumberText $IssueNumberText `
         -Action "run-reviewbundle" `
@@ -1637,7 +1748,8 @@ function New-ReviewBundleComment {
         -FilesFingerprint $FilesFingerprint `
         -ChangedFilesText $ModifiedFiles `
         -FinalStatus $FinalStatus `
-        -CodexExitCode $CodexExitCode
+        -CodexExitCode $CodexExitCode `
+        -RuntimeContractBinding $RuntimeContractBinding
 
     return @"
 ## local-runner-v1 review bundle
@@ -1674,6 +1786,12 @@ $runnerResultJson
 
 $TextFence
 $displayModifiedFiles
+$Fence
+
+### Runtime contract binding
+
+$TextFence
+$runtimeContractJson
 $Fence
 
 ### Approval context
@@ -2189,6 +2307,47 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
     exit 3
 }
 
+$headBeforeFull = Get-GitOutput -GitArgs @("rev-parse", "HEAD") -Action "git rev-parse HEAD before runtime contract binding"
+$runtimeContractBinding = Invoke-RuntimeContractEvaluator `
+    -Action "inspect" `
+    -Payload ([ordered]@{
+        surface_text = $issueBody
+        logical_issue = $IssueNumber
+        repository = $Repo
+        branch = $branch
+        head = $headBeforeFull
+    })
+if ([string]::Equals([string]$runtimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal)) {
+    $stderrSummary = Get-StderrSummary -Text "" -ExitCode "not-run"
+    $violationReasons = @($runtimeContractBinding.reasons) -join ","
+    $comment = New-ReviewBundleComment `
+        -IssueNumberText ([string]$IssueNumber) `
+        -Branch $branch `
+        -HeadBefore $headBefore `
+        -HeadAfter $headBefore `
+        -CodexExitCode "not run; runtime contract violation" `
+        -RepoCleanBefore "yes" `
+        -ReviewId "" `
+        -DiffFingerprint "" `
+        -FilesFingerprint "" `
+        -ApprovalToken "" `
+        -ModifiedFiles "(none)" `
+        -DiffStat "" `
+        -CachedDiffStat "" `
+        -CommandsSummary "Codex was not run because Task Packet v1.1 runtime contract binding failed: $violationReasons" `
+        -CodexFinalReport "Codex was not run. Runtime contract identity evidence failed closed before invocation." `
+        -StderrSummary $stderrSummary `
+        -FinalStatus "(clean)" `
+        -RuntimeContractBinding $runtimeContractBinding
+    $postResult = Post-IssueComment -Comment $comment
+    if ($postResult.ExitCode -ne 0) {
+        throw "Runtime contract violation blocked Codex, and posting the failure bundle failed: $($postResult.Stderr)"
+    }
+    Write-Output $postResult.Stdout
+    exit 2
+}
+Assert-RuntimeContractAllowsCodex -RuntimeContractBinding $runtimeContractBinding
+
 if ([string]::IsNullOrWhiteSpace($ReviewedCodexPath)) {
     throw "ReviewedCodexPath is required for ReviewBundle execution; refusing to re-resolve codex from PATH."
 }
@@ -2247,6 +2406,12 @@ $finalStatus = Get-GitStatusShort
 $diffStatAfter = Get-GitOutput -GitArgs @("diff", "--stat") -Action "git diff --stat"
 $cachedDiffStatAfter = Get-GitOutput -GitArgs @("diff", "--cached", "--stat") -Action "git diff --cached --stat"
 $modifiedFiles = Get-ModifiedFilesFromStatus -Status $finalStatus
+$runtimeContractBinding = Invoke-RuntimeContractEvaluator `
+    -Action "post" `
+    -Payload ([ordered]@{
+        runtime_contract_binding = $runtimeContractBinding
+        actual_changed_files = @(Convert-FileTextToArray -Text $modifiedFiles)
+    })
 $codexFinalReport = Truncate-Text -Text $codexResult.Stdout -MaxChars $MaxCodexStdoutChars -Label "Codex final report"
 $stderrSummaryAfter = Get-StderrSummary -Text $codexResult.Stderr -ExitCode ([string]$codexResult.ExitCode)
 $commandsSummary = "Review the Codex final report below for commands and verification results reported by Codex. The runner also captured final git status, git diff --stat, and git diff --cached --stat. The runner did not run stage, commit, push, issue close, label edit, or PR commands."
@@ -2290,7 +2455,8 @@ $comment = New-ReviewBundleComment `
     -CodexFinalReport $codexFinalReport `
     -StderrSummary $stderrSummaryAfter `
     -ChildProcessSummary $childProcessSummary `
-    -FinalStatus $finalStatus
+    -FinalStatus $finalStatus `
+    -RuntimeContractBinding $runtimeContractBinding
 
 $commentResult = Post-IssueComment -Comment $comment
 if ($commentResult.ExitCode -ne 0) {
@@ -2298,4 +2464,5 @@ if ($commentResult.ExitCode -ne 0) {
 }
 
 Write-Output $commentResult.Stdout
-exit $codexResult.ExitCode
+$overallExitCode = if ([string]::Equals([string]$runtimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal)) { 2 } else { $codexResult.ExitCode }
+exit $overallExitCode
