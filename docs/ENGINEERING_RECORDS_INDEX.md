@@ -27,14 +27,17 @@ Recommended future session read order:
 ## Current Important Anchors
 
 - Roadmap v2 tracker: Issue `#168`
-- Workflow v1 Final Closeout accepted canonical record: `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`; it is the primary final Workflow v1 architecture, evidence, limitation, demo, and case-study record
+- Workflow v1 Final Closeout correction record: `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`; it remains the candidate architecture, evidence, limitation, demo, and case-study record and becomes the primary final closeout record only after final acceptance
+- Current active engineering node: `Workflow v1 Closeout Integrity Correction`, explicitly approved as a bounded correction; no later node is activated
+- PR #203: Final Closeout candidate publication; commit `368934f5c93d210c485d49180bc1c347d7d3647c`; canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`
+- PR #204: attempted `REVIEW` -> `DONE` transition; commit `240e47a77da753c9ffb619e79be1c15e20b23e7a`; canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`
 - RV2-03 accepted historical node: Issue `#175`
 - Deferred workflow-hardening anchor: Issue `#188`
 - Records and closeout planning anchor: Issue `#190`
 - RV2-03 lessons publication lane: PR `#186`
 - Canonical branch: `master`, with HEAD always requiring fresh verification
 
-`PLANS.md` remains the current project-status authority. This index is navigation only. Workflow v1 Final Closeout and Workflow v1 are `DONE` through accepted publication commit `368934f5c93d210c485d49180bc1c347d7d3647c`, PR #203, canonical merge commit `c36a1b820e6f6786267057aa05d25697b9f1deca`, post-merge canonical verification `PASS`, and final hidden residual review `NO_HIDDEN_RESIDUAL_TASK_FOUND`.
+`PLANS.md` remains the current project-status authority. This index is navigation only and does not itself accept or activate work. Post-merge automated P2 findings on PR #203 and PR #204 invalidated final `DONE` acceptance. Workflow v1 Final Closeout is `REVIEW — Closeout Integrity Correction in progress`; Workflow v1 is not yet finally accepted as `DONE`; and tracker #168 remains stale and pending final truth synchronization.
 
 ## ECO-DOC-01 Durable Records
 
@@ -70,9 +73,10 @@ This entry is navigation, not implementation authority or a replacement for curr
 ## RV2 / Product Checkpoint Warning
 
 - RV2-03, RV2-P1-SYNC, RV2-04N, and Cross-Repository Bounded Proof are recorded as `DONE` by current canonical `PLANS.md` and accepted evidence.
-- Workflow v1 Final Closeout and Workflow v1 are canonically `DONE`; all four mandatory Workflow v1 nodes are `DONE`, and the current active Roadmap node is none.
+- The first three mandatory Workflow v1 nodes remain `DONE`; Workflow v1 Final Closeout is `REVIEW / INTEGRITY CORRECTION REQUIRED`, and Workflow v1 final `DONE` acceptance is withheld.
 - Historical RV2-04 was narrowed into completed RV2-04N; historical RV2-05/07/08/09 remain deferred and RV2-06 remains partially absorbed.
-- Final Closeout completion does not activate another node, Issue #188, Workbench Phase 5.4, deferred scope, or new authority.
+- Tracker #168 remains unsynchronized and is a required later close-rule step; this index and this local correction do not mutate it.
+- The active integrity correction does not activate another node, Issue #188, Workbench Phase 5.4, deferred scope, or new authority.
 
 ## Stale Surface Warnings
 

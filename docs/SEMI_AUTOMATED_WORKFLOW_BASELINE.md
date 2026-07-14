@@ -1,6 +1,6 @@
 # Semi-Automated Workflow Operational Baseline
 
-> **Historical status banner:** This file is an RV2-03-era operational baseline snapshot. Its embedded phase and current-status language is historical and must not be used as current Workflow v1 completion truth. Current durable status is governed by `PLANS.md` and, after canonical acceptance, `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`. Historical commands and evidence remain useful where still applicable, but repository, environment, authentication, tool, and authority assumptions require fresh verification.
+> **Historical status banner:** This file is an RV2-03-era operational baseline snapshot. It is not current normative authority. Its embedded phase and current-status language is historical and must not be used as current Workflow v1 completion truth. Current durable status is governed by applicable user approval and task-local scope, `AGENTS.md`, applicable scoped `AGENTS.md`, `PLANS.md`, and current domain specifications; after final canonical acceptance, `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md` becomes the primary final Workflow v1 record. Historical commands and evidence remain useful where still applicable, but repository, environment, authentication, tool, and authority assumptions require fresh verification.
 
 ## Document Identity
 
@@ -15,32 +15,33 @@
 
 ## 1. Purpose And Document Authority
 
-This document is the operational baseline and handoff entrypoint for the verified semi-automated ChatGPT / GitHub / Dispatcher / Runner / Codex workflow. It summarizes current state, environment, commands, recovery, evidence, and approved future direction so future work does not need to rediscover the baseline across historical files.
+This document is the historical operational baseline and handoff record for the RV2-03-era semi-automated ChatGPT / GitHub / Dispatcher / Runner / Codex workflow. It summarizes state, environment, commands, recovery, evidence, and approved direction at that snapshot so later work can use the evidence without mistaking it for current authority.
 
-It does not replace or override the Direction Lock, Bridge Operator specification, Lv4.5 SOP, or historical architecture evidence.
+It is not a current normative source and does not replace or override applicable user approval, task-local scope, `AGENTS.md`, scoped `AGENTS.md`, `PLANS.md`, the Direction Lock, the Bridge Operator specification, Roadmap v2, or a finally accepted Final Closeout record.
 
-### Normative
+### Current Authority Navigation — Historical Pointer Only
 
-These documents currently control direction, scope, and authority:
+For new work, consult current authority and status sources directly:
 
+- the user's latest explicit approval that applies to the current task;
+- the approved current task-local scope and risk package;
 - `AGENTS.md`
 - `src/local_runner_bridge/AGENTS.md`
 - `PLANS.md`
-- `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`
-- `docs/BRIDGE_OPERATOR_V0_SPEC.md`
-- `docs/SEMI_AUTOMATED_WORKFLOW_BASELINE.md`
+- applicable current domain sources, including `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`, `docs/BRIDGE_OPERATOR_V0_SPEC.md`, and `docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md`;
+- `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md` only after its final status is technically accepted.
 
-Precedence for current work:
+Purpose-specific current-work routing:
 
 1. the user's latest explicit approval or decision that applies to the current work;
-2. the current approved Task / Issue task-local scope;
+2. the current approved task-local scope and risk package;
 3. root `AGENTS.md` repository-wide safety;
 4. applicable scoped `AGENTS.md`;
-5. `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md` bridge strategy direction;
-6. `docs/BRIDGE_OPERATOR_V0_SPEC.md` operator architecture and authority;
-7. `PLANS.md` current project and phase status;
-8. `docs/SEMI_AUTOMATED_WORKFLOW_BASELINE.md` and operational SOP;
-9. evidence, historical, and superseded material.
+5. `PLANS.md` for current durable project and Workflow status;
+6. applicable current Direction Lock, Bridge Operator specification, and Roadmap v2 specification for bridge direction, architecture, authority, and execution governance;
+7. a finally accepted `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md` for final Workflow v1 architecture and status;
+8. freshly verified implementation and remote evidence for mutable current behavior;
+9. this file and other evidence, historical, and superseded material as non-normative context only.
 
 Scoped AGENTS files may provide more specific domain rules, but they must not
 weaken root safety. Operational documents must not change normative authority.
@@ -48,9 +49,10 @@ Historical evidence must not override the sources above. If two normative
 sources at the same level truly conflict, stop and ask the user to decide
 instead of guessing.
 
-New planning must start from the current normative entrypoints. Historical
-evidence cannot override the Direction Lock, Bridge Operator specification,
-scoped AGENTS rules, or current approved Issue.
+New planning must start from the current authority and status sources above. This
+historical baseline cannot override user approval, task-local scope, root or
+scoped AGENTS rules, `PLANS.md`, Direction Lock, Bridge Operator specification,
+Roadmap v2, or a finally accepted Final Closeout record.
 
 ### Operational
 
@@ -397,13 +399,13 @@ SEPARATE APPROVAL:
 
 ## 14. Conversation Handoff Rule
 
-For future conversations:
+For future conversations that consult this historical record:
 
-- read Direction Lock
-- read Bridge Operator spec
-- read this baseline
-- identify current phase
-- identify current verified HEAD
+- first read current user approval and task-local scope
+- read root and applicable scoped `AGENTS.md`
+- read `PLANS.md`, Direction Lock, Bridge Operator spec, and applicable Roadmap/Final Closeout status
+- use this baseline only as historical operational evidence
+- freshly identify the current phase and verified HEAD
 - distinguish VERIFIED / APPROVED DIRECTION / DEFERRED / SEPARATE APPROVAL
 - never treat manual `PollOnce` as final target UX
 - never treat Bridge Operator as already implemented before evidence exists
