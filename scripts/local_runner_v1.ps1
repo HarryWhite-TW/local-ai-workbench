@@ -17,7 +17,7 @@ stops before calling Codex and posts a failure review bundle when possible.
 param(
     [ValidateRange(0, [int]::MaxValue)]
     [int]$IssueNumber = 0,
-    [ValidateSet("ReviewBundle", "CommitApproved", "ApprovalStateDiagnostic")]
+    [ValidateSet("ReviewBundle", "CommitApproved", "ApprovalStateDiagnostic", "CommitApprovalStateDiagnostic")]
     [string]$Mode = "ReviewBundle",
     [switch]$ToolResolutionPreflight,
     [string]$RequiredAction = "",
@@ -311,6 +311,22 @@ function Get-GitUntrackedFilesWithoutExcludes {
     return @(Convert-FileTextToArray -Text $result.Stdout)
 }
 
+function Test-IsBenignPythonCacheNoisePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $normalized = $Path.Replace("\", "/")
+    if ($normalized -match '(^|/)__pycache__/[^/]+\.pyc$') {
+        return $true
+    }
+    if ($normalized -match '(^|/)[^/]+\.pyc$') {
+        return $true
+    }
+    return $normalized -match '(^|/)\.pytest_cache/(README\.md|CACHEDIR\.TAG|\.gitignore|v/cache/(nodeids|lastfailed|stepwise))$'
+}
+
 function Get-GitIndexVisibilityFiles {
     $result = Invoke-BoundedGitObservation -GitArgs @(
         "ls-files",
@@ -398,12 +414,12 @@ function Get-ReviewBundleEffectiveChangedFiles {
         $null = $after.Add($path)
     }
     foreach ($path in @($before)) {
-        if (-not $after.Contains($path)) {
+        if (-not $after.Contains($path) -and -not (Test-IsBenignPythonCacheNoisePath -Path $path)) {
             $null = $changed.Add($path)
         }
     }
     foreach ($path in @($after)) {
-        if (-not $before.Contains($path)) {
+        if (-not $before.Contains($path) -and -not (Test-IsBenignPythonCacheNoisePath -Path $path)) {
             $null = $changed.Add($path)
         }
     }
@@ -555,6 +571,39 @@ function Get-RuntimeContractEvaluatorIdentity {
         EvaluatorPath = Join-Path -Path $RepositoryPath -ChildPath "src\local_runner_bridge\runtime_contract_binding.py"
         Files = $files
         Fingerprint = Get-Sha256Text -Text $fingerprintPayload
+    }
+}
+
+function New-TrustedRuntimeContractEvaluatorSnapshot {
+    $relativePaths = @(
+        "src/local_runner_bridge/runtime_contract_binding.py",
+        "src/local_runner_bridge/task_packet_validator.py",
+        "src/local_runner_bridge/task_surface_resolver.py"
+    )
+    $snapshotRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("lawb-runtime-contract-" + [guid]::NewGuid().ToString("N"))
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    try {
+        New-Item -ItemType Directory -Path $snapshotRoot -Force | Out-Null
+        $files = [ordered]@{}
+        foreach ($relativePath in $relativePaths) {
+            $committed = Invoke-Git -GitArgs @("show", "HEAD:$relativePath")
+            Require-Success -Result $committed -Action "trusted runtime contract evaluator baseline read for $relativePath"
+            $destination = Join-Path -Path $snapshotRoot -ChildPath ($relativePath -replace "^src/local_runner_bridge/", "")
+            [System.IO.File]::WriteAllText($destination, ([string]$committed.Stdout) + "`n", $utf8NoBom)
+            $files[$relativePath] = Get-Sha256File -Path $destination
+        }
+        $fingerprintPayload = @($files.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
+        return [pscustomobject]@{
+            Root = $snapshotRoot
+            EvaluatorPath = Join-Path -Path $snapshotRoot -ChildPath "runtime_contract_binding.py"
+            Files = $files
+            Fingerprint = Get-Sha256Text -Text $fingerprintPayload
+            Source = "committed_head"
+        }
+    }
+    catch {
+        Remove-Item -LiteralPath $snapshotRoot -Recurse -Force -ErrorAction SilentlyContinue
+        throw
     }
 }
 
@@ -961,7 +1010,8 @@ function Invoke-RuntimeContractEvaluator {
         [string]$Action,
         [Parameter(Mandatory = $true)]
         [object]$Payload,
-        [string]$PythonPath = ""
+        [string]$PythonPath = "",
+        [switch]$TrustedCommittedBaseline
     )
 
     $python = if ([string]::IsNullOrWhiteSpace($PythonPath)) { Resolve-PythonRuntimeCommand } else { [System.IO.Path]::GetFullPath($PythonPath) }
@@ -969,35 +1019,51 @@ function Invoke-RuntimeContractEvaluator {
     if ($pythonExtension -notin @(".exe", ".com") -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
         throw "Runtime contract Python path is not an available direct executable: $python"
     }
-    $bindingScript = Join-Path -Path $RepoPath -ChildPath "src\local_runner_bridge\runtime_contract_binding.py"
-    if (-not (Test-Path -LiteralPath $bindingScript -PathType Leaf)) {
-        throw "Runtime contract binding module was not found: $bindingScript"
-    }
-    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
-    $payloadJson = $Payload | ConvertTo-Json -Depth 20 -Compress
-    $evaluation = Invoke-CapturedNativeProcess `
-        -FilePath $python `
-        -Arguments @($bindingScript, $Action) `
-        -WorkingDirectory $RepoPath `
-        -StandardInput $payloadJson `
-        -StandardInputEncoding $utf8 `
-        -StandardOutputEncoding $utf8 `
-        -StandardErrorEncoding $utf8 `
-        -TimeoutSeconds 30 `
-        -Action "runtime contract $Action evaluation"
-    if ($evaluation.ExitCode -ne 0) {
-        throw "Runtime contract $Action evaluation failed closed: $($evaluation.Stderr)"
-    }
+    $trustedSnapshot = $null
     try {
-        $binding = $evaluation.Stdout | ConvertFrom-Json
+        if ($TrustedCommittedBaseline) {
+            $trustedSnapshot = New-TrustedRuntimeContractEvaluatorSnapshot
+            $bindingScript = [string]$trustedSnapshot.EvaluatorPath
+            $workingDirectory = [string]$trustedSnapshot.Root
+        }
+        else {
+            $bindingScript = Join-Path -Path $RepoPath -ChildPath "src\local_runner_bridge\runtime_contract_binding.py"
+            $workingDirectory = $RepoPath
+        }
+        if (-not (Test-Path -LiteralPath $bindingScript -PathType Leaf)) {
+            throw "Runtime contract binding module was not found: $bindingScript"
+        }
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $payloadJson = $Payload | ConvertTo-Json -Depth 20 -Compress
+        $evaluation = Invoke-CapturedNativeProcess `
+            -FilePath $python `
+            -Arguments @($bindingScript, $Action) `
+            -WorkingDirectory $workingDirectory `
+            -StandardInput $payloadJson `
+            -StandardInputEncoding $utf8 `
+            -StandardOutputEncoding $utf8 `
+            -StandardErrorEncoding $utf8 `
+            -TimeoutSeconds 30 `
+            -Action "runtime contract $Action evaluation"
+        if ($evaluation.ExitCode -ne 0) {
+            throw "Runtime contract $Action evaluation failed closed: $($evaluation.Stderr)"
+        }
+        try {
+            $binding = $evaluation.Stdout | ConvertFrom-Json
+        }
+        catch {
+            throw "Runtime contract $Action evaluation returned malformed JSON."
+        }
+        if ($null -eq $binding -or $binding -is [array] -or $binding.status -notin @("passed", "contract_violation", "not_present")) {
+            throw "Runtime contract $Action evaluation returned an invalid binding status."
+        }
+        return $binding
     }
-    catch {
-        throw "Runtime contract $Action evaluation returned malformed JSON."
+    finally {
+        if ($null -ne $trustedSnapshot) {
+            Remove-Item -LiteralPath ([string]$trustedSnapshot.Root) -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
-    if ($null -eq $binding -or $binding -is [array] -or $binding.status -notin @("passed", "contract_violation", "not_present")) {
-        throw "Runtime contract $Action evaluation returned an invalid binding status."
-    }
-    return $binding
 }
 
 function Assert-RuntimeContractAllowsCodex {
@@ -2928,6 +2994,7 @@ function Get-CommitApprovedBoundState {
     $runtimeContractBinding = Invoke-RuntimeContractEvaluator `
         -Action "inspect" `
         -PythonPath (Resolve-PythonRuntimeCommand) `
+        -TrustedCommittedBaseline `
         -Payload ([ordered]@{
             surface_text = $IssueBody
             logical_issue = $IssueNumber
@@ -3006,6 +3073,36 @@ function Get-CommitApprovedIssueSnapshot {
         throw "gh issue view returned an invalid Issue snapshot for CommitApproved."
     }
     return $issue
+}
+
+function Write-CommitApprovalStateDiagnostic {
+    $issue = Get-CommitApprovedIssueSnapshot
+    $issueTitle = [string]$issue.title
+    $issueBody = [string]$issue.body
+    if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) {
+        throw "Issue #$IssueNumber does not explicitly identify itself as write-capable or review-bundle capable."
+    }
+
+    $boundState = Get-CommitApprovedBoundState -IssueBody $issueBody
+    $state = $boundState.ApprovalState
+    $summary = [ordered]@{
+        protocol = "lawb.runner_v1.commit_approval_state.v1"
+        issue = [string]$state.IssueNumber
+        branch = [string]$state.Branch
+        head = [string]$state.Head
+        review_id = [string]$state.ReviewId
+        diff_fingerprint = [string]$state.DiffFingerprint
+        files_fingerprint = [string]$state.FilesFingerprint
+        scope_fingerprint = [string]$state.AllowedScopeFingerprint
+        manifest_fingerprint = [string]$state.CandidateManifestFingerprint
+        evidence_profile = [string]$state.EvidenceProfile
+        isolation_guarantee = [string]$state.IsolationGuarantee
+        modified_files = @($state.ModifiedFiles)
+        approval_token = [string]$state.ApprovalToken
+        trusted_evaluator_source = "committed_head"
+    }
+    Write-Output "LRV1-COMMIT-APPROVAL-STATE protocol=lawb.runner_v1.commit_approval_state.v1"
+    Write-Output ($summary | ConvertTo-Json -Depth 8 -Compress)
 }
 
 function Invoke-CommitApprovedMode {
@@ -3123,7 +3220,7 @@ if ($ToolResolutionPreflight) {
 
 if ($IssueNumber -lt 1) {
     $issueNumberRequiredMessage = "IssueNumber is required for ReviewBundle, CommitApproved, " +
-        "and ApprovalStateDiagnostic modes."
+        "ApprovalStateDiagnostic, and CommitApprovalStateDiagnostic modes."
     throw $issueNumberRequiredMessage
 }
 
@@ -3133,6 +3230,11 @@ if ($Mode -eq "ApprovalStateDiagnostic") {
 }
 
 $Gh = Resolve-GitHubCliCommand
+
+if ($Mode -eq "CommitApprovalStateDiagnostic") {
+    Write-CommitApprovalStateDiagnostic
+    exit 0
+}
 
 if ($Mode -eq "CommitApproved") {
     try {

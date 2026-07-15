@@ -3,7 +3,7 @@
 ## 1. Document Identity
 
 - title: Workflow v1 Final Closeout
-- status: `REVIEW` — Execution Safety Boundary Rebaseline under review
+- status: `REVIEW` — Acceptance Integrity Correction candidate ready for ChatGPT review; full target-flow validation pending
 - repository: `HarryWhite-TW/local-ai-workbench`
 - candidate baseline: `43195ace509089c8ccfa6e7f14d79bb3238b4f22`
 - publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
@@ -17,11 +17,13 @@
 
 ## 2. Executive Verdict
 
-The Final Closeout is in `REVIEW — Execution Safety Boundary Rebaseline under review`. The first three mandatory Workflow v1 nodes remain historically `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
+The Final Closeout is in `REVIEW — Acceptance Integrity Correction candidate ready for ChatGPT review; full target-flow validation pending`. The first three mandatory Workflow v1 nodes remain historically `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
 
 PR #203 published this candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; it explicitly did not declare canonical Workflow v1 `DONE`. PR #204 later attempted the `REVIEW` -> `DONE` status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Both transitions remain historical evidence, but asynchronous post-merge automated P2 findings exposed integrity defects and invalidated final reviewer acceptance. Tracker #168 remains stale and unsynchronized.
 
 The current correction also rebaselines the execution-safety boundary. `allowed_files` is exact candidate-modification and acceptance scope, not an automatic claim of OS-level write prevention. Local Runner evidence is bounded and named; current Codex `workspace-write` provider isolation is `unverified`. Useful Git and candidate-manifest evidence remains, but universal write absence, transient-action prevention, full Git-internals coverage, and external-side-effect isolation are not claimed.
+
+The bounded acceptance-integrity correction candidate restores the real Runner v2 -> Runner v1 CommitApproved token handoff through one Runner v1 authoritative approval-state contract, makes CommitApproved evaluate current governance with evaluator files materialized from committed `HEAD`, and distinguishes narrow deterministic Python/pytest cache-path deltas from arbitrary ignored candidate manipulation. These are local correction results awaiting ChatGPT review and full target-flow validation, not final Workflow acceptance.
 
 ## 3. Workflow v1 Final Architecture
 
@@ -70,6 +72,8 @@ one acceptance goal
 
 Each node carries one local risk package covering scope, authority, risk delta, exclusions, verification, evidence, repair allowance, stop conditions, and applicable approvals.
 
+Workflow acceptance and closeout work also follows `docs/WORKFLOW_ACCEPTANCE_INTEGRITY_PROTOCOL.md`, including primary-goal coverage, top-down backward review, cross-call-site compatibility, asynchronous review completion, trusted-oracle independence, contradiction detection, and durable truth closure.
+
 Within an approved package, directly relevant read-only investigation, source/test/spec reads, targeted verification, evidence collection, and one explicitly bounded focused repair do not require repeated approval. A new approval is required for an actual risk or authority delta. Permanent, remote, and high-risk actions require applicable explicit approval.
 
 Governance truth and observed current truth are different. Mutable Git, GitHub, environment, authentication, dependency, and platform state must be freshly verified. A completion summary is a claim, not correctness evidence. Codex and Work are executors or researchers, ChatGPT is the final technical reviewer, and the user handles genuine decisions and risk acceptance.
@@ -112,7 +116,7 @@ Raw evidence may remain local when appropriate, but accepted conclusions and can
 | `RV2-P1-SYNC` | `DONE` | Established the Human-Governed AI Engineering Control Layer, four-node completion boundary, Roadmap rebaseline, and deferred-scope preservation. |
 | `RV2-04N` | `DONE` | Closed the historical minimum runtime-contract gap; the current rebaseline corrects its acceptance-versus-prevention semantics without erasing the bounded implementation evidence. |
 | Cross-Repository Bounded Proof | `DONE` | Reused the core governance method on one real independent repository for one bounded target-native engineering node. |
-| Workflow v1 Final Closeout | `REVIEW / INTEGRITY CORRECTION REQUIRED` | PR #203 published the candidate; PR #204 attempted the `DONE` transition; post-merge P2 findings invalidated final acceptance. Correction publication, review completion, merge, post-merge verification, tracker sync, and final residual review remain open. |
+| Workflow v1 Final Closeout | `REVIEW / CORRECTION CANDIDATE READY FOR CHATGPT REVIEW` | The local acceptance-integrity correction candidate addresses the confirmed token-compatibility, trusted-oracle, and benign-cache defects. Full target-flow validation, correction publication, asynchronous review completion, merge, post-merge verification, tracker sync, and final residual review remain open. |
 
 ## 9. Accepted Evidence Ledger
 
@@ -165,7 +169,7 @@ Accepted bounded claim: the core Workflow governance method was successfully reu
 - attempted DONE-transition canonical merge: `b20a12c07cd2de7105b94b34ed2996b06f59b84a`
 - PR #204 evidence: it merged before asynchronous automated review completed; later post-merge review produced three unresolved P2 findings concerning tracker synchronization, PR #203 review attribution, and PR #203/PR #204 evidence attribution
 - review conclusion: PR #203 remains historical publication evidence, not a clean no-finding review gate; PR #204 remains historical attempted-transition evidence, not accepted final `DONE`
-- current status: final ChatGPT `DONE` acceptance is withheld; tracker #168 is stale and unsynchronized; the final residual review remains open
+- current status: the bounded local correction candidate is ready for ChatGPT review and full target-flow validation; final ChatGPT `DONE` acceptance is withheld; tracker #168 is stale and unsynchronized; the final residual review remains open
 
 ## 10. Demonstration Paths
 
@@ -289,7 +293,7 @@ The repository-separation plan, old proof report, and earlier operational baseli
 
 ## 18. Final DONE Checkpoint
 
-Current status: Workflow v1 Final Closeout is `REVIEW — Execution Safety Boundary Rebaseline under review`; Workflow v1 is not yet finally accepted as `DONE`.
+Current status: Workflow v1 Final Closeout is `REVIEW — Acceptance Integrity Correction candidate ready for ChatGPT review; full target-flow validation pending`; Workflow v1 is not yet finally accepted as `DONE`.
 
 Historical evidence already completed:
 
@@ -297,7 +301,7 @@ Historical evidence already completed:
 2. PR #204 attempted the final status transition at canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`.
 3. Post-merge automated review findings on both PRs triggered this bounded integrity-correction node and invalidated final reviewer acceptance.
 
-Final `DONE` remains gated on rebaseline semantic acceptance, publication, asynchronous review completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 currently remains stale and unsynchronized; this task does not mutate it. The current active engineering node is `Workflow v1 Execution Safety Boundary Rebaseline`.
+Final `DONE` remains gated on correction semantic acceptance, full target-flow validation, publication, asynchronous review completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 currently remains stale and unsynchronized; this task does not mutate it. The current bounded engineering node is the Workflow v1 Acceptance Integrity Correction.
 
 The first three mandatory nodes remain `DONE`; the fourth remains `REVIEW / INTEGRITY CORRECTION REQUIRED`. No later node is activated.
 

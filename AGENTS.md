@@ -11,6 +11,10 @@ workflow task must also read and follow `src/local_runner_bridge/AGENTS.md` as
 the bridge-specific governance reference, whether the touched files are under
 `src/`, `scripts/`, `tests/`, or `docs/`.
 
+Any Workflow acceptance, closeout, final-status adjudication, or acceptance-
+integrity incident task must also read and follow
+`docs/WORKFLOW_ACCEPTANCE_INTEGRITY_PROTOCOL.md`.
+
 ## Project Positioning
 
 - The canonical showcase identity for this repo is `Local Document-to-Knowledge Workbench`, presented as a local document-to-knowledge workbench.
@@ -89,6 +93,7 @@ needs user approval.
 ## Verification
 
 - After code changes, run `pytest -q` by default when the repo provides a pytest-based test suite, unless the user gives a narrower command.
+- Acceptance must cover the primary goal top-down, not only local implementation gates. Review direct call sites for shared contract changes, distinguish asynchronous review completion from no review observed, and keep trusted acceptance oracles independent of the candidate they judge.
 - For CLI-related changes, run the documented CLI command from `README.md` or project docs. If no CLI entrypoint exists, report that explicitly in the final report.
 - For Docker-related changes, run `docker build` and `docker run` for the affected flow. If Docker assets are absent, report that the check is not applicable.
 - For documentation-only or governance-only changes, verify the written description still matches current repo behavior, commands, visible structure, and approved authority.

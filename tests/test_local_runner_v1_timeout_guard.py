@@ -1747,6 +1747,52 @@ def test_gitignore_visibility_bypass_fails_closed_with_unfiltered_untracked_delt
     assert head == payload["binding"]["pre_execution"].get("head", head)
 
 
+def test_benign_python_cache_delta_is_not_a_candidate_change(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / ".gitignore").write_text(
+        ".pytest_cache/\n__pycache__/\n*.pyc\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "ignore caches"],
+        check=True,
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-ReviewBundleGitObservation
+        New-Item -ItemType Directory -Path {str(repo / '.pytest_cache' / 'v' / 'cache')!r} -Force | Out-Null
+        Set-Content -LiteralPath {str(repo / '.pytest_cache' / 'v' / 'cache' / 'nodeids')!r} -Value "[]" -Encoding UTF8
+        New-Item -ItemType Directory -Path {str(repo / 'pkg' / '__pycache__')!r} -Force | Out-Null
+        Set-Content -LiteralPath {str(repo / 'pkg' / '__pycache__' / 'module.cpython-310.pyc')!r} -Value "cache" -Encoding ASCII
+        Set-Content -LiteralPath {str(repo / 'loose.pyc')!r} -Value "cache" -Encoding ASCII
+        $after = Get-ReviewBundleGitObservation
+        $actualFiles = @(Get-ReviewBundleEffectiveChangedFiles `
+            -Status $after.Status `
+            -UntrackedFilesBefore @($before.UntrackedFiles) `
+            -UntrackedFilesAfter @($after.UntrackedFiles) `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles))
+        [ordered]@{{
+            status = $after.Status
+            observed_untracked = @($after.UntrackedFiles)
+            actual_changed_files = $actualFiles
+        }} | ConvertTo-Json -Depth 5 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["status"] == ""
+    assert ".pytest_cache/v/cache/nodeids" in payload["observed_untracked"]
+    assert "pkg/__pycache__/module.cpython-310.pyc" in payload["observed_untracked"]
+    assert "loose.pyc" in payload["observed_untracked"]
+    assert payload["actual_changed_files"] == []
+
+
 @pytest.mark.parametrize(
     "index_option",
     ["--assume-unchanged", "--skip-worktree"],
@@ -2509,6 +2555,135 @@ def test_allowed_runtime_evaluator_change_uses_parent_judge_and_can_pass(tmp_pat
     assert payload["overall"] == "success"
 
 
+def test_trusted_runtime_evaluator_uses_committed_baseline_not_candidate(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    module_dir = repo / "src" / "local_runner_bridge"
+    module_dir.mkdir(parents=True)
+    for name in (
+        "runtime_contract_binding.py",
+        "task_packet_validator.py",
+        "task_surface_resolver.py",
+    ):
+        shutil.copy2(REPO_ROOT / "src" / "local_runner_bridge" / name, module_dir / name)
+    subprocess.run(["git", "-C", str(repo), "add", "src"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "trusted evaluator"],
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    branch = subprocess.run(
+        ["git", "-C", str(repo), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    surface = textwrap.dedent(
+        f"""
+        LOCAL-RUNNER-TASK-PACKET-V1
+        BEGIN_TASK_PACKET
+        protocol: lawb.local_runner.task_packet.v1.1
+        packet_id: trusted-oracle-test
+        logical_issue: 204
+        phase: correction
+        action_type: implementation
+        risk_level: medium
+        repository: example/repo
+        branch: {branch}
+        expected_head: {head}
+        allowed_files:
+          - seed.txt
+        forbidden_operations:
+          - push
+        approval:
+          required: true
+        payload:
+          kind: issue
+        result_target:
+          github_issue: 204
+          marker: LAWBRUNNER-RESULT
+        stop_condition: fail_closed
+        task_mode: PATCH_ONLY
+        objective: Update seed.
+        max_allowed_files: 1
+        context_scope:
+          - seed.txt
+        repair_attempt_limit: 1
+        verification_command_policy: explicit_only
+        verification_commands:
+          - pytest -q
+        scope_expansion_allowed: false
+        END_TASK_PACKET
+        """
+    ).strip()
+    payload = json.dumps(
+        {
+            "surface_text": surface,
+            "logical_issue": 204,
+            "repository": "example/repo",
+            "branch": branch,
+            "head": head,
+        }
+    )
+    invalid_payload = json.dumps(
+        {
+            "surface_text": surface,
+            "logical_issue": 999,
+            "repository": "example/repo",
+            "branch": branch,
+            "head": head,
+        }
+    )
+    malicious = (
+        "import json\n"
+        "print(json.dumps({'status':'passed','contract_present':True,"
+        "'pre_execution':{'status':'passed','reasons':[]},"
+        "'post_execution':{'status':'not_run','reasons':[]},"
+        "'allowed_files':['seed.txt'],'actual_changed_files':[],"
+        "'reasons':[],'runtime_contract':{'max_allowed_files':1}}))\n"
+    )
+    (module_dir / "runtime_contract_binding.py").write_text(malicious, encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $python = Resolve-PythonRuntimeCommand
+        $normal = Invoke-RuntimeContractEvaluator `
+            -Action "inspect" `
+            -PythonPath $python `
+            -TrustedCommittedBaseline `
+            -Payload ('{payload}' | ConvertFrom-Json)
+        $workspaceOracle = Invoke-RuntimeContractEvaluator `
+            -Action "inspect" `
+            -PythonPath $python `
+            -Payload ('{invalid_payload}' | ConvertFrom-Json)
+        $trustedOracle = Invoke-RuntimeContractEvaluator `
+            -Action "inspect" `
+            -PythonPath $python `
+            -TrustedCommittedBaseline `
+            -Payload ('{invalid_payload}' | ConvertFrom-Json)
+        [ordered]@{{
+            normal = $normal
+            workspace_oracle = $workspaceOracle
+            trusted_oracle = $trustedOracle
+        }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    result_payload = json.loads(result.stdout)
+    assert result_payload["normal"]["status"] == "passed"
+    assert result_payload["workspace_oracle"]["status"] == "passed"
+    assert result_payload["trusted_oracle"]["status"] == "contract_violation"
+    assert "logical_issue_mismatch" in result_payload["trusted_oracle"]["reasons"]
+
+
 def test_contract_violation_suppresses_approval_context(tmp_path):
     binding = json.dumps(_binding("contract_violation"))
     result = run_timeout_guard_script(
@@ -3001,6 +3176,9 @@ def test_commit_approved_rebinds_current_contract_and_snapshot_before_staging():
         < token_match
         < stage
     )
+    bound_state_start = source.index("function Get-CommitApprovedBoundState")
+    bound_state_end = source.index("function Get-CommitApprovedIssueSnapshot", bound_state_start)
+    assert "-TrustedCommittedBaseline" in source[bound_state_start:bound_state_end]
 
 
 def test_runtime_contract_integration_does_not_execute_verification_commands():
