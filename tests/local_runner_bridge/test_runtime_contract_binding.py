@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -168,6 +170,66 @@ def test_path_separator_normalization_avoids_false_mismatch():
 
     assert result["status"] == "passed"
     assert result["actual_changed_files"] == ["src/example.py"]
+
+
+def test_windows_drive_qualified_allowed_file_is_rejected():
+    result = inspect(surface(packet(allowed_files=["C:/example/file.py"])))
+
+    assert result["status"] == "contract_violation"
+    assert "invalid_allowed_file" in result["reasons"]
+
+
+def test_windows_backslash_drive_qualified_allowed_file_is_rejected():
+    result = inspect(surface(packet(allowed_files=[r"C:\example\file.py"])))
+
+    assert result["status"] == "contract_violation"
+    assert "invalid_allowed_file" in result["reasons"]
+
+
+def test_windows_drive_qualified_actual_changed_file_is_rejected():
+    result = enforce_changed_files(inspect(), ["C:/example/file.py"])
+
+    assert result["status"] == "contract_violation"
+    assert "invalid_actual_changed_file" in result["reasons"]
+
+
+def test_windows_backslash_drive_qualified_actual_changed_file_is_rejected():
+    result = enforce_changed_files(inspect(), [r"C:\example\file.py"])
+
+    assert result["status"] == "contract_violation"
+    assert "invalid_actual_changed_file" in result["reasons"]
+
+
+@pytest.mark.parametrize(
+    "invalid_path",
+    [
+        "/absolute/file.py",
+        "../outside.py",
+        "src/../outside.py",
+        "src/*.py",
+        "src/file?.py",
+        "src/",
+        ".git/config",
+        ".GIT/hooks/pre-commit",
+        "src/file.py:alternate-stream",
+    ],
+)
+def test_non_worktree_or_non_file_allowed_scope_is_rejected(invalid_path):
+    result = inspect(surface(packet(allowed_files=[invalid_path])))
+
+    assert result["status"] == "contract_violation"
+    assert "invalid_allowed_file" in result["reasons"]
+
+
+@pytest.mark.parametrize(
+    "invalid_path",
+    ["/absolute/file.py", "../outside.py", "src/*.py", "src/", ".git/config"],
+)
+def test_invalid_actual_candidate_path_is_rejected(invalid_path):
+    result = enforce_changed_files(inspect(), [invalid_path])
+
+    assert result["status"] == "contract_violation"
+    assert "invalid_actual_changed_file" in result["reasons"]
 
 
 def test_out_of_scope_changed_file_is_contract_violation():

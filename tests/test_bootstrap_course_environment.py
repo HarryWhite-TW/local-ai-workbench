@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -520,6 +521,15 @@ def test_gh_zip_checksum_mismatch_aborts_before_activation(tmp_path):
     assert not (tmp_path / "localappdata" / "LocalAIWorkbench" / "gh" / "current" / "gh.exe").exists()
 
 
+def test_bootstrap_checksum_uses_dependency_free_dotnet_sha256():
+    script = SCRIPT.read_text(encoding="utf-8")
+
+    assert "function Get-Sha256FileHash" in script
+    assert "[System.Security.Cryptography.SHA256]::Create()" in script
+    assert "$hash = Get-Sha256FileHash -Path $zipPath" in script
+    assert "$hash = (Get-FileHash" not in script
+
+
 def test_local_artifact_cache_path_is_used_without_network_for_gh(tmp_path):
     repo = make_repo(tmp_path)
     bin_dir = tmp_path / "bin"
@@ -559,12 +569,7 @@ def test_gh_checksum_exact_match_passes_checksum_gate(tmp_path):
     zip_path = cache / "gh_2.95.0_windows_amd64.zip"
     with ZipFile(zip_path, "w", ZIP_DEFLATED) as archive:
         archive.writestr("not-gh.txt", "checksum ok, archive content wrong")
-    digest = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-Command", f"(Get-FileHash -Algorithm SHA256 -LiteralPath '{zip_path}').Hash"],
-        text=True,
-        capture_output=True,
-        check=False,
-    ).stdout.strip()
+    digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
     (cache / "gh_2.95.0_checksums.txt").write_text(
         f"{digest}  gh_2.95.0_windows_amd64.zip\n",
         encoding="utf-8",

@@ -104,6 +104,22 @@ function Set-FinalStatus($Summary) {
     }
 }
 
+function Get-Sha256FileHash([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "SHA-256 input file was not found: $Path"
+    }
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+        $hashBytes = $sha256.ComputeHash($stream)
+        return (($hashBytes | ForEach-Object { $_.ToString("x2") }) -join "")
+    }
+    finally {
+        $stream.Dispose()
+        $sha256.Dispose()
+    }
+}
+
 function Resolve-LocalAppDataRoot {
     if ($env:LAWB_BOOTSTRAP_LOCALAPPDATA) {
         return $env:LAWB_BOOTSTRAP_LOCALAPPDATA
@@ -347,7 +363,7 @@ function Install-GhPortable($ExpectedExe, $InstallRoot, $CurrentDir, $Summary) {
             Invoke-WebRequest -Uri $Manifest.github_cli.checksums_url -OutFile $checksumsPath
         }
         $stage = "checksum_verify"
-        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
+        $hash = Get-Sha256FileHash -Path $zipPath
         $checksumLine = Get-Content -LiteralPath $checksumsPath -Encoding UTF8 |
             Where-Object {
                 $parts = $_ -split "\s+"

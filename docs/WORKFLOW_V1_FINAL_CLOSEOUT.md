@@ -3,7 +3,7 @@
 ## 1. Document Identity
 
 - title: Workflow v1 Final Closeout
-- status: `REVIEW` — Closeout Integrity Correction in progress
+- status: `REVIEW` — Execution Safety Boundary Rebaseline under review
 - repository: `HarryWhite-TW/local-ai-workbench`
 - candidate baseline: `43195ace509089c8ccfa6e7f14d79bb3238b4f22`
 - publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
@@ -13,13 +13,15 @@
 - attempted DONE-transition PR: #204
 - attempted DONE-transition canonical merge: `b20a12c07cd2de7105b94b34ed2996b06f59b84a`
 - scope: final Workflow v1 architecture, governance contract, evidence, demonstrations, limitations, and durable-status record
-- authority boundary: documentation only; no runtime or Git/GitHub authority expansion
+- authority boundary: bounded contract/runtime evidence correction only; no Git/GitHub or execution authority expansion
 
 ## 2. Executive Verdict
 
-The Final Closeout is in `REVIEW — Closeout Integrity Correction in progress`. The first three mandatory Workflow v1 nodes remain `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
+The Final Closeout is in `REVIEW — Execution Safety Boundary Rebaseline under review`. The first three mandatory Workflow v1 nodes remain historically `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
 
 PR #203 published this candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; it explicitly did not declare canonical Workflow v1 `DONE`. PR #204 later attempted the `REVIEW` -> `DONE` status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Both transitions remain historical evidence, but asynchronous post-merge automated P2 findings exposed integrity defects and invalidated final reviewer acceptance. Tracker #168 remains stale and unsynchronized.
+
+The current correction also rebaselines the execution-safety boundary. `allowed_files` is exact candidate-modification and acceptance scope, not an automatic claim of OS-level write prevention. Local Runner evidence is bounded and named; current Codex `workspace-write` provider isolation is `unverified`. Useful Git and candidate-manifest evidence remains, but universal write absence, transient-action prevention, full Git-internals coverage, and external-side-effect isolation are not claimed.
 
 ## 3. Workflow v1 Final Architecture
 
@@ -72,6 +74,14 @@ Within an approved package, directly relevant read-only investigation, source/te
 
 Governance truth and observed current truth are different. Mutable Git, GitHub, environment, authentication, dependency, and platform state must be freshly verified. A completion summary is a claim, not correctness evidence. Codex and Work are executors or researchers, ChatGPT is the final technical reviewer, and the user handles genuine decisions and risk acceptance.
 
+Execution assurance is three-layered:
+
+1. workflow governance defines exact candidate-acceptance scope and rejects observed out-of-scope candidates;
+2. a named evidence profile states only what bounded observations verify;
+3. exact filesystem isolation may be reported as verified only from trusted child-independent provider or OS evidence.
+
+The current local profile is `local_git_candidate_observation.v1`, and current provider isolation is `unverified`. A candidate token means only `candidate_acceptance=eligible` for the bound observed snapshot; human approval and final acceptance remain separate authority events. Missing v1.1 governance contracts cannot produce eligibility or a token, and CommitApproved must rebind current contract, full HEAD, scope, and evidence.
+
 ## 6. Execution Surfaces And Routing
 
 - **CORE:** engineering nodes, acceptance contracts, bounded scope, risk packages, authority boundaries, risk delta, current-truth verification, evidence-first review, focused-repair limits, durable truth, and final semantic adjudication.
@@ -100,7 +110,7 @@ Raw evidence may remain local when appropriate, but accepted conclusions and can
 | Node | Candidate status | Accepted outcome |
 | --- | --- | --- |
 | `RV2-P1-SYNC` | `DONE` | Established the Human-Governed AI Engineering Control Layer, four-node completion boundary, Roadmap rebaseline, and deferred-scope preservation. |
-| `RV2-04N` | `DONE` | Closed the minimum runtime-contract gap with fail-closed pre/post-execution binding and machine-readable evidence. |
+| `RV2-04N` | `DONE` | Closed the historical minimum runtime-contract gap; the current rebaseline corrects its acceptance-versus-prevention semantics without erasing the bounded implementation evidence. |
 | Cross-Repository Bounded Proof | `DONE` | Reused the core governance method on one real independent repository for one bounded target-native engineering node. |
 | Workflow v1 Final Closeout | `REVIEW / INTEGRITY CORRECTION REQUIRED` | PR #203 published the candidate; PR #204 attempted the `DONE` transition; post-merge P2 findings invalidated final acceptance. Correction publication, review completion, merge, post-merge verification, tracker sync, and final residual review remain open. |
 
@@ -122,7 +132,7 @@ Raw evidence may remain local when appropriate, but accepted conclusions and can
 - canonical durable merge: `ef32480489c186c389ab691066e547c47c491c59`
 - accepted recorded verification: 36 targeted tests, 52 Runner-integration tests, and 203 final related tests passed; 0 failed; 0 skipped
 - focused repair: one used; budget exhausted; no Repair-2
-- accepted semantics: normalized v1.1 runtime contract; fail-closed invalid present packets; logical-Issue/repository/branch/full-HEAD pre-execution binding; allowed-files and maximum-file-count enforcement; machine-readable evidence; Codex exit `0` cannot override a contract violation; `verification_commands` remain metadata only
+- accepted bounded semantics: normalized v1.1 runtime contract; fail-closed invalid present packets; logical-Issue/repository/branch/full-HEAD pre-execution binding; rejection of observed out-of-scope or over-limit candidates; machine-readable evidence; Codex exit `0` cannot override a contract violation; `verification_commands` remain metadata only
 
 These test counts are accepted durable evidence, not a fresh test execution performed during this closeout.
 
@@ -279,7 +289,7 @@ The repository-separation plan, old proof report, and earlier operational baseli
 
 ## 18. Final DONE Checkpoint
 
-Current status: Workflow v1 Final Closeout is `REVIEW — Closeout Integrity Correction in progress`; Workflow v1 is not yet finally accepted as `DONE`.
+Current status: Workflow v1 Final Closeout is `REVIEW — Execution Safety Boundary Rebaseline under review`; Workflow v1 is not yet finally accepted as `DONE`.
 
 Historical evidence already completed:
 
@@ -287,7 +297,7 @@ Historical evidence already completed:
 2. PR #204 attempted the final status transition at canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`.
 3. Post-merge automated review findings on both PRs triggered this bounded integrity-correction node and invalidated final reviewer acceptance.
 
-Final `DONE` remains gated on correction semantic acceptance, correction publication, asynchronous review completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 currently remains stale and unsynchronized; this task does not mutate it. The current active engineering node is `Workflow v1 Closeout Integrity Correction`.
+Final `DONE` remains gated on rebaseline semantic acceptance, publication, asynchronous review completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 currently remains stale and unsynchronized; this task does not mutate it. The current active engineering node is `Workflow v1 Execution Safety Boundary Rebaseline`.
 
 The first three mandatory nodes remain `DONE`; the fourth remains `REVIEW / INTEGRITY CORRECTION REQUIRED`. No later node is activated.
 

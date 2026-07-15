@@ -339,34 +339,25 @@ The runner must not pull, merge, rebase, reset, restore, clean, or amend to fix 
 
 ## Allowed files field
 
-allowed_files lists exact file paths the runner may write.
+`allowed_files` lists the exact normalized repository-worktree paths that are legitimate candidate modifications and eligible for engineering-node review, candidate-acceptance eligibility, and final acceptance.
+
+This is a governance and acceptance scope. It does not mean the local Runner independently proves that the child process was technically incapable of writing any other filesystem path.
 
 For read-only actions, allowed_files may be empty.
 
 For write actions, allowed_files must be non-empty.
 
-The runner must reject wildcard paths in v1.
+The runner must reject absolute paths, drive-qualified paths, traversal, wildcards, directory-only entries, `.git` administration paths, alternate-stream/non-worktree paths, and other entries that do not identify a regular repository-worktree candidate file.
 
 The runner must reject directory-only write permissions in v1.
 
-The runner must reject writes outside allowed_files.
+Every accepted candidate path must be inside `allowed_files`. An observed changed path outside `allowed_files` must block candidate eligibility and acceptance. Natural-language instructions cannot expand this scope.
 
 For docs-only apply candidate, exactly one target file should be allowed unless a task explicitly permits multiple docs files.
 
-## Forbidden files field
+## Paths outside the allowlist
 
-forbidden_files lists paths that must not be changed.
-
-The runner must fail if any forbidden file changes.
-
-Recommended forbidden files for docs/schema phases:
-
-* scripts/
-* tests/
-* README.md
-* AGENTS.md
-
-The runner should treat forbidden files as stronger than allowed files if there is a conflict.
+Task Packet v1.1 does not define a separate machine-readable `forbidden_files` field. The exact allowlist is sufficient: every repository candidate path outside `allowed_files` is ineligible. A future denylist would require an explicit schema and runtime change rather than documentation-only implication.
 
 ## Forbidden operations field
 
@@ -399,11 +390,27 @@ Common forbidden operations:
 
 For high-risk phases, only the explicitly approved operation should be removed from forbidden_operations.
 
+`forbidden_operations` records governance authority. A trusted parent may report commands it did not invoke, and named evidence may detect selected outcomes, but the field alone does not prove that an untrusted child was technically prevented from every forbidden or transient action.
+
 Example:
 
 For local_commit, commit may be allowed, but push must remain forbidden.
 
 For push_once, push may be allowed, but commit must remain forbidden.
+
+## Execution assurance and candidate tokens
+
+Runner result evidence must distinguish:
+
+* `detected`: a named evidence source reported a concrete condition;
+* `verified`: a predicate was established within a named bounded evidence profile;
+* `inferred`: a conclusion was derived but not directly established;
+* `unverified`: evidence was absent, failed, or was insufficient;
+* `not guaranteed`: the architecture expressly provides no such guarantee.
+
+For the current local Runner, `observable_evidence=verified` means verified only within `local_git_candidate_observation.v1`. Current Codex `workspace-write` execution reports `isolation_guarantee=unverified`; it does not prove universal filesystem, network, process, GitHub, or external-side-effect isolation.
+
+A candidate-review snapshot token may be emitted only when a valid v1.1 governance contract is present, governance passes, observable evidence is verified under a named profile, and all candidate gates pass. The token binds the observed candidate snapshot; it is not human approval, final acceptance, new authority, or proof of universal write prevention. Missing-contract operation is observation-only and cannot produce candidate eligibility or a token. CommitApproved must rebind current contract, scope, full HEAD, and candidate evidence before staging.
 
 ## Approval object
 
@@ -483,17 +490,18 @@ Examples:
 * head_matches
 * changed_files_exact
 * diff_check_passed
-* no_staged_changes
-* no_commit_created
-* no_push_performed
-* no_pr_created
-* no_issue_closed
-* no_scripts_created
-* no_tests_created
+* final_index_clean
+* final_head_matches_initial
+* observed_candidate_paths_within_allowed_files
+* trusted_parent_push_invoked
+* trusted_parent_pr_create_invoked
+* trusted_parent_issue_close_invoked
 
 The runner must include check results in the result packet.
 
 If a required check cannot be evaluated, the runner must fail closed.
+
+Validation names and results must preserve their evidence boundary. `final_index_clean=true` means only that the final observed staged area is empty; it does not prove staging never occurred. `final_head_matches_initial=true` means only that the final observed HEAD matches the initial HEAD; it does not prove no transient commit occurred. A `trusted_parent_*_invoked=false` fact describes only the trusted parent action path. It does not prove that child, hook, transient, external, network, process, or GitHub actions were universally absent or impossible. Candidate file-type restrictions must be evaluated through the exact `allowed_files` scope and the named bounded evidence profile rather than expressed as universal no-write claims.
 
 ## Result target object
 

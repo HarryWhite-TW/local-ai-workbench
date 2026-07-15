@@ -492,7 +492,60 @@ def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
     assert summary["request_id"] == "req-rb-83"
     assert summary["result"] == "success"
     assert summary["validations"]["git_status_clean"]["status"] == "passed"
-    assert summary["safety"]["no_commit"] is True
+    assert summary["validations"]["final_head_matches_initial"]["status"] == "passed"
+    assert summary["validations"]["final_index_clean"]["status"] == "passed"
+    assert summary["observations"]["final_index_clean"] is True
+    assert summary["observations"]["final_head_matches_initial"] is True
+    assert summary["trusted_parent_actions"]["push_invoked"] is False
+    assert summary["child_action_non_claim"] == "transient_or_external_child_actions_not_guaranteed_absent"
+
+
+def test_dispatcher_reports_changed_head_as_bounded_observation_failure(tmp_path):
+    result = run_case(
+        tmp_path,
+        f"""
+        function Invoke-WriteCommand {{
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            $script:RunnerCalls += 1
+            $script:RunnerFilePath = $FilePath
+            $script:RunnerArguments = @($Arguments)
+            $script:Head = {('2' * 40)!r}
+            return [pscustomobject]@{{ ExitCode = 0; Stdout = "runner ok"; Stderr = "" }}
+        }}
+        $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-head-change")))
+        """,
+    )
+
+    assert_success(result)
+    summary = extract_summary(result.stdout)
+    assert summary["result"] == "failure"
+    assert summary["head"] == "2" * 40
+    assert summary["observations"]["final_head_matches_initial"] is False
+    assert summary["validations"]["final_head_matches_initial"]["status"] == "failed"
+
+
+def test_dispatcher_reports_final_staged_index_as_bounded_observation_failure(tmp_path):
+    result = run_case(
+        tmp_path,
+        """
+        function Invoke-WriteCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            $script:RunnerCalls += 1
+            $script:RunnerFilePath = $FilePath
+            $script:RunnerArguments = @($Arguments)
+            $script:GitStatus = "M  staged.txt"
+            return [pscustomobject]@{ ExitCode = 0; Stdout = "runner ok"; Stderr = "" }
+        }
+        $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-stage-change")))
+        """,
+    )
+
+    assert_success(result)
+    summary = extract_summary(result.stdout)
+    assert summary["result"] == "failure"
+    assert summary["observations"]["final_index_clean"] is False
+    assert summary["observations"]["final_head_matches_initial"] is True
+    assert summary["validations"]["final_index_clean"]["status"] == "failed"
 
 
 def test_run_reviewbundle_real_stub_runner_binds_named_parameters(tmp_path):
@@ -594,9 +647,9 @@ def test_run_reviewbundle_runner_failure_posts_dispatcher_failure_result(tmp_pat
     assert summary["validations"]["git_status_clean"]["status"] == "passed"
     assert summary["validations"]["runner_v1"]["status"] == "failed"
     assert "exit code: 1" in summary["validations"]["runner_v1"]["summary"]
-    assert summary["safety"]["no_commit"] is True
-    assert summary["safety"]["no_push"] is True
-    assert summary["safety"]["no_issue_close"] is True
+    assert summary["observations"]["final_head_matches_initial"] is True
+    assert summary["trusted_parent_actions"]["push_invoked"] is False
+    assert summary["trusted_parent_actions"]["issue_close_invoked"] is False
 
     posted_body = extract_posted_body(result.stdout)
     posted_summary = extract_summary_after(posted_body, MARKER)
@@ -663,7 +716,9 @@ def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_pat
             -Result "success" `
             -Branch "master" `
             -Head "1111111111111111111111111111111111111111" `
-            -SelectedIssue 83
+            -SelectedIssue 83 `
+            -NoStage $true `
+            -NoCommit $true
         $body = "$RunnerResultMarker`n$summaryJson"
         $null = Publish-RunnerResultComment -IssueNumber 83 -Body $body
 
@@ -1334,7 +1389,7 @@ def test_dirty_status_still_succeeds_as_read_only_warning(tmp_path):
     assert "CASE_RESULT=success" in result.stdout
     summary = extract_summary(result.stdout)
     assert summary["validations"]["git_status_clean"]["status"] == "warning"
-    assert summary["safety"]["no_commit"] is True
+    assert summary["observations"]["final_head_matches_initial"] is True
 
 
 def test_post_result_comment_failure_is_reported_after_stdout_summary(tmp_path):
@@ -1391,7 +1446,7 @@ def test_dry_run_single_issue_reports_would_happen_without_action_or_post(tmp_pa
     assert summary["decisions"][0]["action"] == "maybe-status-check"
     assert summary["decisions"][0]["request_id"] == "req-83"
     assert summary["decisions"][0]["would_execute_dispatch_action"] is False
-    assert summary["safety"]["no_result_comment"] is True
+    assert summary["dry_run_facts"]["result_comment_invoked"] is False
 
 
 def test_dry_run_accepts_run_reviewbundle_without_delegating_to_runner(tmp_path):
@@ -1579,7 +1634,7 @@ def test_bounded_poll_single_issue_executes_maybe_status_check_and_posts_when_re
     assert summary["action"] == "maybe-status-check"
     assert summary["request_id"] == "req-83"
     assert summary["poll_mode"] == "BoundedPoll"
-    assert summary["safety"]["no_push"] is True
+    assert summary["trusted_parent_actions"]["push_invoked"] is False
 
     posted_body = extract_posted_body(result.stdout)
     assert posted_body.startswith(MARKER + "\n")

@@ -3,7 +3,7 @@
 ## Document Identity
 
 - title: Bridge Roadmap v2 Execution Specification
-- version: v1.0
+- version: v1.1
 - status: Active Execution Baseline
 - owner: 駿弘
 - repository: `HarryWhite-TW/local-ai-workbench`
@@ -11,6 +11,8 @@
 - activation_pr: `#167`
 - activation_commit: `9baf606197bbdf886b23782d1c67f2a872e76e09`
 - scope: Execution governance for the ChatGPT-centered local Codex bridge roadmap after B4-D preparation
+
+Version v1.1 records the approved `RV2-P1-SYNC` Workflow v1 completion-boundary rebaseline as the current sequencing truth while preserving the original v1.0 activation and historical node order. It does not broaden authority or activate deferred scope.
 
 ## Governing Documents And Precedence
 
@@ -397,7 +399,7 @@ RV2-03 completion did not automatically authorize RV2-04. The later user-approve
 
 Objective:
 
-Convert Task Packet v1.1 limits from validator-only discipline into a traceable execution contract enforced before and after Runner/Codex execution.
+Convert Task Packet v1.1 limits from validator-only discipline into a traceable governance contract bound before execution and evaluated against named bounded evidence after Runner/Codex execution.
 
 Target flow:
 
@@ -405,7 +407,7 @@ Target flow:
 Task Packet v1.1
 -> validated execution manifest
 -> bounded Runner/Codex input
--> post-execution diff and verification validation
+-> post-execution bounded candidate observation and verification validation
 -> structured result
 ```
 
@@ -440,13 +442,15 @@ Pre-execution enforcement:
 - valid explicit verification commands;
 - no unauthorized scope expansion.
 
-Post-execution enforcement:
+Post-execution governance and evidence adjudication:
 
-- actual changed files remain inside the allowlist;
+- every observed candidate path eligible for acceptance remains inside the allowlist;
 - changed-file count remains within the limit;
-- no forbidden path is touched;
+- any observed out-of-scope candidate path blocks candidate eligibility;
 - verification outcome is structured;
 - a claimed Codex success does not override an execution-contract violation.
+
+These checks govern candidate acceptance and report what the named evidence profile establishes. They do not independently prove that an untrusted child was technically incapable of an out-of-scope, transient, absolute, sibling, external, or otherwise unobserved write.
 
 This node must preserve existing Dispatcher and Runner authority boundaries and must not add commit, push, merge, retry, repair-loop, or approval-chaining authority.
 
@@ -456,9 +460,13 @@ This node must preserve existing Dispatcher and Runner authority boundaries and 
 
 Accepted evidence: targeted validator/runtime-binding tests `36 passed`; Runner integration `52 passed`; final related suite `203 passed, 0 failed, 0 skipped`. One focused repair was used, its budget is exhausted, and Repair-2 was not used.
 
-The accepted closure exposes normalized Task Packet v1.1 runtime-contract data; fails closed for malformed or invalid present packets; binds logical Issue, repository, branch, and full HEAD before execution; enforces `allowed_files` and `max_allowed_files` after execution; emits machine-readable runtime binding evidence; and ensures Codex exit 0 or a DONE summary cannot override a runtime contract violation. `verification_commands` remain metadata only and are not automatically executed. No new execution authority was introduced.
+The accepted closure exposed normalized Task Packet v1.1 runtime-contract data; failed closed for malformed or invalid present packets; bound logical Issue, repository, branch, and full HEAD before execution; rejected observed candidate paths outside `allowed_files` and candidates beyond `max_allowed_files`; emitted machine-readable runtime binding evidence; and ensured Codex exit 0 or a DONE summary could not override a runtime contract violation. `verification_commands` remained metadata only and were not automatically executed. No new execution authority was introduced.
 
-Non-claims remain explicit: RV2-04N did not perform a real live Bridge execution, prove cross-repository portability, or perform a Native-vs-Bridge benchmark.
+Non-claims remain explicit: RV2-04N did not prove universal filesystem-write prevention, universal no-write detection, full Git-internals coverage, provider isolation, real live Bridge execution, cross-repository portability, or a Native-vs-Bridge benchmark.
+
+#### Workflow v1 Execution Safety Boundary Rebaseline
+
+The current bounded correction preserves exact `allowed_files` candidate-acceptance governance and useful local Git evidence while separating it from provider-backed isolation. Machine-readable results distinguish governance scope, bounded observable evidence, and provider isolation. Current local Codex `workspace-write` isolation remains `unverified`; no provider evidence, custom sandbox, ACL platform, whole-filesystem hashing, or exhaustive Git-internals engine is added. Candidate tokens are snapshot bindings only and require a valid v1.1 contract plus verified named evidence; CommitApproved revalidates current scope and evidence. This implementation remains subject to final ChatGPT review and does not make Workflow v1 `DONE`.
 
 ### RV2-05 — Minimal `lawb` CLI Facade
 
@@ -711,7 +719,7 @@ It must emit:
 ```text
 ROADMAP-V2-READ-AUDIT protocol=lawb.bridge_roadmap_v2_read.v1
 spec_path=docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md
-spec_version=v1.0
+spec_version=v1.1
 spec_read=<true|false>
 tracker_issue=<number|not_created>
 active_node=<RV2-XX|none>
