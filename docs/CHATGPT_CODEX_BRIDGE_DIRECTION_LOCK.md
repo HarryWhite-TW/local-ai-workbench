@@ -119,7 +119,7 @@ After Roadmap v2 adoption, Roadmap v2 tracker and node Issues must also include:
 ```text
 Roadmap v2 Binding
 spec_path=docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md
-spec_version=v1.0
+spec_version=v1.1
 node_id=<RV2-XX|RV2-P1>
 tracker_issue=<number>
 must_emit_roadmap_v2_read_audit=true
@@ -222,7 +222,9 @@ The bridge is intended to become reusable cross-project development infrastructu
 
 This direction does not authorize a new repository, file movement, package publishing, import rewiring, runtime-boundary changes, startup behavior, tray UX, service behavior, MCP, automatic commit/push/close/merge, trusted-actor expansion, allowlist expansion, approval chaining, or automatic retry. A later separately approved migration implementation node is required. The bounded design is recorded in `docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md`.
 
-The default ordered direction is:
+The following list is the historical Roadmap v2 default order adopted before the approved `RV2-P1-SYNC` Workflow v1 completion-boundary rebaseline. It remains durable sequencing history, but it is **not** the current Workflow v1 mandatory completion queue. Current Workflow v1 completion sequencing is defined by the active Roadmap v2 v1.1 rebaseline and its four-node completion boundary. This clarification preserves Direction Lock v1.2 authority and does not activate any historical or deferred node.
+
+The historical default ordered direction was:
 
 1. `RV2-00`: specification adoption and execution baseline (`DONE`).
 2. `RV2-01`: one explicitly approved B4-D supervised live smoke through the existing path (`DONE`).
@@ -236,7 +238,7 @@ The default ordered direction is:
 10. `RV2-09`: later Phase C ChatGPT App / MCP feasibility and bounded integration.
 11. `RV2-P1`: parallel product-mainline checkpoint after operational or runtime-binding milestones.
 
-This order remains bounded and auditable. It must not implement automatic commit, automatic push, automatic close, approval chaining, broad issue scanning, hidden unattended services, or a high-risk Release Bundle.
+This historical order remains bounded evidence rather than standing execution authority. Neither it nor the current rebaseline may be interpreted to authorize automatic commit, automatic push, automatic close, approval chaining, broad issue scanning, hidden unattended services, or a high-risk Release Bundle.
 
 ## Current Level And Terminology
 

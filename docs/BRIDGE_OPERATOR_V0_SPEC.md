@@ -315,7 +315,7 @@ Do not assume persistent:
 
 Before live B3 operation after a reset, environment recovery, authentication, executable resolution, repository identity, branch, HEAD, clean-tree state, and operator-state continuity must be revalidated.
 
-Loss or absence of local operator state must never be treated as evidence that a request has not run. Before delegation, the operator must reconcile trusted durable completion evidence or fail closed when prior execution cannot be ruled out. Cross-reset duplicate suppression remains unproven until it is separately implemented, tested, and accepted.
+Loss or absence of local operator state must never be treated as evidence that a request has not run. Before delegation, the operator must reconcile trusted durable completion evidence or fail closed when prior execution cannot be ruled out. The bounded RV2-03 acceptance demonstrated and accepted cross-reset/local-state-loss duplicate suppression for the designated single-host Bridge Operator v0 contract: trusted durable `COMPLETED` evidence reconstructed `CONSUMED` without Dispatcher, Runner, or Codex rerun, and the later local duplicate gate prevented another execution. This does not prove simultaneous cross-host execution safety, universal portability, or universal Bridge portability.
 
 Manual `PollOnce` remains a recovery path and requires its existing separate authority.
 

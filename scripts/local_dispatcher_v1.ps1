@@ -371,7 +371,28 @@ function Get-CurrentFullHead {
 }
 
 function Get-GitStatusShort {
-    return Get-GitOutput -GitArgs @("status", "--short") -Action "git status --short"
+    return Get-GitOutput -GitArgs @("status", "--short", "--untracked-files=all") -Action "git status --short --untracked-files=all"
+}
+
+function Test-GitStatusHasStagedChanges {
+    param(
+        [AllowEmptyString()]
+        [string]$Status
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Status)) {
+        return $false
+    }
+    foreach ($line in @($Status -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        if ($line.Length -lt 2) {
+            throw "Unexpected git status line: $line"
+        }
+        $indexStatus = $line.Substring(0, 1)
+        if ($indexStatus -notin @(" ", "?", "!")) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Resolve-CurrentPowerShellHostPath {
@@ -436,8 +457,14 @@ function New-RunnerResultSummaryJson {
         [string]$Head,
         [Parameter(Mandatory = $true)]
         [int]$SelectedIssue,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoStage")]
+        [bool]$FinalIndexClean,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoCommit")]
+        [bool]$FinalHeadMatchesInitial,
         [hashtable]$ValidationOverrides = @{},
-        [hashtable]$SafetyOverrides = @{},
+        [hashtable]$ParentActionOverrides = @{},
         [string]$RequestId = $null,
         [string]$PollMode = $null,
         [string]$NextRecommendedAction = "chatgpt_review"
@@ -453,18 +480,18 @@ function New-RunnerResultSummaryJson {
         $validations[$key] = $ValidationOverrides[$key]
     }
 
-    $safety = [ordered]@{
-        no_stage = $true
-        no_commit = $true
-        no_push = $true
-        no_issue_close = $true
-        no_label = $true
-        no_pr = $true
-        no_merge = $true
-        no_approval_chaining = $true
+    $parentActions = [ordered]@{
+        stage_invoked = $false
+        commit_invoked = $false
+        push_invoked = $false
+        issue_close_invoked = $false
+        label_edit_invoked = $false
+        pr_create_invoked = $false
+        merge_invoked = $false
+        approval_token_consumed = $false
     }
-    foreach ($key in $SafetyOverrides.Keys) {
-        $safety[$key] = [bool]$SafetyOverrides[$key]
+    foreach ($key in $ParentActionOverrides.Keys) {
+        $parentActions[$key] = [bool]$ParentActionOverrides[$key]
     }
 
     $summary = [ordered]@{
@@ -482,8 +509,14 @@ function New-RunnerResultSummaryJson {
         diff_fingerprint = $null
         files_fingerprint = $null
         changed_files = @()
+        result_scope = "dispatcher_action_and_final_git_observations"
         validations = $validations
-        safety = $safety
+        observations = [ordered]@{
+            final_index_clean = $FinalIndexClean
+            final_head_matches_initial = $FinalHeadMatchesInitial
+        }
+        trusted_parent_actions = $parentActions
+        child_action_non_claim = "transient_or_external_child_actions_not_guaranteed_absent"
         next_recommended_action = $NextRecommendedAction
     }
 
@@ -527,7 +560,13 @@ function New-DryRunSummaryJson {
         [object[]]$Decisions,
         [Parameter(Mandatory = $true)]
         [ValidateSet("success", "failure")]
-        [string]$Result
+        [string]$Result,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoStage")]
+        [bool]$FinalIndexClean,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoCommit")]
+        [bool]$FinalHeadMatchesInitial
     )
 
     $summary = [ordered]@{
@@ -538,19 +577,25 @@ function New-DryRunSummaryJson {
         max_issues_per_run = $MaxDryRunIssuesPerRun
         issues = @($Issues)
         decisions = @($Decisions)
-        safety = [ordered]@{
+        dry_run_facts = [ordered]@{
             dry_run_only = $true
-            no_dispatch_action_execution = $true
-            no_claim_comment = $true
-            no_result_comment = $true
-            no_stage = $true
-            no_commit = $true
-            no_push = $true
-            no_issue_close = $true
-            no_label = $true
-            no_pr = $true
-            no_merge = $true
-            no_approval_chaining = $true
+            dispatch_action_invoked = $false
+            claim_comment_invoked = $false
+            result_comment_invoked = $false
+        }
+        observations = [ordered]@{
+            final_index_clean = $FinalIndexClean
+            final_head_matches_initial = $FinalHeadMatchesInitial
+        }
+        trusted_parent_actions = [ordered]@{
+            stage_invoked = $false
+            commit_invoked = $false
+            push_invoked = $false
+            issue_close_invoked = $false
+            label_edit_invoked = $false
+            pr_create_invoked = $false
+            merge_invoked = $false
+            approval_token_consumed = $false
         }
         next_recommended_action = "human_review"
     }
@@ -573,8 +618,14 @@ function Write-RunnerResultSummary {
         [string]$Head,
         [Parameter(Mandatory = $true)]
         [int]$SelectedIssue,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoStage")]
+        [bool]$FinalIndexClean,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoCommit")]
+        [bool]$FinalHeadMatchesInitial,
         [hashtable]$ValidationOverrides = @{},
-        [hashtable]$SafetyOverrides = @{},
+        [hashtable]$ParentActionOverrides = @{},
         [string]$RequestId = $null,
         [string]$PollMode = $null,
         [string]$NextRecommendedAction = "chatgpt_review"
@@ -588,8 +639,10 @@ function Write-RunnerResultSummary {
         -Branch $Branch `
         -Head $Head `
         -SelectedIssue $SelectedIssue `
+        -FinalIndexClean $FinalIndexClean `
+        -FinalHeadMatchesInitial $FinalHeadMatchesInitial `
         -ValidationOverrides $ValidationOverrides `
-        -SafetyOverrides $SafetyOverrides `
+        -ParentActionOverrides $ParentActionOverrides `
         -RequestId $RequestId `
         -PollMode $PollMode `
         -NextRecommendedAction $NextRecommendedAction)
@@ -1428,6 +1481,8 @@ function Invoke-AcceptedDispatchAction {
     Write-Host "Safety boundary: $SafetyBoundary"
     Write-Host ""
 
+    $headBeforeAction = Get-CurrentFullHead
+
     if ([string]::Equals($action, "maybe-status-check", [System.StringComparison]::Ordinal)) {
         $actionResult = Invoke-MaybeStatusCheck -Selection $selection
     }
@@ -1452,6 +1507,12 @@ function Invoke-AcceptedDispatchAction {
         Write-Host $actionResult.Status
     }
 
+    $headAfterAction = Get-CurrentFullHead
+    $finalObservedStatus = Get-GitStatusShort
+    $finalHeadMatchesInitial = [string]::Equals($headBeforeAction, $headAfterAction, [System.StringComparison]::OrdinalIgnoreCase)
+    $finalIndexClean = -not (Test-GitStatusHasStagedChanges -Status $finalObservedStatus)
+    $summaryResult = if ([string]::Equals($actionResult.Result, "success", [System.StringComparison]::Ordinal) -and $finalHeadMatchesInitial -and $finalIndexClean) { "success" } else { "failure" }
+
     Write-FinalGitStatus
 
     $gitStatusValidationSummary = if ([string]::Equals($action, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
@@ -1464,6 +1525,8 @@ function Invoke-AcceptedDispatchAction {
     $validationOverrides = @{
         dispatch_marker = (New-RunnerValidationResult -Status "passed" -Summary "Exactly one current CHATGPT-DISPATCH marker matched issue, repo, branch, HEAD, expiry, and allowed action.")
         git_status_clean = (New-RunnerValidationResult -Status $(if ($actionResult.StatusSummary -eq "clean") { "passed" } else { "warning" }) -Summary $gitStatusValidationSummary)
+        final_head_matches_initial = (New-RunnerValidationResult -Status $(if ($finalHeadMatchesInitial) { "passed" } else { "failed" }) -Summary $(if ($finalHeadMatchesInitial) { "Final full HEAD matches the initial dispatcher observation." } else { "Final full HEAD differs from the initial dispatcher observation." }))
+        final_index_clean = (New-RunnerValidationResult -Status $(if ($finalIndexClean) { "passed" } else { "failed" }) -Summary $(if ($finalIndexClean) { "The final staged area was observed clean." } else { "The final staged area contains changes." }))
     }
 
     if ([string]::Equals($action, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
@@ -1475,10 +1538,12 @@ function Invoke-AcceptedDispatchAction {
     $summaryJson = New-RunnerResultSummaryJson `
         -Issue $Issue `
         -Action $action `
-        -Result $actionResult.Result `
+        -Result $summaryResult `
         -Branch $selection.Branch `
-        -Head $selection.Head `
+        -Head $headAfterAction `
         -SelectedIssue $Issue `
+        -FinalIndexClean $finalIndexClean `
+        -FinalHeadMatchesInitial $finalHeadMatchesInitial `
         -ValidationOverrides $validationOverrides `
         -RequestId $requestId `
         -PollMode $ModeName
@@ -1554,6 +1619,7 @@ function Invoke-DryRunBoundedPoll {
     }
 
     Assert-RepoRoot
+    $headBeforeDryRun = Get-CurrentFullHead
     $scope = @(Get-DryRunIssueScope)
     $decisions = @()
 
@@ -1598,12 +1664,19 @@ function Invoke-DryRunBoundedPoll {
 
     $rejectedCount = @($decisions | Where-Object { $_["decision"] -eq "rejected" }).Count
     $result = if ($rejectedCount -eq 0) { "success" } else { "failure" }
+    $headAfterDryRun = Get-CurrentFullHead
+    $statusAfterDryRun = Get-GitStatusShort
+    $finalHeadMatchesInitial = [string]::Equals($headBeforeDryRun, $headAfterDryRun, [System.StringComparison]::OrdinalIgnoreCase)
+    $finalIndexClean = -not (Test-GitStatusHasStagedChanges -Status $statusAfterDryRun)
+    if (-not $finalHeadMatchesInitial -or -not $finalIndexClean) {
+        $result = "failure"
+    }
 
     Write-Host $DryRunMarker
-    Write-Host (New-DryRunSummaryJson -Issues $scope -Decisions $decisions -Result $result)
+    Write-Host (New-DryRunSummaryJson -Issues $scope -Decisions $decisions -Result $result -FinalIndexClean $finalIndexClean -FinalHeadMatchesInitial $finalHeadMatchesInitial)
 
-    if ($rejectedCount -gt 0) {
-        throw "DryRunBoundedPoll failed closed for $rejectedCount issue(s)."
+    if ($rejectedCount -gt 0 -or -not $finalHeadMatchesInitial -or -not $finalIndexClean) {
+        throw "DryRunBoundedPoll failed closed for $rejectedCount issue(s); final_head_matches_initial=$finalHeadMatchesInitial final_index_clean=$finalIndexClean."
     }
 }
 

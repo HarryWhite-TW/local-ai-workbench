@@ -42,6 +42,8 @@ $ReviewBundleCodexTimeoutSeconds = 1200
 $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
+$CandidateEvidenceProfile = "local_git_candidate_observation.v1"
+$LocalIsolationProvider = "codex_cli_workspace_write"
 $script:CommitApprovedLocalCommitCreated = "unknown"
 $script:CommitApprovedCommitSha = ""
 
@@ -144,6 +146,27 @@ function Get-Sha256Text {
     }
 }
 
+function Get-Sha256File {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "SHA-256 input file was not found: $Path"
+    }
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    try {
+        $hashBytes = $sha256.ComputeHash($stream)
+        return (($hashBytes | ForEach-Object { $_.ToString("x2") }) -join "")
+    }
+    finally {
+        $stream.Dispose()
+        $sha256.Dispose()
+    }
+}
+
 function Get-TextLineCount {
     param(
         [AllowNull()]
@@ -176,9 +199,32 @@ function Get-TextPreview {
     return $normalized.Substring(0, $MaxChars) + "`n[truncated]"
 }
 
+function Invoke-BoundedGitObservation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$GitArgs
+    )
+
+    return Invoke-Captured {
+        git -C $RepoPath `
+            "--work-tree=$RepoPath" `
+            -c "color.status=false" `
+            -c "core.fsmonitor=false" `
+            -c "core.ignoreStat=false" `
+            -c "core.untrackedCache=false" `
+            -c "status.relativePaths=false" `
+            @GitArgs
+    }
+}
+
 function Get-GitStatusShort {
-    $result = Invoke-Git -GitArgs @("status", "--short")
-    Require-Success -Result $result -Action "git status --short"
+    $result = Invoke-BoundedGitObservation -GitArgs @(
+        "status",
+        "--short",
+        "--untracked-files=all",
+        "--ignore-submodules=none"
+    )
+    Require-Success -Result $result -Action "bounded git status --short --untracked-files=all --ignore-submodules=none"
     return $result.Stdout.TrimEnd()
 }
 
@@ -218,6 +264,27 @@ function Get-ModifiedFilesFromStatus {
     return (($paths | Sort-Object -Unique) -join [Environment]::NewLine)
 }
 
+function Test-GitStatusHasStagedChanges {
+    param(
+        [AllowEmptyString()]
+        [string]$Status
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Status)) {
+        return $false
+    }
+    foreach ($line in @($Status -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        if ($line.Length -lt 2) {
+            throw "Unexpected git status line: $line"
+        }
+        $indexStatus = $line.Substring(0, 1)
+        if ($indexStatus -notin @(" ", "?", "!")) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Convert-FileTextToArray {
     param(
         [AllowEmptyString()]
@@ -233,6 +300,226 @@ function Convert-FileTextToArray {
     } | ForEach-Object { $_.Trim() } | Sort-Object -Unique)
 }
 
+function Get-GitUntrackedFilesWithoutExcludes {
+    $result = Invoke-BoundedGitObservation -GitArgs @(
+        "ls-files",
+        "--others",
+        "--full-name",
+        "--"
+    )
+    Require-Success -Result $result -Action "bounded git ls-files --others without excludes"
+    return @(Convert-FileTextToArray -Text $result.Stdout)
+}
+
+function Get-GitIndexVisibilityFiles {
+    $result = Invoke-BoundedGitObservation -GitArgs @(
+        "ls-files",
+        "-v",
+        "-f",
+        "--full-name",
+        "--"
+    )
+    Require-Success -Result $result -Action "bounded git ls-files index visibility inspection"
+
+    $paths = @()
+    foreach ($line in @($result.Stdout -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        if ($line.Length -lt 3 -or $line.Substring(1, 1) -ne " ") {
+            throw "Unexpected git ls-files visibility line: $line"
+        }
+        $tag = $line.Substring(0, 1)
+        if ([char]::IsLower($tag[0]) -or $tag -ceq "S") {
+            $paths += $line.Substring(2).Trim()
+        }
+    }
+    return @($paths | Sort-Object -Unique)
+}
+
+function Get-GitVisibilityMetadataFingerprint {
+    $configuration = Invoke-BoundedGitObservation -GitArgs @(
+        "config",
+        "--list",
+        "--show-origin",
+        "--includes"
+    )
+    Require-Success -Result $configuration -Action "bounded git visibility configuration inspection"
+
+    $entries = [System.Collections.Generic.List[string]]::new()
+    $entries.Add("configuration=$(Get-Sha256Text -Text $configuration.Stdout)")
+    foreach ($relativePath in @("info/exclude", "info/attributes", "info/sparse-checkout")) {
+        $pathResult = Invoke-BoundedGitObservation -GitArgs @(
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            $relativePath
+        )
+        Require-Success -Result $pathResult -Action "git path resolution for $relativePath"
+        $metadataPath = $pathResult.Stdout.Trim()
+        $entries.Add("${relativePath}:path=$metadataPath")
+        if (Test-Path -LiteralPath $metadataPath -PathType Leaf) {
+            $entries.Add("${relativePath}:file=$(Get-Sha256File -Path $metadataPath)")
+        }
+        elseif (Test-Path -LiteralPath $metadataPath) {
+            $entries.Add("${relativePath}:type=non_file")
+        }
+        else {
+            $entries.Add("${relativePath}:type=absent")
+        }
+    }
+    return Get-Sha256Text -Text ([string]::Join("`n", $entries))
+}
+
+function Get-ReviewBundleEffectiveChangedFiles {
+    param(
+        [AllowEmptyString()]
+        [string]$Status,
+        [AllowEmptyCollection()]
+        [string[]]$UntrackedFilesBefore = @(),
+        [AllowEmptyCollection()]
+        [string[]]$UntrackedFilesAfter = @(),
+        [AllowEmptyCollection()]
+        [string[]]$IndexVisibilityFilesBefore = @(),
+        [AllowEmptyCollection()]
+        [string[]]$IndexVisibilityFilesAfter = @(),
+        [AllowEmptyCollection()]
+        [string[]]$AllowedFilesChanged = @()
+    )
+
+    $changed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($path in @(Convert-FileTextToArray -Text (Get-ModifiedFilesFromStatus -Status $Status))) {
+        $null = $changed.Add($path)
+    }
+
+    $before = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $after = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($path in @($UntrackedFilesBefore)) {
+        $null = $before.Add($path)
+    }
+    foreach ($path in @($UntrackedFilesAfter)) {
+        $null = $after.Add($path)
+    }
+    foreach ($path in @($before)) {
+        if (-not $after.Contains($path)) {
+            $null = $changed.Add($path)
+        }
+    }
+    foreach ($path in @($after)) {
+        if (-not $before.Contains($path)) {
+            $null = $changed.Add($path)
+        }
+    }
+    foreach ($path in @($IndexVisibilityFilesBefore) + @($IndexVisibilityFilesAfter)) {
+        $null = $changed.Add($path)
+    }
+    foreach ($path in @($AllowedFilesChanged)) {
+        $null = $changed.Add($path)
+    }
+
+    [string[]]$sortedPaths = @($changed)
+    [System.Array]::Sort($sortedPaths, [System.StringComparer]::Ordinal)
+    return $sortedPaths
+}
+
+function Get-BoundedCandidateManifest {
+    param(
+        [AllowEmptyCollection()]
+        [string[]]$AllowedFiles = @()
+    )
+
+    $normalization = ConvertTo-NormalizedRuntimeContractPathSet `
+        -Paths @($AllowedFiles) `
+        -InvalidReason "invalid_allowed_file"
+    $reasons = @($normalization.Reasons)
+    $entries = [System.Collections.Generic.List[object]]::new()
+    $repositoryRoot = [System.IO.Path]::GetFullPath($RepoPath).TrimEnd("\", "/")
+    $repositoryPrefix = $repositoryRoot + [System.IO.Path]::DirectorySeparatorChar
+
+    foreach ($relativePath in @($normalization.Paths)) {
+        try {
+            $fullPath = [System.IO.Path]::GetFullPath((Join-Path -Path $repositoryRoot -ChildPath ($relativePath -replace "/", "\")))
+            if (-not $fullPath.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "path_resolves_outside_worktree"
+            }
+
+            if (-not (Test-Path -LiteralPath $fullPath)) {
+                $entries.Add([pscustomobject]@{
+                    path = $relativePath
+                    state = "absent"
+                    sha256 = $null
+                    length = $null
+                })
+                continue
+            }
+
+            $item = Get-Item -LiteralPath $fullPath -Force
+            if ($item.PSIsContainer) {
+                throw "allowed_path_is_directory"
+            }
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "allowed_path_is_reparse_point"
+            }
+
+            $entries.Add([pscustomobject]@{
+                path = $relativePath
+                state = "regular_file"
+                sha256 = Get-Sha256File -Path $fullPath
+                length = [int64]$item.Length
+            })
+        }
+        catch {
+            $reasons += "bounded_manifest_unavailable:$relativePath"
+        }
+    }
+
+    $sortedEntries = @($entries | Sort-Object -Property path)
+    $payload = @($sortedEntries | ForEach-Object {
+        "$($_.path)|$($_.state)|$($_.sha256)|$($_.length)"
+    }) -join "`n"
+    $uniqueReasons = @($reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+    $status = if ($uniqueReasons.Count -eq 0) { "verified" } else { "unverified" }
+
+    return [pscustomobject]@{
+        status = $status
+        evidence_profile = $CandidateEvidenceProfile
+        entries = @($sortedEntries)
+        payload = $payload
+        fingerprint = if ($status -eq "verified") { Get-Sha256Text -Text $payload } else { $null }
+        reasons = $uniqueReasons
+    }
+}
+
+function Get-ChangedAllowedFilesFromManifests {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Before,
+        [Parameter(Mandatory = $true)]
+        [object]$After
+    )
+
+    if ($Before.status -ne "verified" -or $After.status -ne "verified") {
+        return @()
+    }
+
+    $beforeByPath = @{}
+    $afterByPath = @{}
+    foreach ($entry in @($Before.entries)) {
+        $beforeByPath[[string]$entry.path] = "$($entry.state)|$($entry.sha256)|$($entry.length)"
+    }
+    foreach ($entry in @($After.entries)) {
+        $afterByPath[[string]$entry.path] = "$($entry.state)|$($entry.sha256)|$($entry.length)"
+    }
+
+    $changed = [System.Collections.Generic.List[string]]::new()
+    $allPaths = @($beforeByPath.Keys) + @($afterByPath.Keys)
+    foreach ($path in @($allPaths | Sort-Object -Unique)) {
+        if (-not $beforeByPath.ContainsKey($path) -or
+            -not $afterByPath.ContainsKey($path) -or
+            $beforeByPath[$path] -ne $afterByPath[$path]) {
+            $changed.Add($path)
+        }
+    }
+    return @($changed)
+}
+
 function New-RuntimeContractNotPresent {
     return [pscustomobject]@{
         status = "not_present"
@@ -243,6 +530,413 @@ function New-RuntimeContractNotPresent {
         actual_changed_files = @()
         reasons = @()
     }
+}
+
+function Get-RuntimeContractEvaluatorIdentity {
+    param(
+        [string]$RepositoryPath = $RepoPath
+    )
+
+    $relativePaths = @(
+        "src/local_runner_bridge/runtime_contract_binding.py",
+        "src/local_runner_bridge/task_packet_validator.py",
+        "src/local_runner_bridge/task_surface_resolver.py"
+    )
+    $files = [ordered]@{}
+    foreach ($relativePath in $relativePaths) {
+        $fullPath = Join-Path -Path $RepositoryPath -ChildPath ($relativePath -replace "/", "\")
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            throw "Runtime contract evaluator dependency was not found: $fullPath"
+        }
+        $files[$relativePath] = Get-Sha256File -Path $fullPath
+    }
+    $fingerprintPayload = @($files.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
+    return [pscustomobject]@{
+        EvaluatorPath = Join-Path -Path $RepositoryPath -ChildPath "src\local_runner_bridge\runtime_contract_binding.py"
+        Files = $files
+        Fingerprint = Get-Sha256Text -Text $fingerprintPayload
+    }
+}
+
+function Get-ReviewBundleGitObservation {
+    $head = Get-GitOutput -GitArgs @("rev-parse", "HEAD") -Action "git rev-parse HEAD"
+    $status = Get-GitStatusShort
+    return [pscustomobject]@{
+        Head = $head
+        Status = $status
+        NoStage = -not (Test-GitStatusHasStagedChanges -Status $status)
+        UntrackedFiles = @(Get-GitUntrackedFilesWithoutExcludes)
+        IndexVisibilityFiles = @(Get-GitIndexVisibilityFiles)
+        GitVisibilityMetadataFingerprint = Get-GitVisibilityMetadataFingerprint
+    }
+}
+
+function Get-ReviewBundleInvariantViolationReasons {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HeadBefore,
+        [Parameter(Mandatory = $true)]
+        [string]$HeadAfter,
+        [Parameter(Mandatory = $true)]
+        [bool]$NoStage,
+        [AllowEmptyCollection()]
+        [string[]]$IndexVisibilityFilesBefore = @(),
+        [AllowEmptyCollection()]
+        [string[]]$IndexVisibilityFilesAfter = @(),
+        [AllowEmptyString()]
+        [string]$GitVisibilityMetadataFingerprintBefore = "",
+        [AllowEmptyString()]
+        [string]$GitVisibilityMetadataFingerprintAfter = ""
+    )
+
+    $reasons = @()
+    if ($HeadBefore -notmatch '^[0-9a-fA-F]{40}$' -or $HeadAfter -notmatch '^[0-9a-fA-F]{40}$') {
+        $reasons += "head_measurement_invalid"
+    }
+    elseif (-not [string]::Equals($HeadBefore, $HeadAfter, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $reasons += "unexpected_head_movement"
+    }
+    if (-not $NoStage) {
+        $reasons += "staged_changes_detected"
+    }
+    if (@($IndexVisibilityFilesBefore).Count -gt 0 -or @($IndexVisibilityFilesAfter).Count -gt 0) {
+        $reasons += "git_index_visibility_flags_detected"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($GitVisibilityMetadataFingerprintBefore) -and
+        -not [string]::IsNullOrWhiteSpace($GitVisibilityMetadataFingerprintAfter) -and
+        -not [string]::Equals(
+            $GitVisibilityMetadataFingerprintBefore,
+            $GitVisibilityMetadataFingerprintAfter,
+            [System.StringComparison]::Ordinal
+        )) {
+        $reasons += "git_visibility_metadata_changed"
+    }
+    return @($reasons)
+}
+
+function New-RuntimeContractViolationBinding {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeContractBinding,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Reasons,
+        [AllowEmptyCollection()]
+        [string[]]$ActualChangedFiles = @()
+    )
+
+    $newReasons = @($Reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $allReasons = @(@($RuntimeContractBinding.reasons) + $newReasons | Select-Object -Unique)
+    $result = [ordered]@{
+        status = "contract_violation"
+        contract_present = [bool]$RuntimeContractBinding.contract_present
+        pre_execution = $RuntimeContractBinding.pre_execution
+        post_execution = [pscustomobject]@{ status = "contract_violation"; reasons = $newReasons }
+        allowed_files = @($RuntimeContractBinding.allowed_files)
+        actual_changed_files = @($ActualChangedFiles | Sort-Object -Unique)
+        reasons = $allReasons
+    }
+    $runtimeContractProperty = $RuntimeContractBinding.PSObject.Properties["runtime_contract"]
+    if ($null -ne $runtimeContractProperty) {
+        $result["runtime_contract"] = $runtimeContractProperty.Value
+    }
+    return [pscustomobject]$result
+}
+
+function ConvertTo-NormalizedRuntimeContractPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Path
+    )
+
+    $normalized = $Path.Trim().Replace("\", "/")
+    while ($normalized.StartsWith("./", [System.StringComparison]::Ordinal)) {
+        $normalized = $normalized.Substring(2)
+    }
+    if ([string]::IsNullOrWhiteSpace($normalized) -or
+        $normalized -eq "." -or
+        $normalized -match '^[A-Za-z]:' -or
+        $normalized.Contains(":") -or
+        $normalized.IndexOfAny([char[]]@([char]'*', [char]'?', [char]'[', [char]']')) -ge 0 -or
+        $normalized.EndsWith("/", [System.StringComparison]::Ordinal) -or
+        $normalized.StartsWith("/", [System.StringComparison]::Ordinal)) {
+        throw "invalid_repository_relative_path"
+    }
+
+    $parts = [System.Collections.Generic.List[string]]::new()
+    foreach ($part in $normalized.Split("/")) {
+        if ($part -eq "..") {
+            throw "invalid_repository_relative_path"
+        }
+        if ($part -eq "" -or $part -eq ".") {
+            continue
+        }
+        $parts.Add($part)
+    }
+    if ($parts.Count -eq 0) {
+        throw "invalid_repository_relative_path"
+    }
+    if ([string]::Equals($parts[0], ".git", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "invalid_repository_relative_path"
+    }
+    return [string]::Join("/", $parts)
+}
+
+function ConvertTo-NormalizedRuntimeContractPathSet {
+    param(
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object[]]$Paths,
+        [Parameter(Mandatory = $true)]
+        [string]$InvalidReason
+    )
+
+    $normalized = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    $reasons = @()
+    foreach ($path in @($Paths)) {
+        try {
+            if ($path -isnot [string]) {
+                throw "invalid_repository_relative_path"
+            }
+            $null = $normalized.Add((ConvertTo-NormalizedRuntimeContractPath -Path ([string]$path)))
+        }
+        catch {
+            $reasons += $InvalidReason
+        }
+    }
+
+    [string[]]$sortedPaths = @($normalized)
+    [System.Array]::Sort($sortedPaths, [System.StringComparer]::Ordinal)
+    return [pscustomobject]@{
+        Paths = @($sortedPaths)
+        Reasons = @($reasons | Select-Object -Unique)
+    }
+}
+
+function Test-PositiveRuntimeContractInteger {
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value -or $Value -is [bool]) {
+        return $false
+    }
+    $integerTypes = @(
+        "System.Byte",
+        "System.SByte",
+        "System.Int16",
+        "System.UInt16",
+        "System.Int32",
+        "System.UInt32",
+        "System.Int64",
+        "System.UInt64"
+    )
+    return (($integerTypes -contains $Value.GetType().FullName) -and ([decimal]$Value -gt 0))
+}
+
+function Invoke-ParentControlledRuntimeContractEnforcement {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeContractBinding,
+        [AllowEmptyCollection()]
+        [string[]]$ActualChangedFiles = @(),
+        [AllowEmptyCollection()]
+        [string[]]$InvariantViolationReasons = @()
+    )
+
+    $actualNormalization = ConvertTo-NormalizedRuntimeContractPathSet `
+        -Paths @($ActualChangedFiles) `
+        -InvalidReason "invalid_actual_changed_file"
+    $actualFiles = @($actualNormalization.Paths)
+    $reasons = @(@($InvariantViolationReasons) + @($actualNormalization.Reasons))
+    $bindingStatus = [string]$RuntimeContractBinding.status
+
+    if ([string]::Equals($bindingStatus, "not_present", [System.StringComparison]::Ordinal)) {
+        $reasons = @($reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        if ($reasons.Count -gt 0) {
+            return New-RuntimeContractViolationBinding `
+                -RuntimeContractBinding $RuntimeContractBinding `
+                -Reasons $reasons `
+                -ActualChangedFiles $actualFiles
+        }
+        return [pscustomobject]@{
+            status = "not_present"
+            contract_present = $false
+            pre_execution = $RuntimeContractBinding.pre_execution
+            post_execution = [pscustomobject]@{ status = "not_present"; reasons = @() }
+            allowed_files = @()
+            actual_changed_files = $actualFiles
+            reasons = @()
+        }
+    }
+
+    if (-not [string]::Equals($bindingStatus, "passed", [System.StringComparison]::Ordinal) -or
+        -not [string]::Equals([string]$RuntimeContractBinding.pre_execution.status, "passed", [System.StringComparison]::Ordinal) -or
+        -not [bool]$RuntimeContractBinding.contract_present) {
+        $reasons += "runtime_contract_pre_execution_not_passed"
+    }
+
+    $allowedNormalization = ConvertTo-NormalizedRuntimeContractPathSet `
+        -Paths @($RuntimeContractBinding.allowed_files) `
+        -InvalidReason "invalid_allowed_file"
+    $allowedFiles = @($allowedNormalization.Paths)
+    $reasons += @($allowedNormalization.Reasons)
+    $allowedSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($allowedFile in $allowedFiles) {
+        $null = $allowedSet.Add($allowedFile)
+    }
+    if (@($actualFiles | Where-Object { -not $allowedSet.Contains($_) }).Count -gt 0) {
+        $reasons += "changed_file_outside_allowed_files"
+    }
+
+    $runtimeContractProperty = $RuntimeContractBinding.PSObject.Properties["runtime_contract"]
+    $maximum = $null
+    if ($null -eq $runtimeContractProperty) {
+        $reasons += "runtime_contract_binding_invalid"
+    }
+    else {
+        $maximumProperty = $runtimeContractProperty.Value.PSObject.Properties["max_allowed_files"]
+        if ($null -ne $maximumProperty) {
+            $maximum = $maximumProperty.Value
+        }
+    }
+    if (-not (Test-PositiveRuntimeContractInteger -Value $maximum)) {
+        $reasons += "invalid_max_allowed_files"
+    }
+    elseif ($actualFiles.Count -gt [uint64]$maximum) {
+        $reasons += "changed_file_count_exceeds_max_allowed_files"
+    }
+
+    $reasons = @($reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+    if ($reasons.Count -gt 0) {
+        return New-RuntimeContractViolationBinding `
+            -RuntimeContractBinding $RuntimeContractBinding `
+            -Reasons $reasons `
+            -ActualChangedFiles $actualFiles
+    }
+
+    return [pscustomobject]@{
+        status = "passed"
+        contract_present = $true
+        pre_execution = $RuntimeContractBinding.pre_execution
+        post_execution = [pscustomobject]@{ status = "passed"; reasons = @() }
+        allowed_files = $allowedFiles
+        actual_changed_files = $actualFiles
+        reasons = @()
+        runtime_contract = $runtimeContractProperty.Value
+    }
+}
+
+function New-ExecutionAssurance {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeContractBinding,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("verified", "violation", "unverified")]
+        [string]$ObservableEvidence,
+        [AllowNull()]
+        [object]$CandidateManifest = $null
+    )
+
+    $governanceScope = switch ([string]$RuntimeContractBinding.status) {
+        "passed" { "passed" }
+        "contract_violation" { "violation" }
+        default { "not_present" }
+    }
+    $manifestEvidenceVerified = $null -ne $CandidateManifest -and
+        [string]::Equals([string]$CandidateManifest.status, "verified", [System.StringComparison]::Ordinal) -and
+        [string]::Equals([string]$CandidateManifest.evidence_profile, $CandidateEvidenceProfile, [System.StringComparison]::Ordinal) -and
+        -not [string]::IsNullOrWhiteSpace([string]$CandidateManifest.fingerprint)
+    $effectiveObservableEvidence = if ($ObservableEvidence -eq "verified" -and -not $manifestEvidenceVerified) {
+        "unverified"
+    }
+    else {
+        $ObservableEvidence
+    }
+    if ($effectiveObservableEvidence -eq "verified" -and [string]::IsNullOrWhiteSpace($CandidateEvidenceProfile)) {
+        throw "Verified observable evidence requires a named evidence profile."
+    }
+
+    return [pscustomobject][ordered]@{
+        governance_scope = $governanceScope
+        observable_evidence = $effectiveObservableEvidence
+        evidence_profile = if ($effectiveObservableEvidence -eq "verified") { $CandidateEvidenceProfile } else { $null }
+        candidate_manifest_fingerprint = if ($effectiveObservableEvidence -eq "verified") { [string]$CandidateManifest.fingerprint } else { $null }
+        isolation_guarantee = "unverified"
+        isolation_provider = $LocalIsolationProvider
+        isolation_evidence_source = $null
+    }
+}
+
+function Get-AllowedFileScopeViolationReasons {
+    param(
+        [AllowEmptyCollection()]
+        [string[]]$AllowedFiles = @()
+    )
+
+    $normalization = ConvertTo-NormalizedRuntimeContractPathSet `
+        -Paths @($AllowedFiles) `
+        -InvalidReason "invalid_allowed_file"
+    $reasons = @($normalization.Reasons)
+    $repositoryRoot = [System.IO.Path]::GetFullPath($RepoPath).TrimEnd("\", "/")
+    $repositoryPrefix = $repositoryRoot + [System.IO.Path]::DirectorySeparatorChar
+
+    foreach ($relativePath in @($normalization.Paths)) {
+        try {
+            $fullPath = [System.IO.Path]::GetFullPath((Join-Path -Path $repositoryRoot -ChildPath ($relativePath -replace "/", "\")))
+            if (-not $fullPath.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $reasons += "allowed_file_outside_worktree"
+                continue
+            }
+            if (Test-Path -LiteralPath $fullPath) {
+                $item = Get-Item -LiteralPath $fullPath -Force
+                if ($item.PSIsContainer) {
+                    $reasons += "allowed_file_is_directory"
+                }
+                elseif (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    $reasons += "allowed_file_not_regular_worktree_path"
+                }
+            }
+        }
+        catch {
+            $reasons += "allowed_file_scope_unavailable"
+        }
+    }
+    return @($reasons | Select-Object -Unique)
+}
+
+function Test-ApprovalContextAllowed {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeContractBinding,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoStage")]
+        [bool]$FinalIndexClean,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoCommit")]
+        [bool]$FinalHeadMatchesInitial,
+        [AllowNull()]
+        [object]$ExecutionAssurance,
+        [bool]$CandidatePathsReviewable = $true
+    )
+
+    if ($null -eq $ExecutionAssurance) {
+        $defaultEvidence = if ($RuntimeContractBinding.status -eq "contract_violation") { "violation" } else { "unverified" }
+        $ExecutionAssurance = New-ExecutionAssurance `
+            -RuntimeContractBinding $RuntimeContractBinding `
+            -ObservableEvidence $defaultEvidence
+    }
+
+    return $FinalIndexClean -and
+        $FinalHeadMatchesInitial -and
+        $CandidatePathsReviewable -and
+        [bool]$RuntimeContractBinding.contract_present -and
+        [string]::Equals([string]$RuntimeContractBinding.status, "passed", [System.StringComparison]::Ordinal) -and
+        [string]::Equals([string]$ExecutionAssurance.governance_scope, "passed", [System.StringComparison]::Ordinal) -and
+        [string]::Equals([string]$ExecutionAssurance.observable_evidence, "verified", [System.StringComparison]::Ordinal) -and
+        -not [string]::IsNullOrWhiteSpace([string]$ExecutionAssurance.evidence_profile) -and
+        -not [string]::IsNullOrWhiteSpace([string]$ExecutionAssurance.candidate_manifest_fingerprint)
 }
 
 function Resolve-PythonRuntimeCommand {
@@ -263,13 +957,18 @@ function Resolve-PythonRuntimeCommand {
 function Invoke-RuntimeContractEvaluator {
     param(
         [Parameter(Mandatory = $true)]
-        [ValidateSet("inspect", "post")]
+        [ValidateSet("inspect")]
         [string]$Action,
         [Parameter(Mandatory = $true)]
-        [object]$Payload
+        [object]$Payload,
+        [string]$PythonPath = ""
     )
 
-    $python = Resolve-PythonRuntimeCommand
+    $python = if ([string]::IsNullOrWhiteSpace($PythonPath)) { Resolve-PythonRuntimeCommand } else { [System.IO.Path]::GetFullPath($PythonPath) }
+    $pythonExtension = [System.IO.Path]::GetExtension($python).ToLowerInvariant()
+    if ($pythonExtension -notin @(".exe", ".com") -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
+        throw "Runtime contract Python path is not an available direct executable: $python"
+    }
     $bindingScript = Join-Path -Path $RepoPath -ChildPath "src\local_runner_bridge\runtime_contract_binding.py"
     if (-not (Test-Path -LiteralPath $bindingScript -PathType Leaf)) {
         throw "Runtime contract binding module was not found: $bindingScript"
@@ -318,10 +1017,16 @@ function Get-OverallRunnerResult {
         [Parameter(Mandatory = $true)]
         [string]$CodexExitCode,
         [Parameter(Mandatory = $true)]
-        [object]$RuntimeContractBinding
+        [object]$RuntimeContractBinding,
+        [AllowNull()]
+        [object]$ExecutionAssurance = $null
     )
 
     if ([string]::Equals([string]$RuntimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal)) {
+        return "failure"
+    }
+    if ($null -ne $ExecutionAssurance -and
+        -not [string]::Equals([string]$ExecutionAssurance.observable_evidence, "verified", [System.StringComparison]::Ordinal)) {
         return "failure"
     }
     if ($CodexExitCode -eq "0") {
@@ -1084,6 +1789,42 @@ function Invoke-ToolResolutionPreflight {
     }
 
     try {
+        $pythonPath = Resolve-PythonRuntimeCommand
+        $pythonProbe = New-ToolResolutionNativeProbe -FilePath $pythonPath -Arguments @("--version") -Action "python --version"
+        $tools["python"] = New-ToolEntry -SelectedPath $pythonPath -SelectionSource "direct executable on PATH" -VersionProbe $pythonProbe
+        if (-not $pythonProbe.ok) {
+            $blocked += "runner_python_version_probe_failed"
+        }
+    }
+    catch {
+        $blocked += "runner_python_unavailable"
+        $tools["python"] = New-ToolEntry -SelectedPath $null -SelectionSource $null -VersionProbe $null
+    }
+
+    try {
+        $evaluatorIdentity = Get-RuntimeContractEvaluatorIdentity
+        $tools["runtime_contract_evaluator"] = [ordered]@{
+            selected_path = [System.IO.Path]::GetFullPath([string]$evaluatorIdentity.EvaluatorPath)
+            suffix = ".py"
+            selection_source = "repository trusted path"
+            available = $true
+            identity_fingerprint = [string]$evaluatorIdentity.Fingerprint
+            files = $evaluatorIdentity.Files
+        }
+    }
+    catch {
+        $blocked += "runtime_contract_evaluator_unavailable"
+        $tools["runtime_contract_evaluator"] = [ordered]@{
+            selected_path = $null
+            suffix = ".py"
+            selection_source = "repository trusted path"
+            available = $false
+            identity_fingerprint = $null
+            files = [ordered]@{}
+        }
+    }
+
+    try {
         $codexCommand = Resolve-CodexCommand
         $codexProbe = New-ToolResolutionNativeProbe `
             -FilePath $codexCommand.FilePath `
@@ -1180,7 +1921,7 @@ stopped_process_ids=$stoppedIds
 fail_closed_on_timeout=$timedOut
 no_tests_after_timeout=$timedOut
 no_smoke_after_timeout=$timedOut
-no_commit_push_close_after_timeout=true
+parent_commit_push_close_continuation_after_timeout=false
 "@
 }
 
@@ -1213,13 +1954,45 @@ function New-RunnerResultSummaryJson {
         [string]$FinalStatus,
         [Parameter(Mandatory = $true)]
         [string]$CodexExitCode,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoStage")]
+        [bool]$FinalIndexClean,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoCommit")]
+        [bool]$FinalHeadMatchesInitial,
+        [Parameter(Mandatory = $true)]
+        [bool]$ApprovalTokenGenerated,
         [AllowNull()]
-        [object]$RuntimeContractBinding = $null
+        [object]$RuntimeContractBinding = $null,
+        [AllowNull()]
+        [object]$ExecutionAssurance = $null,
+        [AllowNull()]
+        [object]$CandidateEvidenceManifest = $null
     )
 
     if ($null -eq $RuntimeContractBinding) {
         $RuntimeContractBinding = New-RuntimeContractNotPresent
     }
+    if ($null -eq $ExecutionAssurance) {
+        $ExecutionAssurance = New-ExecutionAssurance `
+            -RuntimeContractBinding $RuntimeContractBinding `
+            -ObservableEvidence "unverified"
+    }
+    $candidateManifestVerified = $null -ne $CandidateEvidenceManifest -and
+        [string]::Equals([string]$CandidateEvidenceManifest.status, "verified", [System.StringComparison]::Ordinal) -and
+        -not [string]::IsNullOrWhiteSpace([string]$CandidateEvidenceManifest.fingerprint) -and
+        [string]::Equals(
+            [string]$CandidateEvidenceManifest.fingerprint,
+            [string]$ExecutionAssurance.candidate_manifest_fingerprint,
+            [System.StringComparison]::Ordinal
+        )
+    $candidateSnapshotEligible = $ApprovalTokenGenerated -and
+        $candidateManifestVerified -and
+        (Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $RuntimeContractBinding `
+            -FinalIndexClean $FinalIndexClean `
+            -FinalHeadMatchesInitial $FinalHeadMatchesInitial `
+            -ExecutionAssurance $ExecutionAssurance)
 
     $issueValue = [int]$IssueNumberText
     $changedFiles = @(Convert-FileTextToArray -Text $ChangedFilesText)
@@ -1240,21 +2013,30 @@ function New-RunnerResultSummaryJson {
         files_fingerprint = if ([string]::IsNullOrWhiteSpace($FilesFingerprint)) { $null } else { $FilesFingerprint }
         changed_files = $changedFiles
         runtime_contract_binding = $RuntimeContractBinding
+        execution_assurance = $ExecutionAssurance
+        candidate_evidence_manifest = $CandidateEvidenceManifest
+        candidate_acceptance = if ($candidateSnapshotEligible) { "eligible" } else { "ineligible" }
+        approval_token_generated = $candidateSnapshotEligible
+        approval_token_semantics = "candidate_review_snapshot_not_human_approval"
         validations = [ordered]@{
             git_status_clean = (New-RunnerValidationResult -Status $(if ($finalClean) { "passed" } else { "warning" }) -Summary $(if ($finalClean) { "Final git status is clean." } else { "Final git status reports local changes for review." }))
             codex = (New-RunnerValidationResult -Status $codexStatus -Summary "Codex exit code: $CodexExitCode")
             pytest = (New-RunnerValidationResult -Status "reported" -Summary "See Codex final report for test commands and results.")
             git_diff_check = (New-RunnerValidationResult -Status "reported" -Summary "See Codex final report for git diff --check result if run.")
         }
-        safety = [ordered]@{
-            no_stage = $true
-            no_commit = $true
-            no_push = $true
-            no_issue_close = $true
-            no_label = $true
-            no_pr = $true
-            no_merge = $true
-            no_approval_chaining = $true
+        observations = [ordered]@{
+            final_index_clean = $FinalIndexClean
+            final_head_matches_initial = $FinalHeadMatchesInitial
+        }
+        trusted_parent_actions = [ordered]@{
+            stage_invoked = $false
+            commit_invoked = $false
+            push_invoked = $false
+            issue_close_invoked = $false
+            label_edit_invoked = $false
+            pr_create_invoked = $false
+            merge_invoked = $false
+            approval_token_consumed = $false
         }
         next_recommended_action = "chatgpt_review"
     }
@@ -1344,10 +2126,16 @@ function Assert-ReviewableStatus {
             throw "Refusing unsafe or outside-allowlist path: $path"
         }
 
-        $fullPath = Join-Path -Path $RepoPath -ChildPath $path
+        $repositoryRoot = [System.IO.Path]::GetFullPath($RepoPath).TrimEnd("\", "/")
+        $repositoryPrefix = $repositoryRoot + [System.IO.Path]::DirectorySeparatorChar
+        $fullPath = Join-Path -Path $repositoryRoot -ChildPath $path
         $resolvedParent = Resolve-Path -LiteralPath (Split-Path -Parent $fullPath) -ErrorAction SilentlyContinue
-        if ($null -ne $resolvedParent -and -not $resolvedParent.Path.StartsWith($RepoPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing path outside repo root: $path"
+        if ($null -ne $resolvedParent) {
+            $resolvedParentPath = [System.IO.Path]::GetFullPath($resolvedParent.Path).TrimEnd("\", "/")
+            if ($resolvedParentPath -ne $repositoryRoot -and
+                -not $resolvedParentPath.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing path outside repo root: $path"
+            }
         }
     }
 }
@@ -1411,7 +2199,11 @@ function Get-ApprovalState {
     param(
         [Parameter(Mandatory = $true)]
         [int]$IssueNumberForState,
-        [switch]$RequireChanges
+        [switch]$RequireChanges,
+        [AllowEmptyCollection()]
+        [string[]]$AllowedFiles = @(),
+        [AllowNull()]
+        [object]$CandidateManifest = $null
     )
 
     $branchForState = Format-Block -Text (Get-GitOutput -GitArgs @("branch", "--show-current") -Action "git branch --show-current") -EmptyText "(detached HEAD)"
@@ -1427,9 +2219,27 @@ function Get-ApprovalState {
     $trackedDiff = Get-GitOutput -GitArgs @("diff", "--binary") -Action "git diff --binary"
     $untrackedPayload = Get-UntrackedFileFingerprintPayload -Status $statusForState
     $modifiedFilesForState = @(Get-StatusPaths -Status $statusForState)
+    $allowedNormalization = ConvertTo-NormalizedRuntimeContractPathSet `
+        -Paths @($AllowedFiles) `
+        -InvalidReason "invalid_allowed_file"
+    if (@($allowedNormalization.Reasons).Count -gt 0) {
+        throw "Approval state contains an invalid allowed path."
+    }
+    $normalizedAllowedFiles = @($allowedNormalization.Paths)
+    if ($null -eq $CandidateManifest) {
+        $CandidateManifest = Get-BoundedCandidateManifest -AllowedFiles $normalizedAllowedFiles
+    }
+    if ([string]$CandidateManifest.status -ne "verified" -or
+        [string]::IsNullOrWhiteSpace([string]$CandidateManifest.fingerprint)) {
+        throw "Bounded candidate evidence manifest is unverified."
+    }
+
     $statusPayload = $statusLines -join [Environment]::NewLine
-    $filesPayload = "issue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`nstatus=`n$statusPayload"
-    $diffPayload = "issue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`nstatus=`n$statusPayload`ntracked-diff=`n$trackedDiff`nuntracked=`n$untrackedPayload"
+    $allowedScopePayload = @($normalizedAllowedFiles) -join "`n"
+    $allowedScopeFingerprint = Get-Sha256Text -Text $allowedScopePayload
+    $manifestFingerprint = [string]$CandidateManifest.fingerprint
+    $filesPayload = "issue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`nevidence=$CandidateEvidenceProfile`nisolation=unverified`nscope=`n$allowedScopePayload`nmanifest=$manifestFingerprint`nstatus=`n$statusPayload"
+    $diffPayload = "issue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`nevidence=$CandidateEvidenceProfile`nisolation=unverified`nscope=$allowedScopeFingerprint`nmanifest=$manifestFingerprint`nstatus=`n$statusPayload`ntracked-diff=`n$trackedDiff`nuntracked=`n$untrackedPayload"
     $filesFingerprint = Get-Sha256Text -Text $filesPayload
     $diffFingerprint = Get-Sha256Text -Text $diffPayload
     $reviewId = (Get-Sha256Text -Text "review`nissue=$IssueNumberForState`nbranch=$branchForState`nhead=$headForState`ndiff=$diffFingerprint`nfiles=$filesFingerprint").Substring(0, 16)
@@ -1449,6 +2259,12 @@ function Get-ApprovalState {
         TrackedDiffLineCount = Get-TextLineCount -Text $trackedDiff
         UntrackedPayload = $untrackedPayload
         UntrackedPayloadHash = Get-Sha256Text -Text $untrackedPayload
+        AllowedFiles = $normalizedAllowedFiles
+        AllowedScopeFingerprint = $allowedScopeFingerprint
+        CandidateManifest = $CandidateManifest
+        CandidateManifestFingerprint = $manifestFingerprint
+        EvidenceProfile = $CandidateEvidenceProfile
+        IsolationGuarantee = "unverified"
         FilesPayload = $filesPayload
         FilesPayloadHash = Get-Sha256Text -Text $filesPayload
         DiffPayload = $diffPayload
@@ -1456,7 +2272,7 @@ function Get-ApprovalState {
         DiffFingerprint = $diffFingerprint
         FilesFingerprint = $filesFingerprint
         ReviewId = $reviewId
-        ApprovalToken = "LRV1-APPROVE issue=$IssueNumberForState mode=Level3A branch=$branchForState head=$headForState review=$reviewId diff=$diffFingerprint files=$filesFingerprint"
+        ApprovalToken = "LRV1-APPROVE issue=$IssueNumberForState mode=Level3A branch=$branchForState head=$headForState review=$reviewId diff=$diffFingerprint files=$filesFingerprint scope=$allowedScopeFingerprint manifest=$manifestFingerprint evidence=$CandidateEvidenceProfile isolation=unverified"
     }
 }
 
@@ -1525,7 +2341,7 @@ function ConvertFrom-ApprovalToken {
     }
 
     $parts = $Token.Trim() -split "\s+"
-    if ($parts.Count -ne 8 -or $parts[0] -ne "LRV1-APPROVE") {
+    if ($parts.Count -ne 12 -or $parts[0] -ne "LRV1-APPROVE") {
         throw "Approval token format is invalid."
     }
 
@@ -1541,7 +2357,7 @@ function ConvertFrom-ApprovalToken {
         $values[$key] = $Matches[2]
     }
 
-    foreach ($requiredKey in @("issue", "mode", "branch", "head", "review", "diff", "files")) {
+    foreach ($requiredKey in @("issue", "mode", "branch", "head", "review", "diff", "files", "scope", "manifest", "evidence", "isolation")) {
         if (-not $values.ContainsKey($requiredKey)) {
             throw "Approval token is missing field: $requiredKey"
         }
@@ -1555,6 +2371,10 @@ function ConvertFrom-ApprovalToken {
         Review = $values["review"]
         Diff = $values["diff"]
         Files = $values["files"]
+        Scope = $values["scope"]
+        Manifest = $values["manifest"]
+        Evidence = $values["evidence"]
+        Isolation = $values["isolation"]
     }
 }
 
@@ -1574,6 +2394,10 @@ function Assert-ApprovalMatchesState {
     if ($Token.Review -ne $State.ReviewId) { $mismatches += "review expected $($State.ReviewId), got $($Token.Review)" }
     if ($Token.Diff -ne $State.DiffFingerprint) { $mismatches += "diff fingerprint mismatch" }
     if ($Token.Files -ne $State.FilesFingerprint) { $mismatches += "files fingerprint mismatch" }
+    if ($Token.Scope -ne $State.AllowedScopeFingerprint) { $mismatches += "allowed scope fingerprint mismatch" }
+    if ($Token.Manifest -ne $State.CandidateManifestFingerprint) { $mismatches += "candidate manifest fingerprint mismatch" }
+    if ($Token.Evidence -ne $State.EvidenceProfile) { $mismatches += "evidence profile mismatch" }
+    if ($Token.Isolation -ne $State.IsolationGuarantee) { $mismatches += "isolation guarantee mismatch" }
 
     if ($mismatches.Count -gt 0) {
         throw "Approval token does not match current repo state:`n$($mismatches -join [Environment]::NewLine)"
@@ -1719,12 +2543,36 @@ function New-ReviewBundleComment {
         [Parameter(Mandatory = $true)]
         [AllowEmptyString()]
         [string]$FinalStatus,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoStage")]
+        [bool]$FinalIndexClean,
+        [Parameter(Mandatory = $true)]
+        [Alias("NoCommit")]
+        [bool]$FinalHeadMatchesInitial,
         [AllowNull()]
-        [object]$RuntimeContractBinding = $null
+        [object]$RuntimeContractBinding = $null,
+        [AllowNull()]
+        [object]$ExecutionAssurance = $null,
+        [AllowNull()]
+        [object]$CandidateEvidenceManifest = $null,
+        [bool]$CandidatePathsReviewable = $true
     )
 
     if ($null -eq $RuntimeContractBinding) {
         $RuntimeContractBinding = New-RuntimeContractNotPresent
+    }
+    if ($null -eq $ExecutionAssurance) {
+        $ExecutionAssurance = New-ExecutionAssurance `
+            -RuntimeContractBinding $RuntimeContractBinding `
+            -ObservableEvidence "unverified"
+    }
+    if (-not (Test-ApprovalContextAllowed `
+        -RuntimeContractBinding $RuntimeContractBinding `
+        -FinalIndexClean $FinalIndexClean `
+        -FinalHeadMatchesInitial $FinalHeadMatchesInitial `
+        -ExecutionAssurance $ExecutionAssurance `
+        -CandidatePathsReviewable $CandidatePathsReviewable)) {
+        $ApprovalToken = ""
     }
 
     $TextFence = '```text'
@@ -1734,8 +2582,11 @@ function New-ReviewBundleComment {
     $displayFinalStatus = Format-Block -Text (Truncate-Text -Text $FinalStatus -MaxChars $MaxGitOutputChars -Label "final git status") -EmptyText "(clean)"
     $displayModifiedFiles = Format-Block -Text (Truncate-Text -Text $ModifiedFiles -MaxChars $MaxGitOutputChars -Label "modified files") -EmptyText "(none)"
     $displayFinalReport = Format-Block -Text $CodexFinalReport -EmptyText "(no Codex stdout captured)"
-    $displayChildProcessSummary = Format-Block -Text $ChildProcessSummary -EmptyText "child_process_timed_out=false`nno_commit_push_close_after_timeout=true"
-    $runnerResult = Get-OverallRunnerResult -CodexExitCode $CodexExitCode -RuntimeContractBinding $RuntimeContractBinding
+    $displayChildProcessSummary = Format-Block -Text $ChildProcessSummary -EmptyText "child_process_timed_out=false`nparent_commit_push_close_continuation_after_timeout=false"
+    $runnerResult = Get-OverallRunnerResult `
+        -CodexExitCode $CodexExitCode `
+        -RuntimeContractBinding $RuntimeContractBinding `
+        -ExecutionAssurance $ExecutionAssurance
     $runtimeContractJson = $RuntimeContractBinding | ConvertTo-Json -Depth 12
     $runnerResultJson = New-RunnerResultSummaryJson `
         -IssueNumberText $IssueNumberText `
@@ -1749,7 +2600,17 @@ function New-ReviewBundleComment {
         -ChangedFilesText $ModifiedFiles `
         -FinalStatus $FinalStatus `
         -CodexExitCode $CodexExitCode `
-        -RuntimeContractBinding $RuntimeContractBinding
+        -FinalIndexClean $FinalIndexClean `
+        -FinalHeadMatchesInitial $FinalHeadMatchesInitial `
+        -ApprovalTokenGenerated (-not [string]::IsNullOrWhiteSpace($ApprovalToken)) `
+        -RuntimeContractBinding $RuntimeContractBinding `
+        -ExecutionAssurance $ExecutionAssurance `
+        -CandidateEvidenceManifest $CandidateEvidenceManifest
+
+    $finalIndexCleanText = if ($FinalIndexClean) { "yes" } else { "no" }
+    $finalHeadMatchesText = if ($FinalHeadMatchesInitial) { "yes" } else { "no" }
+    $executionAssuranceJson = $ExecutionAssurance | ConvertTo-Json -Depth 12
+    $candidateManifestJson = if ($null -eq $CandidateEvidenceManifest) { "null" } else { $CandidateEvidenceManifest | ConvertTo-Json -Depth 12 }
 
     return @"
 ## local-runner-v1 review bundle
@@ -1771,16 +2632,14 @@ $runnerResultJson
 - Diff fingerprint: $(Format-Block -Text $DiffFingerprint -EmptyText "(not available)")
 - Files fingerprint: $(Format-Block -Text $FilesFingerprint -EmptyText "(not available)")
 
-### Safety status
+### Bounded evidence and trusted-parent facts
 
 - Repo clean before start: $RepoCleanBefore
-- No stage performed: yes
-- No commit performed: yes
-- No push performed: yes
-- No issue close performed: yes
-- No label edit performed: yes
-- No PR created: yes
-- Approval tokens consumed in this run: no
+- Final staged area observed clean: $finalIndexCleanText
+- Final HEAD matches initial HEAD: $finalHeadMatchesText
+- Runner parent invoked stage/commit/push/Issue-close/label-edit/PR-create/merge: no
+- Runner parent consumed an approval token: no
+- Child-wide absence of transient actions or external side effects: not guaranteed
 
 ### Modified files
 
@@ -1794,9 +2653,21 @@ $TextFence
 $runtimeContractJson
 $Fence
 
+### Execution assurance
+
+$TextFence
+$executionAssuranceJson
+$Fence
+
+### Bounded candidate evidence manifest
+
+$TextFence
+$candidateManifestJson
+$Fence
+
 ### Approval context
 
-Allowed files are the modified files listed above. Commit-approved mode recomputes branch, HEAD, modified files, diff fingerprint, and files fingerprint before staging.
+The token below, when present, binds a candidate-review snapshot only. It is not human approval, final acceptance, new authority, or proof of universal write prevention. CommitApproved re-reads the current v1.1 contract and recomputes branch, full HEAD, allowed scope, candidate manifest, and fingerprints before staging.
 
 $TextFence
 $(Format-Block -Text $ApprovalToken -EmptyText "(not available)")
@@ -1852,7 +2723,7 @@ $Fence
 
 ### Next approval note
 
-This run is review-bundle-only. Human / ChatGPT review is required before any commit. To create a local commit after review, run this script separately with `-Mode CommitApproved` and enter the exact ASCII approval token for the current state. Do not push until a separate push step is approved.
+This run is review-bundle-only. Human / ChatGPT review remains a separate authority event before any commit. A candidate token records eligibility for review only and does not itself approve CommitApproved. Do not push until a separate push step is approved.
 "@
 }
 
@@ -1939,15 +2810,14 @@ function New-CommitApprovedComment {
 - Diff fingerprint: $DiffFingerprint
 - Files fingerprint: $FilesFingerprint
 
-### Safety status
+### Candidate token and trusted-parent actions
 
-- Local approval token accepted: yes
+- Candidate snapshot token matched the rebound current state: yes
+- Token meaning: candidate snapshot only; not human approval or new authority
 - Exactly one local commit created: yes
-- No push performed: yes
-- No issue close performed: yes
-- No label edit performed: yes
-- No PR created: yes
-- Approval source: $ApprovalSource
+- Runner parent invoked push/Issue-close/label-edit/PR-create/merge: no
+- Hook, child, transient, or external side effects absent: not guaranteed
+- Token input source: $ApprovalSource
 
 ### Committed files
 
@@ -2026,15 +2896,12 @@ $TextFence
 $displayReason
 $Fence
 
-### Safety status
+### Trusted-parent action facts
 
 - Local commit completed: $LocalCommitCreated
-- No push performed: yes
-- No issue close performed: yes
-- No label edit performed: yes
-- No PR created: yes
-- No merge or force push performed: yes
-- Auto-reset performed: no
+- Runner parent invoked push/Issue-close/label-edit/PR-create/merge/force-push: no
+- Runner parent invoked auto-reset: no
+- Hook, child, transient, or external side effects absent: not guaranteed
 
 ### Final git status
 
@@ -2046,6 +2913,99 @@ $Fence
 
 $cleanupNote
 "@
+}
+
+function Get-CommitApprovedBoundState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$IssueBody
+    )
+
+    $branchForContract = Format-Block `
+        -Text (Get-GitOutput -GitArgs @("branch", "--show-current") -Action "git branch --show-current") `
+        -EmptyText "(detached HEAD)"
+    $headForContract = Get-GitOutput -GitArgs @("rev-parse", "HEAD") -Action "git rev-parse HEAD"
+    $runtimeContractBinding = Invoke-RuntimeContractEvaluator `
+        -Action "inspect" `
+        -PythonPath (Resolve-PythonRuntimeCommand) `
+        -Payload ([ordered]@{
+            surface_text = $IssueBody
+            logical_issue = $IssueNumber
+            repository = $Repo
+            branch = $branchForContract
+            head = $headForContract
+        })
+    $scopeViolationReasons = @(Get-AllowedFileScopeViolationReasons -AllowedFiles @($runtimeContractBinding.allowed_files))
+    if (-not [bool]$runtimeContractBinding.contract_present -or
+        -not [string]::Equals([string]$runtimeContractBinding.status, "passed", [System.StringComparison]::Ordinal) -or
+        $scopeViolationReasons.Count -gt 0) {
+        $reason = @(@($runtimeContractBinding.reasons) + $scopeViolationReasons) -join ","
+        throw "CommitApproved requires a currently valid Task Packet v1.1 governance contract: $reason"
+    }
+
+    $observation = Get-ReviewBundleGitObservation
+    $manifest = Get-BoundedCandidateManifest -AllowedFiles @($runtimeContractBinding.allowed_files)
+    $observableEvidence = if ($manifest.status -eq "verified") { "verified" } else { "unverified" }
+    $actualFiles = @(Get-StatusPaths -Status $observation.Status)
+    $invariantReasons = @(Get-ReviewBundleInvariantViolationReasons `
+        -HeadBefore $headForContract `
+        -HeadAfter ([string]$observation.Head) `
+        -NoStage ([bool]$observation.NoStage) `
+        -IndexVisibilityFilesBefore @($observation.IndexVisibilityFiles) `
+        -IndexVisibilityFilesAfter @($observation.IndexVisibilityFiles) `
+        -GitVisibilityMetadataFingerprintBefore ([string]$observation.GitVisibilityMetadataFingerprint) `
+        -GitVisibilityMetadataFingerprintAfter ([string]$observation.GitVisibilityMetadataFingerprint))
+    $runtimeContractBinding = Invoke-ParentControlledRuntimeContractEnforcement `
+        -RuntimeContractBinding $runtimeContractBinding `
+        -ActualChangedFiles $actualFiles `
+        -InvariantViolationReasons $invariantReasons
+    if ($runtimeContractBinding.status -eq "contract_violation") {
+        $observableEvidence = "violation"
+    }
+    $assurance = New-ExecutionAssurance `
+        -RuntimeContractBinding $runtimeContractBinding `
+        -ObservableEvidence $observableEvidence `
+        -CandidateManifest $manifest
+    $headMatches = [string]::Equals($headForContract, [string]$observation.Head, [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not (Test-ApprovalContextAllowed `
+        -RuntimeContractBinding $runtimeContractBinding `
+        -FinalIndexClean ([bool]$observation.NoStage) `
+        -FinalHeadMatchesInitial $headMatches `
+        -ExecutionAssurance $assurance `
+        -CandidatePathsReviewable $true)) {
+        throw "CommitApproved current governance or bounded evidence is not eligible for continuation."
+    }
+
+    $approvalState = Get-ApprovalState `
+        -IssueNumberForState $IssueNumber `
+        -RequireChanges `
+        -AllowedFiles @($runtimeContractBinding.allowed_files) `
+        -CandidateManifest $manifest
+    Assert-NoPreexistingStagedFiles -Status $approvalState.Status
+
+    return [pscustomobject]@{
+        RuntimeContractBinding = $runtimeContractBinding
+        ExecutionAssurance = $assurance
+        CandidateManifest = $manifest
+        ApprovalState = $approvalState
+    }
+}
+
+function Get-CommitApprovedIssueSnapshot {
+    $issueJsonResult = Invoke-Captured {
+        & $Gh issue view $IssueNumber --repo $Repo --json title,body,url,number
+    }
+    Require-Success -Result $issueJsonResult -Action "gh issue view"
+    try {
+        $issue = $issueJsonResult.Stdout | ConvertFrom-Json
+    }
+    catch {
+        throw "gh issue view returned malformed JSON for CommitApproved."
+    }
+    if ($null -eq $issue -or $issue -is [array] -or [int]$issue.number -ne $IssueNumber) {
+        throw "gh issue view returned an invalid Issue snapshot for CommitApproved."
+    }
+    return $issue
 }
 
 function Invoke-CommitApprovedMode {
@@ -2061,11 +3021,7 @@ function Invoke-CommitApprovedMode {
 
     $null = Assert-RepositoryLocalGitIdentity
 
-    $issueJsonResult = Invoke-Captured {
-        & $Gh issue view $IssueNumber --repo $Repo --json title,body,url,number
-    }
-    Require-Success -Result $issueJsonResult -Action "gh issue view"
-    $issue = $issueJsonResult.Stdout | ConvertFrom-Json
+    $issue = Get-CommitApprovedIssueSnapshot
     $issueTitle = [string]$issue.title
     $issueBody = [string]$issue.body
 
@@ -2073,8 +3029,8 @@ function Invoke-CommitApprovedMode {
         throw "Issue #$IssueNumber does not explicitly identify itself as write-capable or review-bundle capable."
     }
 
-    $state = Get-ApprovalState -IssueNumberForState $IssueNumber -RequireChanges
-    Assert-NoPreexistingStagedFiles -Status $state.Status
+    $boundState = Get-CommitApprovedBoundState -IssueBody $issueBody
+    $state = $boundState.ApprovalState
 
     Write-Output "local-runner-v1 CommitApproved expected approval context:"
     Write-Output "Issue: #$IssueNumber"
@@ -2094,9 +3050,16 @@ function Invoke-CommitApprovedMode {
     }
     $token = ConvertFrom-ApprovalToken -Token $tokenText
 
-    $stateBeforeStage = Get-ApprovalState -IssueNumberForState $IssueNumber -RequireChanges
-    Assert-NoPreexistingStagedFiles -Status $stateBeforeStage.Status
+    $currentIssue = Get-CommitApprovedIssueSnapshot
+    $currentIssueTitle = [string]$currentIssue.title
+    $currentIssueBody = [string]$currentIssue.body
+    if (-not (Test-IssueAllowsWriteCapableRun -Title $currentIssueTitle -Body $currentIssueBody)) {
+        throw "Issue #$IssueNumber no longer identifies itself as write-capable or review-bundle capable."
+    }
+    $boundStateBeforeStage = Get-CommitApprovedBoundState -IssueBody $currentIssueBody
+    $stateBeforeStage = $boundStateBeforeStage.ApprovalState
     Assert-ApprovalMatchesState -Token $token -State $stateBeforeStage
+    $issueTitle = $currentIssueTitle
 
     $filesToStage = @($stateBeforeStage.ModifiedFiles)
     if ($filesToStage.Count -eq 0) {
@@ -2159,7 +3122,9 @@ if ($ToolResolutionPreflight) {
 }
 
 if ($IssueNumber -lt 1) {
-    throw "IssueNumber is required for ReviewBundle, CommitApproved, and ApprovalStateDiagnostic modes."
+    $issueNumberRequiredMessage = "IssueNumber is required for ReviewBundle, CommitApproved, " +
+        "and ApprovalStateDiagnostic modes."
+    throw $issueNumberRequiredMessage
 }
 
 if ($Mode -eq "ApprovalStateDiagnostic") {
@@ -2235,8 +3200,9 @@ if ($Mode -eq "CommitApproved") {
 }
 
 $branch = Format-Block -Text (Get-GitOutput -GitArgs @("branch", "--show-current") -Action "git branch --show-current") -EmptyText "(detached HEAD)"
-$headBefore = Get-GitOutput -GitArgs @("rev-parse", "--short", "HEAD") -Action "git rev-parse --short HEAD"
+$headBefore = Get-GitOutput -GitArgs @("rev-parse", "HEAD") -Action "git rev-parse HEAD"
 $initialStatus = Get-GitStatusShort
+$initialNoStage = -not (Test-GitStatusHasStagedChanges -Status $initialStatus)
 
 if (-not [string]::IsNullOrWhiteSpace($initialStatus)) {
     $diffStat = Get-GitOutput -GitArgs @("diff", "--stat") -Action "git diff --stat"
@@ -2259,7 +3225,9 @@ if (-not [string]::IsNullOrWhiteSpace($initialStatus)) {
         -CommandsSummary "Codex was not run because the repo was dirty before start." `
         -CodexFinalReport "Codex was not run. Clean or commit/stash existing changes before using local-runner-v1." `
         -StderrSummary $stderrSummary `
-        -FinalStatus $initialStatus
+        -FinalStatus $initialStatus `
+        -FinalIndexClean $initialNoStage `
+        -FinalHeadMatchesInitial $true
 
     $postResult = Post-IssueComment -Comment $comment
     if ($postResult.ExitCode -ne 0) {
@@ -2297,7 +3265,9 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
         -CommandsSummary "Codex was not run because the issue did not explicitly identify itself as write-capable or review-bundle capable." `
         -CodexFinalReport "Codex was not run. Add an explicit write-capable or review-bundle marker to the issue before using local-runner-v1." `
         -StderrSummary $stderrSummary `
-        -FinalStatus "(clean)"
+        -FinalStatus "(clean)" `
+        -FinalIndexClean $true `
+        -FinalHeadMatchesInitial $true
 
     $postResult = Post-IssueComment -Comment $comment
     if ($postResult.ExitCode -ne 0) {
@@ -2307,9 +3277,11 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
     exit 3
 }
 
-$headBeforeFull = Get-GitOutput -GitArgs @("rev-parse", "HEAD") -Action "git rev-parse HEAD before runtime contract binding"
+$headBeforeFull = $headBefore
+$runtimeContractPython = Resolve-PythonRuntimeCommand
 $runtimeContractBinding = Invoke-RuntimeContractEvaluator `
     -Action "inspect" `
+    -PythonPath $runtimeContractPython `
     -Payload ([ordered]@{
         surface_text = $issueBody
         logical_issue = $IssueNumber
@@ -2317,6 +3289,20 @@ $runtimeContractBinding = Invoke-RuntimeContractEvaluator `
         branch = $branch
         head = $headBeforeFull
     })
+$preExecutionScopeReasons = @(Get-AllowedFileScopeViolationReasons -AllowedFiles @($runtimeContractBinding.allowed_files))
+if ($preExecutionScopeReasons.Count -gt 0) {
+    $runtimeContractBinding = New-RuntimeContractViolationBinding `
+        -RuntimeContractBinding $runtimeContractBinding `
+        -Reasons $preExecutionScopeReasons
+    $runtimeContractBinding.pre_execution = [pscustomobject]@{
+        status = "contract_violation"
+        reasons = $preExecutionScopeReasons
+    }
+    $runtimeContractBinding.post_execution = [pscustomobject]@{
+        status = "not_run"
+        reasons = @()
+    }
+}
 if ([string]::Equals([string]$runtimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal)) {
     $stderrSummary = Get-StderrSummary -Text "" -ExitCode "not-run"
     $violationReasons = @($runtimeContractBinding.reasons) -join ","
@@ -2338,6 +3324,8 @@ if ([string]::Equals([string]$runtimeContractBinding.status, "contract_violation
         -CodexFinalReport "Codex was not run. Runtime contract identity evidence failed closed before invocation." `
         -StderrSummary $stderrSummary `
         -FinalStatus "(clean)" `
+        -FinalIndexClean $true `
+        -FinalHeadMatchesInitial $true `
         -RuntimeContractBinding $runtimeContractBinding
     $postResult = Post-IssueComment -Comment $comment
     if ($postResult.ExitCode -ne 0) {
@@ -2390,6 +3378,8 @@ Issue body:
 $issueBodyForPrompt
 "@
 
+$preExecutionObservation = Get-ReviewBundleGitObservation
+$preExecutionManifest = Get-BoundedCandidateManifest -AllowedFiles @($runtimeContractBinding.allowed_files)
 $codexResult = Invoke-CapturedNativeProcess `
     -FilePath $codexCommand.FilePath `
     -Arguments (@($codexCommand.ArgumentPrefix) + $codexArguments) `
@@ -2401,20 +3391,70 @@ $codexResult = Invoke-CapturedNativeProcess `
     -TimeoutSeconds $ReviewBundleCodexTimeoutSeconds `
     -Action "codex ReviewBundle candidate generation"
 
-$headAfter = Get-GitOutput -GitArgs @("rev-parse", "--short", "HEAD") -Action "git rev-parse --short HEAD"
-$finalStatus = Get-GitStatusShort
+$postExecutionObservation = Get-ReviewBundleGitObservation
+$postExecutionManifest = Get-BoundedCandidateManifest -AllowedFiles @($runtimeContractBinding.allowed_files)
+$headAfter = [string]$postExecutionObservation.Head
+$finalStatus = [string]$postExecutionObservation.Status
+$finalIndexClean = [bool]$postExecutionObservation.NoStage
+$finalHeadMatchesInitial = [string]::Equals($headBeforeFull, $headAfter, [System.StringComparison]::OrdinalIgnoreCase)
 $diffStatAfter = Get-GitOutput -GitArgs @("diff", "--stat") -Action "git diff --stat"
 $cachedDiffStatAfter = Get-GitOutput -GitArgs @("diff", "--cached", "--stat") -Action "git diff --cached --stat"
-$modifiedFiles = Get-ModifiedFilesFromStatus -Status $finalStatus
-$runtimeContractBinding = Invoke-RuntimeContractEvaluator `
-    -Action "post" `
-    -Payload ([ordered]@{
-        runtime_contract_binding = $runtimeContractBinding
-        actual_changed_files = @(Convert-FileTextToArray -Text $modifiedFiles)
-    })
+$allowedFilesChanged = @(Get-ChangedAllowedFilesFromManifests `
+    -Before $preExecutionManifest `
+    -After $postExecutionManifest)
+$actualChangedFiles = @(Get-ReviewBundleEffectiveChangedFiles `
+    -Status $finalStatus `
+    -UntrackedFilesBefore @($preExecutionObservation.UntrackedFiles) `
+    -UntrackedFilesAfter @($postExecutionObservation.UntrackedFiles) `
+    -IndexVisibilityFilesBefore @($preExecutionObservation.IndexVisibilityFiles) `
+    -IndexVisibilityFilesAfter @($postExecutionObservation.IndexVisibilityFiles) `
+    -AllowedFilesChanged $allowedFilesChanged)
+$reviewableStatusFiles = @()
+$candidatePathsReviewable = $true
+try {
+    $reviewableStatusFiles = @(Get-StatusPaths -Status $finalStatus)
+}
+catch {
+    $candidatePathsReviewable = $false
+}
+if ($candidatePathsReviewable -and
+    (@($actualChangedFiles | Sort-Object) -join "`n") -ne (@($reviewableStatusFiles | Sort-Object) -join "`n")) {
+    $candidatePathsReviewable = $false
+}
+$modifiedFiles = if ($actualChangedFiles.Count -eq 0) {
+    "(none)"
+}
+else {
+    $actualChangedFiles -join [Environment]::NewLine
+}
+$invariantViolationReasons = @(Get-ReviewBundleInvariantViolationReasons `
+    -HeadBefore $headBeforeFull `
+    -HeadAfter $headAfter `
+    -NoStage $finalIndexClean `
+    -IndexVisibilityFilesBefore @($preExecutionObservation.IndexVisibilityFiles) `
+    -IndexVisibilityFilesAfter @($postExecutionObservation.IndexVisibilityFiles) `
+    -GitVisibilityMetadataFingerprintBefore ([string]$preExecutionObservation.GitVisibilityMetadataFingerprint) `
+    -GitVisibilityMetadataFingerprintAfter ([string]$postExecutionObservation.GitVisibilityMetadataFingerprint))
+$runtimeContractBinding = Invoke-ParentControlledRuntimeContractEnforcement `
+    -RuntimeContractBinding $runtimeContractBinding `
+    -ActualChangedFiles $actualChangedFiles `
+    -InvariantViolationReasons $invariantViolationReasons
+$observableEvidence = if ($preExecutionManifest.status -eq "verified" -and $postExecutionManifest.status -eq "verified") {
+    "verified"
+}
+else {
+    "unverified"
+}
+if ($runtimeContractBinding.status -eq "contract_violation") {
+    $observableEvidence = "violation"
+}
+$executionAssurance = New-ExecutionAssurance `
+    -RuntimeContractBinding $runtimeContractBinding `
+    -ObservableEvidence $observableEvidence `
+    -CandidateManifest $postExecutionManifest
 $codexFinalReport = Truncate-Text -Text $codexResult.Stdout -MaxChars $MaxCodexStdoutChars -Label "Codex final report"
 $stderrSummaryAfter = Get-StderrSummary -Text $codexResult.Stderr -ExitCode ([string]$codexResult.ExitCode)
-$commandsSummary = "Review the Codex final report below for commands and verification results reported by Codex. The runner also captured final git status, git diff --stat, and git diff --cached --stat. The runner did not run stage, commit, push, issue close, label edit, or PR commands."
+$commandsSummary = "Review the Codex final report below for commands and verification results reported by Codex. The runner also captured bounded final git status, git diff --stat, and git diff --cached --stat evidence. The trusted Runner parent did not invoke stage, commit, push, issue close, label edit, or PR commands; child-wide absence of transient or external actions is not guaranteed."
 $childProcessSummary = New-ChildProcessReviewBundleSummary -Result $codexResult -FinalStatus $finalStatus -CodexCommand $codexCommand -ReviewedCodexPath $ReviewedCodexPath -CodexVersionProbe $codexVersionProbe
 if ($codexResult.TimedOut) {
     $commandsSummary = "$commandsSummary Codex child process timed out after $($codexResult.TimeoutSeconds) second(s); runner stopped the child process tree when possible and did not continue into any higher-risk action."
@@ -2423,9 +3463,19 @@ $reviewId = ""
 $diffFingerprint = ""
 $filesFingerprint = ""
 $approvalToken = ""
-if (-not [string]::IsNullOrWhiteSpace($finalStatus)) {
+if (-not [string]::IsNullOrWhiteSpace($finalStatus) -and
+    (Test-ApprovalContextAllowed `
+        -RuntimeContractBinding $runtimeContractBinding `
+        -FinalIndexClean $finalIndexClean `
+        -FinalHeadMatchesInitial $finalHeadMatchesInitial `
+        -ExecutionAssurance $executionAssurance `
+        -CandidatePathsReviewable $candidatePathsReviewable)) {
     try {
-        $approvalState = Get-ApprovalState -IssueNumberForState $IssueNumber -RequireChanges
+        $approvalState = Get-ApprovalState `
+            -IssueNumberForState $IssueNumber `
+            -RequireChanges `
+            -AllowedFiles @($runtimeContractBinding.allowed_files) `
+            -CandidateManifest $postExecutionManifest
         Assert-NoPreexistingStagedFiles -Status $approvalState.Status
         $reviewId = $approvalState.ReviewId
         $diffFingerprint = $approvalState.DiffFingerprint
@@ -2456,7 +3506,12 @@ $comment = New-ReviewBundleComment `
     -StderrSummary $stderrSummaryAfter `
     -ChildProcessSummary $childProcessSummary `
     -FinalStatus $finalStatus `
-    -RuntimeContractBinding $runtimeContractBinding
+    -FinalIndexClean $finalIndexClean `
+    -FinalHeadMatchesInitial $finalHeadMatchesInitial `
+    -RuntimeContractBinding $runtimeContractBinding `
+    -ExecutionAssurance $executionAssurance `
+    -CandidateEvidenceManifest $postExecutionManifest `
+    -CandidatePathsReviewable $candidatePathsReviewable
 
 $commentResult = Post-IssueComment -Comment $comment
 if ($commentResult.ExitCode -ne 0) {
@@ -2464,5 +3519,8 @@ if ($commentResult.ExitCode -ne 0) {
 }
 
 Write-Output $commentResult.Stdout
-$overallExitCode = if ([string]::Equals([string]$runtimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal)) { 2 } else { $codexResult.ExitCode }
+$overallExitCode = if (
+    [string]::Equals([string]$runtimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal) -or
+    -not [string]::Equals([string]$executionAssurance.observable_evidence, "verified", [System.StringComparison]::Ordinal)
+) { 2 } else { $codexResult.ExitCode }
 exit $overallExitCode

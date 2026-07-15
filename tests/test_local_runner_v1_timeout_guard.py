@@ -46,6 +46,25 @@ def assert_success(result: subprocess.CompletedProcess) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def init_git_repo(path: Path) -> str:
+    path.mkdir()
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "Runner Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "runner-test@example.invalid"],
+        check=True,
+    )
+    (path / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "seed.txt"], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "seed"], check=True)
+    return subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 def test_normal_runner_modes_still_require_issue_number():
     result = subprocess.run(
         [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(RUNNER)],
@@ -840,6 +859,14 @@ def test_tool_resolution_preflight_runs_without_issue_number_and_probes_versions
         $script:IssueNumber = 0
         $script:ProbeCalls = @()
         function Resolve-GitHubCliCommand {{ return {str(tmp_path / 'gh.exe')!r} }}
+        function Resolve-PythonRuntimeCommand {{ return {str(tmp_path / 'python.exe')!r} }}
+        function Get-RuntimeContractEvaluatorIdentity {{
+            return [pscustomobject]@{{
+                EvaluatorPath = {str(tmp_path / 'runtime_contract_binding.py')!r}
+                Fingerprint = "trusted-evaluator"
+                Files = [ordered]@{{ "runtime_contract_binding.py" = "abc" }}
+            }}
+        }}
         function Resolve-CodexCommand {{
             return [pscustomobject]@{{
                 Source = {str(tmp_path / 'codex.cmd')!r}
@@ -897,6 +924,22 @@ def test_tool_resolution_preflight_runs_without_issue_number_and_probes_versions
             "safe_message": "ok",
         },
     }
+    assert summary["tools"]["python"] == {
+        "selected_path": str(tmp_path / "python.exe"),
+        "suffix": ".exe",
+        "selection_source": "direct executable on PATH",
+        "version_probe": {
+            "executed": True,
+            "exit_code": 0,
+            "ok": True,
+            "safe_message": "ok",
+        },
+    }
+    assert summary["tools"]["runtime_contract_evaluator"]["available"] is True
+    assert (
+        summary["tools"]["runtime_contract_evaluator"]["identity_fingerprint"]
+        == "trusted-evaluator"
+    )
     assert summary["safety"]["github_issue_read_performed"] is False
     assert summary["safety"]["runner_work_invoked"] is False
     assert summary["safety"]["codex_task_executed"] is False
@@ -929,6 +972,14 @@ def test_tool_resolution_preflight_gh_probe_uses_expected_launcher_composition(
         $script:Mode = "ReviewBundle"
         $script:ApprovalToken = ""
         function Resolve-GitHubCliCommand {{ return {gh_launcher.as_posix()!r} }}
+        function Resolve-PythonRuntimeCommand {{ return {str(tmp_path / 'python.exe')!r} }}
+        function Get-RuntimeContractEvaluatorIdentity {{
+            return [pscustomobject]@{{
+                EvaluatorPath = {str(tmp_path / 'runtime_contract_binding.py')!r}
+                Fingerprint = "trusted-evaluator"
+                Files = [ordered]@{{ "runtime_contract_binding.py" = "abc" }}
+            }}
+        }}
         function Resolve-ComSpecPath {{ return {fake_cmd.as_posix()!r} }}
         function Resolve-CodexCommand {{
             return [pscustomobject]@{{
@@ -988,6 +1039,73 @@ def test_tool_resolution_preflight_blocks_when_gh_or_codex_missing(tmp_path):
     assert "runner_gh_unavailable" in summary["blocked_reasons"]
     assert "codex_unavailable" in summary["blocked_reasons"]
     assert summary["safety"]["github_write_performed"] is False
+
+
+def test_tool_resolution_preflight_blocks_structurally_when_python_is_missing(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:RequiredAction = "run-reviewbundle"
+        function Resolve-GitHubCliCommand {{ return {str(tmp_path / 'gh.exe')!r} }}
+        function Resolve-PythonRuntimeCommand {{ throw "missing python" }}
+        function Get-RuntimeContractEvaluatorIdentity {{
+            return [pscustomobject]@{{
+                EvaluatorPath = {str(tmp_path / 'runtime_contract_binding.py')!r}
+                Fingerprint = "trusted-evaluator"
+                Files = [ordered]@{{ "runtime_contract_binding.py" = "abc" }}
+            }}
+        }}
+        function Resolve-CodexCommand {{
+            return [pscustomobject]@{{
+                Source = {str(tmp_path / 'codex.exe')!r}
+                FilePath = {str(tmp_path / 'codex.exe')!r}
+                ArgumentPrefix = @()
+            }}
+        }}
+        function Invoke-CapturedNativeProcess {{
+            return [pscustomobject]@{{ ExitCode = 0; TimedOut = $false; Stdout = "version"; Stderr = "" }}
+        }}
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["result"] == "blocked"
+    assert "runner_python_unavailable" in summary["blocked_reasons"]
+    assert summary["tools"]["python"]["selected_path"] is None
+    assert summary["safety"]["runner_work_invoked"] is False
+
+
+def test_tool_resolution_preflight_blocks_structurally_when_evaluator_is_missing(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {tmp_path.as_posix()!r}
+        $script:RequiredAction = "run-reviewbundle"
+        function Resolve-GitHubCliCommand {{ return {str(tmp_path / 'gh.exe')!r} }}
+        function Resolve-PythonRuntimeCommand {{ return {str(tmp_path / 'python.exe')!r} }}
+        function Get-RuntimeContractEvaluatorIdentity {{ throw "missing evaluator" }}
+        function Resolve-CodexCommand {{
+            return [pscustomobject]@{{
+                Source = {str(tmp_path / 'codex.exe')!r}
+                FilePath = {str(tmp_path / 'codex.exe')!r}
+                ArgumentPrefix = @()
+            }}
+        }}
+        function Invoke-CapturedNativeProcess {{
+            return [pscustomobject]@{{ ExitCode = 0; TimedOut = $false; Stdout = "version"; Stderr = "" }}
+        }}
+        Invoke-ToolResolutionPreflight
+        """,
+    )
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["result"] == "blocked"
+    assert "runtime_contract_evaluator_unavailable" in summary["blocked_reasons"]
+    assert summary["tools"]["runtime_contract_evaluator"]["available"] is False
 
 
 @pytest.mark.parametrize(
@@ -1490,7 +1608,7 @@ def test_timeout_summary_reports_fail_closed_partial_candidate_and_no_followup_a
             "fail_closed_on_timeout=true",
             "no_tests_after_timeout=true",
             "no_smoke_after_timeout=true",
-            "no_commit_push_close_after_timeout=true",
+            "parent_commit_push_close_continuation_after_timeout=false",
             "stopped_process_ids=111,222"
         )) {
             if (-not $summary.Contains($expected)) {
@@ -1502,14 +1620,925 @@ def test_timeout_summary_reports_fail_closed_partial_candidate_and_no_followup_a
     assert_success(result)
 
 
-def _binding(status: str, *, contract_present: bool = True) -> dict:
+def test_git_status_enumerates_each_untracked_file_in_new_directory(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    new_dir = repo / "newdir"
+    new_dir.mkdir()
+    (new_dir / "one.txt").write_text("one\n", encoding="utf-8")
+    (new_dir / "two.txt").write_text("two\n", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $status = Get-GitStatusShort
+        $files = @(Convert-FileTextToArray -Text (Get-ModifiedFilesFromStatus -Status $status))
+        $payload = [ordered]@{{ status = $status; files = $files }}
+        Write-Output ($payload | ConvertTo-Json -Compress)
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["files"] == ["newdir/one.txt", "newdir/two.txt"]
+    assert "?? newdir/" not in payload["status"].splitlines()
+
+
+def test_gitignore_visibility_bypass_fails_closed_with_unfiltered_untracked_delta(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    head = init_git_repo(repo)
+    (repo / ".gitignore").write_text("\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "tracked gitignore"],
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    child = tmp_path / "gitignore_child.ps1"
+    child.write_text(
+        textwrap.dedent(
+            f"""
+            Set-Content -LiteralPath {str(repo / '.gitignore')!r} -Value "evil.py" -Encoding UTF8
+            Set-Content -LiteralPath {str(repo / 'evil.py')!r} -Value "evil" -Encoding UTF8
+            """
+        ).strip(),
+        encoding="utf-8-sig",
+    )
+    binding = json.dumps(
+        _binding("passed", allowed_files=[".gitignore"], max_allowed_files=2)
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-ReviewBundleGitObservation
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $child = Invoke-CapturedNativeProcess `
+            -FilePath {_powershell()!r} `
+            -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", {str(child)!r}) `
+            -WorkingDirectory {repo.as_posix()!r} `
+            -StandardInput "" `
+            -StandardInputEncoding $utf8 `
+            -StandardOutputEncoding $utf8 `
+            -StandardErrorEncoding $utf8 `
+            -TimeoutSeconds 20 `
+            -Action "simulated gitignore visibility bypass"
+        if ($child.ExitCode -ne 0) {{ throw "Child failed: $($child.Stderr)" }}
+        $after = Get-ReviewBundleGitObservation
+        $ordinaryStatusFiles = @(Convert-FileTextToArray -Text (Get-ModifiedFilesFromStatus -Status $after.Status))
+        $actualFiles = @(Get-ReviewBundleEffectiveChangedFiles `
+            -Status $after.Status `
+            -UntrackedFilesBefore @($before.UntrackedFiles) `
+            -UntrackedFilesAfter @($after.UntrackedFiles) `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles))
+        $reasons = @(Get-ReviewBundleInvariantViolationReasons `
+            -HeadBefore $before.Head `
+            -HeadAfter $after.Head `
+            -NoStage $after.NoStage `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles) `
+            -GitVisibilityMetadataFingerprintBefore $before.GitVisibilityMetadataFingerprint `
+            -GitVisibilityMetadataFingerprintAfter $after.GitVisibilityMetadataFingerprint)
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles $actualFiles `
+            -InvariantViolationReasons $reasons
+        $noCommit = [string]::Equals($before.Head, $after.Head, [System.StringComparison]::OrdinalIgnoreCase)
+        $approvalAllowed = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -NoStage $after.NoStage `
+            -NoCommit $noCommit
+        $overall = Get-OverallRunnerResult -CodexExitCode "0" -RuntimeContractBinding $binding
+        [ordered]@{{
+            child_exit = $child.ExitCode
+            head_unchanged = $noCommit
+            no_stage = $after.NoStage
+            ordinary_status_files = $ordinaryStatusFiles
+            actual_changed_files = $actualFiles
+            binding = $binding
+            approval_allowed = $approvalAllowed
+            overall = $overall
+        }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["child_exit"] == 0
+    assert payload["head_unchanged"] is True
+    assert payload["no_stage"] is True
+    assert payload["ordinary_status_files"] == [".gitignore"]
+    assert payload["actual_changed_files"] == [".gitignore", "evil.py"]
+    assert payload["binding"]["status"] == "contract_violation"
+    assert "changed_file_outside_allowed_files" in payload["binding"]["reasons"]
+    assert payload["approval_allowed"] is False
+    assert payload["overall"] == "failure"
+    assert head == payload["binding"]["pre_execution"].get("head", head)
+
+
+@pytest.mark.parametrize(
+    "index_option",
+    ["--assume-unchanged", "--skip-worktree"],
+    ids=["assume-unchanged", "skip-worktree"],
+)
+def test_index_visibility_bypass_fails_closed(index_option, tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    outside = repo / "outside.txt"
+    outside.write_text("trusted\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "outside.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "tracked outside"],
+        check=True,
+    )
+    child = tmp_path / "index_visibility_child.ps1"
+    child.write_text(
+        textwrap.dedent(
+            f"""
+            & git -C {repo.as_posix()!r} update-index {index_option} outside.txt
+            if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+            Set-Content -LiteralPath {str(outside)!r} -Value "hidden change" -Encoding UTF8
+            """
+        ).strip(),
+        encoding="utf-8-sig",
+    )
+    binding = json.dumps(
+        _binding("passed", allowed_files=["seed.txt"], max_allowed_files=1)
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-ReviewBundleGitObservation
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $child = Invoke-CapturedNativeProcess `
+            -FilePath {_powershell()!r} `
+            -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", {str(child)!r}) `
+            -WorkingDirectory {repo.as_posix()!r} `
+            -StandardInput "" `
+            -StandardInputEncoding $utf8 `
+            -StandardOutputEncoding $utf8 `
+            -StandardErrorEncoding $utf8 `
+            -TimeoutSeconds 20 `
+            -Action "simulated index visibility bypass"
+        if ($child.ExitCode -ne 0) {{ throw "Child failed: $($child.Stderr)" }}
+        $after = Get-ReviewBundleGitObservation
+        $actualFiles = @(Get-ReviewBundleEffectiveChangedFiles `
+            -Status $after.Status `
+            -UntrackedFilesBefore @($before.UntrackedFiles) `
+            -UntrackedFilesAfter @($after.UntrackedFiles) `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles))
+        $reasons = @(Get-ReviewBundleInvariantViolationReasons `
+            -HeadBefore $before.Head `
+            -HeadAfter $after.Head `
+            -NoStage $after.NoStage `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles) `
+            -GitVisibilityMetadataFingerprintBefore $before.GitVisibilityMetadataFingerprint `
+            -GitVisibilityMetadataFingerprintAfter $after.GitVisibilityMetadataFingerprint)
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles $actualFiles `
+            -InvariantViolationReasons $reasons
+        $noCommit = [string]::Equals($before.Head, $after.Head, [System.StringComparison]::OrdinalIgnoreCase)
+        $approvalAllowed = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -NoStage $after.NoStage `
+            -NoCommit $noCommit
+        $overall = Get-OverallRunnerResult -CodexExitCode "0" -RuntimeContractBinding $binding
+        [ordered]@{{
+            child_exit = $child.ExitCode
+            status = $after.Status
+            head_unchanged = $noCommit
+            no_stage = $after.NoStage
+            index_visibility_files = @($after.IndexVisibilityFiles)
+            actual_changed_files = $actualFiles
+            binding = $binding
+            approval_allowed = $approvalAllowed
+            overall = $overall
+        }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["child_exit"] == 0
+    assert payload["status"] == ""
+    assert payload["head_unchanged"] is True
+    assert payload["no_stage"] is True
+    assert payload["index_visibility_files"] == ["outside.txt"]
+    assert payload["actual_changed_files"] == ["outside.txt"]
+    assert payload["binding"]["status"] == "contract_violation"
+    assert "git_index_visibility_flags_detected" in payload["binding"]["reasons"]
+    assert payload["approval_allowed"] is False
+    assert payload["overall"] == "failure"
+
+
+def test_info_exclude_visibility_bypass_fails_closed_on_metadata_and_path_delta(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    child = tmp_path / "info_exclude_child.ps1"
+    child.write_text(
+        textwrap.dedent(
+            f"""
+            Add-Content -LiteralPath {str(repo / '.git' / 'info' / 'exclude')!r} -Value "evil.py" -Encoding UTF8
+            Set-Content -LiteralPath {str(repo / 'evil.py')!r} -Value "evil" -Encoding UTF8
+            """
+        ).strip(),
+        encoding="utf-8-sig",
+    )
+    binding = json.dumps(
+        _binding("passed", allowed_files=["seed.txt"], max_allowed_files=1)
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-ReviewBundleGitObservation
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $child = Invoke-CapturedNativeProcess `
+            -FilePath {_powershell()!r} `
+            -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", {str(child)!r}) `
+            -WorkingDirectory {repo.as_posix()!r} `
+            -StandardInput "" `
+            -StandardInputEncoding $utf8 `
+            -StandardOutputEncoding $utf8 `
+            -StandardErrorEncoding $utf8 `
+            -TimeoutSeconds 20 `
+            -Action "simulated info exclude visibility bypass"
+        if ($child.ExitCode -ne 0) {{ throw "Child failed: $($child.Stderr)" }}
+        $after = Get-ReviewBundleGitObservation
+        $actualFiles = @(Get-ReviewBundleEffectiveChangedFiles `
+            -Status $after.Status `
+            -UntrackedFilesBefore @($before.UntrackedFiles) `
+            -UntrackedFilesAfter @($after.UntrackedFiles) `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles))
+        $reasons = @(Get-ReviewBundleInvariantViolationReasons `
+            -HeadBefore $before.Head `
+            -HeadAfter $after.Head `
+            -NoStage $after.NoStage `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles) `
+            -GitVisibilityMetadataFingerprintBefore $before.GitVisibilityMetadataFingerprint `
+            -GitVisibilityMetadataFingerprintAfter $after.GitVisibilityMetadataFingerprint)
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles $actualFiles `
+            -InvariantViolationReasons $reasons
+        $noCommit = [string]::Equals($before.Head, $after.Head, [System.StringComparison]::OrdinalIgnoreCase)
+        $approvalAllowed = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -NoStage $after.NoStage `
+            -NoCommit $noCommit
+        $overall = Get-OverallRunnerResult -CodexExitCode "0" -RuntimeContractBinding $binding
+        [ordered]@{{
+            child_exit = $child.ExitCode
+            status = $after.Status
+            head_unchanged = $noCommit
+            no_stage = $after.NoStage
+            metadata_changed = -not [string]::Equals(
+                $before.GitVisibilityMetadataFingerprint,
+                $after.GitVisibilityMetadataFingerprint,
+                [System.StringComparison]::Ordinal
+            )
+            actual_changed_files = $actualFiles
+            binding = $binding
+            approval_allowed = $approvalAllowed
+            overall = $overall
+        }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["child_exit"] == 0
+    assert payload["status"] == ""
+    assert payload["head_unchanged"] is True
+    assert payload["no_stage"] is True
+    assert payload["metadata_changed"] is True
+    assert payload["actual_changed_files"] == ["evil.py"]
+    assert payload["binding"]["status"] == "contract_violation"
+    assert "changed_file_outside_allowed_files" in payload["binding"]["reasons"]
+    assert "git_visibility_metadata_changed" in payload["binding"]["reasons"]
+    assert payload["approval_allowed"] is False
+    assert payload["overall"] == "failure"
+
+
+def test_staged_area_observation_reports_no_stage_false(tmp_path):
+    repo = tmp_path / "repo"
+    head = init_git_repo(repo)
+    (repo / "seed.txt").write_text("staged\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "seed.txt"], check=True)
+    binding = json.dumps(
+        _binding("passed", allowed_files=["seed.txt"], max_allowed_files=1)
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $observation = Get-ReviewBundleGitObservation
+        $reasons = @(Get-ReviewBundleInvariantViolationReasons `
+            -HeadBefore {head!r} `
+            -HeadAfter $observation.Head `
+            -NoStage $observation.NoStage)
+        $actualFiles = @(Convert-FileTextToArray -Text (Get-ModifiedFilesFromStatus -Status $observation.Status))
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles $actualFiles `
+            -InvariantViolationReasons $reasons
+        [ordered]@{{ observation = $observation; binding = $binding }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    observation = payload["observation"]
+    assert observation["Head"] == head
+    assert observation["NoStage"] is False
+    assert payload["binding"]["status"] == "contract_violation"
+    assert "staged_changes_detected" in payload["binding"]["reasons"]
+
+
+def test_clean_observations_report_unchanged_head_and_empty_index(tmp_path):
+    repo = tmp_path / "repo"
+    head = init_git_repo(repo)
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-ReviewBundleGitObservation
+        $after = Get-ReviewBundleGitObservation
+        $reasons = @(Get-ReviewBundleInvariantViolationReasons `
+            -HeadBefore $before.Head `
+            -HeadAfter $after.Head `
+            -NoStage $after.NoStage)
+        $payload = [ordered]@{{
+            head = $after.Head
+            no_stage = $after.NoStage
+            no_commit = [string]::Equals($before.Head, $after.Head, [System.StringComparison]::OrdinalIgnoreCase)
+            reasons = $reasons
+        }}
+        Write-Output ($payload | ConvertTo-Json -Compress)
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "head": head,
+        "no_stage": True,
+        "no_commit": True,
+        "reasons": [],
+    }
+
+
+def test_allowed_preexisting_ignored_file_content_is_bound_by_bounded_manifest(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / ".gitignore").write_text("allowed-ignored.txt\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "ignore allowed file"],
+        check=True,
+    )
+    ignored = repo / "allowed-ignored.txt"
+    ignored.write_text("before\n", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-BoundedCandidateManifest -AllowedFiles @("allowed-ignored.txt")
+        Set-Content -LiteralPath {ignored.as_posix()!r} -Value "after" -Encoding UTF8
+        $after = Get-BoundedCandidateManifest -AllowedFiles @("allowed-ignored.txt")
+        $changed = @(Get-ChangedAllowedFilesFromManifests -Before $before -After $after)
+        [ordered]@{{ before = $before; after = $after; changed = $changed }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["before"]["status"] == "verified"
+    assert payload["after"]["status"] == "verified"
+    assert payload["before"]["fingerprint"] != payload["after"]["fingerprint"]
+    assert payload["changed"] == ["allowed-ignored.txt"]
+    assert payload["after"]["entries"][0]["state"] == "regular_file"
+    assert len(payload["after"]["entries"][0]["sha256"]) == 64
+
+
+def test_directory_scope_is_invalid_and_manifest_failure_suppresses_eligibility(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    directory = repo / "directory-only"
+    directory.mkdir()
+    binding = json.dumps(
+        _binding("passed", allowed_files=["directory-only"], max_allowed_files=1)
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $binding = '{binding}' | ConvertFrom-Json
+        $scopeReasons = @(Get-AllowedFileScopeViolationReasons -AllowedFiles @("directory-only"))
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("directory-only")
+        $assurance = New-ExecutionAssurance `
+            -RuntimeContractBinding $binding `
+            -ObservableEvidence "unverified" `
+            -CandidateManifest $manifest
+        $eligible = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -FinalIndexClean $true `
+            -FinalHeadMatchesInitial $true `
+            -ExecutionAssurance $assurance
+        [ordered]@{{ scope_reasons = $scopeReasons; manifest = $manifest; assurance = $assurance; eligible = $eligible }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert "allowed_file_is_directory" in payload["scope_reasons"]
+    assert payload["manifest"]["status"] == "unverified"
+    assert payload["assurance"]["observable_evidence"] == "unverified"
+    assert payload["eligible"] is False
+
+
+def test_passed_governance_without_bounded_evidence_suppresses_snapshot_eligibility(
+    tmp_path,
+):
+    binding = json.dumps(_binding("passed"))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $binding = '{binding}' | ConvertFrom-Json
+        $requestedAssurance = New-ExecutionAssurance `
+            -RuntimeContractBinding $binding `
+            -ObservableEvidence "verified"
+        $eligible = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -FinalIndexClean $true `
+            -FinalHeadMatchesInitial $true
+        $stderrSummary = Get-StderrSummary -Text "" -ExitCode "0"
+        $comment = New-ReviewBundleComment `
+            -IssueNumberText "204" `
+            -Branch "feature/runtime-contract" `
+            -HeadBefore ("1" * 40) `
+            -HeadAfter ("1" * 40) `
+            -CodexExitCode "0" `
+            -RepoCleanBefore "yes" `
+            -ReviewId "review" `
+            -DiffFingerprint ("2" * 64) `
+            -FilesFingerprint ("3" * 64) `
+            -ApprovalToken "SHOULD-NOT-APPEAR" `
+            -ModifiedFiles "src/example.py" `
+            -DiffStat "" `
+            -CachedDiffStat "" `
+            -CommandsSummary "fake" `
+            -CodexFinalReport "DONE" `
+            -StderrSummary $stderrSummary `
+            -FinalStatus " M src/example.py" `
+            -FinalIndexClean $true `
+            -FinalHeadMatchesInitial $true `
+            -RuntimeContractBinding $binding
+        [ordered]@{{
+            requested_assurance = $requestedAssurance
+            eligible = $eligible
+            comment = $comment
+        }} | ConvertTo-Json -Depth 12 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["requested_assurance"]["governance_scope"] == "passed"
+    assert payload["requested_assurance"]["observable_evidence"] == "unverified"
+    assert payload["requested_assurance"]["evidence_profile"] is None
+    assert payload["requested_assurance"]["candidate_manifest_fingerprint"] is None
+    assert payload["eligible"] is False
+    assert "SHOULD-NOT-APPEAR" not in payload["comment"]
+    marker_index = payload["comment"].index(
+        "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1"
+    )
+    json_start = payload["comment"].index("{", marker_index)
+    summary, _ = json.JSONDecoder().raw_decode(payload["comment"][json_start:])
+    assert summary["execution_assurance"]["observable_evidence"] == "unverified"
+    assert summary["candidate_acceptance"] == "ineligible"
+    assert summary["approval_token_generated"] is False
+
+
+def test_execution_assurance_is_bounded_and_provider_isolation_defaults_unverified(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    binding = json.dumps(_binding("passed", allowed_files=["seed.txt"]))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $binding = '{binding}' | ConvertFrom-Json
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $assurance = New-ExecutionAssurance `
+            -RuntimeContractBinding $binding `
+            -ObservableEvidence "verified" `
+            -CandidateManifest $manifest
+        $eligible = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -FinalIndexClean $true `
+            -FinalHeadMatchesInitial $true `
+            -ExecutionAssurance $assurance
+        [ordered]@{{ assurance = $assurance; manifest = $manifest; eligible = $eligible }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["assurance"]["governance_scope"] == "passed"
+    assert payload["assurance"]["observable_evidence"] == "verified"
+    assert payload["assurance"]["evidence_profile"] == (
+        "local_git_candidate_observation.v1"
+    )
+    assert payload["assurance"]["candidate_manifest_fingerprint"] == payload[
+        "manifest"
+    ]["fingerprint"]
+    assert payload["assurance"]["isolation_guarantee"] == "unverified"
+    assert payload["assurance"]["isolation_provider"] == "codex_cli_workspace_write"
+    assert payload["assurance"]["isolation_evidence_source"] is None
+    assert payload["eligible"] is True
+
+
+def test_candidate_token_binds_scope_manifest_evidence_and_rejects_drift_or_upgrade(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / "seed.txt").write_text("candidate one\n", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $state = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $manifest
+        $token = ConvertFrom-ApprovalToken -Token $state.ApprovalToken
+        Assert-ApprovalMatchesState -Token $token -State $state
+
+        Set-Content -LiteralPath {str(repo / 'seed.txt')!r} -Value "candidate two" -Encoding UTF8
+        $driftManifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $driftState = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $driftManifest
+        $driftRejected = $false
+        try {{ Assert-ApprovalMatchesState -Token $token -State $driftState }} catch {{ $driftRejected = $true }}
+
+        $forgedText = $state.ApprovalToken.Replace("isolation=unverified", "isolation=verified")
+        $forgedToken = ConvertFrom-ApprovalToken -Token $forgedText
+        $upgradeRejected = $false
+        try {{ Assert-ApprovalMatchesState -Token $forgedToken -State $state }} catch {{ $upgradeRejected = $true }}
+
+        [ordered]@{{
+            scope = $state.AllowedScopeFingerprint
+            manifest = $state.CandidateManifestFingerprint
+            evidence = $state.EvidenceProfile
+            isolation = $state.IsolationGuarantee
+            drift_rejected = $driftRejected
+            upgrade_rejected = $upgradeRejected
+        }} | ConvertTo-Json -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert len(payload["scope"]) == 64
+    assert len(payload["manifest"]) == 64
+    assert payload["evidence"] == "local_git_candidate_observation.v1"
+    assert payload["isolation"] == "unverified"
+    assert payload["drift_rejected"] is True
+    assert payload["upgrade_rejected"] is True
+
+
+def test_successful_child_commit_with_clean_worktree_fails_closed(tmp_path):
+    repo = tmp_path / "repo"
+    head_before = init_git_repo(repo)
+    child = tmp_path / "commit_child.ps1"
+    child.write_text(
+        textwrap.dedent(
+            f"""
+            Set-Content -LiteralPath {str(repo / 'committed.txt')!r} -Value "committed" -Encoding UTF8
+            & git -C {str(repo)!r} add committed.txt
+            if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
+            & git -C {str(repo)!r} commit -q -m "child commit"
+            exit $LASTEXITCODE
+            """
+        ).strip(),
+        encoding="utf-8-sig",
+    )
+    binding = json.dumps(
+        _binding("passed", allowed_files=["seed.txt"], max_allowed_files=1)
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-ReviewBundleGitObservation
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $child = Invoke-CapturedNativeProcess `
+            -FilePath {_powershell()!r} `
+            -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", {str(child)!r}) `
+            -WorkingDirectory {repo.as_posix()!r} `
+            -StandardInput "" `
+            -StandardInputEncoding $utf8 `
+            -StandardOutputEncoding $utf8 `
+            -StandardErrorEncoding $utf8 `
+            -TimeoutSeconds 20 `
+            -Action "simulated successful child commit"
+        if ($child.ExitCode -ne 0) {{ throw "Child failed: $($child.Stderr)" }}
+        $after = Get-ReviewBundleGitObservation
+        $reasons = @(Get-ReviewBundleInvariantViolationReasons `
+            -HeadBefore $before.Head `
+            -HeadAfter $after.Head `
+            -NoStage $after.NoStage)
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles @() `
+            -InvariantViolationReasons $reasons
+        $noCommit = [string]::Equals($before.Head, $after.Head, [System.StringComparison]::OrdinalIgnoreCase)
+        $approvalAllowed = Test-ApprovalContextAllowed -RuntimeContractBinding $binding -NoStage $after.NoStage -NoCommit $noCommit
+        $json = New-RunnerResultSummaryJson `
+            -IssueNumberText "204" `
+            -Action "run-reviewbundle" `
+            -Result "failure" `
+            -Branch "test" `
+            -Head $after.Head `
+            -ReviewId "" `
+            -DiffFingerprint "" `
+            -FilesFingerprint "" `
+            -ChangedFilesText "(none)" `
+            -FinalStatus $after.Status `
+            -CodexExitCode "0" `
+            -NoStage $after.NoStage `
+            -NoCommit $noCommit `
+            -ApprovalTokenGenerated $approvalAllowed `
+            -RuntimeContractBinding $binding
+        Write-Output $json
+        """,
+    )
+
+    assert_success(result)
+    summary = json.loads(result.stdout[result.stdout.index("{") :])
+    assert head_before != summary["head"]
+    assert summary["runtime_contract_binding"]["status"] == "contract_violation"
+    assert "unexpected_head_movement" in summary["runtime_contract_binding"]["reasons"]
+    assert summary["observations"]["final_head_matches_initial"] is False
+    assert summary["observations"]["final_index_clean"] is True
+    assert summary["approval_token_generated"] is False
+    assert summary["candidate_acceptance"] == "ineligible"
+
+
+def test_import_shadow_attack_is_rejected_without_post_child_python(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    module_dir = repo / "src" / "local_runner_bridge"
+    module_dir.mkdir(parents=True)
+    for name in (
+        "runtime_contract_binding.py",
+        "task_packet_validator.py",
+        "task_surface_resolver.py",
+    ):
+        (module_dir / name).write_text(f"# trusted {name}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "src"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "trusted evaluator"],
+        check=True,
+    )
+    marker = tmp_path / "malicious-json-imported.txt"
+    malicious = (
+        f"open(r'{marker.as_posix()}', 'w').write('imported')\n"
+        "def load(stream):\n"
+        "    return dict(runtime_contract_binding=dict(status='passed'), actual_changed_files=[])\n"
+        "def dumps(value, **kwargs):\n"
+        "    return '{\"status\":\"passed\"}'\n"
+    )
+    child = tmp_path / "shadow_child.ps1"
+    child.write_text(
+        "$payload = @'\n"
+        + malicious
+        + "'@\n"
+        + f"Set-Content -LiteralPath {str(module_dir / 'json.py')!r} -Value $payload -Encoding UTF8\n",
+        encoding="utf-8-sig",
+    )
+    binding = json.dumps(
+        _binding("passed", allowed_files=["seed.txt"], max_allowed_files=1)
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $script:PostEvaluatorCalls = 0
+        function Invoke-RuntimeContractEvaluator {{
+            param([string]$Action, [object]$Payload, [string]$PythonPath = "")
+            if ($Action -eq "post") {{ $script:PostEvaluatorCalls += 1 }}
+            return [pscustomobject]@{{ status = "passed" }}
+        }}
+        $before = Get-ReviewBundleGitObservation
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $child = Invoke-CapturedNativeProcess `
+            -FilePath {_powershell()!r} `
+            -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", {str(child)!r}) `
+            -WorkingDirectory {repo.as_posix()!r} `
+            -StandardInput "" `
+            -StandardInputEncoding $utf8 `
+            -StandardOutputEncoding $utf8 `
+            -StandardErrorEncoding $utf8 `
+            -TimeoutSeconds 20 `
+            -Action "simulated import-shadow child"
+        if ($child.ExitCode -ne 0) {{ throw "Child failed: $($child.Stderr)" }}
+        $after = Get-ReviewBundleGitObservation
+        $reasons = @(Get-ReviewBundleInvariantViolationReasons `
+            -HeadBefore $before.Head `
+            -HeadAfter $after.Head `
+            -NoStage $after.NoStage)
+        $actualFiles = @(Convert-FileTextToArray -Text (Get-ModifiedFilesFromStatus -Status $after.Status))
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles $actualFiles `
+            -InvariantViolationReasons $reasons
+        $approvalAllowed = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -NoStage $after.NoStage `
+            -NoCommit ([string]::Equals($before.Head, $after.Head, [System.StringComparison]::OrdinalIgnoreCase)
+        )
+        $overall = Get-OverallRunnerResult -CodexExitCode "0" -RuntimeContractBinding $binding
+        $payload = [ordered]@{{
+            child_exit = $child.ExitCode
+            post_evaluator_calls = $script:PostEvaluatorCalls
+            malicious_module_imported = Test-Path -LiteralPath {marker.as_posix()!r}
+            actual_changed_files = $actualFiles
+            binding = $binding
+            approval_allowed = $approvalAllowed
+            overall = $overall
+        }}
+        Write-Output ($payload | ConvertTo-Json -Depth 8 -Compress)
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["child_exit"] == 0
+    assert payload["post_evaluator_calls"] == 0
+    assert payload["malicious_module_imported"] is False
+    assert payload["actual_changed_files"] == ["src/local_runner_bridge/json.py"]
+    assert payload["binding"]["status"] == "contract_violation"
+    assert "changed_file_outside_allowed_files" in payload["binding"]["reasons"]
+    assert payload["approval_allowed"] is False
+    assert payload["overall"] == "failure"
+
+
+def test_allowed_runtime_evaluator_change_uses_parent_judge_and_can_pass(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    evaluator = repo / "src" / "local_runner_bridge" / "runtime_contract_binding.py"
+    evaluator.parent.mkdir(parents=True)
+    evaluator.write_text("# trusted evaluator\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "src"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "trusted evaluator"],
+        check=True,
+    )
+    child = tmp_path / "allowed_evaluator_child.ps1"
+    child.write_text(
+        f"Set-Content -LiteralPath {str(evaluator)!r} -Value '# legitimate allowed evaluator change' -Encoding UTF8\n",
+        encoding="utf-8-sig",
+    )
+    allowed_path = "src/local_runner_bridge/runtime_contract_binding.py"
+    binding = json.dumps(
+        _binding("passed", allowed_files=[allowed_path], max_allowed_files=1)
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $script:PostEvaluatorCalls = 0
+        function Invoke-RuntimeContractEvaluator {{
+            param([string]$Action, [object]$Payload, [string]$PythonPath = "")
+            if ($Action -eq "post") {{ $script:PostEvaluatorCalls += 1 }}
+            throw "Workspace evaluator must not run after child execution."
+        }}
+        $before = Get-ReviewBundleGitObservation
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $child = Invoke-CapturedNativeProcess `
+            -FilePath {_powershell()!r} `
+            -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", {str(child)!r}) `
+            -WorkingDirectory {repo.as_posix()!r} `
+            -StandardInput "" `
+            -StandardInputEncoding $utf8 `
+            -StandardOutputEncoding $utf8 `
+            -StandardErrorEncoding $utf8 `
+            -TimeoutSeconds 20 `
+            -Action "simulated allowed evaluator child"
+        if ($child.ExitCode -ne 0) {{ throw "Child failed: $($child.Stderr)" }}
+        $after = Get-ReviewBundleGitObservation
+        $reasons = @(Get-ReviewBundleInvariantViolationReasons `
+            -HeadBefore $before.Head `
+            -HeadAfter $after.Head `
+            -NoStage $after.NoStage)
+        $actualFiles = @(Convert-FileTextToArray -Text (Get-ModifiedFilesFromStatus -Status $after.Status))
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles $actualFiles `
+            -InvariantViolationReasons $reasons
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @($binding.allowed_files)
+        $assurance = New-ExecutionAssurance `
+            -RuntimeContractBinding $binding `
+            -ObservableEvidence "verified" `
+            -CandidateManifest $manifest
+        $noCommit = [string]::Equals($before.Head, $after.Head, [System.StringComparison]::OrdinalIgnoreCase)
+        $approvalAllowed = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -NoStage $after.NoStage `
+            -NoCommit $noCommit `
+            -ExecutionAssurance $assurance
+        $overall = Get-OverallRunnerResult `
+            -CodexExitCode "0" `
+            -RuntimeContractBinding $binding `
+            -ExecutionAssurance $assurance
+        [ordered]@{{
+            child_exit = $child.ExitCode
+            post_evaluator_calls = $script:PostEvaluatorCalls
+            head_unchanged = $noCommit
+            no_stage = $after.NoStage
+            actual_changed_files = $actualFiles
+            binding = $binding
+            approval_allowed = $approvalAllowed
+            overall = $overall
+        }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["child_exit"] == 0
+    assert payload["post_evaluator_calls"] == 0
+    assert payload["head_unchanged"] is True
+    assert payload["no_stage"] is True
+    assert payload["actual_changed_files"] == [allowed_path]
+    assert payload["binding"]["status"] == "passed"
+    assert payload["approval_allowed"] is True
+    assert payload["overall"] == "success"
+
+
+def test_contract_violation_suppresses_approval_context(tmp_path):
+    binding = json.dumps(_binding("contract_violation"))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $binding = '{binding}' | ConvertFrom-Json
+        $allowed = Test-ApprovalContextAllowed -RuntimeContractBinding $binding -NoStage $true -NoCommit $true
+        Write-Output ($allowed | ConvertTo-Json -Compress)
+        """,
+    )
+
+    assert_success(result)
+    assert json.loads(result.stdout) is False
+
+
+def _binding(
+    status: str,
+    *,
+    contract_present: bool = True,
+    allowed_files: list[str] | None = None,
+    max_allowed_files: int = 1,
+) -> dict:
     stage_status = "passed" if status == "passed" else status
-    return {
+    allowed = ["src/example.py"] if allowed_files is None else allowed_files
+    result = {
         "status": status,
         "contract_present": contract_present,
         "pre_execution": {"status": stage_status, "reasons": []},
         "post_execution": {"status": stage_status, "reasons": []},
-        "allowed_files": ["src/example.py"] if contract_present else [],
+        "allowed_files": allowed if contract_present else [],
         "actual_changed_files": ["src/example.py"] if contract_present else [],
         "reasons": (
             ["changed_file_outside_allowed_files"]
@@ -1517,6 +2546,124 @@ def _binding(status: str, *, contract_present: bool = True) -> dict:
             else []
         ),
     }
+    if contract_present:
+        result["runtime_contract"] = {
+            "allowed_files": allowed,
+            "max_allowed_files": max_allowed_files,
+            "verification_commands": ["python -m pytest -q"],
+        }
+    return result
+
+
+def test_parent_controlled_enforcement_allows_normal_task(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    candidate = repo / "src" / "example.py"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text("candidate\n", encoding="utf-8")
+    binding = json.dumps(
+        _binding("passed", allowed_files=["src/example.py"], max_allowed_files=1)
+    )
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles @("src\\example.py") `
+            -InvariantViolationReasons @()
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @($binding.allowed_files)
+        $assurance = New-ExecutionAssurance `
+            -RuntimeContractBinding $binding `
+            -ObservableEvidence "verified" `
+            -CandidateManifest $manifest
+        $approvalAllowed = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -NoStage $true `
+            -NoCommit $true `
+            -ExecutionAssurance $assurance
+        [ordered]@{{ binding = $binding; approval_allowed = $approvalAllowed }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["binding"]["status"] == "passed"
+    assert payload["binding"]["post_execution"] == {
+        "status": "passed",
+        "reasons": [],
+    }
+    assert payload["binding"]["actual_changed_files"] == ["src/example.py"]
+    assert payload["approval_allowed"] is True
+
+
+@pytest.mark.parametrize(
+    ("actual_files", "allowed_files", "maximum", "expected_reason"),
+    [
+        (["README.md"], ["src/example.py"], 1, "changed_file_outside_allowed_files"),
+        (["a.py", "b.py"], ["a.py", "b.py"], 1, "changed_file_count_exceeds_max_allowed_files"),
+        (["C:/outside.py"], ["src/example.py"], 1, "invalid_actual_changed_file"),
+    ],
+)
+def test_parent_controlled_enforcement_fails_closed_on_scope_violations(
+    tmp_path, actual_files, allowed_files, maximum, expected_reason
+):
+    binding = json.dumps(
+        _binding(
+            "passed",
+            allowed_files=allowed_files,
+            max_allowed_files=maximum,
+        )
+    )
+    actual = ",".join(json.dumps(value) for value in actual_files)
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles @({actual}) `
+            -InvariantViolationReasons @()
+        $approvalAllowed = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -NoStage $true `
+            -NoCommit $true
+        [ordered]@{{ binding = $binding; approval_allowed = $approvalAllowed }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["binding"]["status"] == "contract_violation"
+    assert expected_reason in payload["binding"]["reasons"]
+    assert payload["approval_allowed"] is False
+
+
+def test_parent_controlled_enforcement_preserves_legacy_reporting_but_suppresses_eligibility(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        """
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding (New-RuntimeContractNotPresent) `
+            -ActualChangedFiles @("legacy.py") `
+            -InvariantViolationReasons @()
+        $approvalAllowed = Test-ApprovalContextAllowed `
+            -RuntimeContractBinding $binding `
+            -NoStage $true `
+            -NoCommit $true
+        $overall = Get-OverallRunnerResult -CodexExitCode "0" -RuntimeContractBinding $binding
+        [ordered]@{ binding = $binding; approval_allowed = $approvalAllowed; overall = $overall } | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["binding"]["status"] == "not_present"
+    assert payload["binding"]["post_execution"]["status"] == "not_present"
+    assert payload["binding"]["actual_changed_files"] == ["legacy.py"]
+    assert payload["approval_allowed"] is False
+    assert payload["overall"] == "success"
 
 
 def test_runner_result_explicitly_reports_legacy_runtime_contract_not_present(tmp_path):
@@ -1536,6 +2683,9 @@ def test_runner_result_explicitly_reports_legacy_runtime_contract_not_present(tm
             -ChangedFilesText "legacy.py" `
             -FinalStatus " M legacy.py" `
             -CodexExitCode "0" `
+            -NoStage $true `
+            -NoCommit $true `
+            -ApprovalTokenGenerated $false `
             -RuntimeContractBinding $binding
         Write-Output $json
         """,
@@ -1545,6 +2695,55 @@ def test_runner_result_explicitly_reports_legacy_runtime_contract_not_present(tm
     assert summary["runtime_contract_binding"]["status"] == "not_present"
     assert summary["runtime_contract_binding"]["contract_present"] is False
     assert summary["runtime_contract_binding"]["pre_execution"]["status"] == "not_present"
+    assert summary["execution_assurance"]["governance_scope"] == "not_present"
+    assert summary["execution_assurance"]["isolation_guarantee"] == "unverified"
+    assert summary["candidate_acceptance"] == "ineligible"
+    assert summary["approval_token_generated"] is False
+
+
+def test_runner_result_reports_snapshot_eligibility_without_isolation_overclaim(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    binding = json.dumps(_binding("passed", allowed_files=["seed.txt"]))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $binding = '{binding}' | ConvertFrom-Json
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $assurance = New-ExecutionAssurance `
+            -RuntimeContractBinding $binding `
+            -ObservableEvidence "verified" `
+            -CandidateManifest $manifest
+        $json = New-RunnerResultSummaryJson `
+            -IssueNumberText "204" `
+            -Action "run-reviewbundle" `
+            -Result "success" `
+            -Branch "feature/runtime-contract" `
+            -Head ("1" * 40) `
+            -ReviewId "review" `
+            -DiffFingerprint ("2" * 64) `
+            -FilesFingerprint ("3" * 64) `
+            -ChangedFilesText "src/example.py" `
+            -FinalStatus " M src/example.py" `
+            -CodexExitCode "0" `
+            -FinalIndexClean $true `
+            -FinalHeadMatchesInitial $true `
+            -ApprovalTokenGenerated $true `
+            -RuntimeContractBinding $binding `
+            -ExecutionAssurance $assurance `
+            -CandidateEvidenceManifest $manifest
+        Write-Output $json
+        """,
+    )
+
+    assert_success(result)
+    summary = json.loads(result.stdout)
+    assert summary["candidate_acceptance"] == "eligible"
+    assert summary["approval_token_semantics"] == "candidate_review_snapshot_not_human_approval"
+    assert summary["execution_assurance"]["observable_evidence"] == "verified"
+    assert summary["execution_assurance"]["isolation_guarantee"] == "unverified"
+    assert summary["trusted_parent_actions"]["push_invoked"] is False
 
 
 def test_pre_execution_contract_violation_blocks_before_fake_codex(tmp_path):
@@ -1616,7 +2815,7 @@ def test_review_bundle_machine_result_contains_violation_and_reports_failure(tmp
             -ReviewId "" `
             -DiffFingerprint "" `
             -FilesFingerprint "" `
-            -ApprovalToken "" `
+            -ApprovalToken "SHOULD-NOT-APPEAR" `
             -ModifiedFiles "README.md" `
             -DiffStat "" `
             -CachedDiffStat "" `
@@ -1624,6 +2823,8 @@ def test_review_bundle_machine_result_contains_violation_and_reports_failure(tmp
             -CodexFinalReport "DONE" `
             -StderrSummary $stderrSummary `
             -FinalStatus " M README.md" `
+            -NoStage $true `
+            -NoCommit $true `
             -RuntimeContractBinding $binding
         Write-Output $comment
         """,
@@ -1639,17 +2840,167 @@ def test_review_bundle_machine_result_contains_violation_and_reports_failure(tmp
     assert summary["runtime_contract_binding"]["actual_changed_files"] == [
         "src/example.py"
     ]
+    assert summary["approval_token_generated"] is False
+    assert summary["observations"]["final_index_clean"] is True
+    assert summary["observations"]["final_head_matches_initial"] is True
+    assert summary["trusted_parent_actions"]["push_invoked"] is False
+    assert "SHOULD-NOT-APPEAR" not in result.stdout
 
 
 def test_runner_main_orders_contract_checks_around_codex_invocation():
     source = RUNNER.read_text(encoding="utf-8")
     inspect_index = source.index('-Action "inspect"')
     assert_index = source.index("Assert-RuntimeContractAllowsCodex", inspect_index)
+    pre_observation_index = source.index(
+        "$preExecutionObservation = Get-ReviewBundleGitObservation", assert_index
+    )
     codex_index = source.index('-Action "codex ReviewBundle candidate generation"')
-    post_index = source.index('-Action "post"', codex_index)
-    overall_index = source.index("$overallExitCode", post_index)
+    effective_changed_files_index = source.index(
+        "Get-ReviewBundleEffectiveChangedFiles", codex_index
+    )
+    invariant_index = source.index("Get-ReviewBundleInvariantViolationReasons", codex_index)
+    parent_enforcement_index = source.index(
+        "Invoke-ParentControlledRuntimeContractEnforcement", codex_index
+    )
+    approval_gate_index = source.index(
+        "Test-ApprovalContextAllowed", parent_enforcement_index
+    )
+    overall_index = source.index("$overallExitCode", parent_enforcement_index)
 
-    assert inspect_index < assert_index < codex_index < post_index < overall_index
+    assert (
+        inspect_index
+        < assert_index
+        < pre_observation_index
+        < codex_index
+        < effective_changed_files_index
+        < invariant_index
+        < parent_enforcement_index
+        < approval_gate_index
+        < overall_index
+    )
+    assert "Invoke-RuntimeContractEvaluator" not in source[codex_index:]
+    assert '-Action "post"' not in source
+
+
+def test_commit_approved_rereads_changed_contract_source_and_blocks_before_stage(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fake_gh = tmp_path / "gh.exe"
+    fake_gh.write_text("fixture", encoding="utf-8")
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $script:Gh = {fake_gh.as_posix()!r}
+        $script:IssueNumber = 204
+        $script:ApprovalToken = "fixture-token"
+        $script:IssueReadCount = 0
+        $script:BoundBodies = @()
+        $script:StageCalls = 0
+
+        function Assert-RepositoryLocalGitIdentity {{ return $null }}
+        function Test-IssueAllowsWriteCapableRun {{ return $true }}
+        function Get-CommitApprovedIssueSnapshot {{
+            $script:IssueReadCount += 1
+            if ($script:IssueReadCount -eq 1) {{
+                return [pscustomobject]@{{
+                    number = 204
+                    title = "initial title"
+                    body = "initial contract source"
+                }}
+            }}
+            return [pscustomobject]@{{
+                number = 204
+                title = "current title"
+                body = "materially changed contract source"
+            }}
+        }}
+        function Get-CommitApprovedBoundState {{
+            param([string]$IssueBody)
+            $script:BoundBodies += $IssueBody
+            if ($IssueBody -ne "initial contract source") {{
+                throw "current contract drift detected"
+            }}
+            return [pscustomobject]@{{
+                ApprovalState = [pscustomobject]@{{
+                    Branch = "feature/rebaseline"
+                    Head = ("1" * 40)
+                    ReviewId = "review"
+                    DiffFingerprint = ("2" * 64)
+                    FilesFingerprint = ("3" * 64)
+                    ModifiedFilesText = "seed.txt"
+                    ModifiedFiles = @("seed.txt")
+                }}
+            }}
+        }}
+        function ConvertFrom-ApprovalToken {{
+            param([string]$Token)
+            return [pscustomobject]@{{ raw = $Token }}
+        }}
+        function Assert-ApprovalMatchesState {{ param([object]$Token, [object]$State) }}
+        function Invoke-Captured {{
+            param([scriptblock]$ScriptBlock)
+            $script:StageCalls += 1
+            return [pscustomobject]@{{ ExitCode = 0; Stdout = ""; Stderr = "" }}
+        }}
+
+        $blocked = $false
+        $blockMessage = ""
+        try {{ Invoke-CommitApprovedMode }}
+        catch {{
+            $blocked = $true
+            $blockMessage = $_.Exception.Message
+        }}
+        [ordered]@{{
+            issue_reads = $script:IssueReadCount
+            bound_bodies = @($script:BoundBodies)
+            blocked = $blocked
+            block_message = $blockMessage
+            stage_calls = $script:StageCalls
+        }} | ConvertTo-Json -Depth 6 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["issue_reads"] == 2
+    assert payload["bound_bodies"] == [
+        "initial contract source",
+        "materially changed contract source",
+    ]
+    assert payload["blocked"] is True
+    assert "current contract drift detected" in payload["block_message"]
+    assert payload["stage_calls"] == 0
+
+
+def test_commit_approved_rebinds_current_contract_and_snapshot_before_staging():
+    source = RUNNER.read_text(encoding="utf-8")
+    start = source.index("function Invoke-CommitApprovedMode")
+    end = source.index("\nif (-not (Test-Path -LiteralPath $RepoPath))", start)
+    body = source[start:end]
+
+    assert body.count("Get-CommitApprovedIssueSnapshot") == 2
+    first_read = body.index("$issue = Get-CommitApprovedIssueSnapshot")
+    first_rebind = body.index("Get-CommitApprovedBoundState -IssueBody $issueBody")
+    token_parse = body.index("ConvertFrom-ApprovalToken", first_rebind)
+    second_read = body.index("$currentIssue = Get-CommitApprovedIssueSnapshot", token_parse)
+    second_rebind = body.index(
+        "Get-CommitApprovedBoundState -IssueBody $currentIssueBody", second_read
+    )
+    token_match = body.index("Assert-ApprovalMatchesState", second_rebind)
+    stage = body.index("git -C $RepoPath add", token_match)
+
+    assert (
+        first_read
+        < first_rebind
+        < token_parse
+        < second_read
+        < second_rebind
+        < token_match
+        < stage
+    )
 
 
 def test_runtime_contract_integration_does_not_execute_verification_commands():

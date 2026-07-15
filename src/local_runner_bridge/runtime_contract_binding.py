@@ -67,8 +67,17 @@ def normalize_repo_path(value: str) -> str:
     normalized = value.strip().replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
+    if (
+        re.match(r"^[A-Za-z]:", normalized)
+        or ":" in normalized
+        or any(character in normalized for character in "*?[]")
+        or normalized.endswith("/")
+    ):
+        raise ValueError("invalid_repository_relative_path")
     path = PurePosixPath(normalized)
     if path.is_absolute() or ".." in path.parts or normalized in {"", "."}:
+        raise ValueError("invalid_repository_relative_path")
+    if path.parts and path.parts[0].casefold() == ".git":
         raise ValueError("invalid_repository_relative_path")
     return path.as_posix()
 
