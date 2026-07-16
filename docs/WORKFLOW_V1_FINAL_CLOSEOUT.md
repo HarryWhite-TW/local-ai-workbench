@@ -8,8 +8,8 @@
 - candidate baseline: `43195ace509089c8ccfa6e7f14d79bb3238b4f22`
 - accepted correction baseline: `a95d05388ad77963ee8cb44c0b7710a49a9d8421`
 - accepted technical correction HEAD: branch `workflow-v1-phase-c-powershell-env-correction` at `6ee0698f69ec8642925f9ff2a8c1d9677b515682`
-- pre-publication canonical `master` snapshot observed for this synchronization: `a3be6ad46e0a2a93f7fe87dfdd3c476ed3695abb`
-- future documentation publication commit / PR head: not yet created during this Repair-2 synchronization
+- PR #211 base `master` snapshot observed when opened: `a3be6ad46e0a2a93f7fe87dfdd3c476ed3695abb`
+- active correction/publication PR: #211, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; its current head is mutable review truth and requires fresh verification
 - historical original publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
 - historical original publication PR: #203
 - historical original publication canonical merge: `c36a1b820e6f6786267057aa05d25697b9f1deca`
@@ -21,13 +21,13 @@
 
 ## 2. Executive Verdict
 
-The Final Closeout is in `REVIEW — TECHNICAL CORRECTION AND TARGET-FLOW VALIDATION ACCEPTED; PUBLICATION / ASYNC REVIEW / MERGE / TRACKER SYNC PENDING`. The first three mandatory Workflow v1 nodes remain historically `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
+The Final Closeout is in `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING`. The first three mandatory Workflow v1 nodes remain historically `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
 
 PR #203 published this candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; it explicitly did not declare canonical Workflow v1 `DONE`. PR #204 later attempted the `REVIEW` -> `DONE` status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Both transitions remain historical evidence, but asynchronous post-merge automated P2 findings exposed integrity defects and invalidated final reviewer acceptance. Tracker #168 remains stale and unsynchronized.
 
 The current correction also rebaselines the execution-safety boundary. `allowed_files` is exact candidate-modification and acceptance scope, not an automatic claim of OS-level write prevention. Local Runner evidence is bounded and named; current Codex `workspace-write` provider isolation is `unverified`. Useful Git and candidate-manifest evidence remains, but universal write absence, transient-action prevention, full Git-internals coverage, and external-side-effect isolation are not claimed.
 
-The acceptance-integrity correction at `a95d05388ad77963ee8cb44c0b7710a49a9d8421` restores the real Runner v2 -> Runner v1 CommitApproved token handoff through one Runner v1 authoritative approval-state contract, makes CommitApproved evaluate current governance with evaluator files materialized from committed `HEAD`, and distinguishes narrow deterministic Python/pytest cache-path deltas from arbitrary ignored candidate manipulation. The accepted technical correction HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682` copies the child environment, removes inherited `PSModulePath` only for a `powershell.exe` child, leaves the parent environment untouched, preserves the variable for `pwsh.exe` and unrelated executables, and exercises Python -> subprocess -> Windows PowerShell -> `New-TemporaryFile` on a real Windows path. Both the technical correction and full target-flow validation are accepted. At this pre-publication synchronization point, the future documentation publication commit and PR head containing that correction had not yet been created.
+The acceptance-integrity correction at `a95d05388ad77963ee8cb44c0b7710a49a9d8421` restores the real Runner v2 -> Runner v1 CommitApproved token handoff through one Runner v1 authoritative approval-state contract, makes CommitApproved evaluate current governance with evaluator files materialized from committed `HEAD`, and distinguishes narrow deterministic Python/pytest cache-path deltas from arbitrary ignored candidate manipulation. The accepted technical correction HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682` copies the child environment, removes inherited `PSModulePath` only for a `powershell.exe` child, leaves the parent environment untouched, preserves the variable for `pwsh.exe` and unrelated executables, and exercises Python -> subprocess -> Windows PowerShell -> `New-TemporaryFile` on a real Windows path. Both the technical correction and full target-flow validation are accepted. PR #211 is the active correction/publication PR, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; accepted review findings on that PR require correction and completed asynchronous rereview before merge.
 
 ## 3. Workflow v1 Final Architecture
 
@@ -120,7 +120,7 @@ Raw evidence may remain local when appropriate, but accepted conclusions and can
 | `RV2-P1-SYNC` | `DONE` | Established the Human-Governed AI Engineering Control Layer, four-node completion boundary, Roadmap rebaseline, and deferred-scope preservation. |
 | `RV2-04N` | `DONE` | Closed the historical minimum runtime-contract gap; the current rebaseline corrects its acceptance-versus-prevention semantics without erasing the bounded implementation evidence. |
 | Cross-Repository Bounded Proof | `DONE` | Reused the core governance method on one real independent repository for one bounded target-native engineering node. |
-| Workflow v1 Final Closeout | `REVIEW — TECHNICAL CORRECTION AND TARGET-FLOW VALIDATION ACCEPTED; PUBLICATION / ASYNC REVIEW / MERGE / TRACKER SYNC PENDING` | The accepted correction addresses the token-compatibility, trusted-oracle, benign-cache, and Windows PowerShell child-environment defects. Publication, completed asynchronous PR review, merge, post-merge canonical verification, tracker sync, and final residual review remain open. |
+| Workflow v1 Final Closeout | `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING` | The accepted correction addresses the token-compatibility, trusted-oracle, benign-cache, and Windows PowerShell child-environment defects. PR #211 review-finding correction, completed asynchronous rereview, merge, post-merge canonical verification, tracker sync, and final residual review remain open. |
 
 ## 9. Accepted Evidence Ledger
 
@@ -175,7 +175,7 @@ Accepted bounded claim: the core Workflow governance method was successfully reu
 - review conclusion: PR #203 remains historical publication evidence, not a clean no-finding review gate; PR #204 remains historical attempted-transition evidence, not accepted final `DONE`
 - accepted correction baseline: `a95d05388ad77963ee8cb44c0b7710a49a9d8421`
 - accepted technical correction HEAD: `6ee0698f69ec8642925f9ff2a8c1d9677b515682` on `workflow-v1-phase-c-powershell-env-correction`
-- future documentation publication commit / PR head: not yet created during this Repair-2 synchronization
+- active correction/publication PR: #211, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; current head requires fresh verification
 - accepted historical verification, not rerun by this publication task: precise correction set `4 passed`; B2 `49 passed`; related `279 passed`; full repository `1101 passed`; `git diff --check` clean
 - current status: technical correction and full target-flow validation are accepted; final ChatGPT `DONE` acceptance is withheld; tracker #168 is stale and unsynchronized; publication, asynchronous review completion, merge, post-merge canonical verification, tracker synchronization, and final residual review remain open
 
@@ -229,7 +229,7 @@ This demonstration supports one bounded reuse claim, not universal portability.
 -> ACCEPTED — PHASE_C_FULL_TARGET_FLOW_VALIDATED
 ```
 
-This demonstrates the bounded target flow with preserved negative evidence and no automatic retry. It does not publish or merge the correction, synchronize tracker #168, complete asynchronous PR review, or make Workflow v1 `DONE`.
+This demonstrates the bounded target flow with preserved negative evidence and no automatic retry. It does not merge active correction/publication PR #211, synchronize tracker #168, complete asynchronous rereview, or make Workflow v1 `DONE`.
 
 ## 11. Reverb Cross-Repository Bounded Case Study
 
@@ -329,7 +329,7 @@ The repository-separation plan, old proof report, and earlier operational baseli
 
 ## 18. Final DONE Checkpoint
 
-Current status: Workflow v1 Final Closeout is `REVIEW — TECHNICAL CORRECTION AND TARGET-FLOW VALIDATION ACCEPTED; PUBLICATION / ASYNC REVIEW / MERGE / TRACKER SYNC PENDING`; Workflow v1 is not yet finally accepted as `DONE`.
+Current status: Workflow v1 Final Closeout is `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING`; Workflow v1 is not yet finally accepted as `DONE`.
 
 Historical evidence already completed:
 
@@ -337,7 +337,7 @@ Historical evidence already completed:
 2. PR #204 attempted the final status transition at canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`.
 3. Post-merge automated review findings on both PRs triggered this bounded integrity-correction node and invalidated final reviewer acceptance.
 
-Correction semantic acceptance and full target-flow validation are complete. Final `DONE` remains gated on publication through a reviewed documentation commit and PR that contain accepted technical correction HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682`, asynchronous PR review completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. That future documentation publication commit and PR head were not yet created during this Repair-2 synchronization. Tracker #168 currently remains stale and unsynchronized: its newest durable comment still records the superseded pre-correction `WORKFLOW_V1_DONE` verdict. This task does not mutate it.
+Correction semantic acceptance and full target-flow validation are complete. PR #211 is the active correction/publication PR and was opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; its mutable current head must be freshly verified. Final `DONE` remains gated on accepted correction of the PR #211 review findings, asynchronous rereview completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 currently remains stale and unsynchronized: its newest durable comment still records the superseded pre-correction `WORKFLOW_V1_DONE` verdict. This task does not mutate it.
 
 The first three mandatory nodes remain `DONE`; the fourth remains `REVIEW`. No later node is activated.
 

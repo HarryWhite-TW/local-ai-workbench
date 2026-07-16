@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 import textwrap
@@ -147,3 +148,112 @@ def test_runner_v2_no_longer_constructs_a_divergent_lrv1_token():
     marker_recheck = body.index("Assert-CommitApprovalMarkerMatchesState", current_state)
     handoff = body.index("Invoke-RunnerV1CommitApproved", marker_recheck)
     assert diagnostic < current_state < marker_recheck < handoff
+
+
+def test_runner_v2_real_approval_state_diagnostic_is_strict_mode_safe_and_read_only():
+    def git(*args: str) -> bytes:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=REPO_ROOT,
+            capture_output=True,
+        )
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        assert result.returncode == 0, f"git {' '.join(args)} failed:\n{stderr}"
+        return result.stdout
+
+    before = {
+        "head": git("rev-parse", "HEAD"),
+        "status": git("status", "--porcelain=v1", "--untracked-files=all"),
+        "staged": git("diff", "--cached", "--binary"),
+        "worktree": git("diff", "--binary"),
+    }
+    result = subprocess.run(
+        [
+            _powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(RUNNER_V2),
+            "-ApprovalStateDiagnostic",
+            "-IssueNumber",
+            "211",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        timeout=60,
+    )
+    after = {
+        "head": git("rev-parse", "HEAD"),
+        "status": git("status", "--porcelain=v1", "--untracked-files=all"),
+        "staged": git("diff", "--cached", "--binary"),
+        "worktree": git("diff", "--binary"),
+    }
+
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    stderr = result.stderr.decode("utf-8", errors="replace")
+    output = stdout + stderr
+    assert result.returncode == 0, f"stdout:\n{stdout}\nstderr:\n{stderr}"
+    assert "Mode: ApprovalStateDiagnostic" in output
+    assert "Read-only: yes" in output
+    assert "Issue number: #211" in output
+    assert "Final files fingerprint:" in output
+    assert "Final diff fingerprint:" in output
+    assert "No-write guarantee:" in output
+    assert "Approval token preview:" not in output
+    assert "ApprovalToken" not in output
+    assert after == before
+
+
+def test_workflow_closeout_surfaces_name_active_pr_211_without_stale_placeholder():
+    paths = [
+        REPO_ROOT / "PLANS.md",
+        REPO_ROOT / "docs" / "WORKFLOW_V1_FINAL_CLOSEOUT.md",
+        REPO_ROOT / "docs" / "ENGINEERING_RECORDS_INDEX.md",
+    ]
+    texts = [path.read_text(encoding="utf-8") for path in paths]
+    initial_publication_head = "423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb"
+    accepted_technical_correction = "6ee0698f69ec8642925f9ff2a8c1d9677b515682"
+    stale_placeholders = (
+        "future documentation publication commit / PR head",
+        "future documentation publication commit and PR head",
+        "future documentation commit and PR",
+        "documentation publication commit and PR head had not yet been created",
+    )
+
+    for text in texts:
+        active_pr_identity = (
+            re.search(
+                r"PR #211 is (?:now )?the active correction/publication PR",
+                text,
+                flags=re.IGNORECASE,
+            )
+            or re.search(
+                r"active correction/publication PR:\s*#211",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+        assert active_pr_identity is not None
+        assert initial_publication_head in text
+        assert accepted_technical_correction in text
+        assert re.search(
+            r"current(?: PR)? head.{0,160}mutable.{0,160}"
+            r"(?:freshly verified|fresh verification)",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        assert "REVIEW" in text
+        assert re.search(
+            r"not yet finally accepted as\s+[`*]*DONE",
+            text,
+            flags=re.IGNORECASE,
+        )
+        pending_truth = text.lower()
+        assert "rereview" in pending_truth
+        assert "merge" in pending_truth
+        assert "post-merge canonical verification" in pending_truth
+        assert re.search(r"tracker(?: #168)? (?:synchronization|sync)", pending_truth)
+        assert "final residual review" in pending_truth
+        for placeholder in stale_placeholders:
+            assert placeholder not in text

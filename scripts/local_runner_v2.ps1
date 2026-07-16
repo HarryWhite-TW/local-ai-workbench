@@ -1760,7 +1760,6 @@ function Invoke-ApprovalStateDiagnostic {
     Write-Host "Final files fingerprint: $($state.FilesFingerprint)"
     Write-Host "Final diff fingerprint: $($state.DiffFingerprint)"
     Write-Host "Final review id: $($state.ReviewId)"
-    Write-Host "Approval token preview: $($state.ApprovalToken)"
     Write-Host "No-write guarantee: diagnostic mode does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or consume approval tokens."
 }
 

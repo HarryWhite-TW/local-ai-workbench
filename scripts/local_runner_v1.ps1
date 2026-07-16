@@ -321,9 +321,6 @@ function Test-IsBenignPythonCacheNoisePath {
     if ($normalized -match '(^|/)__pycache__/[^/]+\.pyc$') {
         return $true
     }
-    if ($normalized -match '(^|/)[^/]+\.pyc$') {
-        return $true
-    }
     return $normalized -match '(^|/)\.pytest_cache/(README\.md|CACHEDIR\.TAG|\.gitignore|v/cache/(nodeids|lastfailed|stepwise))$'
 }
 
@@ -554,6 +551,7 @@ function Get-RuntimeContractEvaluatorIdentity {
     )
 
     $relativePaths = @(
+        "src/local_runner_bridge/__init__.py",
         "src/local_runner_bridge/runtime_contract_binding.py",
         "src/local_runner_bridge/task_packet_validator.py",
         "src/local_runner_bridge/task_surface_resolver.py"
@@ -576,6 +574,7 @@ function Get-RuntimeContractEvaluatorIdentity {
 
 function New-TrustedRuntimeContractEvaluatorSnapshot {
     $relativePaths = @(
+        "src/local_runner_bridge/__init__.py",
         "src/local_runner_bridge/runtime_contract_binding.py",
         "src/local_runner_bridge/task_packet_validator.py",
         "src/local_runner_bridge/task_surface_resolver.py"
@@ -584,18 +583,31 @@ function New-TrustedRuntimeContractEvaluatorSnapshot {
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     try {
         New-Item -ItemType Directory -Path $snapshotRoot -Force | Out-Null
+        $packageRoot = Join-Path -Path $snapshotRoot -ChildPath "local_runner_bridge"
+        New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
         $files = [ordered]@{}
         foreach ($relativePath in $relativePaths) {
             $committed = Invoke-Git -GitArgs @("show", "HEAD:$relativePath")
             Require-Success -Result $committed -Action "trusted runtime contract evaluator baseline read for $relativePath"
-            $destination = Join-Path -Path $snapshotRoot -ChildPath ($relativePath -replace "^src/local_runner_bridge/", "")
+            $destination = Join-Path -Path $snapshotRoot -ChildPath ($relativePath -replace "^src/", "")
             [System.IO.File]::WriteAllText($destination, ([string]$committed.Stdout) + "`n", $utf8NoBom)
             $files[$relativePath] = Get-Sha256File -Path $destination
         }
+        $entryPath = Join-Path -Path $snapshotRoot -ChildPath "trusted_runtime_contract_entry.py"
+        $entrySource = @'
+import runpy
+import sys
+from pathlib import Path
+
+trusted_root = str(Path(__file__).resolve().parent)
+sys.path.insert(0, trusted_root)
+runpy.run_module("local_runner_bridge.runtime_contract_binding", run_name="__main__")
+'@
+        [System.IO.File]::WriteAllText($entryPath, $entrySource, $utf8NoBom)
         $fingerprintPayload = @($files.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
         return [pscustomobject]@{
             Root = $snapshotRoot
-            EvaluatorPath = Join-Path -Path $snapshotRoot -ChildPath "runtime_contract_binding.py"
+            EvaluatorPath = $entryPath
             Files = $files
             Fingerprint = Get-Sha256Text -Text $fingerprintPayload
             Source = "committed_head"
@@ -1035,9 +1047,15 @@ function Invoke-RuntimeContractEvaluator {
         }
         $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
         $payloadJson = $Payload | ConvertTo-Json -Depth 20 -Compress
+        $pythonArguments = if ($TrustedCommittedBaseline) {
+            @("-I", "-S", $bindingScript, $Action)
+        }
+        else {
+            @($bindingScript, $Action)
+        }
         $evaluation = Invoke-CapturedNativeProcess `
             -FilePath $python `
-            -Arguments @($bindingScript, $Action) `
+            -Arguments $pythonArguments `
             -WorkingDirectory $workingDirectory `
             -StandardInput $payloadJson `
             -StandardInputEncoding $utf8 `

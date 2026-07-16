@@ -27,8 +27,8 @@ Recommended future session read order:
 ## Current Important Anchors
 
 - Roadmap v2 tracker: Issue `#168`
-- Workflow v1 Final Closeout correction record: `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`; at this synchronization it records the accepted technical correction and target-flow validation as a pre-publication candidate, and it becomes the primary final closeout record only after final acceptance
-- Publication sequence recorded for this synchronization: a future documentation commit and PR containing accepted technical correction HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682` on `workflow-v1-phase-c-powershell-env-correction`, followed by asynchronous review, merge, post-merge canonical verification, tracker sync, and final residual review; the documentation publication commit and PR head had not yet been created, and no later node is activated
+- Workflow v1 Final Closeout correction record: `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`; it records the accepted technical correction and target-flow validation plus the active PR #211 correction/publication state, and it becomes the primary final closeout record only after final acceptance
+- Active correction/publication PR: #211 on `workflow-v1-phase-c-powershell-env-correction`, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb` and containing accepted technical correction HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682`; the current PR head is mutable and requires fresh verification, while accepted review-finding correction, asynchronous rereview, merge, post-merge canonical verification, tracker sync, and final residual review remain pending; no later node is activated
 - Acceptance-integrity correction baseline: `a95d05388ad77963ee8cb44c0b7710a49a9d8421`
 - Phase C evidence Issues: #207 first `maybe-status-check` failure; #208 corrected success; #209 first `run-reviewbundle` failure; #210 restored-CLI success and independent PASS
 - PR #203: Final Closeout candidate publication; commit `368934f5c93d210c485d49180bc1c347d7d3647c`; canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`
@@ -37,9 +37,9 @@ Recommended future session read order:
 - Deferred workflow-hardening anchor: Issue `#188`
 - Records and closeout planning anchor: Issue `#190`
 - RV2-03 lessons publication lane: PR `#186`
-- Canonical branch: `master`; the pre-publication remote `master` snapshot observed for this synchronization was `a3be6ad46e0a2a93f7fe87dfdd3c476ed3695abb`, with any later HEAD always requiring fresh verification
+- Canonical branch: `master`; PR #211 was opened against observed base snapshot `a3be6ad46e0a2a93f7fe87dfdd3c476ed3695abb`, with any later HEAD always requiring fresh verification
 
-`PLANS.md` remains the current project-status authority. This index is navigation only and does not itself accept or activate work. Post-merge automated P2 findings on PR #203 and PR #204 invalidated the earlier final `DONE` acceptance. Workflow v1 Final Closeout is `REVIEW — TECHNICAL CORRECTION AND TARGET-FLOW VALIDATION ACCEPTED; PUBLICATION / ASYNC REVIEW / MERGE / TRACKER SYNC PENDING`; Workflow v1 is not yet finally accepted as `DONE`. Tracker #168 remains stale because its newest durable comment still records the superseded pre-correction `WORKFLOW_V1_DONE` verdict.
+`PLANS.md` remains the current project-status authority. This index is navigation only and does not itself accept or activate work. Post-merge automated P2 findings on PR #203 and PR #204 invalidated the earlier final `DONE` acceptance. Workflow v1 Final Closeout is `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING`; Workflow v1 is not yet finally accepted as `DONE`. Tracker #168 remains stale because its newest durable comment still records the superseded pre-correction `WORKFLOW_V1_DONE` verdict.
 
 ## ECO-DOC-01 Durable Records
 
@@ -75,7 +75,7 @@ This entry is navigation, not implementation authority or a replacement for curr
 ## RV2 / Product Checkpoint Warning
 
 - RV2-03, RV2-P1-SYNC, RV2-04N, and Cross-Repository Bounded Proof are recorded as `DONE` by current canonical `PLANS.md` and accepted evidence.
-- The first three mandatory Workflow v1 nodes remain `DONE`; Workflow v1 Final Closeout remains `REVIEW` after accepted correction and target-flow validation, and Workflow v1 final `DONE` acceptance is withheld pending publication, asynchronous review completion, merge, post-merge canonical verification, tracker sync, and final residual review.
+- The first three mandatory Workflow v1 nodes remain `DONE`; Workflow v1 Final Closeout remains `REVIEW` after accepted correction and target-flow validation, and Workflow v1 final `DONE` acceptance is withheld pending accepted PR #211 review-finding correction, asynchronous rereview completion, merge, post-merge canonical verification, tracker sync, and final residual review.
 - Historical RV2-04 was narrowed into completed RV2-04N; historical RV2-05/07/08/09 remain deferred and RV2-06 remains partially absorbed.
 - Tracker #168 remains unsynchronized and is a required later close-rule step; this index and this local correction do not mutate it.
 - The accepted correction and current publication sequence do not activate another node, Issue #188, Workbench Phase 5.4, deferred scope, or new authority.
