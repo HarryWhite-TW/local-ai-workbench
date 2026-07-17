@@ -205,7 +205,7 @@ def test_runner_v2_real_approval_state_diagnostic_is_strict_mode_safe_and_read_o
     assert after == before
 
 
-def test_workflow_closeout_surfaces_record_final_done_truth():
+def test_workflow_closeout_surfaces_record_pre_final_review_truth():
     paths = (
         REPO_ROOT / "PLANS.md",
         REPO_ROOT / "docs" / "BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md",
@@ -215,49 +215,17 @@ def test_workflow_closeout_surfaces_record_final_done_truth():
     reviewed_head = "4d3b649da9c953480c5053ae8e0b1707315de3e6"
     canonical_merge = "38d3e96263b671a72141d0ab92b61b91a85e6c36"
     tracker_checkpoint = "4998971940"
-    stale_placeholders = (
-        "future documentation publication commit / PR head",
-        "future documentation publication commit and PR head",
-        "future documentation commit and PR",
-        "documentation publication commit and PR head had not yet been created",
+    done_nodes = (
+        "RV2-P1-SYNC",
+        "RV2-04N",
+        "Cross-Repository Bounded Proof",
     )
-
-    stale_current_status_patterns = (
-        r"PR #211 is (?:now )?the active correction/publication PR",
-        r"active correction/publication PR:\s*#211",
-        r"REVIEW\s*[—-]\s*ACTIVE PR #211",
-        r"(?:ChatGPT\s+)?final reviewer acceptance is withheld",
-        r"final acceptance is withheld",
-        r"Workflow v1 is not yet finally accepted as\s+(?:DONE|`DONE`)",
-        r"Final Closeout remains\s+`?REVIEW\b",
-        r"(?:rereview|merge|post-merge canonical verification|"
-        r"tracker #168 (?:synchronization|sync)|final residual review)"
-        r"[^\n]{0,120}\b(?:remain|remains|is|are)\s+(?:pending|open|required)\b",
+    current_final_done_claims = (
+        r"Workflow v1 Final Closeout\s+(?:is|:)\s*`DONE`",
+        r"Workflow v1 Final Closeout\s*\|\s*`DONE`",
+        r"Workflow v1 is (?:now )?finally (?:recorded as\s+)?`DONE`",
+        r"all four mandatory(?: Workflow v1)? nodes are `DONE`",
     )
-    stale_acceptance_examples = (
-        "ChatGPT final reviewer acceptance is withheld",
-        "final reviewer acceptance is withheld",
-        "final acceptance is withheld",
-        "Workflow v1 is not yet finally accepted as DONE",
-        "Workflow v1 is not yet finally accepted as `DONE`",
-        "Final Closeout remains REVIEW",
-    )
-    historical_acceptance_examples = (
-        "ChatGPT final reviewer acceptance was withheld at the incident checkpoint",
-        "ChatGPT final reviewer acceptance had been withheld pending correction",
-        "ChatGPT final reviewer acceptance was historically withheld",
-    )
-
-    for example in stale_acceptance_examples:
-        assert any(
-            re.search(pattern, example, flags=re.IGNORECASE)
-            for pattern in stale_current_status_patterns
-        ), example
-    for example in historical_acceptance_examples:
-        assert all(
-            re.search(pattern, example, flags=re.IGNORECASE) is None
-            for pattern in stale_current_status_patterns
-        ), example
 
     for path in paths:
         text = path.read_text(encoding="utf-8")
@@ -265,8 +233,19 @@ def test_workflow_closeout_surfaces_record_final_done_truth():
         assert reviewed_head in text, path
         assert canonical_merge in text, path
         assert tracker_checkpoint in text, path
+        for node in done_nodes:
+            assert re.search(
+                rf"{re.escape(node)}[^\n]{{0,200}}`DONE`",
+                text,
+                flags=re.IGNORECASE,
+            ), (path, node)
         assert re.search(
-            r"Workflow v1 Final Closeout[^\n]{0,240}`DONE`",
+            r"Workflow v1 Final Closeout[^\n]{0,240}`REVIEW\b",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"Workflow v1 remains\s+`REVIEW\b",
             text,
             flags=re.IGNORECASE,
         ), path
@@ -276,7 +255,9 @@ def test_workflow_closeout_surfaces_record_final_done_truth():
             flags=re.IGNORECASE,
         ), path
         assert re.search(
-            r"post-merge canonical verification (?:is )?complete(?:d)?",
+            r"post-merge canonical verification"
+            r"(?:\s+(?:is\s+)?complete(?:d)?"
+            r"|,\s+and\s+final residual review\s+(?:is\s+)?complete(?:d)?)",
             text,
             flags=re.IGNORECASE,
         ), path
@@ -292,18 +273,31 @@ def test_workflow_closeout_surfaces_record_final_done_truth():
             flags=re.IGNORECASE,
         ), path
         assert re.search(
-            rf"comment\s+`?{tracker_checkpoint}`?.{{0,240}}"
-            r"(?:REVIEW|before final residual review)",
+            rf"comment\s+`?{tracker_checkpoint}`?[^\n]{{0,240}}"
+            r"(?:latest durable[^\n]{0,80}`REVIEW`|"
+            r"`REVIEW`[^\n]{0,80}latest durable)",
             text,
-            flags=re.IGNORECASE | re.DOTALL,
+            flags=re.IGNORECASE,
         ), path
-        for pattern in stale_current_status_patterns:
+        assert re.search(
+            r"remaining ordered closeout sequence[^\n]{0,400}"
+            r"PR #212[^\n]{0,120}exact-head rereview[^\n]{0,120}"
+            r"PR #212 merge[^\n]{0,120}post-merge canonical verification[^\n]{0,160}"
+            r"tracker #168 final `DONE` synchronization[^\n]{0,160}"
+            r"separate final durable-status transition",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"PR #212 does not itself constitute canonical Workflow v1 closure",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        for pattern in current_final_done_claims:
             assert re.search(pattern, text, flags=re.IGNORECASE) is None, (
                 path,
                 pattern,
             )
-        for placeholder in stale_placeholders:
-            assert placeholder not in text, (path, placeholder)
 
     closeout = (REPO_ROOT / "docs" / "WORKFLOW_V1_FINAL_CLOSEOUT.md").read_text(
         encoding="utf-8"

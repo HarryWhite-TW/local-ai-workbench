@@ -652,7 +652,7 @@ Workflow v1 completion consists of four mandatory nodes:
 1. `RV2-P1-SYNC` — this Workflow v1 completion-boundary and Roadmap-rebaseline documentation node: `DONE`.
 2. `RV2-04N — Minimal Runtime Contract Closure`: `DONE`.
 3. Cross-Repository Bounded Proof: `DONE`.
-4. Workflow v1 Final Closeout: `DONE`. PR #203 published the candidate and PR #204 attempted the final transition, but later post-merge automated P2 findings made both historical integrity-incident evidence rather than clean final acceptance. PR #211 completed the correction at reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`; external Codex exact-head review reported no major issues; canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36` and post-merge canonical verification completed. Tracker #168 comment `4998971940` preserved the then-current post-merge `REVIEW` checkpoint before final residual review, and final residual review is complete.
+4. Workflow v1 Final Closeout: `REVIEW — FINAL TRACKER AND DURABLE-TRUTH CLOSURE NOT YET COMPLETE`. PR #203 published the candidate and PR #204 attempted the final transition, but later post-merge automated P2 findings made both historical integrity-incident evidence rather than clean final acceptance. PR #211 completed the correction at reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`; external Codex exact-head review reported no major issues; canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36`, post-merge canonical verification, and final residual review completed. Tracker #168 comment `4998971940` remains the latest durable `REVIEW` checkpoint and does not declare final `DONE`.
 
 RV2-04N acceptance is bounded to implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200, canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`, and the accepted test/repair evidence recorded above.
 
@@ -668,7 +668,7 @@ The Final Closeout candidate records the final architecture, role and authority 
 
 PR #203 published the Final Closeout candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; its own acceptance boundary did not declare canonical Workflow v1 `DONE`. PR #204 then attempted the final status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. At the PR #203 / PR #204 integrity-incident checkpoint, ChatGPT final reviewer acceptance was withheld until the correction and close rule were completed.
 
-The close rule has been satisfied for Workflow v1. The accepted integrity correction passed semantic review and external Codex exact-head review with no major issues at `4d3b649da9c953480c5053ae8e0b1707315de3e6`; PR #211 merged canonically at `38d3e96263b671a72141d0ab92b61b91a85e6c36`; post-merge canonical verification completed; tracker #168 post-merge synchronization was recorded historically in checkpoint comment `4998971940`; and final residual review completed. That tracker comment correctly preserved `REVIEW` at the time and did not itself declare final `DONE`. Accepted candidate verification recorded targeted pycache regressions `10 passed`, Runner v1 `89 passed`, Runner v2 compatibility `4 passed`, related Runner/Bridge `810 passed`, full repository `1112 passed`, `0 failed`, and `git diff --check` exit `0`.
+The final close rule is not yet complete for Workflow v1. The accepted integrity correction passed semantic review and external Codex exact-head review with no major issues at `4d3b649da9c953480c5053ae8e0b1707315de3e6`; PR #211 merged canonically at `38d3e96263b671a72141d0ab92b61b91a85e6c36`; post-merge canonical verification and final residual review completed. Tracker #168 comment `4998971940` correctly preserves the latest durable `REVIEW` checkpoint and does not declare final `DONE`. The remaining ordered closeout sequence is PR #212 review repair and exact-head rereview, PR #212 merge, post-merge canonical verification, tracker #168 final `DONE` synchronization, and a separate final durable-status transition. PR #212 does not itself constitute canonical Workflow v1 closure. Accepted candidate verification recorded targeted pycache regressions `10 passed`, Runner v1 `89 passed`, Runner v2 compatibility `4 passed`, related Runner/Bridge `810 passed`, full repository `1112 passed`, `0 failed`, and `git diff --check` exit `0`.
 
 ### Historical-node classifications
 
@@ -681,9 +681,9 @@ The close rule has been satisfied for Workflow v1. The accepted integrity correc
 
 ### Completion exclusions and non-activation
 
-Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use for every task, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
+An eventual Workflow v1 `DONE` transition does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use for every task, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
 
-All four mandatory Workflow v1 nodes are `DONE`. This final status creates no Issue #188 or Issue #190 implementation, Workbench Phase 5.4, RV2-05/07/08/09, unabsorbed RV2-06 work, Native-vs-Bridge benchmark, startup, tray, service, MCP, repository separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic commit/push/PR/merge authority. No later node is activated.
+The first three mandatory Workflow v1 nodes remain `DONE`. Workflow v1 Final Closeout remains `REVIEW — FINAL TRACKER AND DURABLE-TRUTH CLOSURE NOT YET COMPLETE`, and Workflow v1 remains `REVIEW — FINAL CLOSE RULE NOT YET COMPLETE`. This pre-final status creates no Issue #188 or Issue #190 implementation, Workbench Phase 5.4, RV2-05/07/08/09, unabsorbed RV2-06 work, Native-vs-Bridge benchmark, startup, tray, service, MCP, repository separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic commit/push/PR/merge authority. No later node is activated.
 
 ## Auth And Dependency Preflight Policy
 
@@ -775,7 +775,7 @@ After merge and post-merge verification:
 4. set `RV2-01` to `PLANNED` or `READY` only after checking its entry criteria;
 5. do not publish smoke markers or execute B4-D until the required separate approvals are obtained.
 
-This section records the historical activation procedure. Tracker #168 is the designated canonical GitHub Roadmap surface. Its post-merge checkpoint comment `4998971940` records PR #211 reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`, canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36`, completed exact-head review and post-merge verification, and the historically correct `REVIEW` checkpoint before final residual review. Workflow v1 Final Closeout is now `DONE`; no later Roadmap node is activated.
+This section records the historical activation procedure. Tracker #168 is the designated canonical GitHub Roadmap surface. Its latest durable checkpoint comment `4998971940` records PR #211 reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`, canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36`, completed exact-head review and post-merge verification, and the correct `REVIEW` state pending final tracker and durable-truth closure. Workflow v1 Final Closeout remains `REVIEW`; no later Roadmap node is activated.
 
 ## Current Authority Boundary
 
