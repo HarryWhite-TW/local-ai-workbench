@@ -466,7 +466,7 @@ Non-claims remain explicit: RV2-04N did not prove universal filesystem-write pre
 
 #### Workflow v1 Execution Safety Boundary Rebaseline
 
-The current bounded correction preserves exact `allowed_files` candidate-acceptance governance and useful local Git evidence while separating it from provider-backed isolation. Machine-readable results distinguish governance scope, bounded observable evidence, and provider isolation. Current local Codex `workspace-write` isolation remains `unverified`; no provider evidence, custom sandbox, ACL platform, whole-filesystem hashing, or exhaustive Git-internals engine is added. Candidate tokens are snapshot bindings only and require a valid v1.1 contract plus verified named evidence; CommitApproved revalidates current scope and evidence. This implementation remains subject to final ChatGPT review and does not make Workflow v1 `DONE`.
+The accepted bounded correction preserves exact `allowed_files` candidate-acceptance governance and useful local Git evidence while separating it from provider-backed isolation. Machine-readable results distinguish governance scope, bounded observable evidence, and provider isolation. Current local Codex `workspace-write` isolation remains `unverified`; no provider evidence, custom sandbox, ACL platform, whole-filesystem hashing, or exhaustive Git-internals engine is added. Candidate tokens are snapshot bindings only and require a valid v1.1 contract plus verified named evidence; CommitApproved revalidates current scope and evidence. Final Workflow v1 acceptance does not broaden these bounded semantics or non-claims.
 
 ### RV2-05 — Minimal `lawb` CLI Facade
 
@@ -652,7 +652,7 @@ Workflow v1 completion consists of four mandatory nodes:
 1. `RV2-P1-SYNC` — this Workflow v1 completion-boundary and Roadmap-rebaseline documentation node: `DONE`.
 2. `RV2-04N — Minimal Runtime Contract Closure`: `DONE`.
 3. Cross-Repository Bounded Proof: `DONE`.
-4. Workflow v1 Final Closeout: `REVIEW — CORRECTION REQUIRED`. PR #203 published the candidate; PR #204 attempted the final `DONE` transition; later post-merge automated P2 findings invalidated final reviewer acceptance and activated the explicitly approved Workflow v1 Closeout Integrity Correction.
+4. Workflow v1 Final Closeout: `DONE`. PR #203 published the candidate and PR #204 attempted the final transition, but later post-merge automated P2 findings made both historical integrity-incident evidence rather than clean final acceptance. PR #211 completed the correction at reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`; external Codex exact-head review reported no major issues; canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36` and post-merge canonical verification completed. Tracker #168 comment `4998971940` preserved the then-current post-merge `REVIEW` checkpoint before final residual review, and final residual review is complete.
 
 RV2-04N acceptance is bounded to implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649`, PR #200, canonical merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`, and the accepted test/repair evidence recorded above.
 
@@ -666,9 +666,9 @@ The accepted claim is intentionally bounded: the core Workflow governance method
 
 The Final Closeout candidate records the final architecture, role and authority model, core governance contract, execution surfaces, evidence hierarchy, four-node completion matrix, evidence ledger, demonstrations, Reverb case study, Parallel Agent Trial 01, limitations, non-claims, deferred scope, operational guidance, durable truth surfaces, and final no-auto-activation boundary.
 
-PR #203 published the Final Closeout candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; its own acceptance boundary did not declare canonical Workflow v1 `DONE`. PR #204 then attempted the final status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Asynchronous post-merge automated P2 findings on those PRs exposed remaining integrity defects, so ChatGPT final reviewer acceptance is withheld.
+PR #203 published the Final Closeout candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; its own acceptance boundary did not declare canonical Workflow v1 `DONE`. PR #204 then attempted the final status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. At the PR #203 / PR #204 integrity-incident checkpoint, ChatGPT final reviewer acceptance was withheld until the correction and close rule were completed.
 
-The close rule remains operative: final `DONE` requires this integrity correction to pass semantic review, publication, asynchronous review completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 is currently stale and unsynchronized. The current active engineering node is `Workflow v1 Closeout Integrity Correction`; one-node discipline remains in force, and no later node or authority is activated.
+The close rule has been satisfied for Workflow v1. The accepted integrity correction passed semantic review and external Codex exact-head review with no major issues at `4d3b649da9c953480c5053ae8e0b1707315de3e6`; PR #211 merged canonically at `38d3e96263b671a72141d0ab92b61b91a85e6c36`; post-merge canonical verification completed; tracker #168 post-merge synchronization was recorded historically in checkpoint comment `4998971940`; and final residual review completed. That tracker comment correctly preserved `REVIEW` at the time and did not itself declare final `DONE`. Accepted candidate verification recorded targeted pycache regressions `10 passed`, Runner v1 `89 passed`, Runner v2 compatibility `4 passed`, related Runner/Bridge `810 passed`, full repository `1112 passed`, `0 failed`, and `git diff --check` exit `0`.
 
 ### Historical-node classifications
 
@@ -683,7 +683,7 @@ The close rule remains operative: final `DONE` requires this integrity correctio
 
 Workflow v1 `DONE` does not require tray UX, Windows login startup, a service, MCP, physical repository separation, universal GitHub Issue transport, universal Bridge use for every task, strict autonomy, automatic commit, automatic push, automatic PR creation, merge, or approval chaining.
 
-The first three mandatory Workflow v1 nodes remain `DONE`. Workflow v1 Final Closeout is `REVIEW — CORRECTION REQUIRED`, and Workflow v1 final `DONE` acceptance is withheld. The active correction creates no Issue #188 implementation, benchmark, startup, tray, service, MCP, repository separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic commit/push/PR/merge authority. No later node is activated.
+All four mandatory Workflow v1 nodes are `DONE`. This final status creates no Issue #188 or Issue #190 implementation, Workbench Phase 5.4, RV2-05/07/08/09, unabsorbed RV2-06 work, Native-vs-Bridge benchmark, startup, tray, service, MCP, repository separation, dependency, live-Bridge, trusted-actor, allowlist, or automatic commit/push/PR/merge authority. No later node is activated.
 
 ## Auth And Dependency Preflight Policy
 
@@ -775,7 +775,7 @@ After merge and post-merge verification:
 4. set `RV2-01` to `PLANNED` or `READY` only after checking its entry criteria;
 5. do not publish smoke markers or execute B4-D until the required separate approvals are obtained.
 
-This section records the historical activation procedure. Tracker #168 is the designated canonical GitHub Roadmap surface. Fresh read-only verification for this correction found tracker #168 still records Workflow v1 Final Closeout as the next inactive candidate and retains an old canonical repository baseline. It is stale and pending a separately authorized final truth synchronization; this task does not mutate it. The only current active engineering node is the explicitly approved `Workflow v1 Closeout Integrity Correction`; no later Roadmap node is activated.
+This section records the historical activation procedure. Tracker #168 is the designated canonical GitHub Roadmap surface. Its post-merge checkpoint comment `4998971940` records PR #211 reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`, canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36`, completed exact-head review and post-merge verification, and the historically correct `REVIEW` checkpoint before final residual review. Workflow v1 Final Closeout is now `DONE`; no later Roadmap node is activated.
 
 ## Current Authority Boundary
 

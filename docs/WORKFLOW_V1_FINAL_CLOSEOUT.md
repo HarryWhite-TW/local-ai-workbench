@@ -3,13 +3,15 @@
 ## 1. Document Identity
 
 - title: Workflow v1 Final Closeout
-- status: `REVIEW — TECHNICAL CORRECTION AND TARGET-FLOW VALIDATION ACCEPTED; PUBLICATION / ASYNC REVIEW / MERGE / TRACKER SYNC PENDING`
+- status: `DONE`
 - repository: `HarryWhite-TW/local-ai-workbench`
 - candidate baseline: `43195ace509089c8ccfa6e7f14d79bb3238b4f22`
 - accepted correction baseline: `a95d05388ad77963ee8cb44c0b7710a49a9d8421`
-- accepted technical correction HEAD: branch `workflow-v1-phase-c-powershell-env-correction` at `6ee0698f69ec8642925f9ff2a8c1d9677b515682`
+- accepted integrity-correction reviewed HEAD: branch `workflow-v1-phase-c-powershell-env-correction` at `4d3b649da9c953480c5053ae8e0b1707315de3e6`
+- accepted integrity-correction canonical merge: `38d3e96263b671a72141d0ab92b61b91a85e6c36`
+- tracker #168 post-merge checkpoint comment: `4998971940`
 - PR #211 base `master` snapshot observed when opened: `a3be6ad46e0a2a93f7fe87dfdd3c476ed3695abb`
-- active correction/publication PR: #211, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; its current head is mutable review truth and requires fresh verification
+- accepted correction/publication PR: #211; exact-head review, canonical merge, and post-merge verification completed
 - historical original publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
 - historical original publication PR: #203
 - historical original publication canonical merge: `c36a1b820e6f6786267057aa05d25697b9f1deca`
@@ -21,13 +23,13 @@
 
 ## 2. Executive Verdict
 
-The Final Closeout is in `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING`. The first three mandatory Workflow v1 nodes remain historically `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
+Workflow v1 Final Closeout is `DONE`. All four mandatory Workflow v1 nodes are recorded as `DONE`, and final residual review is complete.
 
-PR #203 published this candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; it explicitly did not declare canonical Workflow v1 `DONE`. PR #204 later attempted the `REVIEW` -> `DONE` status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Both transitions remain historical evidence, but asynchronous post-merge automated P2 findings exposed integrity defects and invalidated final reviewer acceptance. Tracker #168 remains stale and unsynchronized.
+PR #203 published this candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; it explicitly did not declare canonical Workflow v1 `DONE`. PR #204 later attempted the `REVIEW` -> `DONE` status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Asynchronous post-merge automated P2 findings exposed integrity defects and invalidated those earlier acceptance claims. Both PRs remain auditable historical integrity-incident evidence rather than being rewritten as clean final acceptance.
 
 The current correction also rebaselines the execution-safety boundary. `allowed_files` is exact candidate-modification and acceptance scope, not an automatic claim of OS-level write prevention. Local Runner evidence is bounded and named; current Codex `workspace-write` provider isolation is `unverified`. Useful Git and candidate-manifest evidence remains, but universal write absence, transient-action prevention, full Git-internals coverage, and external-side-effect isolation are not claimed.
 
-The acceptance-integrity correction at `a95d05388ad77963ee8cb44c0b7710a49a9d8421` restores the real Runner v2 -> Runner v1 CommitApproved token handoff through one Runner v1 authoritative approval-state contract, makes CommitApproved evaluate current governance with evaluator files materialized from committed `HEAD`, and distinguishes narrow deterministic Python/pytest cache-path deltas from arbitrary ignored candidate manipulation. The accepted technical correction HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682` copies the child environment, removes inherited `PSModulePath` only for a `powershell.exe` child, leaves the parent environment untouched, preserves the variable for `pwsh.exe` and unrelated executables, and exercises Python -> subprocess -> Windows PowerShell -> `New-TemporaryFile` on a real Windows path. Both the technical correction and full target-flow validation are accepted. PR #211 is the active correction/publication PR, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; accepted review findings on that PR require correction and completed asynchronous rereview before merge.
+The acceptance-integrity correction at `a95d05388ad77963ee8cb44c0b7710a49a9d8421` restored the real Runner v2 -> Runner v1 CommitApproved token handoff through one Runner v1 authoritative approval-state contract and made CommitApproved evaluate current governance with evaluator files materialized from committed `HEAD`. Later corrections preserved the Windows PowerShell child-environment boundary and removed every `.pyc` pathname exemption: arbitrary ignored bytecode creation or removal remains observable and fails closed outside the runtime-contract allowlist, while Runner-launched children receive `PYTHONDONTWRITEBYTECODE=1` without parent-environment mutation. PR #211 reached accepted reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`; external Codex exact-head review completed with no major issues; PR #211 merged canonically at `38d3e96263b671a72141d0ab92b61b91a85e6c36`; and post-merge canonical verification completed. Tracker #168 comment `4998971940` then recorded the historically correct post-merge `REVIEW` checkpoint before final residual review; it did not itself declare final `DONE`. Final residual review is complete.
 
 ## 3. Workflow v1 Final Architecture
 
@@ -120,7 +122,7 @@ Raw evidence may remain local when appropriate, but accepted conclusions and can
 | `RV2-P1-SYNC` | `DONE` | Established the Human-Governed AI Engineering Control Layer, four-node completion boundary, Roadmap rebaseline, and deferred-scope preservation. |
 | `RV2-04N` | `DONE` | Closed the historical minimum runtime-contract gap; the current rebaseline corrects its acceptance-versus-prevention semantics without erasing the bounded implementation evidence. |
 | Cross-Repository Bounded Proof | `DONE` | Reused the core governance method on one real independent repository for one bounded target-native engineering node. |
-| Workflow v1 Final Closeout | `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING` | The accepted correction addresses the token-compatibility, trusted-oracle, benign-cache, and Windows PowerShell child-environment defects. PR #211 review-finding correction, completed asynchronous rereview, merge, post-merge canonical verification, tracker sync, and final residual review remain open. |
+| Workflow v1 Final Closeout | `DONE` | PR #211 completed the token-compatibility, trusted-oracle, cache fail-closed, and Windows child-environment corrections; exact-head review, canonical merge, post-merge verification, tracker checkpoint synchronization, and final residual review completed. |
 
 ## 9. Accepted Evidence Ledger
 
@@ -174,10 +176,15 @@ Accepted bounded claim: the core Workflow governance method was successfully reu
 - PR #204 evidence: it merged before asynchronous automated review completed; later post-merge review produced three unresolved P2 findings concerning tracker synchronization, PR #203 review attribution, and PR #203/PR #204 evidence attribution
 - review conclusion: PR #203 remains historical publication evidence, not a clean no-finding review gate; PR #204 remains historical attempted-transition evidence, not accepted final `DONE`
 - accepted correction baseline: `a95d05388ad77963ee8cb44c0b7710a49a9d8421`
-- accepted technical correction HEAD: `6ee0698f69ec8642925f9ff2a8c1d9677b515682` on `workflow-v1-phase-c-powershell-env-correction`
-- active correction/publication PR: #211, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; current head requires fresh verification
-- accepted historical verification, not rerun by this publication task: precise correction set `4 passed`; B2 `49 passed`; related `279 passed`; full repository `1101 passed`; `git diff --check` clean
-- current status: technical correction and full target-flow validation are accepted; final ChatGPT `DONE` acceptance is withheld; tracker #168 is stale and unsynchronized; publication, asynchronous review completion, merge, post-merge canonical verification, tracker synchronization, and final residual review remain open
+- accepted correction/publication PR: #211
+- accepted reviewed head: `4d3b649da9c953480c5053ae8e0b1707315de3e6` on retained branch `workflow-v1-phase-c-powershell-env-correction`
+- external Codex exact-head review: completed with no major issues
+- canonical merge: `38d3e96263b671a72141d0ab92b61b91a85e6c36`
+- post-merge canonical verification: completed
+- tracker #168 post-merge checkpoint: comment `4998971940`; historically recorded `REVIEW` before final residual review and did not itself declare final `DONE`
+- accepted PR #211 candidate verification: targeted pycache regressions `10 passed`; Runner v1 `89 passed`; Runner v2 compatibility `4 passed`; related Runner/Bridge suite `810 passed`; full repository suite `1112 passed`; `0 failed`; `git diff --check` exit `0`
+- final residual review: complete
+- current status: Workflow v1 Final Closeout and all four mandatory Workflow v1 nodes are `DONE`
 
 ### Phase C target-flow evidence
 
@@ -191,7 +198,7 @@ The accepted sequence deliberately preserves failure, repair, and success eviden
 
 Accepted Phase C verdict: `ACCEPTED — PHASE_C_FULL_TARGET_FLOW_VALIDATED`.
 
-Issues #207 through #210 are durable closing evidence for this bounded validation sequence. Creating, editing, or closing those evidence Issues is not a technical requirement for correction acceptance and does not substitute for publication, asynchronous review completion, merge, post-merge canonical verification, tracker synchronization, or final residual review.
+Issues #207 through #210 are durable closing evidence for this bounded validation sequence. Creating, editing, or closing those evidence Issues was not a substitute for the later PR #211 exact-head review, merge, post-merge canonical verification, tracker checkpoint synchronization, and final residual review, all of which completed separately.
 
 ## 10. Demonstration Paths
 
@@ -229,7 +236,7 @@ This demonstration supports one bounded reuse claim, not universal portability.
 -> ACCEPTED — PHASE_C_FULL_TARGET_FLOW_VALIDATED
 ```
 
-This demonstrates the bounded target flow with preserved negative evidence and no automatic retry. It does not merge active correction/publication PR #211, synchronize tracker #168, complete asynchronous rereview, or make Workflow v1 `DONE`.
+This demonstrates the bounded target flow with preserved negative evidence and no automatic retry. It did not by itself complete the later PR #211 review/merge or final closeout; those gates subsequently completed and remain separately auditable.
 
 ## 11. Reverb Cross-Repository Bounded Case Study
 
@@ -272,6 +279,7 @@ Classification: **OPTIONAL / CONDITIONAL OPERATING MODE**. It creates no standin
 - The Reverb proof covers one repository and one engineering node.
 - The Bridge remains an in-repository specialized implementation; operational portability was not proven.
 - Current platform, authentication, environment, and remote state remain mutable and require fresh verification.
+- Current provider-backed filesystem isolation remains `unverified`; `allowed_files` is candidate-acceptance governance, not a universal OS sandbox.
 - Some older documents contain historical phase language. This record and `PLANS.md` provide current status after acceptance; historical commands and evidence require fresh applicability checks.
 
 ## 14. Explicit Non-Claims
@@ -281,6 +289,8 @@ Workflow v1 closeout makes no claim of:
 - universal portability or all-repository compatibility;
 - full autonomous engineering;
 - a universal Bridge or Bridge portability proof;
+- universal filesystem-write prevention or exhaustive Git-internals coverage;
+- external-side-effect isolation;
 - physical repository separation;
 - automatic commit, push, PR, or merge authority;
 - approval chaining;
@@ -320,16 +330,16 @@ After final canonical acceptance, current truth is distributed intentionally:
 - `AGENTS.md` and scoped `AGENTS.md`: repository and domain rules;
 - `PLANS.md`: current project and Workflow status authority;
 - `docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md`: Roadmap execution and close-rule contract;
-- `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`: candidate final Workflow v1 architecture, evidence, limitation, demo, and case-study record; it becomes the primary final record only after final acceptance;
+- `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`: primary final Workflow v1 architecture, evidence, limitation, demo, and case-study record;
 - `docs/ENGINEERING_RECORDS_INDEX.md`: navigation only;
-- tracker #168: GitHub status surface requiring fresh verification;
+- tracker #168: GitHub status surface whose comment `4998971940` preserves the historical post-merge `REVIEW` checkpoint before final residual review;
 - accepted PRs, commits, CI runs, and runtime evidence: durable supporting evidence.
 
 The repository-separation plan, old proof report, and earlier operational baseline retain historical and design value, but their embedded phase statements are not current normative authority and do not override applicable user approval, task-local scope, `AGENTS.md`, scoped rules, `PLANS.md`, Direction Lock, or current specifications.
 
 ## 18. Final DONE Checkpoint
 
-Current status: Workflow v1 Final Closeout is `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING`; Workflow v1 is not yet finally accepted as `DONE`.
+Current status: Workflow v1 Final Closeout is `DONE`; all four mandatory Workflow v1 nodes are `DONE`.
 
 Historical evidence already completed:
 
@@ -337,10 +347,10 @@ Historical evidence already completed:
 2. PR #204 attempted the final status transition at canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`.
 3. Post-merge automated review findings on both PRs triggered this bounded integrity-correction node and invalidated final reviewer acceptance.
 
-Correction semantic acceptance and full target-flow validation are complete. PR #211 is the active correction/publication PR and was opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; its mutable current head must be freshly verified. Final `DONE` remains gated on accepted correction of the PR #211 review findings, asynchronous rereview completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 currently remains stale and unsynchronized: its newest durable comment still records the superseded pre-correction `WORKFLOW_V1_DONE` verdict. This task does not mutate it.
+Correction semantic acceptance and full target-flow validation are complete. PR #211 was reviewed at exact head `4d3b649da9c953480c5053ae8e0b1707315de3e6`, external Codex reported no major issues, canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36` completed, and post-merge canonical verification passed. Tracker #168 comment `4998971940` accurately preserved the interim post-merge `REVIEW` checkpoint before final residual review rather than declaring final `DONE`. Final residual review is complete. Unresolved historical GitHub review-thread UI state is historical interface state, not an outstanding technical blocker.
 
-The first three mandatory nodes remain `DONE`; the fourth remains `REVIEW`. No later node is activated.
+All four mandatory nodes are `DONE`. No later node is activated.
 
 ## 19. No-Auto-Activation Statement
 
-Final Closeout publication, the attempted PR #204 `DONE` transition, this correction, and any eventual Workflow v1 `DONE` status do not activate another engineering node, product phase, benchmark, migration, runtime path, or authority. Any later work requires fresh evidence, an explicit bounded objective, and applicable approval.
+Final Closeout publication, the attempted PR #204 `DONE` transition, the accepted PR #211 correction, and Workflow v1 `DONE` do not activate Issue #188, Issue #190, Workbench Phase 5.4, RV2-05/07/08/09, unabsorbed RV2-06 work, a Native-vs-Bridge benchmark, startup, tray, service, MCP, physical repository separation, another engineering node, or any new runtime, trusted-actor, allowlist, GitHub, commit, push, PR, merge, Issue-close, approval-consumption, or approval-chaining authority. Any later work requires fresh evidence, an explicit bounded objective, and applicable approval.

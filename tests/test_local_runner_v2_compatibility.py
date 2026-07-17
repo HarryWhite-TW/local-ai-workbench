@@ -205,15 +205,16 @@ def test_runner_v2_real_approval_state_diagnostic_is_strict_mode_safe_and_read_o
     assert after == before
 
 
-def test_workflow_closeout_surfaces_name_active_pr_211_without_stale_placeholder():
-    paths = [
+def test_workflow_closeout_surfaces_record_final_done_truth():
+    paths = (
         REPO_ROOT / "PLANS.md",
+        REPO_ROOT / "docs" / "BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md",
         REPO_ROOT / "docs" / "WORKFLOW_V1_FINAL_CLOSEOUT.md",
         REPO_ROOT / "docs" / "ENGINEERING_RECORDS_INDEX.md",
-    ]
-    texts = [path.read_text(encoding="utf-8") for path in paths]
-    initial_publication_head = "423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb"
-    accepted_technical_correction = "6ee0698f69ec8642925f9ff2a8c1d9677b515682"
+    )
+    reviewed_head = "4d3b649da9c953480c5053ae8e0b1707315de3e6"
+    canonical_merge = "38d3e96263b671a72141d0ab92b61b91a85e6c36"
+    tracker_checkpoint = "4998971940"
     stale_placeholders = (
         "future documentation publication commit / PR head",
         "future documentation publication commit and PR head",
@@ -221,39 +222,113 @@ def test_workflow_closeout_surfaces_name_active_pr_211_without_stale_placeholder
         "documentation publication commit and PR head had not yet been created",
     )
 
-    for text in texts:
-        active_pr_identity = (
-            re.search(
-                r"PR #211 is (?:now )?the active correction/publication PR",
-                text,
-                flags=re.IGNORECASE,
-            )
-            or re.search(
-                r"active correction/publication PR:\s*#211",
-                text,
-                flags=re.IGNORECASE,
-            )
-        )
-        assert active_pr_identity is not None
-        assert initial_publication_head in text
-        assert accepted_technical_correction in text
+    stale_current_status_patterns = (
+        r"PR #211 is (?:now )?the active correction/publication PR",
+        r"active correction/publication PR:\s*#211",
+        r"REVIEW\s*[—-]\s*ACTIVE PR #211",
+        r"(?:ChatGPT\s+)?final reviewer acceptance is withheld",
+        r"final acceptance is withheld",
+        r"Workflow v1 is not yet finally accepted as\s+(?:DONE|`DONE`)",
+        r"Final Closeout remains\s+`?REVIEW\b",
+        r"(?:rereview|merge|post-merge canonical verification|"
+        r"tracker #168 (?:synchronization|sync)|final residual review)"
+        r"[^\n]{0,120}\b(?:remain|remains|is|are)\s+(?:pending|open|required)\b",
+    )
+    stale_acceptance_examples = (
+        "ChatGPT final reviewer acceptance is withheld",
+        "final reviewer acceptance is withheld",
+        "final acceptance is withheld",
+        "Workflow v1 is not yet finally accepted as DONE",
+        "Workflow v1 is not yet finally accepted as `DONE`",
+        "Final Closeout remains REVIEW",
+    )
+    historical_acceptance_examples = (
+        "ChatGPT final reviewer acceptance was withheld at the incident checkpoint",
+        "ChatGPT final reviewer acceptance had been withheld pending correction",
+        "ChatGPT final reviewer acceptance was historically withheld",
+    )
+
+    for example in stale_acceptance_examples:
+        assert any(
+            re.search(pattern, example, flags=re.IGNORECASE)
+            for pattern in stale_current_status_patterns
+        ), example
+    for example in historical_acceptance_examples:
+        assert all(
+            re.search(pattern, example, flags=re.IGNORECASE) is None
+            for pattern in stale_current_status_patterns
+        ), example
+
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        assert "PR #211" in text, path
+        assert reviewed_head in text, path
+        assert canonical_merge in text, path
+        assert tracker_checkpoint in text, path
         assert re.search(
-            r"current(?: PR)? head.{0,160}mutable.{0,160}"
-            r"(?:freshly verified|fresh verification)",
-            text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        assert "REVIEW" in text
-        assert re.search(
-            r"not yet finally accepted as\s+[`*]*DONE",
+            r"Workflow v1 Final Closeout[^\n]{0,240}`DONE`",
             text,
             flags=re.IGNORECASE,
-        )
-        pending_truth = text.lower()
-        assert "rereview" in pending_truth
-        assert "merge" in pending_truth
-        assert "post-merge canonical verification" in pending_truth
-        assert re.search(r"tracker(?: #168)? (?:synchronization|sync)", pending_truth)
-        assert "final residual review" in pending_truth
+        ), path
+        assert re.search(
+            r"(?:no major issues|reported no major issues)",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"post-merge canonical verification (?:is )?complete(?:d)?",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"final residual review (?:is )?complete(?:d)?",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"(?:no later (?:Roadmap )?node is activated|"
+            r"does not activate another node|No-Auto-Activation)",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            rf"comment\s+`?{tracker_checkpoint}`?.{{0,240}}"
+            r"(?:REVIEW|before final residual review)",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        ), path
+        for pattern in stale_current_status_patterns:
+            assert re.search(pattern, text, flags=re.IGNORECASE) is None, (
+                path,
+                pattern,
+            )
         for placeholder in stale_placeholders:
-            assert placeholder not in text
+            assert placeholder not in text, (path, placeholder)
+
+    closeout = (REPO_ROOT / "docs" / "WORKFLOW_V1_FINAL_CLOSEOUT.md").read_text(
+        encoding="utf-8"
+    )
+    for evidence in (
+        "targeted pycache regressions `10 passed`",
+        "Runner v1 `89 passed`",
+        "Runner v2 compatibility `4 passed`",
+        "related Runner/Bridge suite `810 passed`",
+        "full repository suite `1112 passed`",
+        "`0 failed`",
+        "`git diff --check` exit `0`",
+    ):
+        assert evidence in closeout
+    assert "PR #203" in closeout
+    assert "PR #204" in closeout
+    assert "historical integrity-incident evidence" in closeout
+    assert re.search(
+        r"provider-backed filesystem isolation remains `unverified`",
+        closeout,
+        flags=re.IGNORECASE,
+    )
+    assert re.search(
+        r"unresolved historical GitHub review-thread UI state.+"
+        r"not an outstanding technical blocker",
+        closeout,
+        flags=re.IGNORECASE,
+    )
