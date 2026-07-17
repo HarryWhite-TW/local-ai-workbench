@@ -3,13 +3,16 @@
 ## 1. Document Identity
 
 - title: Workflow v1 Final Closeout
-- status: `REVIEW — FINAL TRACKER AND DURABLE-TRUTH CLOSURE NOT YET COMPLETE`
+- status: `DONE — FINAL RESIDUAL REVIEW ACCEPTED; CANONICAL EFFECTIVENESS CONDITIONED ON FINAL TRANSITION MERGE AND TRACKER FINAL DONE PUBLICATION`
 - repository: `HarryWhite-TW/local-ai-workbench`
 - candidate baseline: `43195ace509089c8ccfa6e7f14d79bb3238b4f22`
 - accepted correction baseline: `a95d05388ad77963ee8cb44c0b7710a49a9d8421`
 - accepted integrity-correction reviewed HEAD: branch `workflow-v1-phase-c-powershell-env-correction` at `4d3b649da9c953480c5053ae8e0b1707315de3e6`
 - accepted integrity-correction canonical merge: `38d3e96263b671a72141d0ab92b61b91a85e6c36`
-- tracker #168 post-merge checkpoint comment: `4998971940`
+- historical tracker #168 post-PR-#211 `REVIEW` checkpoint comment: `4998971940`
+- PR #212 exact reviewed head: `dd6046409505e009e95e3a68433bca147542a088`
+- PR #212 canonical merge: `ee4f9c06dc48719b8165b75607e51d38e7344c6b`
+- tracker #168 PR #212 intermediate `REVIEW` synchronization comment: `5005537101`
 - PR #211 base `master` snapshot observed when opened: `a3be6ad46e0a2a93f7fe87dfdd3c476ed3695abb`
 - accepted correction/publication PR: #211; exact-head review, canonical merge, and post-merge verification completed
 - historical original publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
@@ -23,13 +26,13 @@
 
 ## 2. Executive Verdict
 
-Workflow v1 Final Closeout is `REVIEW — FINAL TRACKER AND DURABLE-TRUTH CLOSURE NOT YET COMPLETE`. The first three mandatory Workflow v1 nodes remain `DONE`. Workflow v1 remains `REVIEW — FINAL CLOSE RULE NOT YET COMPLETE`.
+Workflow v1 Final Closeout is `DONE — FINAL RESIDUAL REVIEW ACCEPTED; CANONICAL EFFECTIVENESS CONDITIONED ON FINAL TRANSITION MERGE AND TRACKER FINAL DONE PUBLICATION`. The first three mandatory Workflow v1 nodes remain `DONE`. Workflow v1 is `DONE — FINAL RESIDUAL REVIEW ACCEPTED; CANONICAL EFFECTIVENESS CONDITIONED ON FINAL TRANSITION MERGE AND TRACKER FINAL DONE PUBLICATION`.
 
 PR #203 published this candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; it explicitly did not declare canonical Workflow v1 `DONE`. PR #204 later attempted the `REVIEW` -> `DONE` status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Asynchronous post-merge automated P2 findings exposed integrity defects and invalidated those earlier acceptance claims. Both PRs remain auditable historical integrity-incident evidence rather than being rewritten as clean final acceptance.
 
 The current correction also rebaselines the execution-safety boundary. `allowed_files` is exact candidate-modification and acceptance scope, not an automatic claim of OS-level write prevention. Local Runner evidence is bounded and named; current Codex `workspace-write` provider isolation is `unverified`. Useful Git and candidate-manifest evidence remains, but universal write absence, transient-action prevention, full Git-internals coverage, and external-side-effect isolation are not claimed.
 
-The acceptance-integrity correction at `a95d05388ad77963ee8cb44c0b7710a49a9d8421` restored the real Runner v2 -> Runner v1 CommitApproved token handoff through one Runner v1 authoritative approval-state contract and made CommitApproved evaluate current governance with evaluator files materialized from committed `HEAD`. Later corrections preserved the Windows PowerShell child-environment boundary and removed every extension-only `.pyc` pathname exemption. Only the six reviewed `.pytest_cache` metadata path patterns are excluded as benign cache noise, and each pattern may occur beneath any `.pytest_cache` directory. Arbitrary `.pyc` creation or removal remains observable. A `.pyc` path outside runtime `allowed_files` fails closed; a `.pyc` path explicitly included in `allowed_files` is not rejected solely because its extension is `.pyc`. Runner-launched children receive `PYTHONDONTWRITEBYTECODE=1` without parent-environment mutation. PR #211 reached accepted reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`; external Codex exact-head review completed with no major issues; PR #211 merged canonically at `38d3e96263b671a72141d0ab92b61b91a85e6c36`; post-merge canonical verification completed; and the pre-PR-#212 residual review completed. Tracker #168 comment `4998971940` is the latest durable `REVIEW` checkpoint and did not declare final `DONE`. The remaining ordered closeout sequence is PR #212 repair and exact-head rereview, PR #212 merge, post-merge canonical verification, tracker #168 post-merge evidence synchronization while retaining `REVIEW`, final residual review / final `DONE` re-adjudication, and a coordinated final durable-status transition with tracker final `DONE` publication, followed by final canonical verification. Tracker #168 must not publish final `DONE` before the final residual review / final `DONE` re-adjudication passes. The intermediate tracker synchronization records current evidence and remains `REVIEW`. No final canonical acceptance exists until repository durable truth and tracker truth are both synchronized. PR #212 does not itself constitute canonical Workflow v1 closure.
+The acceptance-integrity correction at `a95d05388ad77963ee8cb44c0b7710a49a9d8421` restored the real Runner v2 -> Runner v1 CommitApproved token handoff through one Runner v1 authoritative approval-state contract and made CommitApproved evaluate current governance with evaluator files materialized from committed `HEAD`. Later corrections preserved the Windows PowerShell child-environment boundary and removed every extension-only `.pyc` pathname exemption. Only the six reviewed `.pytest_cache` metadata path patterns are excluded as benign cache noise, and each pattern may occur beneath any `.pytest_cache` directory. Arbitrary `.pyc` creation or removal remains observable. A `.pyc` path outside runtime `allowed_files` fails closed; a `.pyc` path explicitly included in `allowed_files` is not rejected solely because its extension is `.pyc`. Runner-launched children receive `PYTHONDONTWRITEBYTECODE=1` without parent-environment mutation. PR #211 reached accepted reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`; external Codex exact-head review completed with no major issues; PR #211 merged canonically at `38d3e96263b671a72141d0ab92b61b91a85e6c36`; post-merge canonical verification and the pre-PR-#212 residual review completed. PR #212 exact-head rereview completed with no new finding at `dd6046409505e009e95e3a68433bca147542a088`; canonical merge `ee4f9c06dc48719b8165b75607e51d38e7344c6b` and post-merge canonical verification completed. Tracker #168 comment `5005537101` records the intermediate evidence synchronization and retains `REVIEW`. The final residual review / final `DONE` re-adjudication then passed. Canonical effectiveness requires both the canonical merge of this final durable-status transition and the paired Tracker #168 final `DONE` publication. Until both remote facts are observed, this candidate does not claim canonical Workflow v1 closure. Once both are observed, final canonical verification must confirm the transition merge, tracker final `DONE`, repository/tracker agreement, and no later node activation; no further repository wording change is required.
 
 ## 3. Workflow v1 Final Architecture
 
@@ -122,7 +125,7 @@ Raw evidence may remain local when appropriate, but accepted conclusions and can
 | `RV2-P1-SYNC` | `DONE` | Established the Human-Governed AI Engineering Control Layer, four-node completion boundary, Roadmap rebaseline, and deferred-scope preservation. |
 | `RV2-04N` | `DONE` | Closed the historical minimum runtime-contract gap; the current rebaseline corrects its acceptance-versus-prevention semantics without erasing the bounded implementation evidence. |
 | Cross-Repository Bounded Proof | `DONE` | Reused the core governance method on one real independent repository for one bounded target-native engineering node. |
-| Workflow v1 Final Closeout | `REVIEW — FINAL TRACKER AND DURABLE-TRUTH CLOSURE NOT YET COMPLETE` | Pending gates, in order: PR #212 repair and exact-head rereview; PR #212 merge; post-merge canonical verification; tracker #168 post-merge evidence synchronization while retaining `REVIEW`; final residual review / final `DONE` re-adjudication; coordinated final durable-status transition and tracker final `DONE` publication, then final canonical verification. Tracker final `DONE` publication must not precede re-adjudication; final canonical acceptance requires repository durable truth and tracker truth to be synchronized. |
+| Workflow v1 Final Closeout | `DONE — FINAL RESIDUAL REVIEW ACCEPTED; CANONICAL EFFECTIVENESS CONDITIONED ON FINAL TRANSITION MERGE AND TRACKER FINAL DONE PUBLICATION` | PR #212 exact-head rereview, canonical merge, post-merge verification, tracker intermediate `REVIEW` synchronization, and final residual review / final `DONE` re-adjudication are complete. Canonical effectiveness requires both this final durable-status transition to merge and Tracker #168 to publish paired final `DONE`; final canonical verification must then confirm repository/tracker agreement and no later node activation. |
 
 ## 9. Accepted Evidence Ledger
 
@@ -183,8 +186,11 @@ Accepted bounded claim: the core Workflow governance method was successfully reu
 - post-merge canonical verification: completed
 - tracker #168 post-merge checkpoint: comment `4998971940`; historically recorded `REVIEW` before the pre-PR-#212 residual review and did not itself declare final `DONE`
 - accepted PR #211 candidate verification: targeted pycache regressions `10 passed`; Runner v1 `89 passed`; Runner v2 compatibility `4 passed`; related Runner/Bridge suite `810 passed`; full repository suite `1112 passed`; `0 failed`; `git diff --check` exit `0`
-- pre-PR-#212 residual review: complete; final residual review / final `DONE` re-adjudication remains pending until after the intermediate tracker evidence synchronization that retains `REVIEW`
-- current status: Workflow v1 Final Closeout remains `REVIEW`; the first three mandatory Workflow v1 nodes remain `DONE`; Workflow v1 remains `REVIEW`
+- PR #212 exact reviewed head: `dd6046409505e009e95e3a68433bca147542a088`; exact-head Codex rereview completed with no new finding
+- PR #212 canonical merge: `ee4f9c06dc48719b8165b75607e51d38e7344c6b`; post-merge canonical verification completed
+- tracker #168 intermediate evidence synchronization: comment `5005537101`; retained `REVIEW` and did not publish final `DONE`
+- final residual review / final `DONE` re-adjudication: `ACCEPTED — FINAL RESIDUAL REVIEW PASSED`
+- current status: Workflow v1 Final Closeout and Workflow v1 are `DONE — FINAL RESIDUAL REVIEW ACCEPTED; CANONICAL EFFECTIVENESS CONDITIONED ON FINAL TRANSITION MERGE AND TRACKER FINAL DONE PUBLICATION`; the first three mandatory Workflow v1 nodes remain `DONE`
 
 ### Phase C target-flow evidence
 
@@ -236,7 +242,7 @@ This demonstration supports one bounded reuse claim, not universal portability.
 -> ACCEPTED — PHASE_C_FULL_TARGET_FLOW_VALIDATED
 ```
 
-This demonstrates the bounded target flow with preserved negative evidence and no automatic retry. It did not by itself complete the later PR #211 review, merge, or post-merge canonical verification; those three gates subsequently completed and remain separately auditable. Workflow v1 Final Closeout remains pending.
+This demonstrates the bounded target flow with preserved negative evidence and no automatic retry. It did not by itself complete the later PR #211 review, merge, or post-merge canonical verification; those three gates subsequently completed and remain separately auditable. At that historical checkpoint Workflow v1 Final Closeout remained pending; the current conditional final status is recorded in the completion matrix and evidence ledger.
 
 ## 11. Reverb Cross-Repository Bounded Case Study
 
@@ -332,14 +338,14 @@ After final canonical acceptance, current truth is distributed intentionally:
 - `docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md`: Roadmap execution and close-rule contract;
 - `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`: primary final Workflow v1 architecture, evidence, limitation, demo, and case-study record;
 - `docs/ENGINEERING_RECORDS_INDEX.md`: navigation only;
-- tracker #168: GitHub status surface whose comment `4998971940` preserves the historical post-merge `REVIEW` checkpoint before the pre-PR-#212 residual review;
+- tracker #168: GitHub status surface whose comment `4998971940` preserves the historical post-PR-#211 `REVIEW` checkpoint and whose comment `5005537101` preserves the PR #212 intermediate `REVIEW` synchronization before final re-adjudication;
 - accepted PRs, commits, CI runs, and runtime evidence: durable supporting evidence.
 
 The repository-separation plan, old proof report, and earlier operational baseline retain historical and design value, but their embedded phase statements are not current normative authority and do not override applicable user approval, task-local scope, `AGENTS.md`, scoped rules, `PLANS.md`, Direction Lock, or current specifications.
 
 ## 18. Final Closeout Checkpoint
 
-Current status: Workflow v1 Final Closeout is `REVIEW — FINAL TRACKER AND DURABLE-TRUTH CLOSURE NOT YET COMPLETE`; the first three mandatory Workflow v1 nodes remain `DONE`; Workflow v1 remains `REVIEW — FINAL CLOSE RULE NOT YET COMPLETE`.
+Current status: Workflow v1 Final Closeout and Workflow v1 are `DONE — FINAL RESIDUAL REVIEW ACCEPTED; CANONICAL EFFECTIVENESS CONDITIONED ON FINAL TRANSITION MERGE AND TRACKER FINAL DONE PUBLICATION`; the first three mandatory Workflow v1 nodes remain `DONE`.
 
 Historical evidence already completed:
 
@@ -347,9 +353,9 @@ Historical evidence already completed:
 2. PR #204 attempted the final status transition at canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`.
 3. Post-merge automated review findings on both PRs triggered this bounded integrity-correction node and invalidated final reviewer acceptance.
 
-Correction semantic acceptance and full target-flow validation are complete. PR #211 was reviewed at exact head `4d3b649da9c953480c5053ae8e0b1707315de3e6`, external Codex reported no major issues, canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36` completed, post-merge canonical verification passed, and the pre-PR-#212 residual review completed. Tracker #168 comment `4998971940` remains the latest durable `REVIEW` checkpoint rather than a final `DONE` transition. The remaining ordered closeout sequence is PR #212 repair and exact-head rereview, PR #212 merge, post-merge canonical verification, tracker #168 post-merge evidence synchronization while retaining `REVIEW`, final residual review / final `DONE` re-adjudication, and a coordinated final durable-status transition with tracker final `DONE` publication, followed by final canonical verification. Tracker #168 must not publish final `DONE` before the final residual review / final `DONE` re-adjudication passes. The intermediate tracker synchronization records current evidence and remains `REVIEW`. No final canonical acceptance exists until repository durable truth and tracker truth are both synchronized. Unresolved historical GitHub review-thread UI state is historical interface state, not an outstanding technical blocker.
+Correction semantic acceptance and full target-flow validation are complete. PR #211 was reviewed at exact head `4d3b649da9c953480c5053ae8e0b1707315de3e6`, external Codex reported no major issues, canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36` completed, post-merge canonical verification passed, and the pre-PR-#212 residual review completed. PR #212 exact-head rereview completed with no new finding at `dd6046409505e009e95e3a68433bca147542a088`; canonical merge `ee4f9c06dc48719b8165b75607e51d38e7344c6b` and post-merge canonical verification completed. Tracker #168 comment `5005537101` synchronized that evidence while retaining `REVIEW`, after which the final residual review / final `DONE` re-adjudication passed. The repository durable-status candidate now records conditional `DONE`, but canonical effectiveness requires both the canonical merge of this final transition and the paired tracker final `DONE` publication. Final canonical verification must confirm both remote facts, repository/tracker agreement, and no later node activation. Unresolved historical GitHub review-thread UI state is historical interface state, not an outstanding technical blocker.
 
-The first three mandatory nodes remain `DONE`; Workflow v1 Final Closeout remains `REVIEW`. No later node is activated.
+The first three mandatory nodes remain `DONE`; Workflow v1 Final Closeout and Workflow v1 carry the conditional `DONE` status above. No later node is activated.
 
 ## 19. No-Auto-Activation Statement
 
