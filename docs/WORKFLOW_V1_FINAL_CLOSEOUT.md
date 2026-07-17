@@ -3,12 +3,16 @@
 ## 1. Document Identity
 
 - title: Workflow v1 Final Closeout
-- status: `REVIEW` — Execution Safety Boundary Rebaseline under review
+- status: `REVIEW — TECHNICAL CORRECTION AND TARGET-FLOW VALIDATION ACCEPTED; PUBLICATION / ASYNC REVIEW / MERGE / TRACKER SYNC PENDING`
 - repository: `HarryWhite-TW/local-ai-workbench`
 - candidate baseline: `43195ace509089c8ccfa6e7f14d79bb3238b4f22`
-- publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
-- publication PR: #203
-- publication canonical merge: `c36a1b820e6f6786267057aa05d25697b9f1deca`
+- accepted correction baseline: `a95d05388ad77963ee8cb44c0b7710a49a9d8421`
+- accepted technical correction HEAD: branch `workflow-v1-phase-c-powershell-env-correction` at `6ee0698f69ec8642925f9ff2a8c1d9677b515682`
+- PR #211 base `master` snapshot observed when opened: `a3be6ad46e0a2a93f7fe87dfdd3c476ed3695abb`
+- active correction/publication PR: #211, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; its current head is mutable review truth and requires fresh verification
+- historical original publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
+- historical original publication PR: #203
+- historical original publication canonical merge: `c36a1b820e6f6786267057aa05d25697b9f1deca`
 - attempted DONE-transition commit: `240e47a77da753c9ffb619e79be1c15e20b23e7a`
 - attempted DONE-transition PR: #204
 - attempted DONE-transition canonical merge: `b20a12c07cd2de7105b94b34ed2996b06f59b84a`
@@ -17,11 +21,13 @@
 
 ## 2. Executive Verdict
 
-The Final Closeout is in `REVIEW — Execution Safety Boundary Rebaseline under review`. The first three mandatory Workflow v1 nodes remain historically `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
+The Final Closeout is in `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING`. The first three mandatory Workflow v1 nodes remain historically `DONE`; Workflow v1 is **not yet finally accepted as `DONE`**.
 
 PR #203 published this candidate through commit `368934f5c93d210c485d49180bc1c347d7d3647c` and canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`; it explicitly did not declare canonical Workflow v1 `DONE`. PR #204 later attempted the `REVIEW` -> `DONE` status transition through commit `240e47a77da753c9ffb619e79be1c15e20b23e7a` and canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`. Both transitions remain historical evidence, but asynchronous post-merge automated P2 findings exposed integrity defects and invalidated final reviewer acceptance. Tracker #168 remains stale and unsynchronized.
 
 The current correction also rebaselines the execution-safety boundary. `allowed_files` is exact candidate-modification and acceptance scope, not an automatic claim of OS-level write prevention. Local Runner evidence is bounded and named; current Codex `workspace-write` provider isolation is `unverified`. Useful Git and candidate-manifest evidence remains, but universal write absence, transient-action prevention, full Git-internals coverage, and external-side-effect isolation are not claimed.
+
+The acceptance-integrity correction at `a95d05388ad77963ee8cb44c0b7710a49a9d8421` restores the real Runner v2 -> Runner v1 CommitApproved token handoff through one Runner v1 authoritative approval-state contract, makes CommitApproved evaluate current governance with evaluator files materialized from committed `HEAD`, and distinguishes narrow deterministic Python/pytest cache-path deltas from arbitrary ignored candidate manipulation. The accepted technical correction HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682` copies the child environment, removes inherited `PSModulePath` only for a `powershell.exe` child, leaves the parent environment untouched, preserves the variable for `pwsh.exe` and unrelated executables, and exercises Python -> subprocess -> Windows PowerShell -> `New-TemporaryFile` on a real Windows path. Both the technical correction and full target-flow validation are accepted. PR #211 is the active correction/publication PR, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; accepted review findings on that PR require correction and completed asynchronous rereview before merge.
 
 ## 3. Workflow v1 Final Architecture
 
@@ -70,6 +76,8 @@ one acceptance goal
 
 Each node carries one local risk package covering scope, authority, risk delta, exclusions, verification, evidence, repair allowance, stop conditions, and applicable approvals.
 
+Workflow acceptance and closeout work also follows `docs/WORKFLOW_ACCEPTANCE_INTEGRITY_PROTOCOL.md`, including primary-goal coverage, top-down backward review, cross-call-site compatibility, asynchronous review completion, trusted-oracle independence, contradiction detection, and durable truth closure.
+
 Within an approved package, directly relevant read-only investigation, source/test/spec reads, targeted verification, evidence collection, and one explicitly bounded focused repair do not require repeated approval. A new approval is required for an actual risk or authority delta. Permanent, remote, and high-risk actions require applicable explicit approval.
 
 Governance truth and observed current truth are different. Mutable Git, GitHub, environment, authentication, dependency, and platform state must be freshly verified. A completion summary is a claim, not correctness evidence. Codex and Work are executors or researchers, ChatGPT is the final technical reviewer, and the user handles genuine decisions and risk acceptance.
@@ -112,7 +120,7 @@ Raw evidence may remain local when appropriate, but accepted conclusions and can
 | `RV2-P1-SYNC` | `DONE` | Established the Human-Governed AI Engineering Control Layer, four-node completion boundary, Roadmap rebaseline, and deferred-scope preservation. |
 | `RV2-04N` | `DONE` | Closed the historical minimum runtime-contract gap; the current rebaseline corrects its acceptance-versus-prevention semantics without erasing the bounded implementation evidence. |
 | Cross-Repository Bounded Proof | `DONE` | Reused the core governance method on one real independent repository for one bounded target-native engineering node. |
-| Workflow v1 Final Closeout | `REVIEW / INTEGRITY CORRECTION REQUIRED` | PR #203 published the candidate; PR #204 attempted the `DONE` transition; post-merge P2 findings invalidated final acceptance. Correction publication, review completion, merge, post-merge verification, tracker sync, and final residual review remain open. |
+| Workflow v1 Final Closeout | `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING` | The accepted correction addresses the token-compatibility, trusted-oracle, benign-cache, and Windows PowerShell child-environment defects. PR #211 review-finding correction, completed asynchronous rereview, merge, post-merge canonical verification, tracker sync, and final residual review remain open. |
 
 ## 9. Accepted Evidence Ledger
 
@@ -156,16 +164,34 @@ Accepted bounded claim: the core Workflow governance method was successfully reu
 
 ### Workflow v1 Final Closeout
 
-- candidate-publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
-- candidate-publication PR: #203
-- candidate-publication canonical merge: `c36a1b820e6f6786267057aa05d25697b9f1deca`
+- historical original candidate-publication commit: `368934f5c93d210c485d49180bc1c347d7d3647c`
+- historical original candidate-publication PR: #203
+- historical original candidate-publication canonical merge: `c36a1b820e6f6786267057aa05d25697b9f1deca`
 - PR #203 evidence: it merged before asynchronous automated review completed; later post-merge review produced two unresolved P2 findings concerning historical baseline authority and Parallel Agent task-local authorization
 - attempted DONE-transition commit: `240e47a77da753c9ffb619e79be1c15e20b23e7a`
 - attempted DONE-transition PR: #204
 - attempted DONE-transition canonical merge: `b20a12c07cd2de7105b94b34ed2996b06f59b84a`
 - PR #204 evidence: it merged before asynchronous automated review completed; later post-merge review produced three unresolved P2 findings concerning tracker synchronization, PR #203 review attribution, and PR #203/PR #204 evidence attribution
 - review conclusion: PR #203 remains historical publication evidence, not a clean no-finding review gate; PR #204 remains historical attempted-transition evidence, not accepted final `DONE`
-- current status: final ChatGPT `DONE` acceptance is withheld; tracker #168 is stale and unsynchronized; the final residual review remains open
+- accepted correction baseline: `a95d05388ad77963ee8cb44c0b7710a49a9d8421`
+- accepted technical correction HEAD: `6ee0698f69ec8642925f9ff2a8c1d9677b515682` on `workflow-v1-phase-c-powershell-env-correction`
+- active correction/publication PR: #211, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; current head requires fresh verification
+- accepted historical verification, not rerun by this publication task: precise correction set `4 passed`; B2 `49 passed`; related `279 passed`; full repository `1101 passed`; `git diff --check` clean
+- current status: technical correction and full target-flow validation are accepted; final ChatGPT `DONE` acceptance is withheld; tracker #168 is stale and unsynchronized; publication, asynchronous review completion, merge, post-merge canonical verification, tracker synchronization, and final residual review remain open
+
+### Phase C target-flow evidence
+
+The accepted sequence deliberately preserves failure, repair, and success evidence:
+
+1. Issue #207 was the first live `maybe-status-check` attempt. It reached the Operator and Dispatcher, then failed before the requested action because Windows PowerShell inherited an incompatible `PSModulePath`. The real failure was preserved, no automatic retry occurred, and the repository remained unchanged.
+2. Issue #208 was a fresh `maybe-status-check` on corrected HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682`. It produced exactly one trusted identity-matching success result. A later duplicate observation reported `processed_request_already_seen=true`, Dispatcher count `0`, no retry, no write, and a clean repository.
+3. Issue #209 was the first `run-reviewbundle` attempt on the corrected HEAD. It reached Runner and Codex, then failed because Codex CLI `0.141.0` was too old for `gpt-5.6-sol`. The failure was preserved, no retry occurred, and the repository remained clean.
+4. The bound Codex CLI was restored from `0.141.0` to `0.144.5`; ChatGPT login was ready and `gpt-5.6-sol` execution succeeded. The smoke-marker assertion remained ambiguous, but the earlier model-version rejection was removed and the repository stayed unchanged.
+5. Issue #210 was a fresh `run-reviewbundle` after CLI restoration. Exactly one Dispatcher -> Runner -> Codex chain completed with Codex exit `0`. The independent review verdict was `PASS — no findings and no further blocker within Issue #210's scope`; B2 reported `49 passed`, B3 reported `87 passed`, `git diff --check HEAD^ HEAD` was clean, the worktree and index were clean, and no forbidden parent action was invoked. A later duplicate observation again reported `processed_request_already_seen=true` with Dispatcher count `0`, no retry, and no write.
+
+Accepted Phase C verdict: `ACCEPTED — PHASE_C_FULL_TARGET_FLOW_VALIDATED`.
+
+Issues #207 through #210 are durable closing evidence for this bounded validation sequence. Creating, editing, or closing those evidence Issues is not a technical requirement for correction acceptance and does not substitute for publication, asynchronous review completion, merge, post-merge canonical verification, tracker synchronization, or final residual review.
 
 ## 10. Demonstration Paths
 
@@ -190,6 +216,20 @@ fresh Reverb truth
 ```
 
 This demonstration supports one bounded reuse claim, not universal portability.
+
+### Demo C — Phase C failure, repair, and target-flow validation
+
+```text
+#207 maybe-status failure (inherited PSModulePath)
+-> child-environment correction at 6ee0698
+-> #208 maybe-status success and duplicate suppression
+-> #209 review-bundle failure (Codex CLI too old)
+-> CLI restoration to 0.144.5
+-> #210 review-bundle success, independent PASS, and duplicate suppression
+-> ACCEPTED — PHASE_C_FULL_TARGET_FLOW_VALIDATED
+```
+
+This demonstrates the bounded target flow with preserved negative evidence and no automatic retry. It does not merge active correction/publication PR #211, synchronize tracker #168, complete asynchronous rereview, or make Workflow v1 `DONE`.
 
 ## 11. Reverb Cross-Repository Bounded Case Study
 
@@ -289,7 +329,7 @@ The repository-separation plan, old proof report, and earlier operational baseli
 
 ## 18. Final DONE Checkpoint
 
-Current status: Workflow v1 Final Closeout is `REVIEW — Execution Safety Boundary Rebaseline under review`; Workflow v1 is not yet finally accepted as `DONE`.
+Current status: Workflow v1 Final Closeout is `REVIEW — ACTIVE PR #211 CORRECTION / ASYNC REREVIEW / MERGE / TRACKER SYNC PENDING`; Workflow v1 is not yet finally accepted as `DONE`.
 
 Historical evidence already completed:
 
@@ -297,9 +337,9 @@ Historical evidence already completed:
 2. PR #204 attempted the final status transition at canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`.
 3. Post-merge automated review findings on both PRs triggered this bounded integrity-correction node and invalidated final reviewer acceptance.
 
-Final `DONE` remains gated on rebaseline semantic acceptance, publication, asynchronous review completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 currently remains stale and unsynchronized; this task does not mutate it. The current active engineering node is `Workflow v1 Execution Safety Boundary Rebaseline`.
+Correction semantic acceptance and full target-flow validation are complete. PR #211 is the active correction/publication PR and was opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; its mutable current head must be freshly verified. Final `DONE` remains gated on accepted correction of the PR #211 review findings, asynchronous rereview completion without blocker, merge, post-merge canonical verification, tracker #168 synchronization, and a new final residual review. Tracker #168 currently remains stale and unsynchronized: its newest durable comment still records the superseded pre-correction `WORKFLOW_V1_DONE` verdict. This task does not mutate it.
 
-The first three mandatory nodes remain `DONE`; the fourth remains `REVIEW / INTEGRITY CORRECTION REQUIRED`. No later node is activated.
+The first three mandatory nodes remain `DONE`; the fourth remains `REVIEW`. No later node is activated.
 
 ## 19. No-Auto-Activation Statement
 

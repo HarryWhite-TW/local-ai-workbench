@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from local_runner_bridge.bridge_operator_b1 import (
@@ -259,10 +260,18 @@ def default_dispatcher_invoker(
     cwd: str,
     timeout_seconds: int,
 ) -> DispatcherInvocationResult:
+    child_environment = os.environ.copy()
+    executable_name = PureWindowsPath(args[0]).name.casefold() if args else ""
+    if executable_name == "powershell.exe":
+        for key in tuple(child_environment):
+            if key.casefold() == "psmodulepath":
+                del child_environment[key]
+
     try:
         completed = subprocess.run(
             args,
             cwd=cwd,
+            env=child_environment,
             text=True,
             encoding="utf-8",
             errors="replace",

@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -1221,6 +1222,75 @@ def test_captured_native_process_non_timeout_path_preserves_exit_code_and_output
     assert_success(result)
 
 
+def test_runner_child_python_environment_disables_bytecode_without_mutating_parent(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "probe_module.py").write_text("VALUE = 'imported'\n", encoding="utf-8")
+    child = repo / "child_probe.py"
+    child.write_text(
+        textwrap.dedent(
+            """
+            import json
+            import os
+            import probe_module
+
+            print(json.dumps({
+                "environment": os.environ.get("PYTHONDONTWRITEBYTECODE"),
+                "module_value": probe_module.VALUE,
+            }))
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $parentBefore = $env:PYTHONDONTWRITEBYTECODE
+        $env:PYTHONDONTWRITEBYTECODE = "parent-sentinel"
+        try {{
+            $result = Invoke-CapturedNativeProcess `
+                -FilePath {str(Path(sys.executable).resolve())!r} `
+                -Arguments @({str(child)!r}) `
+                -WorkingDirectory {str(repo)!r} `
+                -StandardInput "" `
+                -StandardInputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+                -StandardOutputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+                -StandardErrorEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+                -TimeoutSeconds 10 `
+                -Action "child Python bytecode guard test"
+            $parentAfter = $env:PYTHONDONTWRITEBYTECODE
+        }}
+        finally {{
+            if ($null -eq $parentBefore) {{
+                Remove-Item Env:PYTHONDONTWRITEBYTECODE -ErrorAction SilentlyContinue
+            }}
+            else {{
+                $env:PYTHONDONTWRITEBYTECODE = $parentBefore
+            }}
+        }}
+        if ($result.ExitCode -ne 0) {{ throw "Child failed: $($result.Stderr)" }}
+        [ordered]@{{
+            child = ($result.Stdout | ConvertFrom-Json)
+            parent_after = $parentAfter
+            pycache_exists = Test-Path -LiteralPath {str(repo / '__pycache__')!r}
+        }} | ConvertTo-Json -Depth 4 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["child"] == {
+        "environment": "1",
+        "module_value": "imported",
+    }
+    assert payload["parent_after"] == "parent-sentinel"
+    assert payload["pycache_exists"] is False
+
+
 def test_captured_native_process_writes_standard_input_as_utf8(tmp_path):
     child = tmp_path / "stdin_bytes.ps1"
     child.write_text(
@@ -1745,6 +1815,142 @@ def test_gitignore_visibility_bypass_fails_closed_with_unfiltered_untracked_delt
     assert payload["approval_allowed"] is False
     assert payload["overall"] == "failure"
     assert head == payload["binding"]["pre_execution"].get("head", head)
+
+
+@pytest.mark.parametrize("change", ["created", "removed"])
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "tools/__pycache__/payload.pyc",
+        "tools/__pycache__/payload.cpython-314.pyc",
+        "loose.pyc",
+        "tools/evil.pyc",
+    ],
+)
+def test_arbitrary_ignored_pyc_delta_fails_closed(tmp_path, change, relative_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / ".gitignore").write_text("__pycache__/\n*.pyc\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "ignore caches"],
+        check=True,
+    )
+    candidate = repo / relative_path
+    if change == "removed":
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_bytes(b"candidate")
+    binding = json.dumps(
+        _binding("passed", allowed_files=["seed.txt"], max_allowed_files=1)
+    )
+    mutation = (
+        f"New-Item -ItemType Directory -Path {str(candidate.parent)!r} -Force | Out-Null\n"
+        f"Set-Content -LiteralPath {str(candidate)!r} -Value 'candidate' -Encoding ASCII"
+        if change == "created"
+        else f"Remove-Item -LiteralPath {str(candidate)!r} -Force"
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-ReviewBundleGitObservation
+        {mutation}
+        $after = Get-ReviewBundleGitObservation
+        $actualFiles = @(Get-ReviewBundleEffectiveChangedFiles `
+            -Status $after.Status `
+            -UntrackedFilesBefore @($before.UntrackedFiles) `
+            -UntrackedFilesAfter @($after.UntrackedFiles) `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles))
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles $actualFiles `
+            -InvariantViolationReasons @()
+        [ordered]@{{
+            status = $after.Status
+            observed_untracked_before = @($before.UntrackedFiles)
+            observed_untracked_after = @($after.UntrackedFiles)
+            actual_changed_files = $actualFiles
+            binding = $binding
+        }} | ConvertTo-Json -Depth 5 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["status"] == ""
+    observed_side = (
+        payload["observed_untracked_after"]
+        if change == "created"
+        else payload["observed_untracked_before"]
+    )
+    assert relative_path in observed_side
+    assert payload["actual_changed_files"] == [relative_path]
+    assert payload["binding"]["status"] == "contract_violation"
+    assert "changed_file_outside_allowed_files" in payload["binding"]["reasons"]
+
+
+def test_only_narrow_pytest_cache_metadata_delta_is_benign(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / ".gitignore").write_text(".pytest_cache/\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "ignore pytest cache"],
+        check=True,
+    )
+    cache_paths = [
+        ".pytest_cache/README.md",
+        ".pytest_cache/CACHEDIR.TAG",
+        ".pytest_cache/.gitignore",
+        ".pytest_cache/v/cache/nodeids",
+        ".pytest_cache/v/cache/lastfailed",
+        ".pytest_cache/v/cache/stepwise",
+    ]
+    cache_writes = "\n".join(
+        f"New-Item -ItemType Directory -Path {str((repo / path).parent)!r} -Force | Out-Null\n"
+        f"Set-Content -LiteralPath {str(repo / path)!r} -Value 'metadata' -Encoding UTF8"
+        for path in cache_paths
+    )
+    binding = json.dumps(
+        _binding("passed", allowed_files=["seed.txt"], max_allowed_files=1)
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-ReviewBundleGitObservation
+        {cache_writes}
+        $after = Get-ReviewBundleGitObservation
+        $actualFiles = @(Get-ReviewBundleEffectiveChangedFiles `
+            -Status $after.Status `
+            -UntrackedFilesBefore @($before.UntrackedFiles) `
+            -UntrackedFilesAfter @($after.UntrackedFiles) `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles))
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles $actualFiles `
+            -InvariantViolationReasons @()
+        [ordered]@{{
+            status = $after.Status
+            observed_untracked = @($after.UntrackedFiles)
+            actual_changed_files = $actualFiles
+            binding = $binding
+        }} | ConvertTo-Json -Depth 5 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["status"] == ""
+    assert payload["observed_untracked"] == sorted(cache_paths)
+    assert payload["actual_changed_files"] == []
+    assert payload["binding"]["status"] == "passed"
 
 
 @pytest.mark.parametrize(
@@ -2509,6 +2715,196 @@ def test_allowed_runtime_evaluator_change_uses_parent_judge_and_can_pass(tmp_pat
     assert payload["overall"] == "success"
 
 
+def test_trusted_runtime_evaluator_uses_committed_baseline_not_candidate(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    module_dir = repo / "src" / "local_runner_bridge"
+    module_dir.mkdir(parents=True)
+    for name in (
+        "__init__.py",
+        "runtime_contract_binding.py",
+        "task_packet_validator.py",
+        "task_surface_resolver.py",
+    ):
+        shutil.copy2(REPO_ROOT / "src" / "local_runner_bridge" / name, module_dir / name)
+    subprocess.run(["git", "-C", str(repo), "add", "src"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "trusted evaluator"],
+        check=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    branch = subprocess.run(
+        ["git", "-C", str(repo), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    surface = textwrap.dedent(
+        f"""
+        LOCAL-RUNNER-TASK-PACKET-V1
+        BEGIN_TASK_PACKET
+        protocol: lawb.local_runner.task_packet.v1.1
+        packet_id: trusted-oracle-test
+        logical_issue: 204
+        phase: correction
+        action_type: implementation
+        risk_level: medium
+        repository: example/repo
+        branch: {branch}
+        expected_head: {head}
+        allowed_files:
+          - seed.txt
+        forbidden_operations:
+          - push
+        approval:
+          required: true
+        payload:
+          kind: issue
+        result_target:
+          github_issue: 204
+          marker: LAWBRUNNER-RESULT
+        stop_condition: fail_closed
+        task_mode: PATCH_ONLY
+        objective: Update seed.
+        max_allowed_files: 1
+        context_scope:
+          - seed.txt
+        repair_attempt_limit: 1
+        verification_command_policy: explicit_only
+        verification_commands:
+          - pytest -q
+        scope_expansion_allowed: false
+        END_TASK_PACKET
+        """
+    ).strip()
+    payload = json.dumps(
+        {
+            "surface_text": surface,
+            "logical_issue": 204,
+            "repository": "example/repo",
+            "branch": branch,
+            "head": head,
+        }
+    )
+    invalid_payload = json.dumps(
+        {
+            "surface_text": surface,
+            "logical_issue": 999,
+            "repository": "example/repo",
+            "branch": branch,
+            "head": head,
+        }
+    )
+    candidate_root = tmp_path / "candidate-pythonpath"
+    candidate_package = candidate_root / "local_runner_bridge"
+    candidate_package.mkdir(parents=True)
+    (candidate_package / "__init__.py").write_text("", encoding="utf-8")
+    candidate_marker = tmp_path / "candidate-package-imported.txt"
+    (candidate_package / "task_surface_resolver.py").write_text(
+        textwrap.dedent(
+            """
+            PROTOCOL_MARKER = "LOCAL-RUNNER-TASK-PACKET-V1"
+            BEGIN_MARKER = "BEGIN_TASK_PACKET"
+            END_MARKER = "END_TASK_PACKET"
+
+            def extract_task_packet(surface_text):
+                return {"result": "success", "packet_text": "candidate-controlled"}
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (candidate_package / "task_packet_validator.py").write_text(
+        (
+            f"from pathlib import Path\nPath({str(candidate_marker)!r}).write_text('imported', encoding='utf-8')\n"
+            "def validate_task_packet(packet_text):\n"
+            "    return {'result': 'success', 'runtime_contract': {"
+            f"'logical_issue': '999', 'repository': 'example/repo', 'branch': {branch!r}, "
+            f"'expected_head': {head!r}, 'allowed_files': ['seed.txt'], 'max_allowed_files': 1"
+            "}}\n"
+        ),
+        encoding="utf-8",
+    )
+    snapshot_parent = tmp_path / "trusted-snapshots"
+    snapshot_parent.mkdir()
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $env:PYTHONPATH = {candidate_root.as_posix()!r}
+        $env:TEMP = {snapshot_parent.as_posix()!r}
+        $env:TMP = {snapshot_parent.as_posix()!r}
+        $python = Resolve-PythonRuntimeCommand
+        $snapshot = New-TrustedRuntimeContractEvaluatorSnapshot
+        $snapshotShape = [ordered]@{{
+            package_init = Test-Path -LiteralPath (Join-Path $snapshot.Root "local_runner_bridge/__init__.py") -PathType Leaf
+            package_binding = Test-Path -LiteralPath (Join-Path $snapshot.Root "local_runner_bridge/runtime_contract_binding.py") -PathType Leaf
+            package_validator = Test-Path -LiteralPath (Join-Path $snapshot.Root "local_runner_bridge/task_packet_validator.py") -PathType Leaf
+            package_resolver = Test-Path -LiteralPath (Join-Path $snapshot.Root "local_runner_bridge/task_surface_resolver.py") -PathType Leaf
+            entry = Test-Path -LiteralPath $snapshot.EvaluatorPath -PathType Leaf
+            source = $snapshot.Source
+            fingerprint = $snapshot.Fingerprint
+            files = @($snapshot.Files.Keys)
+        }}
+        Remove-Item -LiteralPath $snapshot.Root -Recurse -Force
+        $trustedValid = Invoke-RuntimeContractEvaluator `
+            -Action "inspect" `
+            -PythonPath $python `
+            -TrustedCommittedBaseline `
+            -Payload ('{payload}' | ConvertFrom-Json)
+        $workspaceOracle = Invoke-RuntimeContractEvaluator `
+            -Action "inspect" `
+            -PythonPath $python `
+            -Payload ('{invalid_payload}' | ConvertFrom-Json)
+        $candidateObserved = Test-Path -LiteralPath {candidate_marker.as_posix()!r}
+        Remove-Item -LiteralPath {candidate_marker.as_posix()!r} -Force -ErrorAction SilentlyContinue
+        $trustedOracle = Invoke-RuntimeContractEvaluator `
+            -Action "inspect" `
+            -PythonPath $python `
+            -TrustedCommittedBaseline `
+            -Payload ('{invalid_payload}' | ConvertFrom-Json)
+        [ordered]@{{
+            snapshot_shape = $snapshotShape
+            trusted_valid = $trustedValid
+            workspace_oracle = $workspaceOracle
+            trusted_oracle = $trustedOracle
+            candidate_observed = $candidateObserved
+            candidate_ignored_by_trusted = -not (Test-Path -LiteralPath {candidate_marker.as_posix()!r})
+            snapshot_cleaned = @(Get-ChildItem -LiteralPath {snapshot_parent.as_posix()!r} -Filter "lawb-runtime-contract-*" -Force).Count -eq 0
+        }} | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    result_payload = json.loads(result.stdout)
+    assert result_payload["snapshot_shape"]["package_init"] is True
+    assert result_payload["snapshot_shape"]["package_binding"] is True
+    assert result_payload["snapshot_shape"]["package_validator"] is True
+    assert result_payload["snapshot_shape"]["package_resolver"] is True
+    assert result_payload["snapshot_shape"]["entry"] is True
+    assert result_payload["snapshot_shape"]["source"] == "committed_head"
+    assert len(result_payload["snapshot_shape"]["fingerprint"]) == 64
+    assert result_payload["snapshot_shape"]["files"] == [
+        "src/local_runner_bridge/__init__.py",
+        "src/local_runner_bridge/runtime_contract_binding.py",
+        "src/local_runner_bridge/task_packet_validator.py",
+        "src/local_runner_bridge/task_surface_resolver.py",
+    ]
+    assert result_payload["trusted_valid"]["status"] == "passed"
+    assert result_payload["workspace_oracle"]["status"] == "passed"
+    assert result_payload["candidate_observed"] is True
+    assert result_payload["trusted_oracle"]["status"] == "contract_violation"
+    assert "logical_issue_mismatch" in result_payload["trusted_oracle"]["reasons"]
+    assert result_payload["candidate_ignored_by_trusted"] is True
+    assert result_payload["snapshot_cleaned"] is True
+
+
 def test_contract_violation_suppresses_approval_context(tmp_path):
     binding = json.dumps(_binding("contract_violation"))
     result = run_timeout_guard_script(
@@ -3001,6 +3397,9 @@ def test_commit_approved_rebinds_current_contract_and_snapshot_before_staging():
         < token_match
         < stage
     )
+    bound_state_start = source.index("function Get-CommitApprovedBoundState")
+    bound_state_end = source.index("function Get-CommitApprovedIssueSnapshot", bound_state_start)
+    assert "-TrustedCommittedBaseline" in source[bound_state_start:bound_state_end]
 
 
 def test_runtime_contract_integration_does_not_execute_verification_commands():

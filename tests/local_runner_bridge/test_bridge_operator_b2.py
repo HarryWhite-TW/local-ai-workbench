@@ -1,3 +1,5 @@
+import os
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -644,4 +646,112 @@ def test_default_invoker_uses_utf8_replacement_decoding(monkeypatch):
     assert calls[0][1]["encoding"] == "utf-8"
     assert calls[0][1]["errors"] == "replace"
     assert calls[0][1]["timeout"] == 12
+
+
+def test_default_invoker_removes_powershell_module_path_from_child_only(monkeypatch):
+    calls = []
+    monkeypatch.setenv("PSModulePath", "inherited-powershell-7-modules")
+    monkeypatch.setenv("BRIDGE_ENV_SENTINEL", "preserved")
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return b2.subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(b2.subprocess, "run", fake_run)
+
+    result = b2.default_dispatcher_invoker(
+        args=[
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "-File",
+            "probe.ps1",
+        ],
+        cwd=ROOT_PATH,
+        timeout_seconds=12,
+    )
+
+    child_environment = calls[0][1]["env"]
+    assert result.returncode == 0
+    assert all(key.casefold() != "psmodulepath" for key in child_environment)
+    assert child_environment["BRIDGE_ENV_SENTINEL"] == "preserved"
+    assert os.environ["PSModulePath"] == "inherited-powershell-7-modules"
+    assert os.environ["BRIDGE_ENV_SENTINEL"] == "preserved"
+
+
+@pytest.mark.parametrize("executable", ["pwsh.exe", "unrelated-tool.exe"])
+def test_default_invoker_preserves_module_path_for_other_executables(
+    monkeypatch, executable
+):
+    calls = []
+    monkeypatch.setenv("PSModulePath", "parent-module-path")
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return b2.subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(b2.subprocess, "run", fake_run)
+
+    result = b2.default_dispatcher_invoker(
+        args=[executable, "--version"],
+        cwd=ROOT_PATH,
+        timeout_seconds=12,
+    )
+
+    assert result.returncode == 0
+    child_module_paths = [
+        value
+        for key, value in calls[0][1]["env"].items()
+        if key.casefold() == "psmodulepath"
+    ]
+    assert child_module_paths == ["parent-module-path"]
+    assert os.environ["PSModulePath"] == "parent-module-path"
+
+
+def test_default_invoker_windows_powershell_restores_native_module_discovery(
+    monkeypatch, tmp_path
+):
+    if os.name != "nt":
+        pytest.skip("Windows PowerShell integration regression requires Windows")
+    powershell = shutil.which("powershell.exe")
+    if powershell is None:
+        pytest.skip("Windows PowerShell powershell.exe is unavailable")
+
+    incompatible_modules = tmp_path / "incompatible-powershell-modules"
+    incompatible_modules.mkdir()
+    monkeypatch.setenv("PSModulePath", str(incompatible_modules))
+    probe = tmp_path / "windows_powershell_module_probe.ps1"
+    probe.write_text(
+        """$ErrorActionPreference = "Stop"
+$temporaryFile = $null
+try {
+    $temporaryFile = New-TemporaryFile
+    if (-not (Test-Path -LiteralPath $temporaryFile.FullName -PathType Leaf)) {
+        throw "New-TemporaryFile did not create a file."
+    }
+    Write-Output "WINDOWS_POWERSHELL_TEMPFILE_OK"
+}
+finally {
+    if ($null -ne $temporaryFile -and (Test-Path -LiteralPath $temporaryFile.FullName)) {
+        Remove-Item -LiteralPath $temporaryFile.FullName -Force
+    }
+}
+""",
+        encoding="utf-8-sig",
+    )
+
+    result = b2.default_dispatcher_invoker(
+        args=[
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(probe),
+        ],
+        cwd=str(tmp_path),
+        timeout_seconds=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "WINDOWS_POWERSHELL_TEMPFILE_OK" in result.stdout
+    assert os.environ["PSModulePath"] == str(incompatible_modules)
 

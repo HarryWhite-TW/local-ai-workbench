@@ -125,6 +125,8 @@ $RunnerVersion = "v2A-runonce-reviewbundle"
 $ExpectedApprovalRepo = "HarryWhite-TW/local-ai-workbench"
 $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
+$RunnerV1CommitApprovalStateProtocol = "lawb.runner_v1.commit_approval_state.v1"
+$RunnerV1CommitApprovalStateMarker = "LRV1-COMMIT-APPROVAL-STATE protocol=$RunnerV1CommitApprovalStateProtocol"
 $QueueRunnerResultProtocol = "lawb.queue_runner_result.v1"
 $QueueRunnerResultMarker = "QUEUE-RUNNER-RESULT protocol=$QueueRunnerResultProtocol"
 $QueueDefinitionProtocol = "lawb.queue_definition.v1"
@@ -1715,7 +1717,6 @@ function Get-CommitApprovalState {
         DiffFingerprint = $diffFingerprint
         FilesFingerprint = $filesFingerprint
         ReviewId = $reviewId
-        ApprovalToken = "LRV1-APPROVE issue=$IssueNumberForState mode=Level3A branch=$branchForState head=$headForState review=$reviewId diff=$diffFingerprint files=$filesFingerprint"
     }
 }
 
@@ -1759,7 +1760,6 @@ function Invoke-ApprovalStateDiagnostic {
     Write-Host "Final files fingerprint: $($state.FilesFingerprint)"
     Write-Host "Final diff fingerprint: $($state.DiffFingerprint)"
     Write-Host "Final review id: $($state.ReviewId)"
-    Write-Host "Approval token preview: $($state.ApprovalToken)"
     Write-Host "No-write guarantee: diagnostic mode does not call Codex, run runner v1, modify files, post GitHub comments, stage files, commit, push, close issues, edit labels, create PRs, merge, force push, install dependencies, change PATH or Windows settings, invoke external agents, run polling, run a daemon, run a scheduler, or consume approval tokens."
 }
 
@@ -3319,7 +3319,19 @@ function Invoke-ApprovalNextCommitOnce {
     $selection = Get-UniqueApprovalNextCommitSelection -ScanResult $scanResult -ModeName "ApprovalNextCommitOnce"
     Write-ApprovalNextCommitSelectionSummary -Selection $selection -SafetyBoundary $ApprovalNextCommitOnceSafetyBoundary
 
-    $runnerExitCode = Invoke-RunnerV1CommitApproved -IssueNumber ([int]$selection.IssueNumber) -ApprovalToken ([string]$selection.State.ApprovalToken)
+    $runnerV1State = Get-RunnerV1CommitApprovalState -IssueNumber ([int]$selection.IssueNumber)
+    $currentState = Get-CommitApprovalState -IssueNumberForState ([int]$selection.IssueNumber) -ValidateDocsOnlyCommit
+    $handoffNowUtc = [System.DateTime]::UtcNow
+    Assert-CommitApprovalMarkerMatchesState `
+        -Fields $selection.Selected.Fields `
+        -State $currentState `
+        -ExpiresUtc $selection.Selected.ExpiresUtc `
+        -NowUtc $handoffNowUtc
+    Assert-RunnerV1CommitApprovalStateMatchesV2State -RunnerV1State $runnerV1State -RunnerV2State $currentState
+
+    $runnerExitCode = Invoke-RunnerV1CommitApproved `
+        -IssueNumber ([int]$selection.IssueNumber) `
+        -ApprovalToken ([string]$runnerV1State.ApprovalToken)
 
     Write-Host ""
     Write-Host "Runner v1 exit code: $runnerExitCode"
@@ -4213,6 +4225,89 @@ function Invoke-RunnerV1ReviewBundle {
     }
 
     return $exitCode
+}
+
+function Get-RunnerV1CommitApprovalState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber
+    )
+
+    $runnerV1Path = Join-Path -Path $PSScriptRoot -ChildPath "local_runner_v1.ps1"
+    if (-not (Test-Path -LiteralPath $runnerV1Path -PathType Leaf)) {
+        throw "Runner v1 script path is missing: $runnerV1Path"
+    }
+
+    $powerShellPath = Get-PowerShellExecutablePath
+    $result = Invoke-ReadOnlyCommand `
+        -FilePath $powerShellPath `
+        -Arguments @("-NoProfile", "-File", $runnerV1Path, "-IssueNumber", [string]$IssueNumber, "-Mode", "CommitApprovalStateDiagnostic") `
+        -Action "runner v1 CommitApprovalStateDiagnostic"
+    Require-Success -Result $result -Action "runner v1 CommitApprovalStateDiagnostic"
+
+    $lines = @($result.Stdout -split "\r?\n")
+    $markerIndexes = @()
+    for ($index = 0; $index -lt $lines.Count; $index += 1) {
+        if ([string]::Equals($lines[$index].Trim(), $RunnerV1CommitApprovalStateMarker, [System.StringComparison]::Ordinal)) {
+            $markerIndexes += $index
+        }
+    }
+    if ($markerIndexes.Count -ne 1) {
+        throw "Runner v1 CommitApprovalStateDiagnostic returned an invalid marker count."
+    }
+    $markerIndex = $markerIndexes[0]
+    if ($markerIndex + 1 -ge $lines.Count -or [string]::IsNullOrWhiteSpace($lines[$markerIndex + 1])) {
+        throw "Runner v1 CommitApprovalStateDiagnostic returned no state JSON."
+    }
+    try {
+        $state = $lines[$markerIndex + 1] | ConvertFrom-Json
+    }
+    catch {
+        throw "Runner v1 CommitApprovalStateDiagnostic returned malformed state JSON."
+    }
+    if ($null -eq $state -or $state -is [array] -or
+        -not [string]::Equals([string]$state.protocol, $RunnerV1CommitApprovalStateProtocol, [System.StringComparison]::Ordinal) -or
+        -not [string]::Equals([string]$state.issue, [string]$IssueNumber, [System.StringComparison]::Ordinal) -or
+        [string]::IsNullOrWhiteSpace([string]$state.approval_token)) {
+        throw "Runner v1 CommitApprovalStateDiagnostic returned an invalid state contract."
+    }
+
+    return [pscustomobject]@{
+        Protocol = [string]$state.protocol
+        IssueNumber = [string]$state.issue
+        Branch = [string]$state.branch
+        Head = [string]$state.head
+        ModifiedFiles = @($state.modified_files)
+        ApprovalToken = [string]$state.approval_token
+    }
+}
+
+function Assert-RunnerV1CommitApprovalStateMatchesV2State {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RunnerV1State,
+        [Parameter(Mandatory = $true)]
+        [object]$RunnerV2State
+    )
+
+    $mismatches = @()
+    if (-not [string]::Equals([string]$RunnerV1State.IssueNumber, [string]$RunnerV2State.IssueNumber, [System.StringComparison]::Ordinal)) {
+        $mismatches += "issue"
+    }
+    if (-not [string]::Equals([string]$RunnerV1State.Branch, [string]$RunnerV2State.Branch, [System.StringComparison]::Ordinal)) {
+        $mismatches += "branch"
+    }
+    if (-not [string]::Equals([string]$RunnerV1State.Head, [string]$RunnerV2State.Head, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $mismatches += "head"
+    }
+    $runnerV1Files = @($RunnerV1State.ModifiedFiles | Sort-Object)
+    $runnerV2Files = @($RunnerV2State.ModifiedFiles | Sort-Object)
+    if (($runnerV1Files -join "`n") -ne ($runnerV2Files -join "`n")) {
+        $mismatches += "modified_files"
+    }
+    if ($mismatches.Count -gt 0) {
+        throw "Runner v1 authoritative approval state does not match Runner v2 approved candidate state: $($mismatches -join ',')."
+    }
 }
 
 function Invoke-RunnerV1CommitApproved {
