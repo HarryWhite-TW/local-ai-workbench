@@ -205,7 +205,7 @@ def test_runner_v2_real_approval_state_diagnostic_is_strict_mode_safe_and_read_o
     assert after == before
 
 
-def test_workflow_closeout_surfaces_record_pre_final_review_truth():
+def test_workflow_closeout_surfaces_record_pending_final_closeout_truth():
     paths = (
         REPO_ROOT / "PLANS.md",
         REPO_ROOT / "docs" / "BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md",
@@ -256,13 +256,7 @@ def test_workflow_closeout_surfaces_record_pre_final_review_truth():
         ), path
         assert re.search(
             r"post-merge canonical verification"
-            r"(?:\s+(?:is\s+)?complete(?:d)?"
-            r"|,\s+and\s+final residual review\s+(?:is\s+)?complete(?:d)?)",
-            text,
-            flags=re.IGNORECASE,
-        ), path
-        assert re.search(
-            r"final residual review (?:is )?complete(?:d)?",
+            r"[^\n]{0,100}(?:complete(?:d)?|passed)",
             text,
             flags=re.IGNORECASE,
         ), path
@@ -280,11 +274,17 @@ def test_workflow_closeout_surfaces_record_pre_final_review_truth():
             flags=re.IGNORECASE,
         ), path
         assert re.search(
-            r"remaining ordered closeout sequence[^\n]{0,400}"
-            r"PR #212[^\n]{0,120}exact-head rereview[^\n]{0,120}"
+            r"remaining ordered closeout sequence[^\n]{0,520}"
+            r"PR #212[^\n]{0,120}repair[^\n]{0,120}exact-head rereview[^\n]{0,120}"
             r"PR #212 merge[^\n]{0,120}post-merge canonical verification[^\n]{0,160}"
             r"tracker #168 final `DONE` synchronization[^\n]{0,160}"
+            r"final residual review / final `DONE` re-adjudication[^\n]{0,160}"
             r"separate final durable-status transition",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"final residual review remains pending until after tracker synchronization",
             text,
             flags=re.IGNORECASE,
         ), path
@@ -302,6 +302,12 @@ def test_workflow_closeout_surfaces_record_pre_final_review_truth():
     closeout = (REPO_ROOT / "docs" / "WORKFLOW_V1_FINAL_CLOSEOUT.md").read_text(
         encoding="utf-8"
     )
+    plans = (REPO_ROOT / "PLANS.md").read_text(encoding="utf-8")
+    cache_semantics = plans + "\n" + closeout
+    assert "six reviewed `.pytest_cache` metadata path patterns" in cache_semantics
+    assert "beneath any `.pytest_cache` directory" in cache_semantics
+    assert "arbitrary `.pyc` creation or removal" in cache_semantics
+    assert "non-matching cache paths remain observable and fail closed" in cache_semantics
     for evidence in (
         "targeted pycache regressions `10 passed`",
         "Runner v1 `89 passed`",
