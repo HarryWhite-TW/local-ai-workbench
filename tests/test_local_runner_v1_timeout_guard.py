@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -1221,6 +1222,75 @@ def test_captured_native_process_non_timeout_path_preserves_exit_code_and_output
     assert_success(result)
 
 
+def test_runner_child_python_environment_disables_bytecode_without_mutating_parent(
+    tmp_path,
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "probe_module.py").write_text("VALUE = 'imported'\n", encoding="utf-8")
+    child = repo / "child_probe.py"
+    child.write_text(
+        textwrap.dedent(
+            """
+            import json
+            import os
+            import probe_module
+
+            print(json.dumps({
+                "environment": os.environ.get("PYTHONDONTWRITEBYTECODE"),
+                "module_value": probe_module.VALUE,
+            }))
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $parentBefore = $env:PYTHONDONTWRITEBYTECODE
+        $env:PYTHONDONTWRITEBYTECODE = "parent-sentinel"
+        try {{
+            $result = Invoke-CapturedNativeProcess `
+                -FilePath {str(Path(sys.executable).resolve())!r} `
+                -Arguments @({str(child)!r}) `
+                -WorkingDirectory {str(repo)!r} `
+                -StandardInput "" `
+                -StandardInputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+                -StandardOutputEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+                -StandardErrorEncoding ([System.Text.UTF8Encoding]::new($false, $true)) `
+                -TimeoutSeconds 10 `
+                -Action "child Python bytecode guard test"
+            $parentAfter = $env:PYTHONDONTWRITEBYTECODE
+        }}
+        finally {{
+            if ($null -eq $parentBefore) {{
+                Remove-Item Env:PYTHONDONTWRITEBYTECODE -ErrorAction SilentlyContinue
+            }}
+            else {{
+                $env:PYTHONDONTWRITEBYTECODE = $parentBefore
+            }}
+        }}
+        if ($result.ExitCode -ne 0) {{ throw "Child failed: $($result.Stderr)" }}
+        [ordered]@{{
+            child = ($result.Stdout | ConvertFrom-Json)
+            parent_after = $parentAfter
+            pycache_exists = Test-Path -LiteralPath {str(repo / '__pycache__')!r}
+        }} | ConvertTo-Json -Depth 4 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["child"] == {
+        "environment": "1",
+        "module_value": "imported",
+    }
+    assert payload["parent_after"] == "parent-sentinel"
+    assert payload["pycache_exists"] is False
+
+
 def test_captured_native_process_writes_standard_input_as_utf8(tmp_path):
     child = tmp_path / "stdin_bytes.ps1"
     child.write_text(
@@ -1747,16 +1817,102 @@ def test_gitignore_visibility_bypass_fails_closed_with_unfiltered_untracked_delt
     assert head == payload["binding"]["pre_execution"].get("head", head)
 
 
-def test_only_narrow_python_cache_delta_is_benign_and_loose_pyc_fails_closed(tmp_path):
+@pytest.mark.parametrize("change", ["created", "removed"])
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "tools/__pycache__/payload.pyc",
+        "tools/__pycache__/payload.cpython-314.pyc",
+        "loose.pyc",
+        "tools/evil.pyc",
+    ],
+)
+def test_arbitrary_ignored_pyc_delta_fails_closed(tmp_path, change, relative_path):
     repo = tmp_path / "repo"
     init_git_repo(repo)
-    (repo / ".gitignore").write_text(
-        ".pytest_cache/\n__pycache__/\n*.pyc\n", encoding="utf-8"
-    )
+    (repo / ".gitignore").write_text("__pycache__/\n*.pyc\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-q", "-m", "ignore caches"],
         check=True,
+    )
+    candidate = repo / relative_path
+    if change == "removed":
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_bytes(b"candidate")
+    binding = json.dumps(
+        _binding("passed", allowed_files=["seed.txt"], max_allowed_files=1)
+    )
+    mutation = (
+        f"New-Item -ItemType Directory -Path {str(candidate.parent)!r} -Force | Out-Null\n"
+        f"Set-Content -LiteralPath {str(candidate)!r} -Value 'candidate' -Encoding ASCII"
+        if change == "created"
+        else f"Remove-Item -LiteralPath {str(candidate)!r} -Force"
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $before = Get-ReviewBundleGitObservation
+        {mutation}
+        $after = Get-ReviewBundleGitObservation
+        $actualFiles = @(Get-ReviewBundleEffectiveChangedFiles `
+            -Status $after.Status `
+            -UntrackedFilesBefore @($before.UntrackedFiles) `
+            -UntrackedFilesAfter @($after.UntrackedFiles) `
+            -IndexVisibilityFilesBefore @($before.IndexVisibilityFiles) `
+            -IndexVisibilityFilesAfter @($after.IndexVisibilityFiles))
+        $binding = '{binding}' | ConvertFrom-Json
+        $binding = Invoke-ParentControlledRuntimeContractEnforcement `
+            -RuntimeContractBinding $binding `
+            -ActualChangedFiles $actualFiles `
+            -InvariantViolationReasons @()
+        [ordered]@{{
+            status = $after.Status
+            observed_untracked_before = @($before.UntrackedFiles)
+            observed_untracked_after = @($after.UntrackedFiles)
+            actual_changed_files = $actualFiles
+            binding = $binding
+        }} | ConvertTo-Json -Depth 5 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["status"] == ""
+    observed_side = (
+        payload["observed_untracked_after"]
+        if change == "created"
+        else payload["observed_untracked_before"]
+    )
+    assert relative_path in observed_side
+    assert payload["actual_changed_files"] == [relative_path]
+    assert payload["binding"]["status"] == "contract_violation"
+    assert "changed_file_outside_allowed_files" in payload["binding"]["reasons"]
+
+
+def test_only_narrow_pytest_cache_metadata_delta_is_benign(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / ".gitignore").write_text(".pytest_cache/\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "ignore pytest cache"],
+        check=True,
+    )
+    cache_paths = [
+        ".pytest_cache/README.md",
+        ".pytest_cache/CACHEDIR.TAG",
+        ".pytest_cache/.gitignore",
+        ".pytest_cache/v/cache/nodeids",
+        ".pytest_cache/v/cache/lastfailed",
+        ".pytest_cache/v/cache/stepwise",
+    ]
+    cache_writes = "\n".join(
+        f"New-Item -ItemType Directory -Path {str((repo / path).parent)!r} -Force | Out-Null\n"
+        f"Set-Content -LiteralPath {str(repo / path)!r} -Value 'metadata' -Encoding UTF8"
+        for path in cache_paths
     )
     binding = json.dumps(
         _binding("passed", allowed_files=["seed.txt"], max_allowed_files=1)
@@ -1767,13 +1923,7 @@ def test_only_narrow_python_cache_delta_is_benign_and_loose_pyc_fails_closed(tmp
         f"""
         $script:RepoPath = {repo.as_posix()!r}
         $before = Get-ReviewBundleGitObservation
-        New-Item -ItemType Directory -Path {str(repo / '.pytest_cache' / 'v' / 'cache')!r} -Force | Out-Null
-        Set-Content -LiteralPath {str(repo / '.pytest_cache' / 'v' / 'cache' / 'nodeids')!r} -Value "[]" -Encoding UTF8
-        New-Item -ItemType Directory -Path {str(repo / 'pkg' / '__pycache__')!r} -Force | Out-Null
-        Set-Content -LiteralPath {str(repo / 'pkg' / '__pycache__' / 'module.cpython-310.pyc')!r} -Value "cache" -Encoding ASCII
-        Set-Content -LiteralPath {str(repo / 'loose.pyc')!r} -Value "cache" -Encoding ASCII
-        New-Item -ItemType Directory -Path {str(repo / 'tools')!r} -Force | Out-Null
-        Set-Content -LiteralPath {str(repo / 'tools' / 'evil.pyc')!r} -Value "candidate" -Encoding ASCII
+        {cache_writes}
         $after = Get-ReviewBundleGitObservation
         $actualFiles = @(Get-ReviewBundleEffectiveChangedFiles `
             -Status $after.Status `
@@ -1798,13 +1948,9 @@ def test_only_narrow_python_cache_delta_is_benign_and_loose_pyc_fails_closed(tmp
     assert_success(result)
     payload = json.loads(result.stdout)
     assert payload["status"] == ""
-    assert ".pytest_cache/v/cache/nodeids" in payload["observed_untracked"]
-    assert "pkg/__pycache__/module.cpython-310.pyc" in payload["observed_untracked"]
-    assert "loose.pyc" in payload["observed_untracked"]
-    assert "tools/evil.pyc" in payload["observed_untracked"]
-    assert payload["actual_changed_files"] == ["loose.pyc", "tools/evil.pyc"]
-    assert payload["binding"]["status"] == "contract_violation"
-    assert "changed_file_outside_allowed_files" in payload["binding"]["reasons"]
+    assert payload["observed_untracked"] == sorted(cache_paths)
+    assert payload["actual_changed_files"] == []
+    assert payload["binding"]["status"] == "passed"
 
 
 @pytest.mark.parametrize(

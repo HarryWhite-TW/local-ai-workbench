@@ -318,9 +318,6 @@ function Test-IsBenignPythonCacheNoisePath {
     )
 
     $normalized = $Path.Replace("\", "/")
-    if ($normalized -match '(^|/)__pycache__/[^/]+\.pyc$') {
-        return $true
-    }
     return $normalized -match '(^|/)\.pytest_cache/(README\.md|CACHEDIR\.TAG|\.gitignore|v/cache/(nodeids|lastfailed|stepwise))$'
 }
 
@@ -1565,6 +1562,7 @@ function Invoke-CapturedNativeProcess {
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
         $startInfo.CreateNoWindow = $true
+        $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
         $startInfo.StandardOutputEncoding = $StandardOutputEncoding
         $startInfo.StandardErrorEncoding = $StandardErrorEncoding
 
