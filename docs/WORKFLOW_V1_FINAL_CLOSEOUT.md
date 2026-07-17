@@ -122,7 +122,7 @@ Raw evidence may remain local when appropriate, but accepted conclusions and can
 | `RV2-P1-SYNC` | `DONE` | Established the Human-Governed AI Engineering Control Layer, four-node completion boundary, Roadmap rebaseline, and deferred-scope preservation. |
 | `RV2-04N` | `DONE` | Closed the historical minimum runtime-contract gap; the current rebaseline corrects its acceptance-versus-prevention semantics without erasing the bounded implementation evidence. |
 | Cross-Repository Bounded Proof | `DONE` | Reused the core governance method on one real independent repository for one bounded target-native engineering node. |
-| Workflow v1 Final Closeout | `REVIEW — FINAL TRACKER AND DURABLE-TRUTH CLOSURE NOT YET COMPLETE` | PR #211 completed the token-compatibility, trusted-oracle, cache fail-closed, and Windows child-environment corrections; tracker final `DONE` synchronization and a separate durable-status transition remain pending. |
+| Workflow v1 Final Closeout | `REVIEW — FINAL TRACKER AND DURABLE-TRUTH CLOSURE NOT YET COMPLETE` | Pending gates: PR #212 exact-head rereview; PR #212 merge; post-merge canonical verification; tracker #168 final `DONE` synchronization; final residual review / final `DONE` re-adjudication; and a separate final durable-status transition. |
 
 ## 9. Accepted Evidence Ledger
 

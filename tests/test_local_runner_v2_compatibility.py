@@ -225,7 +225,33 @@ def test_workflow_closeout_surfaces_record_pending_final_closeout_truth():
         r"Workflow v1 Final Closeout\s*\|\s*`DONE`",
         r"Workflow v1 is (?:now )?finally (?:recorded as\s+)?`DONE`",
         r"all four mandatory(?: Workflow v1)? nodes are `DONE`",
+        r"Workflow v1(?:\s+is|\s*:)\s*"
+        r"(?:\*\*|__)?`?DONE`?(?:\*\*|__)?"
+        r"(?=\s|[.,;:]|$)",
     )
+    direct_done_examples = (
+        "Workflow v1 is `DONE`",
+        "Workflow v1: `DONE`",
+        "Workflow v1 : `DONE`",
+        "Workflow v1 is **DONE**",
+        "Workflow v1: **DONE**",
+        "Workflow v1 is DONE.",
+    )
+    for example in direct_done_examples:
+        assert any(
+            re.search(pattern, example, flags=re.IGNORECASE)
+            for pattern in current_final_done_claims
+        ), example
+    non_done_examples = (
+        "Workflow v1 remains `REVIEW`",
+        "Workflow v1 is not `DONE`",
+        "Workflow v1 Final Closeout remains pending",
+    )
+    for example in non_done_examples:
+        assert all(
+            re.search(pattern, example, flags=re.IGNORECASE) is None
+            for pattern in current_final_done_claims
+        ), example
 
     for path in paths:
         text = path.read_text(encoding="utf-8")
@@ -302,6 +328,23 @@ def test_workflow_closeout_surfaces_record_pending_final_closeout_truth():
     closeout = (REPO_ROOT / "docs" / "WORKFLOW_V1_FINAL_CLOSEOUT.md").read_text(
         encoding="utf-8"
     )
+    matrix_row_match = re.search(
+        r"^\| Workflow v1 Final Closeout \|[^\n]+$",
+        closeout,
+        flags=re.MULTILINE,
+    )
+    assert matrix_row_match is not None
+    matrix_row = matrix_row_match.group(0)
+    assert re.search(r"\|\s*`REVIEW\b", matrix_row, flags=re.IGNORECASE)
+    for pending_gate in (
+        "PR #212 exact-head rereview",
+        "PR #212 merge",
+        "post-merge canonical verification",
+        "tracker #168 final `DONE` synchronization",
+        "final residual review / final `DONE` re-adjudication",
+        "separate final durable-status transition",
+    ):
+        assert pending_gate in matrix_row
     plans = (REPO_ROOT / "PLANS.md").read_text(encoding="utf-8")
     cache_semantics = plans + "\n" + closeout
     assert "six reviewed `.pytest_cache` metadata path patterns" in cache_semantics
