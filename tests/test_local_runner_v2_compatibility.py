@@ -205,7 +205,7 @@ def test_runner_v2_real_approval_state_diagnostic_is_strict_mode_safe_and_read_o
     assert after == before
 
 
-def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
+def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
     paths = (
         REPO_ROOT / "PLANS.md",
         REPO_ROOT / "docs" / "BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md",
@@ -215,25 +215,30 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
     reviewed_head = "dd6046409505e009e95e3a68433bca147542a088"
     canonical_merge = "ee4f9c06dc48719b8165b75607e51d38e7344c6b"
     tracker_checkpoint = "5005537101"
+    residual_review_anchor = "5010099708"
     final_transition_pr = "PR #213"
     final_truth_sync = "final post-tracker repository truth-sync"
-    conditional_status = (
-        "DONE — FINAL RESIDUAL REVIEW ACCEPTED; CANONICAL EFFECTIVENESS "
-        "CONDITIONED ON FINAL TRANSITION MERGE AND TRACKER FINAL DONE PUBLICATION"
+    current_status = (
+        "REVIEW — FINAL RESIDUAL REVIEW PASSED; "
+        "CANONICAL CLOSURE GATES PENDING"
     )
     done_nodes = (
         "RV2-P1-SYNC",
         "RV2-04N",
         "Cross-Repository Bounded Proof",
     )
-    unconditional_done_claims = (
-        r"Workflow v1 Final Closeout\s+(?:is|:)\s*`DONE`",
-        r"Workflow v1 Final Closeout\s*\|\s*`DONE`",
+    current_done_claims = (
+        r"Workflow v1 Final Closeout\s+(?:is|:)\s*`?DONE\b",
+        r"Workflow v1 Final Closeout\s*\|\s*`?DONE\b",
         r"Workflow v1 is (?:now )?finally (?:recorded as\s+)?`DONE`",
         r"all four mandatory(?: Workflow v1)? nodes are `DONE`",
         r"Workflow v1(?:\s+is|\s*:)\s*"
         r"(?:\*\*|__)?`?DONE`?(?:\*\*|__)?"
         r"(?=\s*(?:[.,;:]|$))",
+        r"Workflow v1(?: Final Closeout)?[^\n]{0,100}"
+        r"(?:conditional(?:ly)?|provisional(?:ly)?)\s+`?DONE\b",
+        r"Workflow v1(?: Final Closeout)?[^\n]{0,100}`?DONE`?"
+        r"[^\n]{0,100}(?:pending future publication|future effectiveness)",
     )
     premature_closure_claims = (
         r"no further repository wording change is required",
@@ -253,19 +258,24 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
     for example in direct_done_examples:
         assert any(
             re.search(pattern, example, flags=re.IGNORECASE)
-            for pattern in unconditional_done_claims
+            for pattern in current_done_claims
         ), example
-    non_done_examples = (
-        "Workflow v1 remains `REVIEW`",
-        "Workflow v1 is not `DONE`",
-        "Workflow v1 Final Closeout remains pending",
-        f"Workflow v1 is `{conditional_status}`",
+    rejected_current_status_examples = (
+        "Workflow v1 Final Closeout is DONE",
+        "Workflow v1 is conditionally DONE",
+        "Workflow v1 is provisionally DONE",
+        "Workflow v1 is DONE pending future publication",
     )
-    for example in non_done_examples:
-        assert all(
-            re.search(pattern, example, flags=re.IGNORECASE) is None
-            for pattern in unconditional_done_claims
+    for example in rejected_current_status_examples:
+        assert any(
+            re.search(pattern, example, flags=re.IGNORECASE)
+            for pattern in current_done_claims
         ), example
+    assert all(
+        re.search(pattern, f"Workflow v1 is `{current_status}`", flags=re.IGNORECASE)
+        is None
+        for pattern in current_done_claims
+    )
     premature_closure_examples = (
         "No further repository wording change is required.",
         "Tracker #168 final `DONE` publication plus final canonical verification "
@@ -285,7 +295,9 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
         assert reviewed_head in text, path
         assert canonical_merge in text, path
         assert tracker_checkpoint in text, path
+        assert residual_review_anchor in text, path
         assert final_transition_pr in text, path
+        assert current_status in text, path
         for node in done_nodes:
             assert re.search(
                 rf"{re.escape(node)}[^\n]{{0,200}}`DONE`",
@@ -305,10 +317,12 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
             flags=re.IGNORECASE,
         ), path
         assert re.search(
-            r"final residual review / final `DONE` re-adjudication"
-            r"[^\n]{0,120}(?:passed|accepted)",
+            rf"^(?=[^\n]*{residual_review_anchor})"
+            r"(?=[^\n]*(?:reviewer-controlled|residual-review))"
+            r"(?=[^\n]*FINAL RESIDUAL REVIEW PASSED)"
+            r"(?=[^\n]*REVIEW)[^\n]+$",
             text,
-            flags=re.IGNORECASE,
+            flags=re.IGNORECASE | re.MULTILINE,
         ), path
         final_sync_requirements = (
             r"PR #213 merge",
@@ -332,7 +346,8 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
             flags=re.IGNORECASE,
         ), path
         assert re.search(
-            rf"^(?=[^\n]*{tracker_checkpoint})(?=[^\n]*`REVIEW`)[^\n]+$",
+            rf"^(?=[^\n]*{tracker_checkpoint})(?=[^\n]*intermediate)"
+            r"(?=[^\n]*`REVIEW`)[^\n]+$",
             text,
             flags=re.IGNORECASE | re.MULTILINE,
         ), path
@@ -364,12 +379,20 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
     plans_node_four = extract_line(
         plans, r"^4\. Workflow v1 Final Closeout:[^\n]+$"
     )
-    assert conditional_status in plans_node_four
+    assert current_status in plans_node_four
     assert reviewed_head in plans_node_four
     assert canonical_merge in plans_node_four
     assert tracker_checkpoint in plans_node_four
+    assert residual_review_anchor in plans_node_four
+    plans_proof_summary = extract_line(
+        plans, r"^This proves bounded reuse[^\n]+Workflow v1 is[^\n]+$"
+    )
+    assert current_status in plans_proof_summary
+    assert residual_review_anchor in plans_proof_summary
     plans_summary = extract_line(plans, r"^The first three mandatory nodes remain[^\n]+$")
-    assert conditional_status in plans_summary
+    assert current_status in plans_summary
+    assert tracker_checkpoint in plans_summary
+    assert residual_review_anchor in plans_summary
     assert final_truth_sync in plans_summary
     assert "actual PR #213 canonical merge SHA" in plans_summary
     assert "actual Tracker #168 final `DONE` comment ID" in plans_summary
@@ -385,18 +408,20 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
         roadmap_completion.group("section"),
         r"^4\. Workflow v1 Final Closeout:[^\n]+$",
     )
-    assert conditional_status in roadmap_node_four
+    assert current_status in roadmap_node_four
     assert reviewed_head in roadmap_node_four
     assert canonical_merge in roadmap_node_four
     assert tracker_checkpoint in roadmap_node_four
+    assert residual_review_anchor in roadmap_node_four
     roadmap_summary = extract_line(
         roadmap, r"^The first three mandatory Workflow v1 nodes remain[^\n]+$"
     )
-    assert conditional_status in roadmap_summary
+    assert current_status in roadmap_summary
     roadmap_contract = extract_line(
         roadmap, r"^The final residual review / final `DONE` re-adjudication[^\n]+$"
     )
     assert "has passed" in roadmap_contract
+    assert residual_review_anchor in roadmap_contract
     assert final_truth_sync in roadmap_contract
     assert "actual PR #213 canonical merge SHA" in roadmap_contract
     assert "actual Tracker #168 final `DONE` comment ID" in roadmap_contract
@@ -404,11 +429,20 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
     index_status = extract_line(
         index, r"^`PLANS\.md` remains the current project-status authority\.[^\n]+$"
     )
-    assert conditional_status in index_status
+    assert current_status in index_status
     assert "navigation only and does not itself accept, activate, or grant authority" in index_status
     assert final_truth_sync in index_status
     assert "actual PR #213 canonical merge SHA" in index_status
     assert "actual Tracker #168 final `DONE` comment ID" in index_status
+    assert tracker_checkpoint in index_status
+    assert residual_review_anchor in index_status
+
+    closeout_identity = extract_line(closeout, r"^- status: `[^\n]+`$")
+    assert closeout_identity == f"- status: `{current_status}`"
+    closeout_verdict = extract_line(
+        closeout, r"^Workflow v1 Final Closeout is[^\n]+$"
+    )
+    assert closeout_verdict.count(current_status) == 2
 
     matrix_row_match = re.search(
         r"^\| Workflow v1 Final Closeout \|[^\n]+$",
@@ -417,8 +451,11 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
     )
     assert matrix_row_match is not None
     matrix_row = matrix_row_match.group(0)
-    assert conditional_status in matrix_row
-    assert "final residual review / final `DONE` re-adjudication are complete" in matrix_row
+    assert current_status in matrix_row
+    assert tracker_checkpoint in matrix_row
+    assert residual_review_anchor in matrix_row
+    assert "ACCEPTED — FINAL RESIDUAL REVIEW PASSED" in matrix_row
+    assert "does not declare canonical `DONE`" in matrix_row
     assert "PR #213 repair and exact-head rereview" in matrix_row
     assert "PR #213 merge" in matrix_row
     assert "post-merge canonical verification" in matrix_row
@@ -431,7 +468,7 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
     assert "final canonical verification" in matrix_row
     assert "no later node activation" in matrix_row
     closeout_ledger = extract_line(closeout, r"^- current status:[^\n]+$")
-    assert conditional_status in closeout_ledger
+    assert current_status in closeout_ledger
     ledger_match = re.search(
         r"### Workflow v1 Final Closeout(?P<section>.*?)### Phase C target-flow evidence",
         closeout,
@@ -442,24 +479,33 @@ def test_workflow_closeout_surfaces_record_conditional_final_done_truth():
     assert reviewed_head in ledger
     assert canonical_merge in ledger
     assert tracker_checkpoint in ledger
+    assert residual_review_anchor in ledger
     assert "ACCEPTED — FINAL RESIDUAL REVIEW PASSED" in ledger
+    assert "does not declare canonical `DONE`" in ledger
+    assert "remaining canonical closure gates are pending" in ledger
 
     current_checkpoint = extract_line(closeout, r"^Current status:[^\n]+$")
+    closeout_summary = extract_line(
+        closeout, r"^The first three mandatory nodes remain[^\n]+$"
+    )
     current_anchors = (
         plans_node_four,
+        plans_proof_summary,
         plans_summary,
         roadmap_node_four,
         roadmap_summary,
         index_status,
+        closeout_identity,
+        closeout_verdict,
         matrix_row,
         closeout_ledger,
         current_checkpoint,
+        closeout_summary,
     )
     for anchor in current_anchors:
-        assert conditional_status in anchor
-        assert "remains pending" not in anchor.lower()
+        assert current_status in anchor
         assert "4998971940" not in anchor
-        for pattern in unconditional_done_claims:
+        for pattern in current_done_claims:
             assert re.search(pattern, anchor, flags=re.IGNORECASE) is None, (
                 anchor,
                 pattern,
