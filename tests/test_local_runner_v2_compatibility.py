@@ -205,86 +205,49 @@ def test_runner_v2_real_approval_state_diagnostic_is_strict_mode_safe_and_read_o
     assert after == before
 
 
-def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
+def test_workflow_closeout_surfaces_publish_final_done_truth():
     paths = (
         REPO_ROOT / "PLANS.md",
         REPO_ROOT / "docs" / "BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md",
         REPO_ROOT / "docs" / "WORKFLOW_V1_FINAL_CLOSEOUT.md",
         REPO_ROOT / "docs" / "ENGINEERING_RECORDS_INDEX.md",
     )
-    reviewed_head = "dd6046409505e009e95e3a68433bca147542a088"
-    canonical_merge = "ee4f9c06dc48719b8165b75607e51d38e7344c6b"
+    reviewed_head = "60be637db0c237db3d53408a272fd3aaba98ec8b"
+    canonical_merge = "317cd7e9fedb153daa034c1e698819042e2e4564"
     tracker_checkpoint = "5005537101"
     residual_review_anchor = "5010099708"
-    final_transition_pr = "PR #213"
-    final_truth_sync = "final post-tracker repository truth-sync"
-    current_status = (
-        "REVIEW — FINAL RESIDUAL REVIEW PASSED; "
-        "CANONICAL CLOSURE GATES PENDING"
-    )
+    final_done_comment = "5010353117"
+    current_status = "DONE — FINAL DURABLE TRUTH SYNCHRONIZED"
     done_nodes = (
         "RV2-P1-SYNC",
         "RV2-04N",
         "Cross-Repository Bounded Proof",
     )
-    current_done_claims = (
-        r"Workflow v1 Final Closeout\s+(?:is|:)\s*`?DONE\b",
-        r"Workflow v1 Final Closeout\s*\|\s*`?DONE\b",
-        r"Workflow v1 is (?:now )?finally (?:recorded as\s+)?`DONE`",
-        r"all four mandatory(?: Workflow v1)? nodes are `DONE`",
-        r"Workflow v1(?:\s+is|\s*:)\s*"
-        r"(?:\*\*|__)?`?DONE`?(?:\*\*|__)?"
-        r"(?=\s*(?:[.,;:]|$))",
+    stale_current_claims = (
+        r"Workflow v1(?: Final Closeout)?\s+(?:is|remains|:)\s*`?REVIEW\b",
+        r"canonical closure gates remain pending",
         r"Workflow v1(?: Final Closeout)?[^\n]{0,100}"
         r"(?:conditional(?:ly)?|provisional(?:ly)?)\s+`?DONE\b",
-        r"Workflow v1(?: Final Closeout)?[^\n]{0,100}`?DONE`?"
-        r"[^\n]{0,100}(?:pending future publication|future effectiveness)",
+        r"PR #213 (?:merge|canonical merge)[^\n]{0,80}(?:pending|remains required)",
+        r"Tracker #168 final `DONE` publication[^\n]{0,80}"
+        r"(?:pending|remains required)",
+        r"another post-tracker repository truth-sync remains required",
+        r"candidate branch content alone is canonical current truth",
+        r"successful post-merge verification[^\n]{0,120}"
+        r"requires another repository (?:wording )?(?:change|update|edit)",
     )
-    premature_closure_claims = (
-        r"no further repository wording change is required",
-        r"Tracker #168 final `DONE` publication\s+(?:plus|and)\s+"
-        r"final canonical verification\s+(?:is|are)\s+sufficient",
-        rf"repository/tracker agreement is final[^\n]{{0,160}}"
-        rf"(?:only |solely )?(?:references|records)[^\n]{{0,80}}{tracker_checkpoint}",
-    )
-    direct_done_examples = (
-        "Workflow v1 is `DONE`",
-        "Workflow v1: `DONE`",
-        "Workflow v1 : `DONE`",
-        "Workflow v1 is **DONE**",
-        "Workflow v1: **DONE**",
-        "Workflow v1 is DONE.",
-    )
-    for example in direct_done_examples:
-        assert any(
-            re.search(pattern, example, flags=re.IGNORECASE)
-            for pattern in current_done_claims
-        ), example
-    rejected_current_status_examples = (
-        "Workflow v1 Final Closeout is DONE",
+    stale_current_examples = (
+        "Workflow v1 remains REVIEW",
+        "Canonical closure gates remain pending",
         "Workflow v1 is conditionally DONE",
-        "Workflow v1 is provisionally DONE",
-        "Workflow v1 is DONE pending future publication",
-    )
-    for example in rejected_current_status_examples:
-        assert any(
-            re.search(pattern, example, flags=re.IGNORECASE)
-            for pattern in current_done_claims
-        ), example
-    assert all(
-        re.search(pattern, f"Workflow v1 is `{current_status}`", flags=re.IGNORECASE)
-        is None
-        for pattern in current_done_claims
-    )
-    premature_closure_examples = (
-        "No further repository wording change is required.",
-        "Tracker #168 final `DONE` publication plus final canonical verification "
-        "is sufficient.",
-        "Repository/tracker agreement is final while the repository only "
-        f"references intermediate comment {tracker_checkpoint}.",
+        "PR #213 merge remains required",
+        "Tracker #168 final `DONE` publication is pending",
+        "Another post-tracker repository truth-sync remains required",
+        "Candidate branch content alone is canonical current truth",
+        "Successful post-merge verification requires another repository edit",
     )
     for pattern, example in zip(
-        premature_closure_claims, premature_closure_examples, strict=True
+        stale_current_claims, stale_current_examples, strict=True
     ):
         assert re.search(pattern, example, flags=re.IGNORECASE), example
 
@@ -292,11 +255,12 @@ def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
     for path, text in surface_texts.items():
         assert "PR #211" in text, path
         assert "PR #212" in text, path
+        assert "PR #213" in text, path
         assert reviewed_head in text, path
         assert canonical_merge in text, path
         assert tracker_checkpoint in text, path
         assert residual_review_anchor in text, path
-        assert final_transition_pr in text, path
+        assert final_done_comment in text, path
         assert current_status in text, path
         for node in done_nodes:
             assert re.search(
@@ -304,12 +268,6 @@ def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
                 text,
                 flags=re.IGNORECASE,
             ), (path, node)
-        assert re.search(
-            r"post-merge canonical verification"
-            r"[^\n]{0,100}(?:complete(?:d)?|passed)",
-            text,
-            flags=re.IGNORECASE,
-        ), path
         assert re.search(
             r"(?:no later (?:Roadmap )?node is activated|"
             r"does not activate another node|No-Auto-Activation)",
@@ -319,48 +277,71 @@ def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
         assert re.search(
             rf"^(?=[^\n]*{residual_review_anchor})"
             r"(?=[^\n]*(?:reviewer-controlled|residual-review))"
-            r"(?=[^\n]*FINAL RESIDUAL REVIEW PASSED)"
-            r"(?=[^\n]*REVIEW)[^\n]+$",
+            r"(?=[^\n]*FINAL RESIDUAL REVIEW PASSED)[^\n]+$",
             text,
             flags=re.IGNORECASE | re.MULTILINE,
         ), path
-        final_sync_requirements = (
-            r"PR #213 merge",
-            r"Tracker #168 final `DONE` publication",
-            re.escape(final_truth_sync),
-            r"actual PR #213 canonical merge SHA",
-            r"actual Tracker #168 final `DONE` comment ID",
-            r"exact-head review[^\n]{0,160}canonical merge[^\n]{0,160}"
-            r"post-merge verification",
-            r"final canonical verification",
-        )
-        for requirement in final_sync_requirements:
-            assert re.search(requirement, text, flags=re.IGNORECASE), (
-                path,
-                requirement,
-            )
         assert re.search(
-            r"final canonical verification[^\n]{0,240}"
-            r"(?:repository/tracker agreement|repository and tracker agree)",
+            rf"^(?=[^\n]*{final_done_comment})"
+            r"(?=[^\n]*final `DONE`)[^\n]+$",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        ), path
+        assert re.search(
+            rf"^(?=[^\n]*{tracker_checkpoint})(?=[^\n]*intermediate)"
+            r"(?=[^\n]*(?:historical|history))(?=[^\n]*`REVIEW`)[^\n]+$",
+            text,
+            flags=re.IGNORECASE | re.MULTILINE,
+        ), path
+        assert re.search(
+            r"repository and (?:Tracker #168|tracker) truth are synchronized",
             text,
             flags=re.IGNORECASE,
         ), path
         assert re.search(
-            rf"^(?=[^\n]*{tracker_checkpoint})(?=[^\n]*intermediate)"
-            r"(?=[^\n]*`REVIEW`)[^\n]+$",
+            r"feature branches and PR candidates are proposals, not current truth",
             text,
-            flags=re.IGNORECASE | re.MULTILINE,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"merging the exact reviewed truth-sync content into `master` publishes"
+            r"[^\n]{0,80}final `DONE`",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"post-merge canonical verification validates",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"successful verification requires no second repository wording update",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            r"truth-sync PR number and its future merge SHA are intentionally not pre-recorded",
+            text,
+            flags=re.IGNORECASE,
+        ), path
+        assert re.search(
+            rf"PR #213[^\n]{{0,240}}{reviewed_head}[^\n]{{0,240}}"
+            rf"{canonical_merge}[^\n]{{0,160}}post-merge",
+            text,
+            flags=re.IGNORECASE,
         ), path
         assert not re.search(
             r"(?:4998971940[^\n]{0,120}latest|latest[^\n]{0,120}4998971940)",
             text,
             flags=re.IGNORECASE,
         ), path
-        for pattern in premature_closure_claims:
-            assert re.search(pattern, text, flags=re.IGNORECASE) is None, (
-                path,
-                pattern,
-            )
+        assert re.search(r"truth-sync PR\s+#\d+", text, flags=re.IGNORECASE) is None, path
+        assert re.search(
+            r"truth-sync (?:PR )?(?:canonical )?merge(?: SHA)?\s*[:` ]+"
+            r"[0-9a-f]{40}",
+            text,
+            flags=re.IGNORECASE,
+        ) is None, path
 
     def extract_line(text: str, pattern: str) -> str:
         match = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
@@ -384,18 +365,21 @@ def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
     assert canonical_merge in plans_node_four
     assert tracker_checkpoint in plans_node_four
     assert residual_review_anchor in plans_node_four
+    assert final_done_comment in plans_node_four
     plans_proof_summary = extract_line(
         plans, r"^This proves bounded reuse[^\n]+Workflow v1 is[^\n]+$"
     )
     assert current_status in plans_proof_summary
     assert residual_review_anchor in plans_proof_summary
+    assert final_done_comment in plans_proof_summary
     plans_summary = extract_line(plans, r"^The first three mandatory nodes remain[^\n]+$")
     assert current_status in plans_summary
     assert tracker_checkpoint in plans_summary
     assert residual_review_anchor in plans_summary
-    assert final_truth_sync in plans_summary
-    assert "actual PR #213 canonical merge SHA" in plans_summary
-    assert "actual Tracker #168 final `DONE` comment ID" in plans_summary
+    assert final_done_comment in plans_summary
+    assert reviewed_head in plans_summary
+    assert canonical_merge in plans_summary
+    assert "Repository and Tracker #168 truth are synchronized" in plans_summary
 
     roadmap_completion = re.search(
         r"### Workflow v1 completion boundary(?P<section>.*?)"
@@ -413,6 +397,7 @@ def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
     assert canonical_merge in roadmap_node_four
     assert tracker_checkpoint in roadmap_node_four
     assert residual_review_anchor in roadmap_node_four
+    assert final_done_comment in roadmap_node_four
     roadmap_summary = extract_line(
         roadmap, r"^The first three mandatory Workflow v1 nodes remain[^\n]+$"
     )
@@ -420,20 +405,21 @@ def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
     roadmap_contract = extract_line(
         roadmap, r"^The final residual review / final `DONE` re-adjudication[^\n]+$"
     )
-    assert "has passed" in roadmap_contract
+    assert "passed" in roadmap_contract
     assert residual_review_anchor in roadmap_contract
-    assert final_truth_sync in roadmap_contract
-    assert "actual PR #213 canonical merge SHA" in roadmap_contract
-    assert "actual Tracker #168 final `DONE` comment ID" in roadmap_contract
+    assert reviewed_head in roadmap_contract
+    assert canonical_merge in roadmap_contract
+    assert final_done_comment in roadmap_contract
+    assert current_status in roadmap_contract
 
     index_status = extract_line(
         index, r"^`PLANS\.md` remains the current project-status authority\.[^\n]+$"
     )
     assert current_status in index_status
     assert "navigation only and does not itself accept, activate, or grant authority" in index_status
-    assert final_truth_sync in index_status
-    assert "actual PR #213 canonical merge SHA" in index_status
-    assert "actual Tracker #168 final `DONE` comment ID" in index_status
+    assert reviewed_head in index_status
+    assert canonical_merge in index_status
+    assert final_done_comment in index_status
     assert tracker_checkpoint in index_status
     assert residual_review_anchor in index_status
 
@@ -454,19 +440,15 @@ def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
     assert current_status in matrix_row
     assert tracker_checkpoint in matrix_row
     assert residual_review_anchor in matrix_row
-    assert "ACCEPTED — FINAL RESIDUAL REVIEW PASSED" in matrix_row
-    assert "does not declare canonical `DONE`" in matrix_row
-    assert "PR #213 repair and exact-head rereview" in matrix_row
-    assert "PR #213 merge" in matrix_row
-    assert "post-merge canonical verification" in matrix_row
+    assert "FINAL RESIDUAL REVIEW PASSED" in matrix_row
+    assert reviewed_head in matrix_row
+    assert canonical_merge in matrix_row
+    assert final_done_comment in matrix_row
+    assert "post-merge verification" in matrix_row
     assert "Tracker #168" in matrix_row
-    assert "paired final `DONE`" in matrix_row
-    assert final_truth_sync in matrix_row
-    assert "actual PR #213 canonical merge SHA" in matrix_row
-    assert "actual Tracker #168 final `DONE` comment ID" in matrix_row
-    assert "exact-head review, canonical merge, and post-merge verification" in matrix_row
-    assert "final canonical verification" in matrix_row
-    assert "no later node activation" in matrix_row
+    assert "published final `DONE`" in matrix_row
+    assert "Repository and tracker truth are synchronized" in matrix_row
+    assert "no later node is activated" in matrix_row
     closeout_ledger = extract_line(closeout, r"^- current status:[^\n]+$")
     assert current_status in closeout_ledger
     ledger_match = re.search(
@@ -480,9 +462,10 @@ def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
     assert canonical_merge in ledger
     assert tracker_checkpoint in ledger
     assert residual_review_anchor in ledger
+    assert final_done_comment in ledger
     assert "ACCEPTED — FINAL RESIDUAL REVIEW PASSED" in ledger
-    assert "does not declare canonical `DONE`" in ledger
-    assert "remaining canonical closure gates are pending" in ledger
+    assert "repository and Tracker #168 truth are synchronized" in ledger
+    assert "no later node is activated" in ledger
 
     current_checkpoint = extract_line(closeout, r"^Current status:[^\n]+$")
     closeout_summary = extract_line(
@@ -505,7 +488,7 @@ def test_workflow_closeout_surfaces_remain_review_until_canonical_closure():
     for anchor in current_anchors:
         assert current_status in anchor
         assert "4998971940" not in anchor
-        for pattern in current_done_claims:
+        for pattern in stale_current_claims:
             assert re.search(pattern, anchor, flags=re.IGNORECASE) is None, (
                 anchor,
                 pattern,
