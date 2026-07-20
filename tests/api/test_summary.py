@@ -195,6 +195,54 @@ def test_duplicate_sentences_and_list_items_are_removed_without_rewording():
     assert "- Keep the original source unchanged." in summary
 
 
+def test_identical_long_source_units_render_only_one_key_point():
+    long_unit = " ".join(f"duplicate-token-{index:03d}" for index in range(50))
+    content = (
+        "# Long Duplicate Test\n\n"
+        "This document explains the long duplicate regression.\n\n"
+        f"- {long_unit}\n"
+        f"- {long_unit}\n"
+        "- Preserve this later unique source point."
+    )
+
+    first = build_extractive_summary(content, file_type="md", scanned_title="long-duplicate")
+    second = build_extractive_summary(content, file_type="md", scanned_title="long-duplicate")
+    rendered_points = [line.removeprefix("- ") for line in first.splitlines() if line.startswith("- ")]
+
+    assert len(rendered_points) == 2
+    assert len(rendered_points) == len(set(rendered_points))
+    assert rendered_points[0].startswith("duplicate-token-000")
+    assert rendered_points[1] == "Preserve this later unique source point."
+    assert all(len(point) <= KEY_POINT_MAX_LENGTH for point in rendered_points)
+    assert len(first) <= SUMMARY_MAX_LENGTH
+    assert first.encode("utf-8") == second.encode("utf-8")
+
+
+def test_distinct_long_source_units_with_identical_truncation_render_once():
+    shared_prefix = "shared-render-prefix-" + ("x" * (KEY_POINT_MAX_LENGTH + 40))
+    first_long_unit = shared_prefix + ("a" * 360)
+    second_long_unit = shared_prefix + ("b" * 360)
+    content = (
+        "# Rendered Duplicate Test\n\n"
+        "This document explains the rendered duplicate regression.\n\n"
+        f"- {first_long_unit}\n"
+        f"- {second_long_unit}\n"
+        "- Retain this final unique source point."
+    )
+
+    first = build_extractive_summary(content, file_type="md", scanned_title="rendered-duplicate")
+    second = build_extractive_summary(content, file_type="md", scanned_title="rendered-duplicate")
+    rendered_points = [line.removeprefix("- ") for line in first.splitlines() if line.startswith("- ")]
+
+    assert len(rendered_points) == 2
+    assert len(rendered_points) == len(set(rendered_points))
+    assert rendered_points[0].startswith("shared-render-prefix-")
+    assert rendered_points[1] == "Retain this final unique source point."
+    assert all(len(point) <= KEY_POINT_MAX_LENGTH for point in rendered_points)
+    assert len(first) <= SUMMARY_MAX_LENGTH
+    assert first.encode("utf-8") == second.encode("utf-8")
+
+
 def test_heading_only_and_extremely_short_sources_are_honest_about_insufficiency():
     heading_only = build_extractive_summary("# Only A Heading", file_type="md", scanned_title="fallback")
     extremely_short = build_extractive_summary("OK", file_type="txt", scanned_title="tiny-source")

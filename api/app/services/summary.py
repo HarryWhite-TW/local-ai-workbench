@@ -338,10 +338,14 @@ def apply_coverage_strategy(points: list[str]) -> list[str]:
 
 
 def select_key_points(units: list[tuple[str, str]], *, title: str, role_evidence: str) -> list[str]:
-    selected: list[str] = []
-    excluded = [title]
+    accepted_raw_units: list[str] = []
+    accepted_rendered_points: list[str] = []
+    excluded_raw_units = [title]
     if role_evidence != ROLE_INSUFFICIENCY:
-        excluded.append(role_evidence)
+        excluded_raw_units.append(role_evidence)
+    excluded_rendered_points = [
+        truncate_at_boundary(unit, KEY_POINT_MAX_LENGTH) for unit in excluded_raw_units
+    ]
 
     for kind, unit in units:
         if kind not in {"list", "prose", "arrow"}:
@@ -349,11 +353,21 @@ def select_key_points(units: list[tuple[str, str]], *, title: str, role_evidence
         normalized = normalize_display_text(unit)
         if normalized.endswith((":", "：")) or count_meaningful_chars(normalized) < MIN_MEANINGFUL_CHARS:
             continue
-        if any(are_near_duplicates(normalized, existing) for existing in [*excluded, *selected]):
+        if any(
+            are_near_duplicates(normalized, existing)
+            for existing in [*excluded_raw_units, *accepted_raw_units]
+        ):
             continue
-        selected.append(truncate_at_boundary(normalized, KEY_POINT_MAX_LENGTH))
+        rendered = truncate_at_boundary(normalized, KEY_POINT_MAX_LENGTH)
+        if any(
+            are_near_duplicates(rendered, existing)
+            for existing in [*excluded_rendered_points, *accepted_rendered_points]
+        ):
+            continue
+        accepted_raw_units.append(normalized)
+        accepted_rendered_points.append(rendered)
 
-    return apply_coverage_strategy(selected)
+    return apply_coverage_strategy(accepted_rendered_points)
 
 
 def build_extractive_summary(
