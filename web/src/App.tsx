@@ -969,7 +969,12 @@ export default function App() {
                   </div>
                   <div className="detail-row stacked">
                     <span className="detail-label">Summary text</span>
-                    <p className="summary-paragraph">{summaryArtifact.summary_text}</p>
+                    <p
+                      className="summary-paragraph"
+                      style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+                    >
+                      {summaryArtifact.summary_text}
+                    </p>
                   </div>
                 </div>
               )}

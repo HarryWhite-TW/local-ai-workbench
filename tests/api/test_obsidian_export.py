@@ -58,6 +58,25 @@ def test_build_obsidian_markdown_contains_frontmatter_and_summary():
     assert "# Demo Note" in markdown
     assert "## Summary" in markdown
     assert "This is the deterministic summary." in markdown
+    assert 'source_content_hash: "hash_abc"' in markdown
+    assert 'summary_method: "extractive_v1"' in markdown
+
+
+def test_build_obsidian_markdown_preserves_multiline_summary_text_verbatim():
+    summary = sample_summary()
+    summary["summary_text"] = (
+        "Title: Demo Note\n\n"
+        "Role / purpose evidence:\nA local demonstration note.\n\n"
+        "Key points:\n- Preserve provenance.\n- Keep the source unchanged."
+    )
+
+    markdown = build_obsidian_document_summary_markdown(
+        sample_document(),
+        summary,
+        exported_at="2026-06-08T10:03:00Z",
+    )
+
+    assert summary["summary_text"] in markdown
 
 
 def test_build_obsidian_markdown_does_not_export_full_source_content_by_default():
@@ -135,7 +154,10 @@ def test_get_obsidian_preview_returns_markdown_for_document_with_summary(client,
     assert body["document_id"] == document_id
     assert body["has_summary"] is True
     assert "# demo" in body["markdown"]
-    assert "This document should be summarized." in body["markdown"]
+    assert "Title: demo" in body["markdown"]
+    assert "Role / purpose evidence:\nThis document should be summarized." in body["markdown"]
+    assert "Key points:\n- It has useful local knowledge." in body["markdown"]
+    assert 'summary_method: "extractive_v1"' in body["markdown"]
     assert "summary_generated" in body["markdown"]
 
 
@@ -212,13 +234,26 @@ def test_post_obsidian_export_writes_markdown_file_after_approval(client, tmp_pa
 
     exported_text = export_path.read_text(encoding="utf-8")
     assert 'source: "local-ai-workbench"' in exported_text
-    assert "This document should be exported." in exported_text
+    assert "Title: export-me" in exported_text
+    assert "Role / purpose evidence:\nThis document should be exported." in exported_text
+    assert 'summary_method: "extractive_v1"' in exported_text
+    assert "source_content_hash:" in exported_text
     assert "It does not modify the original source document." in exported_text
 
     audit_events = client.get("/audit").json()
     assert audit_events[0]["event_type"] == "obsidian_export_written"
     assert audit_events[0]["event_payload"]["document_id"] == document_id
     assert audit_events[0]["event_payload"]["export_path"] == str(export_path)
+
+
+def test_web_summary_uses_safe_text_node_with_multiline_wrapping():
+    app_source = (Path(__file__).resolve().parents[2] / "web" / "src" / "App.tsx").read_text(encoding="utf-8")
+
+    assert '{summaryArtifact.summary_text}' in app_source
+    assert 'whiteSpace: "pre-wrap"' in app_source
+    assert 'overflowWrap: "anywhere"' in app_source
+    assert "dangerouslySetInnerHTML" not in app_source
+    assert "innerHTML" not in app_source
 
 
 def test_post_obsidian_export_rejects_missing_export_folder(client, tmp_path: Path):

@@ -139,6 +139,8 @@ def test_run_summarize_selected_document_returns_artifact_and_creates_summary_ar
     assert artifact["id"].startswith("sum_")
     assert artifact["document_id"] == document_id
     assert artifact["method"] == "extractive_v1"
+    assert artifact["summary_text"].startswith("Title: Intro\n\nRole / purpose evidence:")
+    assert "This paragraph should be summarized." in artifact["summary_text"]
 
     with sqlite3.connect(db_path) as connection:
         row = connection.execute(
@@ -154,8 +156,12 @@ def test_run_summarize_selected_document_returns_artifact_and_creates_summary_ar
     assert audit_events[0]["event_type"] == "task_run_completed"
     assert audit_events[0]["event_payload"]["task_type"] == "summarize_selected_document"
     assert audit_events[0]["event_payload"]["artifact_id"] == artifact["id"]
+    assert audit_events[0]["event_payload"]["method"] == "extractive_v1"
     assert audit_events[1]["event_type"] == "summary_generated"
     assert audit_events[1]["event_payload"]["artifact_id"] == artifact["id"]
+    assert audit_events[1]["event_payload"]["method"] == "extractive_v1"
+    assert audit_events[1]["event_payload"]["algorithm_revision"] == "structured_source_units_r1"
+    assert audit_events[1]["event_payload"]["algorithm_revision"] != artifact["method"]
     assert audit_events[2]["event_type"] == "task_run_requested"
 
 
