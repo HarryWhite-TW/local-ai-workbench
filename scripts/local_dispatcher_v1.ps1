@@ -284,8 +284,8 @@ function ConvertTo-NormalizedProviderPath {
         [string]$Path
     )
 
-    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
-    return $resolved.ProviderPath.TrimEnd("\", "/")
+    $providerPath = Microsoft.PowerShell.Management\Convert-Path -LiteralPath $Path -ErrorAction Stop
+    return ([string]$providerPath).TrimEnd("\", "/")
 }
 
 function Assert-RepoRoot {
@@ -317,7 +317,7 @@ function Assert-RepoRoot {
         throw "wrong_target_origin"
     }
 
-    $currentPath = ConvertTo-NormalizedProviderPath -Path (Get-Location).ProviderPath
+    $currentPath = ConvertTo-NormalizedProviderPath -Path "."
     if (-not [string]::Equals($currentPath, $expectedControlRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Run local-dispatcher-v1 from the control repo root. Current path: $currentPath. Control root: $expectedControlRoot."
     }

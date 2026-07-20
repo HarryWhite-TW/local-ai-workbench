@@ -117,6 +117,16 @@ function ConvertTo-NormalizedGitHubRepository {
     throw "wrong_target_origin"
 }
 
+function ConvertTo-NormalizedProviderPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $providerPath = Microsoft.PowerShell.Management\Convert-Path -LiteralPath $Path -ErrorAction Stop
+    return ([string]$providerPath).TrimEnd("\", "/")
+}
+
 function Assert-TargetRepositoryBinding {
     if ($Repo -notin $SupportedTargetRepositories) {
         throw "unsupported_target_repository: $Repo"
@@ -124,11 +134,11 @@ function Assert-TargetRepositoryBinding {
     if (-not (Test-Path -LiteralPath $RepoPath -PathType Container)) {
         throw "target_repo_root_missing"
     }
-    $resolvedRoot = (Resolve-Path -LiteralPath $RepoPath).ProviderPath.TrimEnd("\", "/")
+    $resolvedRoot = ConvertTo-NormalizedProviderPath -Path $RepoPath
     $script:RepoPath = $resolvedRoot
     $topLevel = Invoke-Git -GitArgs @("rev-parse", "--show-toplevel")
     Require-Success -Result $topLevel -Action "git rev-parse --show-toplevel"
-    $actualRoot = (Resolve-Path -LiteralPath $topLevel.Stdout.Trim()).ProviderPath.TrimEnd("\", "/")
+    $actualRoot = ConvertTo-NormalizedProviderPath -Path $topLevel.Stdout.Trim()
     if (-not [string]::Equals($actualRoot, $resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "target_not_git_repository_root"
     }

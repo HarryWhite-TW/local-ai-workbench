@@ -276,6 +276,32 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
     )
 
 
+def test_provider_safe_path_normalization_handles_non_ascii_without_providerpath_property(
+    tmp_path,
+):
+    target = tmp_path / "控制 倉庫"
+    target.mkdir()
+
+    result = run_dispatcher_core_script(
+        tmp_path,
+        f"""
+        function Resolve-Path {{
+            param([string]$LiteralPath, [object]$ErrorAction)
+            return [pscustomobject]@{{ Path = [System.IO.Path]::GetFullPath($LiteralPath) }}
+        }}
+        $actual = ConvertTo-NormalizedProviderPath -Path {target.as_posix()!r}
+        $expected = [System.IO.Path]::GetFullPath({target.as_posix()!r}).TrimEnd("\\", "/")
+        if (-not [string]::Equals($actual, $expected, [System.StringComparison]::OrdinalIgnoreCase)) {{
+            throw "Expected normalized path $expected, got $actual"
+        }}
+        "ok"
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ok" in result.stdout
+
+
 def test_reviewbundle_cross_repo_runner_arguments_bind_hag_target(tmp_path):
     result = run_dispatcher_script(
         tmp_path,
