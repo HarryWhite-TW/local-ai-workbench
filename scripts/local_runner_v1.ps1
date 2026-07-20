@@ -22,7 +22,9 @@ param(
     [switch]$ToolResolutionPreflight,
     [string]$RequiredAction = "",
     [string]$ReviewedCodexPath = "",
-    [string]$ApprovalToken = ""
+    [string]$ApprovalToken = "",
+    [string]$Repo = "HarryWhite-TW/local-ai-workbench",
+    [string]$RepoPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -30,8 +32,19 @@ $ErrorActionPreference = "Stop"
 
 $RunnerName = "local-runner-v1"
 $RunnerVersion = "v1-review-bundle-level3a"
-$Repo = "HarryWhite-TW/local-ai-workbench"
-$RepoPath = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
+$ControlRepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
+$repoVariable = Get-Variable -Name Repo -ErrorAction SilentlyContinue
+if ($null -eq $repoVariable -or [string]::IsNullOrWhiteSpace([string]$repoVariable.Value)) {
+    $Repo = "HarryWhite-TW/local-ai-workbench"
+}
+$repoPathVariable = Get-Variable -Name RepoPath -ErrorAction SilentlyContinue
+if ($null -eq $repoPathVariable -or [string]::IsNullOrWhiteSpace([string]$repoPathVariable.Value)) {
+    $RepoPath = $ControlRepoRoot
+}
+$SupportedTargetRepositories = @(
+    "HarryWhite-TW/local-ai-workbench",
+    "HarryWhite-TW/human-approval-automation-gateway"
+)
 $Gh = "C:\Program Files\GitHub CLI\gh.exe"
 $MaxIssueBodyChars = 16000
 $MaxCodexStdoutChars = 9000
@@ -83,6 +96,53 @@ function Invoke-Git {
     )
 
     return Invoke-Captured { git -C $RepoPath @GitArgs }
+}
+
+function ConvertTo-NormalizedGitHubRepository {
+    param([Parameter(Mandatory = $true)][string]$Url)
+    $value = $Url.Trim().Replace("\", "/")
+    foreach ($pattern in @(
+        '^https?://github\.com/(?<repo>[^/]+/[^/]+?)(?:\.git)?/?$',
+        '^git@github\.com:(?<repo>[^/]+/[^/]+?)(?:\.git)?$',
+        '^ssh://git@github\.com/(?<repo>[^/]+/[^/]+?)(?:\.git)?/?$'
+    )) {
+        if ($value -match $pattern) {
+            $repository = [string]$Matches["repo"]
+            if ($repository.EndsWith(".git", [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $repository.Substring(0, $repository.Length - 4)
+            }
+            return $repository
+        }
+    }
+    throw "wrong_target_origin"
+}
+
+function Assert-TargetRepositoryBinding {
+    if ($Repo -notin $SupportedTargetRepositories) {
+        throw "unsupported_target_repository: $Repo"
+    }
+    if (-not (Test-Path -LiteralPath $RepoPath -PathType Container)) {
+        throw "target_repo_root_missing"
+    }
+    $resolvedRoot = (Resolve-Path -LiteralPath $RepoPath).ProviderPath.TrimEnd("\", "/")
+    $script:RepoPath = $resolvedRoot
+    $topLevel = Invoke-Git -GitArgs @("rev-parse", "--show-toplevel")
+    Require-Success -Result $topLevel -Action "git rev-parse --show-toplevel"
+    $actualRoot = (Resolve-Path -LiteralPath $topLevel.Stdout.Trim()).ProviderPath.TrimEnd("\", "/")
+    if (-not [string]::Equals($actualRoot, $resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "target_not_git_repository_root"
+    }
+    $origin = Invoke-Git -GitArgs @("remote", "get-url", "origin")
+    Require-Success -Result $origin -Action "git remote get-url origin"
+    $originRepository = ConvertTo-NormalizedGitHubRepository -Url $origin.Stdout
+    if (-not [string]::Equals($originRepository, $Repo, [System.StringComparison]::Ordinal)) {
+        throw "wrong_target_origin"
+    }
+    if ($Mode -ne "ReviewBundle" -and
+        (-not [string]::Equals($Repo, "HarryWhite-TW/local-ai-workbench", [System.StringComparison]::Ordinal) -or
+         -not [string]::Equals($RepoPath, $ControlRepoRoot, [System.StringComparison]::OrdinalIgnoreCase))) {
+        throw "cross_repository_mode_not_supported"
+    }
 }
 
 function Require-Success {
@@ -544,7 +604,7 @@ function New-RuntimeContractNotPresent {
 
 function Get-RuntimeContractEvaluatorIdentity {
     param(
-        [string]$RepositoryPath = $RepoPath
+        [string]$RepositoryPath = $ControlRepoRoot
     )
 
     $relativePaths = @(
@@ -1036,8 +1096,8 @@ function Invoke-RuntimeContractEvaluator {
             $workingDirectory = [string]$trustedSnapshot.Root
         }
         else {
-            $bindingScript = Join-Path -Path $RepoPath -ChildPath "src\local_runner_bridge\runtime_contract_binding.py"
-            $workingDirectory = $RepoPath
+            $bindingScript = Join-Path -Path $ControlRepoRoot -ChildPath "src\local_runner_bridge\runtime_contract_binding.py"
+            $workingDirectory = $ControlRepoRoot
         }
         if (-not (Test-Path -LiteralPath $bindingScript -PathType Leaf)) {
             throw "Runtime contract binding module was not found: $bindingScript"
@@ -3230,6 +3290,8 @@ if (-not (Test-Path -LiteralPath $RepoPath)) {
     throw "Repository path was not found: $RepoPath"
 }
 
+Assert-TargetRepositoryBinding
+
 if ($ToolResolutionPreflight) {
     Invoke-ToolResolutionPreflight
 }
@@ -3473,7 +3535,7 @@ $codexArguments = @(
     "--sandbox",
     "workspace-write",
     "-C",
-    ".",
+    $RepoPath,
     "-"
 )
 

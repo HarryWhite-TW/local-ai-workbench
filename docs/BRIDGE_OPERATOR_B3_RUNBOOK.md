@@ -23,8 +23,10 @@ Document-to-Knowledge Workbench product runtime.
 
 ## Fixed Boundary
 
-- Repository: `HarryWhite-TW/local-ai-workbench`
-- Permanent Bridge Inbox: Issue `#147`
+- Control repository: `HarryWhite-TW/local-ai-workbench`
+- Permanent Bridge Inbox: control repository Issue `#147`
+- Target repository: `HarryWhite-TW/local-ai-workbench` or exactly
+  `HarryWhite-TW/human-approval-automation-gateway`
 - Modes:
   - `b3a-dry-run`: foreground dry-run bounded loop
   - `b3b-maybe-status-check`: foreground bounded loop with real Dispatcher
@@ -61,11 +63,16 @@ Optional arguments:
 
 ```powershell
 --repo HarryWhite-TW/local-ai-workbench
+--target-repo-root <EXPLICIT_LOCAL_TARGET_PATH>
 --github-token-env <ENV_VAR_NAME>
 --state-dir <PATH>
 --mode b3a-dry-run|b3b-maybe-status-check|b3c-run-reviewbundle
 --timeout-seconds <SECONDS>
 ```
+
+`--repo-root` remains the control repository root. The local target defaults
+to that path only for the local-ai-workbench compatibility case. HAG requires
+an explicit local `--target-repo-root`; remote request text cannot supply it.
 
 The CLI always uses Inbox `#147`. Standard output is one parseable JSON
 summary. Invalid arguments return nonzero and print a blocked JSON summary.
@@ -100,6 +107,9 @@ and one matching verified result. They never write processed-request state for
 Dispatcher failure, timeout, exception, missing result, untrusted result author,
 identity mismatch, dirty repo, wrong HEAD, pause, stop, or active lock.
 Already processed `request_id` values are skipped and do not rerun Dispatcher.
+New processed identities are keyed by target repository plus `request_id`.
+Historical records without repository identity are compatible only with the
+local-ai-workbench target and never establish HAG completion.
 
 There are two valid processed-record paths:
 
@@ -154,6 +164,11 @@ The production invoker builds an argument array, captures stdout and stderr
 with UTF-8 decoding and `errors="replace"`, and uses a bounded timeout. Tests
 inject a fake Dispatcher invoker and do not call the real Dispatcher, Runner,
 Codex, or GitHub write path.
+
+Dispatcher and Runner scripts are always loaded from the control repository.
+Their target repository/root arguments bind Git inspection, Runner/Codex
+working directory, Task Packet evaluation, candidate evidence, result
+publication/verification, and durable reconciliation to the target.
 
 B3-B blocks or skips before Dispatcher when:
 

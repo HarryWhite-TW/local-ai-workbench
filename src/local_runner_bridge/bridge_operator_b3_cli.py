@@ -53,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--repo", default=DEFAULT_REPOSITORY)
+    parser.add_argument("--target-repo-root")
     parser.add_argument("--github-token-env")
     parser.add_argument("--max-cycles", type=int, required=True)
     parser.add_argument("--poll-interval-seconds", type=float, required=True)
@@ -74,15 +75,26 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     token = os.environ.get(args.github_token_env) if args.github_token_env else None
-    client = GitHubApiClient(args.repo, token=token)
+    if args.repo != DEFAULT_REPOSITORY and not args.target_repo_root:
+        print(json.dumps(_blocked_summary(["target_repo_root_required"]), sort_keys=True))
+        return 2
+    control_client = GitHubApiClient(DEFAULT_REPOSITORY, token=token)
+    target_client = (
+        control_client
+        if args.repo == DEFAULT_REPOSITORY
+        else GitHubApiClient(args.repo, token=token)
+    )
+    target_root = Path(args.target_repo_root or args.repo_root)
     summary = run_bridge_operator_b3_dry_run_loop(
-        repo_root=Path(args.repo_root),
+        repo_root=target_root,
+        control_repo_root=Path(args.repo_root),
         repository=args.repo,
         inbox_issue=DEFAULT_INBOX_ISSUE,
         max_cycles=args.max_cycles,
         poll_interval_seconds=args.poll_interval_seconds,
         state_dir=args.state_dir,
-        github_client=client,
+        github_client=control_client,
+        target_github_client=target_client,
         mode=args.mode,
         timeout_seconds=args.timeout_seconds,
     )

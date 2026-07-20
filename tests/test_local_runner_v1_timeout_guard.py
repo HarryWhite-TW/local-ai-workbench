@@ -66,6 +66,60 @@ def init_git_repo(path: Path) -> str:
     ).stdout.strip()
 
 
+def test_target_repository_binding_accepts_hag_origin_and_rejects_wrong_origin(tmp_path):
+    target = tmp_path / "hag-target"
+    init_git_repo(target)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(target),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:HarryWhite-TW/human-approval-automation-gateway.git",
+        ],
+        check=True,
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $Repo = "HarryWhite-TW/human-approval-automation-gateway"
+        $RepoPath = "{target.as_posix()}"
+        $Mode = "ReviewBundle"
+        Assert-TargetRepositoryBinding
+        if (-not [string]::Equals($RepoPath, [System.IO.Path]::GetFullPath("{target.as_posix()}"), [System.StringComparison]::OrdinalIgnoreCase)) {{
+            throw "target root was not normalized"
+        }}
+        "ok"
+        """,
+    )
+    assert_success(result)
+    assert "ok" in result.stdout
+
+    subprocess.run(
+        ["git", "-C", str(target), "remote", "set-url", "origin", "https://github.com/HarryWhite-TW/local-ai-workbench.git"],
+        check=True,
+    )
+    rejected = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $Repo = "HarryWhite-TW/human-approval-automation-gateway"
+        $RepoPath = "{target.as_posix()}"
+        $Mode = "ReviewBundle"
+        try {{ Assert-TargetRepositoryBinding }} catch {{
+            if ($_.Exception.Message -ne "wrong_target_origin") {{ throw }}
+            "blocked"
+            exit 0
+        }}
+        throw "wrong origin was accepted"
+        """,
+    )
+    assert_success(rejected)
+    assert "blocked" in rejected.stdout
+
+
 def test_normal_runner_modes_still_require_issue_number():
     result = subprocess.run(
         [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(RUNNER)],

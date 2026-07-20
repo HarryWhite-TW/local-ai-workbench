@@ -276,6 +276,31 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
     )
 
 
+def test_reviewbundle_cross_repo_runner_arguments_bind_hag_target(tmp_path):
+    result = run_dispatcher_script(
+        tmp_path,
+        """
+        $Repo = "HarryWhite-TW/human-approval-automation-gateway"
+        $TargetRepoRoot = $RepoRoot
+        $script:GitStatus = ""
+        $selection = [pscustomobject]@{}
+        $result = Invoke-ReviewBundle -Selection $selection -Issue 218
+        if ($result.Result -ne "success") { throw "runner invocation failed" }
+        $repoIndex = [array]::IndexOf($script:RunnerArguments, "-Repo")
+        $pathIndex = [array]::IndexOf($script:RunnerArguments, "-RepoPath")
+        if ($repoIndex -lt 0 -or $script:RunnerArguments[$repoIndex + 1] -ne $Repo) {
+            throw "HAG repository was not propagated to Runner"
+        }
+        if ($pathIndex -lt 0 -or $script:RunnerArguments[$pathIndex + 1] -ne $TargetRepoRoot) {
+            throw "HAG target root was not propagated to Runner"
+        }
+        "ok"
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ok" in result.stdout
+
+
 def assert_success(result: subprocess.CompletedProcess) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 

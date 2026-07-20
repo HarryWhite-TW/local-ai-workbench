@@ -87,6 +87,21 @@ ChatGPT
 -> ChatGPT review
 ```
 
+The control plane remains fixed in `HarryWhite-TW/local-ai-workbench`: Inbox
+`#147`, Bridge Operator, Dispatcher, and Runner are all loaded from that
+control repository. The existing `run-reviewbundle` path may target exactly
+one additional repository, `HarryWhite-TW/human-approval-automation-gateway`.
+This is a single-target exception, not generic multi-repository support.
+
+For the HAG target, the target Issue and comments, dispatch marker, Task
+Packet, result publication and verification, durable reconciliation, Git
+worktree inspection, and Codex `-C` all bind to HAG. The local HAG worktree
+path must be supplied explicitly by local CLI/configuration input. Remote
+Issue/comment/marker/Task Packet text and repository names never select a
+local filesystem path. The target must be an exact Git root whose normalized
+`origin`, branch, full HEAD, clean worktree, and empty staged area match the
+request before delegation.
+
 ### Fixed Bridge Inbox
 
 The default control surface is one dedicated GitHub Issue in this repository.
@@ -158,19 +173,22 @@ Bridge Operator v0 must never automatically:
 
 ### Fixed Scope
 
-- fixed repository: `HarryWhite-TW/local-ai-workbench`;
-- fixed Bridge Inbox;
+- fixed control repository: `HarryWhite-TW/local-ai-workbench`;
+- fixed Bridge Inbox: control repository Issue `#147`;
+- supported target repositories: exactly `HarryWhite-TW/local-ai-workbench`
+  and `HarryWhite-TW/human-approval-automation-gateway`;
 - one explicit target Issue per request;
 - one task executing at a time;
 - one allowlisted action per dispatch;
-- no cross-repository execution in v0.
+- no generic or third-repository execution in v0.
 
 ### State Binding
 
 Each executable request must remain bound to:
 
 - `request_id`;
-- repository;
+- target repository;
+- explicit local target worktree;
 - target Issue;
 - branch;
 - exact expected HEAD;
@@ -267,6 +285,8 @@ The operator must fail closed for:
 - untrusted target dispatch marker author;
 - target dispatch marker `requested_by` mismatch;
 - wrong repository, branch, or HEAD;
+- missing target root, non-root Git path, or wrong target `origin`;
+- staged target files;
 - unsupported action;
 - dirty repository where clean state is required;
 - missing Dispatcher or Runner script;

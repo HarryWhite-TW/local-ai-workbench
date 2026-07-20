@@ -495,7 +495,9 @@ def test_preflight_contract_failures_do_not_invoke_dispatcher(invocation, expect
 
 def test_fixed_inbox_and_repository_are_not_overridable():
     assert run(FakeGitHub(), inbox_issue=999)["blocked_reasons"] == ["unsupported_inbox_issue"]
-    assert run(FakeGitHub(), repository="other/repo")["blocked_reasons"] == ["unsupported_repository"]
+    assert run(FakeGitHub(), repository="other/repo")["blocked_reasons"] == [
+        "unsupported_target_repository"
+    ]
 
 
 def test_preexisting_matching_result_blocks_without_dispatch():
