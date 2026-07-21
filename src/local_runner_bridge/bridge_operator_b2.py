@@ -12,6 +12,7 @@ from typing import Any
 
 from local_runner_bridge.bridge_operator_b1 import (
     DEFAULT_REPOSITORY,
+    SUPPORTED_TARGET_REPOSITORIES,
     TRUSTED_ACTORS,
     CommentRecord,
     GitHubApiClient,
@@ -38,9 +39,11 @@ class DispatcherInvocationResult:
 def run_bridge_operator_b2_once(
     *,
     repo_root: str | Path,
+    control_repo_root: str | Path | None = None,
     repository: str = DEFAULT_REPOSITORY,
     inbox_issue: int = DEFAULT_INBOX_ISSUE,
     github_client: Any | None = None,
+    target_github_client: Any | None = None,
     local_checker: Any | None = None,
     preflight_invoker: Any | None = None,
     dispatcher_invoker: Any | None = None,
@@ -48,21 +51,29 @@ def run_bridge_operator_b2_once(
     timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
     """Validate one fixed Inbox request, delegate once, and verify one result."""
-    summary = _base_summary(repository, inbox_issue)
+    control_root = Path(control_repo_root if control_repo_root is not None else repo_root).resolve()
+    target_root = Path(repo_root).resolve()
+    summary = _base_summary(repository, inbox_issue, control_root, target_root)
 
     if inbox_issue != DEFAULT_INBOX_ISSUE:
         _block(summary, "unsupported_inbox_issue")
         return summary
-    if repository != DEFAULT_REPOSITORY:
-        _block(summary, "unsupported_repository")
+    if repository not in SUPPORTED_TARGET_REPOSITORIES:
+        _block(summary, "unsupported_target_repository")
         return summary
 
-    client = github_client or GitHubApiClient(repository)
+    control_client = github_client or GitHubApiClient(DEFAULT_REPOSITORY)
+    target_client = target_github_client
+    if target_client is None:
+        target_client = (
+            control_client if repository == DEFAULT_REPOSITORY else GitHubApiClient(repository)
+        )
     b1_summary = run_bridge_operator_b1_dry_run(
         inbox_issue=inbox_issue,
         repo_root=repo_root,
         repository=repository,
-        github_client=client,
+        github_client=control_client,
+        target_github_client=target_client,
         local_checker=local_checker,
         now_utc=now_utc,
     )
@@ -77,7 +88,7 @@ def run_bridge_operator_b2_once(
         )
         return summary
 
-    preexisting = _read_matching_results(client, summary)
+    preexisting = _read_matching_results(target_client, summary)
     if preexisting["read_error"] is not None:
         _failure(summary, "github_read_unavailable")
         summary["delegation_result"] = "failure"
@@ -96,7 +107,8 @@ def run_bridge_operator_b2_once(
     preflight = preflight_invoker or default_dispatcher_invoker
     timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
     preflight_args = build_dispatcher_preflight_command(
-        repo_root=repo_root,
+        repo_root=control_root,
+        target_repo_root=target_root,
         required_action=str(summary["requested_action"]),
         repository=repository,
     )
@@ -107,7 +119,7 @@ def run_bridge_operator_b2_once(
     try:
         preflight_result = preflight(
             args=preflight_args,
-            cwd=str(Path(repo_root).resolve()),
+            cwd=str(control_root),
             timeout_seconds=timeout,
         )
     except TimeoutError as error:
@@ -139,7 +151,8 @@ def run_bridge_operator_b2_once(
         return summary
 
     args = build_dispatcher_command(
-        repo_root=repo_root,
+        repo_root=control_root,
+        target_repo_root=target_root,
         target_issue=int(summary["target_issue"]),
         repository=repository,
         reviewed_codex_path=preflight_validation.get("codex_path_binding"),
@@ -149,7 +162,7 @@ def run_bridge_operator_b2_once(
     summary["dispatcher_invocation_count"] = 1
 
     try:
-        invocation = invoker(args=args, cwd=str(Path(repo_root).resolve()), timeout_seconds=timeout)
+        invocation = invoker(args=args, cwd=str(control_root), timeout_seconds=timeout)
     except TimeoutError as error:
         invocation = DispatcherInvocationResult(returncode=1, stderr=str(error), timed_out=True)
     except Exception as error:
@@ -169,7 +182,7 @@ def run_bridge_operator_b2_once(
         summary["delegation_result"] = "failure"
         return summary
 
-    post = _read_matching_results(client, summary)
+    post = _read_matching_results(target_client, summary)
     if post["read_error"] is not None:
         _failure(summary, "github_read_unavailable")
         summary["github_read_error_type"] = post["read_error"]
@@ -210,6 +223,7 @@ def run_bridge_operator_b2_once(
 def build_dispatcher_command(
     *,
     repo_root: str | Path,
+    target_repo_root: str | Path | None = None,
     target_issue: int,
     repository: str = DEFAULT_REPOSITORY,
     reviewed_codex_path: str | None = None,
@@ -230,16 +244,20 @@ def build_dispatcher_command(
     ]
     if reviewed_codex_path:
         args.extend(["-ReviewedCodexPath", reviewed_codex_path])
+    target_root = Path(target_repo_root).resolve() if target_repo_root is not None else Path(repo_root).resolve()
+    if target_root != Path(repo_root).resolve():
+        args.extend(["-TargetRepoRoot", str(target_root)])
     return args
 
 
 def build_dispatcher_preflight_command(
     *,
     repo_root: str | Path,
+    target_repo_root: str | Path | None = None,
     required_action: str,
     repository: str = DEFAULT_REPOSITORY,
 ) -> list[str]:
-    return [
+    args = [
         "powershell.exe",
         "-NoProfile",
         "-ExecutionPolicy",
@@ -252,6 +270,10 @@ def build_dispatcher_preflight_command(
         "-Repo",
         repository,
     ]
+    target_root = Path(target_repo_root).resolve() if target_repo_root is not None else Path(repo_root).resolve()
+    if target_root != Path(repo_root).resolve():
+        args.extend(["-TargetRepoRoot", str(target_root)])
+    return args
 
 
 def default_dispatcher_invoker(
@@ -545,12 +567,21 @@ def _payload_matches_expected(payload: dict[str, Any], summary: dict[str, Any]) 
     return all(str(payload.get(key)) == str(value) for key, value in expected.items())
 
 
-def _base_summary(repository: str, inbox_issue: int) -> dict[str, Any]:
+def _base_summary(
+    repository: str,
+    inbox_issue: int,
+    control_repo_root: str | Path,
+    target_repo_root: str | Path,
+) -> dict[str, Any]:
     return {
         "protocol": SUMMARY_PROTOCOL,
         "phase": "preflight",
         "result": "blocked",
         "repository": repository,
+        "control_repository": DEFAULT_REPOSITORY,
+        "target_repository": repository,
+        "control_repo_root": str(control_repo_root),
+        "target_repo_root": str(target_repo_root),
         "configured_inbox_issue": inbox_issue,
         "request_id": None,
         "target_issue": None,

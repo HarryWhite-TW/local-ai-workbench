@@ -15,7 +15,7 @@ RUNNER = REPO_ROOT / "scripts" / "local_runner_v1.ps1"
 def _runner_core() -> str:
     source = RUNNER.read_text(encoding="utf-8")
     start = source.index("Set-StrictMode -Version Latest")
-    end = source.index("\nif ($ToolResolutionPreflight)")
+    end = source.index("\nAssert-TargetRepositoryBinding")
     return source[start:end]
 
 
@@ -64,6 +64,64 @@ def init_git_repo(path: Path) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def test_target_repository_binding_accepts_hag_origin_and_rejects_wrong_origin(tmp_path):
+    target = tmp_path / "HAG 目標"
+    init_git_repo(target)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(target),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:HarryWhite-TW/human-approval-automation-gateway.git",
+        ],
+        check=True,
+    )
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $Repo = "HarryWhite-TW/human-approval-automation-gateway"
+        $RepoPath = "{target.as_posix()}"
+        $Mode = "ReviewBundle"
+        function Resolve-Path {{
+            param([string]$LiteralPath, [object]$ErrorAction)
+            return [pscustomobject]@{{ Path = [System.IO.Path]::GetFullPath($LiteralPath) }}
+        }}
+        Assert-TargetRepositoryBinding
+        if (-not [string]::Equals($RepoPath, [System.IO.Path]::GetFullPath("{target.as_posix()}"), [System.StringComparison]::OrdinalIgnoreCase)) {{
+            throw "target root was not normalized"
+        }}
+        "ok"
+        """,
+    )
+    assert_success(result)
+    assert "ok" in result.stdout
+
+    subprocess.run(
+        ["git", "-C", str(target), "remote", "set-url", "origin", "https://github.com/HarryWhite-TW/local-ai-workbench.git"],
+        check=True,
+    )
+    rejected = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $Repo = "HarryWhite-TW/human-approval-automation-gateway"
+        $RepoPath = "{target.as_posix()}"
+        $Mode = "ReviewBundle"
+        try {{ Assert-TargetRepositoryBinding }} catch {{
+            if ($_.Exception.Message -ne "wrong_target_origin") {{ throw }}
+            "blocked"
+            exit 0
+        }}
+        throw "wrong origin was accepted"
+        """,
+    )
+    assert_success(rejected)
+    assert "blocked" in rejected.stdout
 
 
 def test_normal_runner_modes_still_require_issue_number():
@@ -1344,7 +1402,7 @@ def test_captured_native_process_decodes_explicit_utf8_without_child_console_enc
             $stderr = [Console]::OpenStandardError()
             $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
             $payload = [ordered]@{
-                cwd = (Get-Location).ProviderPath
+                cwd = Convert-Path -LiteralPath "."
                 stdout_value = "標準輸出"
             } | ConvertTo-Json -Compress
             $stdoutBytes = $utf8.GetBytes($payload)
@@ -2837,6 +2895,7 @@ def test_trusted_runtime_evaluator_uses_committed_baseline_not_candidate(tmp_pat
         tmp_path,
         f"""
         $script:RepoPath = {repo.as_posix()!r}
+        $script:ControlRepoRoot = {repo.as_posix()!r}
         $env:PYTHONPATH = {candidate_root.as_posix()!r}
         $env:TEMP = {snapshot_parent.as_posix()!r}
         $env:TMP = {snapshot_parent.as_posix()!r}

@@ -15,8 +15,10 @@ Workbench product runtime.
 
 ## Fixed Boundary
 
-- Repository: `HarryWhite-TW/local-ai-workbench`
-- Permanent Bridge Inbox: Issue `#147`
+- Control repository: `HarryWhite-TW/local-ai-workbench`
+- Permanent Bridge Inbox: control repository Issue `#147`
+- Target repository: `HarryWhite-TW/local-ai-workbench` or exactly
+  `HarryWhite-TW/human-approval-automation-gateway`
 - Mode: foreground one-shot
 - Broad Issue scanning: forbidden
 - Latest/next Issue inference: forbidden
@@ -50,9 +52,15 @@ Optional arguments:
 
 ```powershell
 --repo HarryWhite-TW/local-ai-workbench
+--target-repo-root <EXPLICIT_LOCAL_TARGET_PATH>
 --github-token-env <ENV_VAR_NAME>
 --timeout-seconds <SECONDS>
 ```
+
+`--repo-root` is the control repository root. For the local-ai-workbench
+target, the target root defaults to that same path for backward compatibility.
+For HAG, `--target-repo-root` is mandatory and is accepted only from the local
+CLI/configuration boundary.
 
 The CLI always uses Inbox `#147`. A verified success exits `0`. A blocked or
 delegation-failure summary exits `1`. Invalid arguments exit `2`. Standard
@@ -66,14 +74,15 @@ The production default invoker builds an argument array, not a shell string:
 powershell.exe
 -NoProfile
 -ExecutionPolicy Bypass
--File <repo_root>\scripts\local_dispatcher_v1.ps1
+-File <control_repo_root>\scripts\local_dispatcher_v1.ps1
 -PollOnce
 -IssueNumber <target_issue>
 -Repo HarryWhite-TW/local-ai-workbench
+-TargetRepoRoot <target_repo_root> # present when separate
 -PostResultComment
 ```
 
-It runs with `cwd=<repo_root>`, captures stdout and stderr with UTF-8 decoding
+It runs with `cwd=<control_repo_root>`, captures stdout and stderr with UTF-8 decoding
 and `errors="replace"`, and uses a bounded timeout. Timeout and nonzero exit
 are failures. B2 does not retry.
 
@@ -100,6 +109,10 @@ branch
 head
 request_id = target_dispatch_request_id
 ```
+
+For HAG, `repo` is `HarryWhite-TW/human-approval-automation-gateway` and both
+pre/post result reads are performed through the HAG target client; Inbox reads
+remain on control Issue `#147`.
 
 If a matching result already exists, B2 returns:
 

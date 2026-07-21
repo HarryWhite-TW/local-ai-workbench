@@ -29,7 +29,8 @@ param(
     [int[]]$IssueNumbers = @(),
     [string]$ReviewedCodexPath = "",
     [ValidateNotNullOrEmpty()]
-    [string]$Repo = "HarryWhite-TW/local-ai-workbench"
+    [string]$Repo = "HarryWhite-TW/local-ai-workbench",
+    [string]$TargetRepoRoot = ""
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +39,8 @@ $ErrorActionPreference = "Stop"
 $DispatcherName = "local-dispatcher-v1"
 $DispatcherVersion = "pollonce-manual"
 $ExpectedDispatchRepo = "HarryWhite-TW/local-ai-workbench"
+$HagDispatchRepo = "HarryWhite-TW/human-approval-automation-gateway"
+$SupportedTargetRepos = @($ExpectedDispatchRepo, $HagDispatchRepo)
 $DispatchMarkerPrefix = "CHATGPT-DISPATCH"
 $DispatchProtocol = "lawb.dispatch.v1"
 $RunnerResultProtocol = "lawb.runner_result.v1"
@@ -46,6 +49,10 @@ $DryRunProtocol = "lawb.dispatch_dry_run.v1"
 $DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
 $ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
+$targetRepoRootVariable = Get-Variable -Name TargetRepoRoot -ErrorAction SilentlyContinue
+if ($null -eq $targetRepoRootVariable -or [string]::IsNullOrWhiteSpace([string]$targetRepoRootVariable.Value)) {
+    $TargetRepoRoot = $RepoRoot
+}
 $GhCliFallbackPath = "C:\Program Files\GitHub CLI\gh.exe"
 $GhCliPortableFallbackPath = Join-Path $env:USERPROFILE "tools\gh-portable\bin\gh.exe"
 $MaxDryRunIssuesPerRun = 3
@@ -266,7 +273,7 @@ function Get-GitOutput {
         [string]$Action
     )
 
-    $result = Invoke-ReadOnlyCommand -FilePath "git" -Arguments (@("-C", $RepoRoot) + $GitArgs) -Action $Action
+    $result = Invoke-ReadOnlyCommand -FilePath "git" -Arguments (@("-C", $TargetRepoRoot) + $GitArgs) -Action $Action
     Require-Success -Result $result -Action $Action
     return $result.Stdout.TrimEnd()
 }
@@ -277,21 +284,62 @@ function ConvertTo-NormalizedProviderPath {
         [string]$Path
     )
 
-    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
-    return $resolved.ProviderPath.TrimEnd("\", "/")
+    $providerPath = Microsoft.PowerShell.Management\Convert-Path -LiteralPath $Path -ErrorAction Stop
+    return ([string]$providerPath).TrimEnd("\", "/")
 }
 
 function Assert-RepoRoot {
+    if (-not (Test-ExactListValue -Values $SupportedTargetRepos -Value $Repo)) {
+        throw "unsupported_target_repository: $Repo"
+    }
+    $controlResult = Invoke-ReadOnlyCommand -FilePath "git" -Arguments @("-C", $RepoRoot, "rev-parse", "--show-toplevel") -Action "control git rev-parse --show-toplevel"
+    Require-Success -Result $controlResult -Action "control git rev-parse --show-toplevel"
+    $controlTopLevel = ConvertTo-NormalizedProviderPath -Path $controlResult.Stdout.Trim()
+    $expectedControlRoot = ConvertTo-NormalizedProviderPath -Path $RepoRoot
+    if (-not [string]::Equals($controlTopLevel, $expectedControlRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Control script path is not the control Git repository root."
+    }
     $isInsideWorkTree = Get-GitOutput -GitArgs @("rev-parse", "--is-inside-work-tree") -Action "git rev-parse --is-inside-work-tree"
     if ($isInsideWorkTree -ne "true") {
-        throw "Script path is not inside a git work tree. Repo root: $RepoRoot."
+        throw "Target path is not inside a git work tree. Target root: $TargetRepoRoot."
     }
 
-    $expectedRoot = ConvertTo-NormalizedProviderPath -Path $RepoRoot
-    $currentPath = ConvertTo-NormalizedProviderPath -Path (Get-Location).ProviderPath
-    if (-not [string]::Equals($currentPath, $expectedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Run local-dispatcher-v1 from the repo root. Current path: $currentPath. Repo root: $expectedRoot."
+    $targetTopLevel = Get-GitOutput -GitArgs @("rev-parse", "--show-toplevel") -Action "git rev-parse --show-toplevel"
+    $expectedTargetRoot = ConvertTo-NormalizedProviderPath -Path $TargetRepoRoot
+    $actualTargetRoot = ConvertTo-NormalizedProviderPath -Path $targetTopLevel
+    if (-not [string]::Equals($actualTargetRoot, $expectedTargetRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "target_not_git_repository_root"
     }
+
+    $originUrl = Get-GitOutput -GitArgs @("remote", "get-url", "origin") -Action "git remote get-url origin"
+    $originRepository = ConvertTo-NormalizedGitHubRepository -Url $originUrl
+    if (-not [string]::Equals($originRepository, $Repo, [System.StringComparison]::Ordinal)) {
+        throw "wrong_target_origin"
+    }
+
+    $currentPath = ConvertTo-NormalizedProviderPath -Path "."
+    if (-not [string]::Equals($currentPath, $expectedControlRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Run local-dispatcher-v1 from the control repo root. Current path: $currentPath. Control root: $expectedControlRoot."
+    }
+}
+
+function ConvertTo-NormalizedGitHubRepository {
+    param([Parameter(Mandatory = $true)][string]$Url)
+    $value = $Url.Trim().Replace("\", "/")
+    foreach ($pattern in @(
+        '^https?://github\.com/(?<repo>[^/]+/[^/]+?)(?:\.git)?/?$',
+        '^git@github\.com:(?<repo>[^/]+/[^/]+?)(?:\.git)?$',
+        '^ssh://git@github\.com/(?<repo>[^/]+/[^/]+?)(?:\.git)?/?$'
+    )) {
+        if ($value -match $pattern) {
+            $repository = [string]$Matches["repo"]
+            if ($repository.EndsWith(".git", [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $repository.Substring(0, $repository.Length - 4)
+            }
+            return $repository
+        }
+    }
+    throw "wrong_target_origin"
 }
 
 function Resolve-GhPath {
@@ -774,7 +822,7 @@ function Assert-DispatchMarkerMatchesLocalState {
 
     Assert-DispatchFieldEquals -Fields $Fields -Name "protocol" -Expected $DispatchProtocol
     Assert-DispatchFieldEquals -Fields $Fields -Name "issue" -Expected ([string]$ExpectedIssueNumber)
-    Assert-DispatchFieldEquals -Fields $Fields -Name "repo" -Expected $ExpectedDispatchRepo
+    Assert-DispatchFieldEquals -Fields $Fields -Name "repo" -Expected $Repo
     Assert-DispatchFieldEquals -Fields $Fields -Name "branch" -Expected $CurrentBranch
     Assert-DispatchFieldEquals -Fields $Fields -Name "head" -Expected $CurrentHead
 
@@ -1024,7 +1072,7 @@ function Invoke-ReviewBundle {
 
     $runnerResult = Invoke-WriteCommand `
         -FilePath $powerShellHost `
-        -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding) `
+        -Arguments (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding) + $(if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal) -or -not [string]::Equals((ConvertTo-NormalizedProviderPath -Path $TargetRepoRoot), (ConvertTo-NormalizedProviderPath -Path $RepoRoot), [System.StringComparison]::OrdinalIgnoreCase)) { @("-Repo", $Repo, "-RepoPath", $TargetRepoRoot) } else { @() })) `
         -Action "local_runner_v1.ps1 ReviewBundle"
 
     $result = if ($runnerResult.ExitCode -eq 0) { "success" } else { "failure" }
@@ -1285,9 +1333,14 @@ function ConvertFrom-ToolResolutionJson {
 
 function Invoke-RunnerToolResolutionPreflight {
     $runnerScript = Get-RunnerScriptPath
+    $runnerArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-ToolResolutionPreflight", "-RequiredAction", "run-reviewbundle")
+    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal) -or
+        -not [string]::Equals((ConvertTo-NormalizedProviderPath -Path $TargetRepoRoot), (ConvertTo-NormalizedProviderPath -Path $RepoRoot), [System.StringComparison]::OrdinalIgnoreCase)) {
+        $runnerArguments += @("-Repo", $Repo, "-RepoPath", $TargetRepoRoot)
+    }
     $runnerResult = Invoke-ReadOnlyCommand `
         -FilePath "powershell.exe" `
-        -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-ToolResolutionPreflight", "-RequiredAction", "run-reviewbundle") `
+        -Arguments $runnerArguments `
         -Action "runner ToolResolutionPreflight"
     if ($runnerResult.ExitCode -notin @(0, 2)) {
         throw "runner_preflight_process_failed"
@@ -1350,8 +1403,8 @@ function Resolve-ReviewBundleCodexPathBinding {
 }
 
 function Invoke-ToolResolutionPreflight {
-    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
-        throw "ToolResolutionPreflight supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
+    if (-not (Test-ExactListValue -Values $SupportedTargetRepos -Value $Repo)) {
+        throw "unsupported_target_repository: $Repo"
     }
     if (-not [string]::Equals($RequiredAction, "maybe-status-check", [System.StringComparison]::Ordinal) -and
         -not [string]::Equals($RequiredAction, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
@@ -1562,8 +1615,8 @@ function Invoke-PollOnce {
         throw "PollOnce requires -IssueNumber <N> and scans only that issue."
     }
 
-    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
-        throw "PollOnce supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
+    if (-not (Test-ExactListValue -Values $SupportedTargetRepos -Value $Repo)) {
+        throw "unsupported_target_repository: $Repo"
     }
 
     Assert-RepoRoot
@@ -1614,8 +1667,8 @@ function Get-DryRunIssueScope {
 }
 
 function Invoke-DryRunBoundedPoll {
-    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
-        throw "DryRunBoundedPoll supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
+    if (-not (Test-ExactListValue -Values $SupportedTargetRepos -Value $Repo)) {
+        throw "unsupported_target_repository: $Repo"
     }
 
     Assert-RepoRoot
@@ -1685,8 +1738,8 @@ function Get-BoundedPollIssueScope {
 }
 
 function Invoke-BoundedPoll {
-    if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal)) {
-        throw "BoundedPoll supports only repo=$ExpectedDispatchRepo for this dispatcher slice."
+    if (-not (Test-ExactListValue -Values $SupportedTargetRepos -Value $Repo)) {
+        throw "unsupported_target_repository: $Repo"
     }
 
     Assert-RepoRoot

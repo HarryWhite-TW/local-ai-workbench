@@ -45,6 +45,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--repo", default=DEFAULT_REPOSITORY)
+    parser.add_argument("--target-repo-root")
     parser.add_argument("--github-token-env")
     parser.add_argument("--timeout-seconds", type=int)
     return parser
@@ -62,12 +63,23 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     token = os.environ.get(args.github_token_env) if args.github_token_env else None
-    client = GitHubApiClient(args.repo, token=token)
+    if args.repo != DEFAULT_REPOSITORY and not args.target_repo_root:
+        print(json.dumps(_blocked_summary(["target_repo_root_required"]), sort_keys=True))
+        return 2
+    control_client = GitHubApiClient(DEFAULT_REPOSITORY, token=token)
+    target_client = (
+        control_client
+        if args.repo == DEFAULT_REPOSITORY
+        else GitHubApiClient(args.repo, token=token)
+    )
+    target_root = Path(args.target_repo_root or args.repo_root)
     summary = run_bridge_operator_b2_once(
-        repo_root=Path(args.repo_root),
+        repo_root=target_root,
+        control_repo_root=Path(args.repo_root),
         repository=args.repo,
         inbox_issue=DEFAULT_INBOX_ISSUE,
-        github_client=client,
+        github_client=control_client,
+        target_github_client=target_client,
         timeout_seconds=args.timeout_seconds,
     )
     print(json.dumps(summary, sort_keys=True))

@@ -610,7 +610,7 @@ def test_unsupported_configured_repository_does_not_read_github():
     summary = run(client, repository="other/repo")
 
     assert summary["result"] == "blocked"
-    assert summary["blocked_reasons"] == ["unsupported_repository"]
+    assert summary["blocked_reasons"] == ["unsupported_target_repository"]
     assert client.issues_read == []
     assert client.comments_read == []
     assert_no_side_effects(summary)

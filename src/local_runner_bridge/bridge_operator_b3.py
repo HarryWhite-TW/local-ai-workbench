@@ -15,6 +15,7 @@ from local_runner_bridge.bridge_operator_b1 import (
     CONSUMED,
     DEFAULT_REPOSITORY,
     GitHubApiClient,
+    SUPPORTED_TARGET_REPOSITORIES,
     TRUSTED_ACTORS,
     run_bridge_operator_b1_dry_run,
 )
@@ -56,12 +57,14 @@ REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$")
 def run_bridge_operator_b3_dry_run_loop(
     *,
     repo_root: str | Path,
+    control_repo_root: str | Path | None = None,
     repository: str = DEFAULT_REPOSITORY,
     inbox_issue: int = DEFAULT_INBOX_ISSUE,
     max_cycles: int = 1,
     poll_interval_seconds: float = 0.0,
     state_dir: str | Path | None = None,
     github_client: Any | None = None,
+    target_github_client: Any | None = None,
     local_checker: Any | None = None,
     now_utc: Callable[[], datetime] | datetime | None = None,
     sleeper: Callable[[float], None] | None = None,
@@ -72,7 +75,9 @@ def run_bridge_operator_b3_dry_run_loop(
     durable_evidence_provider: Any | None = None,
 ) -> dict[str, Any]:
     """Run a visible bounded loop, dry-run by default."""
-    summary = _base_summary(repository, inbox_issue, repo_root, mode)
+    control_root = Path(control_repo_root if control_repo_root is not None else repo_root).resolve()
+    target_root = Path(repo_root).resolve()
+    summary = _base_summary(repository, inbox_issue, control_root, target_root, mode)
     summary["configured_max_cycles"] = max_cycles
     summary["configured_poll_interval_seconds"] = poll_interval_seconds
     sleep = sleeper or time.sleep
@@ -137,7 +142,12 @@ def run_bridge_operator_b3_dry_run_loop(
         _write_state(state_root, "running", summary, _now(now_utc))
         _write_log(state_root, "started", "dry_run_loop_started", summary)
 
-        client = github_client or GitHubApiClient(repository)
+        control_client = github_client or GitHubApiClient(DEFAULT_REPOSITORY)
+        target_client = target_github_client
+        if target_client is None:
+            target_client = (
+                control_client if repository == DEFAULT_REPOSITORY else GitHubApiClient(repository)
+            )
         for cycle in range(1, max_cycles + 1):
             summary["cycles_started"] = cycle
             summary["current_delegation_outcome"] = None
@@ -162,7 +172,8 @@ def run_bridge_operator_b3_dry_run_loop(
                     state_root=state_root,
                     repo_root=repo_root,
                     repository=repository,
-                    client=client,
+                    control_client=control_client,
+                    target_client=target_client,
                     local_checker=local_checker,
                     now_utc=now_utc,
                     retry_count=read_retry_count,
@@ -187,9 +198,10 @@ def run_bridge_operator_b3_dry_run_loop(
                     else:
                         reason = _delegate_b3_request(
                             state_root=state_root,
-                            repo_root=repo_root,
+                            repo_root=target_root,
+                            control_repo_root=control_root,
                             repository=repository,
-                            client=client,
+                            client=target_client,
                             b1_summary=b1_summary,
                             cycle=cycle,
                             now=_now(now_utc),
@@ -261,7 +273,8 @@ def run_bridge_operator_b3_dry_run_loop(
 def _base_summary(
     repository: str,
     inbox_issue: int,
-    repo_root: str | Path,
+    control_repo_root: str | Path,
+    target_repo_root: str | Path,
     mode: str,
 ) -> dict[str, Any]:
     return {
@@ -269,8 +282,12 @@ def _base_summary(
         "phase": "preflight",
         "result": "blocked",
         "repository": repository,
+        "control_repository": DEFAULT_REPOSITORY,
+        "target_repository": repository,
         "configured_inbox_issue": inbox_issue,
-        "repo_root": str(repo_root),
+        "repo_root": str(target_repo_root),
+        "control_repo_root": str(control_repo_root),
+        "target_repo_root": str(target_repo_root),
         "state_dir": None,
         "mode": mode,
         "configured_max_cycles": None,
@@ -368,8 +385,8 @@ def _validate_loop_config(
     read_retry_count: int,
     mode: str,
 ) -> str | None:
-    if repository != DEFAULT_REPOSITORY:
-        return "unsupported_repository"
+    if repository not in SUPPORTED_TARGET_REPOSITORIES:
+        return "unsupported_target_repository"
     if inbox_issue != DEFAULT_INBOX_ISSUE:
         return "unsupported_inbox_issue"
     if not isinstance(max_cycles, int) or max_cycles < 1 or max_cycles > DEFAULT_MAX_CYCLES_LIMIT:
@@ -444,7 +461,8 @@ def _run_b1_with_bounded_retry(
     state_root: Path,
     repo_root: str | Path,
     repository: str,
-    client: Any,
+    control_client: Any,
+    target_client: Any,
     local_checker: Any | None,
     now_utc: Callable[[], datetime] | datetime | None,
     retry_count: int,
@@ -457,7 +475,9 @@ def _run_b1_with_bounded_retry(
         processed_path = state_root / "processed_requests.jsonl"
         try:
             consumed_request_ids = (
-                _read_processed_request_records(processed_path) if processed_path.exists() else {}
+                _read_processed_request_records(processed_path, repository=repository)
+                if processed_path.exists()
+                else {}
             )
         except (OSError, json.JSONDecodeError, ValueError):
             return {"result": "blocked", "blocked_reasons": ["corrupted_state"]}
@@ -466,7 +486,8 @@ def _run_b1_with_bounded_retry(
                 inbox_issue=DEFAULT_INBOX_ISSUE,
                 repo_root=repo_root,
                 repository=repository,
-                github_client=client,
+                github_client=control_client,
+                target_github_client=target_client,
                 local_checker=local_checker,
                 now_utc=_now(now_utc),
                 consumed_request_ids=consumed_request_ids,
@@ -508,14 +529,16 @@ def _append_observation_if_new(
 ) -> bool:
     path = state_dir / "dry_run_observations.jsonl"
     request_id = str(b1_summary.get("request_id") or "")
-    observed = _read_observed_request_ids(path) if path.exists() else set()
-    if request_id in observed:
+    repository = str(b1_summary.get("target_repository") or b1_summary.get("repository") or DEFAULT_REPOSITORY)
+    observed = _read_observed_request_identities(path) if path.exists() else set()
+    if (repository, request_id) in observed:
         return False
     observation = {
         "protocol": OBSERVATION_PROTOCOL,
         "observed_at_utc": _format_time(now),
         "cycle": cycle,
         "request_id": request_id,
+        "target_repository": repository,
         "target_issue": b1_summary.get("target_issue"),
         "target_dispatch_request_id": b1_summary.get("target_dispatch_request_id"),
         "requested_action": b1_summary.get("requested_action"),
@@ -533,6 +556,7 @@ def _delegate_b3_request(
     *,
     state_root: Path,
     repo_root: str | Path,
+    control_repo_root: str | Path,
     repository: str,
     client: Any,
     b1_summary: dict[str, Any],
@@ -559,7 +583,11 @@ def _delegate_b3_request(
     processed_path = state_root / "processed_requests.jsonl"
     request_id = str(b1_summary.get("request_id") or "")
     try:
-        processed = _read_processed_request_records(processed_path) if processed_path.exists() else {}
+        processed = (
+            _read_processed_request_records(processed_path, repository=repository)
+            if processed_path.exists()
+            else {}
+        )
     except (OSError, ValueError):
         _block(summary, "corrupted_state")
         return "corrupted_state"
@@ -619,7 +647,8 @@ def _delegate_b3_request(
     invoker = dispatcher_invoker or default_dispatcher_invoker
     timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
     args = build_dispatcher_command(
-        repo_root=repo_root,
+        repo_root=control_repo_root,
+        target_repo_root=repo_root,
         target_issue=int(b1_summary["target_issue"]),
         repository=repository,
     )
@@ -629,7 +658,11 @@ def _delegate_b3_request(
     summary["dispatcher_invocation_count"] += 1
 
     try:
-        invocation = invoker(args=args, cwd=str(Path(repo_root).resolve()), timeout_seconds=timeout)
+        invocation = invoker(
+            args=args,
+            cwd=str(Path(control_repo_root).resolve()),
+            timeout_seconds=timeout,
+        )
     except TimeoutError as error:
         invocation = DispatcherInvocationResult(returncode=1, stderr=str(error), timed_out=True)
     except FileNotFoundError as error:
@@ -707,6 +740,7 @@ def _append_processed_request(
         "processed_at_utc": _format_time(now),
         "cycle": cycle,
         "request_id": b1_summary.get("request_id"),
+        "target_repository": b1_summary.get("target_repository", b1_summary.get("repository")),
         "target_issue": b1_summary.get("target_issue"),
         "target_dispatch_request_id": b1_summary.get("target_dispatch_request_id"),
         "requested_action": b1_summary.get("requested_action"),
@@ -736,6 +770,7 @@ def _append_reconciled_processed_request(
         "processed_at_utc": _format_time(now),
         "cycle": cycle,
         "request_id": b1_summary.get("request_id"),
+        "target_repository": b1_summary.get("target_repository", b1_summary.get("repository")),
         "target_issue": b1_summary.get("target_issue"),
         "target_dispatch_request_id": b1_summary.get("target_dispatch_request_id"),
         "requested_action": b1_summary.get("requested_action"),
@@ -754,33 +789,53 @@ def _append_reconciled_processed_request(
         handle.write("\n")
 
 
-def _read_observed_request_ids(path: Path) -> set[str]:
-    request_ids: set[str] = set()
+def _read_observed_request_identities(path: Path) -> set[tuple[str, str]]:
+    identities: set[tuple[str, str]] = set()
     if not path.exists():
-        return request_ids
+        return identities
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         payload = json.loads(line)
         if not isinstance(payload, dict) or "request_id" not in payload:
             raise ValueError("invalid_observation")
-        request_ids.add(str(payload["request_id"]))
-    return request_ids
+        repository = str(payload.get("target_repository") or DEFAULT_REPOSITORY)
+        identities.add((repository, str(payload["request_id"])))
+    return identities
 
 
-def _read_processed_request_records(path: Path) -> dict[str, dict[str, Any]]:
-    records: dict[str, dict[str, Any]] = {}
+def _read_observed_request_ids(path: Path) -> set[str]:
+    return {request_id for _, request_id in _read_observed_request_identities(path)}
+
+
+def _read_all_processed_request_records(
+    path: Path,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    records: dict[tuple[str, str], dict[str, Any]] = {}
     if not path.exists():
         return records
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         payload = _parse_processed_request_record(line)
-        request_id = payload["request_id"]
-        if request_id in records:
+        repository = str(payload.get("target_repository") or DEFAULT_REPOSITORY)
+        identity = (repository, payload["request_id"])
+        if identity in records:
             raise ValueError("invalid_processed_request")
-        records[request_id] = payload
+        records[identity] = payload
     return records
+
+
+def _read_processed_request_records(
+    path: Path,
+    *,
+    repository: str = DEFAULT_REPOSITORY,
+) -> dict[str, dict[str, Any]]:
+    return {
+        request_id: payload
+        for (record_repository, request_id), payload in _read_all_processed_request_records(path).items()
+        if record_repository == repository
+    }
 
 
 def _parse_processed_request_record(line: str) -> dict[str, Any]:
@@ -820,6 +875,9 @@ def _validate_processed_request_record(payload: Any) -> None:
     elif "dispatcher_invoked" in payload and payload.get("dispatcher_invoked") is not True:
         raise ValueError("invalid_processed_request")
     if "result_verified" in payload and payload.get("result_verified") is not True:
+        raise ValueError("invalid_processed_request")
+    target_repository = payload.get("target_repository")
+    if target_repository is not None and target_repository not in SUPPORTED_TARGET_REPOSITORIES:
         raise ValueError("invalid_processed_request")
     identity_keys = (
         "target_issue",
@@ -866,7 +924,9 @@ def _processed_record_matches_b1_identity(
     record: dict[str, Any], b1_summary: dict[str, Any]
 ) -> bool:
     return (
-        record.get("target_issue") == b1_summary.get("target_issue")
+        (record.get("target_repository") or DEFAULT_REPOSITORY)
+        == b1_summary.get("target_repository", b1_summary.get("repository"))
+        and record.get("target_issue") == b1_summary.get("target_issue")
         and record.get("target_dispatch_request_id")
         == b1_summary.get("target_dispatch_request_id")
         and record.get("requested_action") == b1_summary.get("requested_action")
@@ -880,9 +940,13 @@ def read_processed_request_ids(path: str | Path) -> set[str]:
     return set(_read_processed_request_records(Path(path)))
 
 
-def read_processed_request_records(path: str | Path) -> dict[str, dict[str, Any]]:
+def read_processed_request_records(
+    path: str | Path,
+    *,
+    repository: str = DEFAULT_REPOSITORY,
+) -> dict[str, dict[str, Any]]:
     """Read validated B3 processed request identity records without modifying state."""
-    return _read_processed_request_records(Path(path))
+    return _read_processed_request_records(Path(path), repository=repository)
 
 
 def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> None:
@@ -903,6 +967,7 @@ def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> No
     if b1_summary.get("selected_request_state") == "CURRENT":
         for key in (
             "request_id",
+            "target_repository",
             "target_issue",
             "target_dispatch_request_id",
             "requested_action",

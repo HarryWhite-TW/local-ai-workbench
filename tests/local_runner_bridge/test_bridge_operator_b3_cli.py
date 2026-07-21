@@ -229,6 +229,76 @@ def test_cli_returns_one_for_blocked_summary(monkeypatch, capsys):
     assert_safety(summary)
 
 
+def test_cli_requires_explicit_target_root_for_hag(capsys):
+    result = cli.main(
+        [
+            "--repo-root",
+            "C:/control",
+            "--repo",
+            "HarryWhite-TW/human-approval-automation-gateway",
+            "--max-cycles",
+            "1",
+            "--poll-interval-seconds",
+            "0",
+        ]
+    )
+    summary = read_json(capsys)
+
+    assert result == 2
+    assert summary["blocked_reasons"] == ["target_repo_root_required"]
+
+
+def test_cli_propagates_separate_hag_target_root(monkeypatch, capsys):
+    calls = []
+
+    class FakeClient:
+        def __init__(self, repo, token=None):
+            calls.append(("client", repo))
+
+    def fake_run(**kwargs):
+        calls.append(
+            (
+                "run",
+                str(kwargs["control_repo_root"]),
+                str(kwargs["repo_root"]),
+                kwargs["repository"],
+                kwargs["github_client"] is not kwargs["target_github_client"],
+            )
+        )
+        return {"result": "success"}
+
+    monkeypatch.setattr(cli, "GitHubApiClient", FakeClient)
+    monkeypatch.setattr(cli, "run_bridge_operator_b3_dry_run_loop", fake_run)
+    result = cli.main(
+        [
+            "--repo-root",
+            "C:/control",
+            "--target-repo-root",
+            "C:/hag",
+            "--repo",
+            "HarryWhite-TW/human-approval-automation-gateway",
+            "--max-cycles",
+            "1",
+            "--poll-interval-seconds",
+            "0",
+        ]
+    )
+    capsys.readouterr()
+
+    assert result == 0
+    assert calls == [
+        ("client", "HarryWhite-TW/local-ai-workbench"),
+        ("client", "HarryWhite-TW/human-approval-automation-gateway"),
+        (
+            "run",
+            "C:\\control",
+            "C:\\hag",
+            "HarryWhite-TW/human-approval-automation-gateway",
+            True,
+        ),
+    ]
+
+
 def test_cli_help_preserves_argparse_behavior(capsys):
     with pytest.raises(SystemExit) as error:
         cli.main(["--help"])

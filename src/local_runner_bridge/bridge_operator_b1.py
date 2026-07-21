@@ -19,6 +19,8 @@ REQUEST_MARKER = "BRIDGE-INBOX-REQUEST"
 DISPATCH_PROTOCOL = "lawb.dispatch.v1"
 DISPATCH_MARKER = "CHATGPT-DISPATCH"
 DEFAULT_REPOSITORY = "HarryWhite-TW/local-ai-workbench"
+HAG_REPOSITORY = "HarryWhite-TW/human-approval-automation-gateway"
+SUPPORTED_TARGET_REPOSITORIES = (DEFAULT_REPOSITORY, HAG_REPOSITORY)
 TRUSTED_ACTORS = ("HarryWhite-TW",)
 ALLOWED_ACTIONS = ("maybe-status-check", "run-reviewbundle")
 UTC_BASIC_FORMAT = "%Y%m%dT%H%M%SZ"
@@ -56,6 +58,9 @@ class LocalReadiness:
     gh_authenticated: bool
     gh_read_available: bool
     errors: tuple[str, ...] = ()
+    origin_repository: str | None = DEFAULT_REPOSITORY
+    git_root_matches: bool = True
+    staged_clean: bool | None = True
 
 
 def run_bridge_operator_b1_dry_run(
@@ -64,6 +69,7 @@ def run_bridge_operator_b1_dry_run(
     repo_root: str | Path,
     repository: str = DEFAULT_REPOSITORY,
     github_client: Any | None = None,
+    target_github_client: Any | None = None,
     local_checker: Callable[[str | Path], LocalReadiness] | None = None,
     now_utc: datetime | None = None,
     consumed_request_ids: Iterable[str] | Mapping[str, Mapping[str, Any]] | None = None,
@@ -74,19 +80,24 @@ def run_bridge_operator_b1_dry_run(
     summary["evaluated_at_utc"] = _format_time(now_utc)
     consumed_records = _normalize_consumed_request_records(consumed_request_ids)
 
-    if repository != DEFAULT_REPOSITORY:
-        _block(summary, "unsupported_repository")
+    if repository not in SUPPORTED_TARGET_REPOSITORIES:
+        _block(summary, "unsupported_target_repository")
         return summary
     if not isinstance(inbox_issue, int) or inbox_issue <= 0:
         _block(summary, "invalid_inbox_issue")
         return summary
 
-    client = github_client or GitHubApiClient(repository)
+    control_client = github_client or GitHubApiClient(DEFAULT_REPOSITORY)
+    target_client = target_github_client
+    if target_client is None:
+        target_client = (
+            control_client if repository == DEFAULT_REPOSITORY else GitHubApiClient(repository)
+        )
     checker = local_checker or check_local_readiness
 
     try:
-        inbox_issue_record = client.get_issue(inbox_issue)
-        inbox_comments = client.list_issue_comments(inbox_issue)
+        inbox_issue_record = control_client.get_issue(inbox_issue)
+        inbox_comments = control_client.list_issue_comments(inbox_issue)
     except Exception as error:
         _block(summary, "github_read_unavailable")
         summary["github_read_error_type"] = type(error).__name__
@@ -181,7 +192,7 @@ def run_bridge_operator_b1_dry_run(
         return summary
 
     try:
-        target_issue = client.get_issue(fields["target_issue"])
+        target_issue = target_client.get_issue(fields["target_issue"])
     except Exception as error:
         _block(summary, "target_issue_missing")
         summary["target_issue_error_type"] = type(error).__name__
@@ -194,7 +205,7 @@ def run_bridge_operator_b1_dry_run(
         return summary
 
     try:
-        target_comments = client.list_issue_comments(fields["target_issue"])
+        target_comments = target_client.list_issue_comments(fields["target_issue"])
     except Exception as error:
         _block(summary, "github_read_unavailable")
         summary["target_comments_error_type"] = type(error).__name__
@@ -246,17 +257,25 @@ def _processed_identity_matches(
     if not isinstance(record, Mapping):
         return False
     expected = {
+        "target_repository": fields.get("repo"),
         "target_issue": fields.get("target_issue"),
         "target_dispatch_request_id": fields.get("target_dispatch_request_id"),
         "requested_action": fields.get("action"),
         "expected_branch": fields.get("branch"),
         "expected_head": fields.get("head"),
     }
-    if not all(key in record for key in expected):
+    record_repository = record.get("target_repository")
+    if record_repository is None:
+        record_repository = DEFAULT_REPOSITORY
+    if record_repository != expected["target_repository"]:
+        return False
+    if not all(key in record for key in expected if key != "target_repository"):
         return False
     if type(record.get("target_issue")) is not int:
         return False
     for key, value in expected.items():
+        if key == "target_repository":
+            continue
         if record.get(key) != value:
             return False
     return True
@@ -357,6 +376,15 @@ def check_local_readiness(repo_root: str | Path) -> LocalReadiness:
     head = _git_output(root, "rev-parse", "HEAD", errors=errors)
     status = _git_output(root, "status", "--porcelain", errors=errors)
     clean = status == "" if status is not None else None
+    staged = _git_output(root, "diff", "--cached", "--name-only", errors=errors)
+    staged_clean = staged == "" if staged is not None else None
+    top_level = _git_output(root, "rev-parse", "--show-toplevel", errors=errors)
+    git_root_matches = (
+        top_level is not None
+        and os.path.normcase(os.path.normpath(top_level)) == os.path.normcase(os.path.normpath(root))
+    )
+    origin_url = _git_output(root, "remote", "get-url", "origin", errors=errors)
+    origin_repository = _normalize_github_repository(origin_url) if origin_url else None
 
     gh_path = _resolve_gh_path()
     gh_available = gh_path is not None
@@ -386,6 +414,9 @@ def check_local_readiness(repo_root: str | Path) -> LocalReadiness:
         gh_authenticated=gh_authenticated,
         gh_read_available=gh_read_available,
         errors=tuple(errors),
+        origin_repository=origin_repository,
+        git_root_matches=git_root_matches,
+        staged_clean=staged_clean,
     )
 
 
@@ -448,6 +479,8 @@ def _base_summary(repository: str, inbox_issue: int, repo_root: str | Path) -> d
         "protocol": SUMMARY_PROTOCOL,
         "result": "blocked",
         "repository": repository,
+        "control_repository": DEFAULT_REPOSITORY,
+        "target_repository": repository,
         "configured_inbox_issue": inbox_issue,
         "repo_root": str(repo_root),
         "trusted_actors": list(TRUSTED_ACTORS),
@@ -566,7 +599,8 @@ def _validate_request_fields(
     checks = (
         (fields["protocol"] == REQUEST_PROTOCOL, "unsupported_protocol"),
         (_REQUEST_ID_RE.match(str(fields["request_id"])) is not None, "invalid_request_id"),
-        (fields["repo"] == DEFAULT_REPOSITORY, "wrong_repository"),
+        (fields["repo"] in SUPPORTED_TARGET_REPOSITORIES, "unsupported_target_repository"),
+        (fields["repo"] == summary["target_repository"], "wrong_repository"),
         (isinstance(fields["target_issue"], int) and fields["target_issue"] > 0, "invalid_target_issue"),
         (
             _REQUEST_ID_RE.match(str(fields["target_dispatch_request_id"])) is not None,
@@ -650,12 +684,18 @@ def _validate_local_readiness(
     expected_root = str(Path(expected_repo_root).resolve())
     if readiness.repo_root != expected_root:
         _block(summary, "wrong_repo_root")
+    if not readiness.git_root_matches:
+        _block(summary, "target_not_git_repository_root")
+    if readiness.origin_repository != fields["repo"]:
+        _block(summary, "wrong_target_origin")
     if readiness.branch != fields["branch"]:
         _block(summary, "wrong_branch")
     if readiness.head != fields["head"]:
         _block(summary, "wrong_head")
     if fields["action"] == "run-reviewbundle" and readiness.clean is not True:
         _block(summary, "dirty_repository")
+    if fields["action"] == "run-reviewbundle" and readiness.staged_clean is not True:
+        _block(summary, "staged_files_present")
     if not readiness.gh_available:
         _block(summary, "missing_github_cli")
     if not readiness.gh_authenticated or not readiness.gh_read_available:
@@ -698,6 +738,21 @@ def _resolve_gh_path() -> str | None:
         installed = Path(program_files) / "GitHub CLI" / "gh.exe"
         if installed.exists():
             return str(installed)
+    return None
+
+
+def _normalize_github_repository(url: str) -> str | None:
+    value = url.strip().replace("\\", "/")
+    patterns = (
+        r"^https?://github\.com/(?P<repo>[^/]+/[^/]+?)(?:\.git)?/?$",
+        r"^git@github\.com:(?P<repo>[^/]+/[^/]+?)(?:\.git)?$",
+        r"^ssh://git@github\.com/(?P<repo>[^/]+/[^/]+?)(?:\.git)?/?$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, value, flags=re.IGNORECASE)
+        if match:
+            repository = match.group("repo")
+            return repository[:-4] if repository.lower().endswith(".git") else repository
     return None
 
 
