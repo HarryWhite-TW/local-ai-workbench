@@ -8,7 +8,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from local_runner_bridge.bridge_operator_b1 import CommentRecord, IssueRecord, LocalReadiness
+from local_runner_bridge.bridge_operator_b1 import (
+    DEFAULT_REPOSITORY,
+    HAG_REPOSITORY,
+    CommentRecord,
+    IssueRecord,
+    LocalReadiness,
+)
 import local_runner_bridge.bridge_operator_b3 as bridge_operator_b3
 from local_runner_bridge.bridge_operator_b3 import (
     B3B_MODE,
@@ -554,6 +560,111 @@ def test_b3c_run_reviewbundle_invokes_dispatcher_once_and_processes_request(tmp_
     assert payload["dispatcher_invoked"] is True
     assert payload["result_verified"] is True
     assert payload["lifecycle_state"] == "CONSUMED"
+    assert_high_risk_safety(summary)
+
+
+def test_b3c_mixed_supported_repository_history_selects_hag_and_dispatches_once(tmp_path):
+    hag_root = r"C:\Users\admin\Desktop\human-approval-automation-gateway"
+    hag_branch = "hag-01-request-contracts"
+    hag_request_id = "hag-current-request"
+    hag_dispatch_id = "hag-current-dispatch"
+    control = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    request_id="local-current-history",
+                    repo=DEFAULT_REPOSITORY,
+                ),
+                author="HarryWhite-TW",
+            ),
+            CommentRecord(
+                id=2,
+                body=inbox_marker(
+                    request_id=hag_request_id,
+                    repo=HAG_REPOSITORY,
+                    target_issue="1",
+                    target_dispatch_request_id=hag_dispatch_id,
+                    branch=hag_branch,
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            ),
+        ]
+    )
+    target = FakeGitHub(
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(
+                    repo=HAG_REPOSITORY,
+                    issue="1",
+                    request_id=hag_dispatch_id,
+                    branch=hag_branch,
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            )
+        ]
+    )
+    calls = []
+
+    def invoker(**kwargs):
+        calls.append(kwargs)
+        target.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(
+                    repo=HAG_REPOSITORY,
+                    issue=1,
+                    request_id=hag_dispatch_id,
+                    branch=hag_branch,
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="dispatcher ok", stderr="")
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=hag_root,
+        control_repo_root=ROOT_PATH,
+        repository=HAG_REPOSITORY,
+        state_dir=tmp_path,
+        github_client=control,
+        target_github_client=target,
+        local_checker=ready(
+            tmp_path,
+            repo_root=str(Path(hag_root).resolve()),
+            branch=hag_branch,
+            origin_repository=HAG_REPOSITORY,
+            staged_clean=True,
+        ),
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+    )
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == hag_request_id
+    assert summary["inbox_comment_id"] == 2
+    assert summary["current_request_count"] == 1
+    assert summary["dispatcher_invoked"] is True
+    assert summary["dispatcher_invocation_count"] == 1
+    assert len(calls) == 1
+    assert calls[0]["args"][calls[0]["args"].index("-Repo") + 1] == HAG_REPOSITORY
+    assert calls[0]["args"][calls[0]["args"].index("-TargetRepoRoot") + 1] == str(
+        Path(hag_root).resolve()
+    )
+    assert summary["runner_invoked"] is False
+    assert summary["codex_invoked"] is False
+    assert summary["github_write_performed"] is False
+    assert summary["commit_performed"] is False
+    assert summary["push_performed"] is False
+    assert summary["pr_created"] is False
+    assert summary["merge_performed"] is False
     assert_high_risk_safety(summary)
 
 

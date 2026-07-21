@@ -437,7 +437,7 @@ def test_expired_valid_marker_plus_current_marker_succeeds():
     assert_no_side_effects(summary)
 
 
-def test_expired_wrong_repo_fails_closed_before_ignore():
+def test_expired_unsupported_third_repo_fails_closed_before_ignore():
     comments = [
         CommentRecord(
             id=1,
@@ -450,7 +450,7 @@ def test_expired_wrong_repo_fails_closed_before_ignore():
     summary = run(FakeGitHub(comments=comments))
 
     assert summary["result"] == "blocked"
-    assert "wrong_repository" in summary["blocked_reasons"]
+    assert "unsupported_target_repository" in summary["blocked_reasons"]
     assert summary["target_issue_read_performed"] is False
     assert_no_side_effects(summary)
 
@@ -533,11 +533,11 @@ def test_untrusted_author_fails_closed_before_target_read():
     assert_no_side_effects(summary)
 
 
-def test_wrong_repository_fails_closed():
+def test_unsupported_third_repository_fails_closed():
     summary = run(FakeGitHub(comments=[CommentRecord(id=1, body=marker(repo="other/repo"), author="HarryWhite-TW")]))
 
     assert summary["result"] == "blocked"
-    assert "wrong_repository" in summary["blocked_reasons"]
+    assert "unsupported_target_repository" in summary["blocked_reasons"]
     assert_no_side_effects(summary)
 
 

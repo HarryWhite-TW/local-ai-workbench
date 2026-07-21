@@ -130,6 +130,12 @@ def run_bridge_operator_b1_dry_run(
         if expires is None:
             _block(summary, "invalid_expiry")
             return summary
+        # The fixed Inbox is shared by the exact supported repositories. Every
+        # marker receives the global safety checks above, including expiry
+        # format validation, but only markers for the configured target
+        # participate in its lifecycle and selection.
+        if fields["repo"] != summary["target_repository"]:
+            continue
         request_id = str(fields["request_id"])
         if request_id in consumed_records:
             if not _processed_identity_matches(fields, consumed_records[request_id]):
@@ -600,7 +606,6 @@ def _validate_request_fields(
         (fields["protocol"] == REQUEST_PROTOCOL, "unsupported_protocol"),
         (_REQUEST_ID_RE.match(str(fields["request_id"])) is not None, "invalid_request_id"),
         (fields["repo"] in SUPPORTED_TARGET_REPOSITORIES, "unsupported_target_repository"),
-        (fields["repo"] == summary["target_repository"], "wrong_repository"),
         (isinstance(fields["target_issue"], int) and fields["target_issue"] > 0, "invalid_target_issue"),
         (
             _REQUEST_ID_RE.match(str(fields["target_dispatch_request_id"])) is not None,
