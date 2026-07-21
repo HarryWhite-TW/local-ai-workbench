@@ -1,3 +1,4 @@
+import base64
 import json
 import shutil
 import subprocess
@@ -69,6 +70,9 @@ def init_git_repo(path: Path) -> str:
 def test_target_repository_binding_accepts_hag_origin_and_rejects_wrong_origin(tmp_path):
     target = tmp_path / "HAG 目標"
     init_git_repo(target)
+    assert target.is_dir()
+    assert not target.name.isascii()
+    target_path_base64 = base64.b64encode(str(target).encode("utf-8")).decode("ascii")
     subprocess.run(
         [
             "git",
@@ -86,14 +90,16 @@ def test_target_repository_binding_accepts_hag_origin_and_rejects_wrong_origin(t
         tmp_path,
         f"""
         $Repo = "HarryWhite-TW/human-approval-automation-gateway"
-        $RepoPath = "{target.as_posix()}"
-        $Mode = "ReviewBundle"
-        function Resolve-Path {{
-            param([string]$LiteralPath, [object]$ErrorAction)
-            return [pscustomobject]@{{ Path = [System.IO.Path]::GetFullPath($LiteralPath) }}
+        $targetPath = [System.Text.Encoding]::UTF8.GetString(
+            [System.Convert]::FromBase64String("{target_path_base64}")
+        )
+        if (-not (Test-Path -LiteralPath $targetPath -PathType Container)) {{
+            throw "decoded target directory was not found"
         }}
+        $RepoPath = $targetPath
+        $Mode = "ReviewBundle"
         Assert-TargetRepositoryBinding
-        if (-not [string]::Equals($RepoPath, [System.IO.Path]::GetFullPath("{target.as_posix()}"), [System.StringComparison]::OrdinalIgnoreCase)) {{
+        if (-not [string]::Equals($RepoPath, [System.IO.Path]::GetFullPath($targetPath), [System.StringComparison]::OrdinalIgnoreCase)) {{
             throw "target root was not normalized"
         }}
         "ok"
@@ -110,7 +116,13 @@ def test_target_repository_binding_accepts_hag_origin_and_rejects_wrong_origin(t
         tmp_path,
         f"""
         $Repo = "HarryWhite-TW/human-approval-automation-gateway"
-        $RepoPath = "{target.as_posix()}"
+        $targetPath = [System.Text.Encoding]::UTF8.GetString(
+            [System.Convert]::FromBase64String("{target_path_base64}")
+        )
+        if (-not (Test-Path -LiteralPath $targetPath -PathType Container)) {{
+            throw "decoded target directory was not found"
+        }}
+        $RepoPath = $targetPath
         $Mode = "ReviewBundle"
         try {{ Assert-TargetRepositoryBinding }} catch {{
             if ($_.Exception.Message -ne "wrong_target_origin") {{ throw }}
