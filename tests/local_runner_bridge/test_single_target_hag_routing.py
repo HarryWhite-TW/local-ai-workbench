@@ -3,6 +3,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -78,8 +80,9 @@ def result_comment(repository=HAG_REPOSITORY):
 
 
 class ControlClient:
-    def __init__(self, repository=HAG_REPOSITORY):
+    def __init__(self, repository=HAG_REPOSITORY, comments=None):
         self.repository = repository
+        self.comments = comments
         self.reads = []
 
     def get_issue(self, issue_number):
@@ -90,11 +93,14 @@ class ControlClient:
     def list_issue_comments(self, issue_number):
         self.reads.append(("comments", issue_number))
         assert issue_number == 147
+        if self.comments is not None:
+            return self.comments
         return [CommentRecord(id=1, body=inbox_marker(self.repository), author="HarryWhite-TW")]
 
 
 class TargetClient:
-    def __init__(self, *, include_result=False):
+    def __init__(self, *, repository=HAG_REPOSITORY, include_result=False):
+        self.repository = repository
         self.include_result = include_result
         self.comment_reads = 0
         self.reads = []
@@ -108,7 +114,13 @@ class TargetClient:
         self.reads.append(("comments", issue_number))
         assert issue_number == 218
         self.comment_reads += 1
-        comments = [CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW")]
+        comments = [
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(self.repository),
+                author="HarryWhite-TW",
+            )
+        ]
         if self.include_result and self.comment_reads >= 3:
             comments.append(CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"))
         return comments
@@ -170,6 +182,24 @@ def preflight_result():
     return DispatcherInvocationResult(0, json.dumps(payload), "")
 
 
+def run_b1_for_repository(repository, comments, *, consumed_request_ids=None):
+    repo_root = TARGET_ROOT if repository == HAG_REPOSITORY else CONTROL_ROOT
+    readiness = ready(
+        repo_root=str(Path(repo_root).resolve()),
+        origin_repository=repository,
+    )
+    return run_bridge_operator_b1_dry_run(
+        inbox_issue=147,
+        repo_root=repo_root,
+        repository=repository,
+        github_client=ControlClient(comments=comments),
+        target_github_client=TargetClient(repository=repository),
+        local_checker=lambda _: readiness,
+        now_utc=NOW,
+        consumed_request_ids=consumed_request_ids,
+    )
+
+
 def test_hag_b1_keeps_fixed_control_inbox_and_reads_target_with_separate_client():
     control = ControlClient()
     target = TargetClient()
@@ -189,6 +219,186 @@ def test_hag_b1_keeps_fixed_control_inbox_and_reads_target_with_separate_client(
     assert summary["target_repository"] == HAG_REPOSITORY
     assert control.reads == [("issue", 147), ("comments", 147)]
     assert target.reads == [("issue", 218), ("comments", 218)]
+
+
+def test_hag_selection_ignores_expired_local_history_and_scopes_lifecycle_counters():
+    comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(
+                DEFAULT_REPOSITORY,
+                request_id="expired-local-history",
+                expires="20260719T080000Z",
+            ),
+            author="HarryWhite-TW",
+        ),
+        CommentRecord(id=2, body=inbox_marker(), author="HarryWhite-TW"),
+    ]
+
+    summary = run_b1_for_repository(HAG_REPOSITORY, comments)
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == "shared-request-id"
+    assert summary["inbox_comment_id"] == 2
+    assert summary["current_request_count"] == 1
+    assert summary["consumed_request_count"] == 0
+    assert summary["expired_request_count"] == 0
+    assert summary["expired_historical_request_count"] == 0
+    assert [entry["request_id"] for entry in summary["request_lifecycle"]] == [
+        "shared-request-id"
+    ]
+
+
+def test_hag_selection_ignores_current_local_marker_and_selects_only_hag():
+    comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(DEFAULT_REPOSITORY, request_id="current-local"),
+            author="HarryWhite-TW",
+        ),
+        CommentRecord(id=2, body=inbox_marker(), author="HarryWhite-TW"),
+    ]
+
+    summary = run_b1_for_repository(HAG_REPOSITORY, comments)
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == "shared-request-id"
+    assert summary["inbox_comment_id"] == 2
+    assert summary["current_request_count"] == 1
+    assert summary["request_lifecycle"][0]["request_id"] == "shared-request-id"
+
+
+def test_two_current_hag_markers_remain_ambiguous():
+    comments = [
+        CommentRecord(id=1, body=inbox_marker(request_id="hag-current-one"), author="HarryWhite-TW"),
+        CommentRecord(id=2, body=inbox_marker(request_id="hag-current-two"), author="HarryWhite-TW"),
+    ]
+
+    summary = run_b1_for_repository(HAG_REPOSITORY, comments)
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["multiple_current_requests"]
+    assert summary["current_request_count"] == 2
+
+
+def test_only_other_supported_repository_markers_report_missing_current_request():
+    comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(DEFAULT_REPOSITORY, request_id="local-only"),
+            author="HarryWhite-TW",
+        )
+    ]
+
+    summary = run_b1_for_repository(HAG_REPOSITORY, comments)
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["missing_current_request"]
+    assert summary["current_request_count"] == 0
+    assert summary["consumed_request_count"] == 0
+    assert summary["expired_request_count"] == 0
+    assert summary["request_lifecycle"] == []
+
+
+@pytest.mark.parametrize(
+    ("marker_overrides", "expected_reason"),
+    [
+        ({"action": "commit"}, "unsupported_action"),
+        ({"requested_by": "codex"}, "requested_by_mismatch"),
+        ({"expires": "not-a-time"}, "invalid_expiry"),
+        ({"repository": "someone/else"}, "unsupported_target_repository"),
+    ],
+)
+def test_other_repository_marker_global_safety_failures_still_block(
+    marker_overrides, expected_reason
+):
+    repository = marker_overrides.pop("repository", DEFAULT_REPOSITORY)
+    comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(repository, request_id="unsafe-other", **marker_overrides),
+            author="HarryWhite-TW",
+        ),
+        CommentRecord(id=2, body=inbox_marker(), author="HarryWhite-TW"),
+    ]
+
+    summary = run_b1_for_repository(HAG_REPOSITORY, comments)
+
+    assert summary["result"] == "blocked"
+    assert expected_reason in summary["blocked_reasons"]
+    assert summary["target_issue_read_performed"] is False
+
+
+def test_malformed_or_untrusted_other_supported_repository_marker_still_blocks():
+    malformed_comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(DEFAULT_REPOSITORY, request_id="malformed-other") + "\nextra",
+            author="HarryWhite-TW",
+        ),
+        CommentRecord(id=2, body=inbox_marker(), author="HarryWhite-TW"),
+    ]
+    untrusted_comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(DEFAULT_REPOSITORY, request_id="untrusted-other"),
+            author="other-user",
+        ),
+        CommentRecord(id=2, body=inbox_marker(), author="HarryWhite-TW"),
+    ]
+
+    malformed = run_b1_for_repository(HAG_REPOSITORY, malformed_comments)
+    untrusted = run_b1_for_repository(HAG_REPOSITORY, untrusted_comments)
+
+    assert malformed["blocked_reasons"] == ["malformed_marker"]
+    assert untrusted["blocked_reasons"] == ["untrusted_inbox_author"]
+
+
+def test_other_repository_request_id_reuse_does_not_touch_target_processed_identity():
+    comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(DEFAULT_REPOSITORY, request_id="reused-across-repositories"),
+            author="HarryWhite-TW",
+        ),
+        CommentRecord(id=2, body=inbox_marker(), author="HarryWhite-TW"),
+    ]
+
+    summary = run_b1_for_repository(
+        HAG_REPOSITORY,
+        comments,
+        consumed_request_ids={"reused-across-repositories": {}},
+    )
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == "shared-request-id"
+    assert summary["consumed_request_count"] == 0
+    assert "processed_request_identity_mismatch" not in summary["blocked_reasons"]
+
+
+def test_local_target_symmetrically_ignores_valid_hag_history():
+    comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(HAG_REPOSITORY, request_id="hag-history"),
+            author="HarryWhite-TW",
+        ),
+        CommentRecord(
+            id=2,
+            body=inbox_marker(DEFAULT_REPOSITORY, request_id="local-current"),
+            author="HarryWhite-TW",
+        ),
+    ]
+
+    summary = run_b1_for_repository(DEFAULT_REPOSITORY, comments)
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == "local-current"
+    assert summary["inbox_comment_id"] == 2
+    assert summary["current_request_count"] == 1
+    assert [entry["request_id"] for entry in summary["request_lifecycle"]] == [
+        "local-current"
+    ]
 
 
 def test_unsupported_third_repository_fails_before_any_github_read():

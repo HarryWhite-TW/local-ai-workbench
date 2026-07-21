@@ -43,6 +43,16 @@ Document-to-Knowledge Workbench product runtime.
 - Latest/next Issue inference: forbidden
 - Startup, tray UI, service, and MCP behavior: forbidden
 
+Inbox `#147` is shared by the two exact supported target repositories. B1
+globally safety-validates every marker-like comment before B3 sees a selected
+request. Lifecycle counts, processed-record matching, current ambiguity, and
+selection are then scoped to B3's configured target repository. Valid history
+for the other supported repository is ignored for selection rather than
+treated as authority; malformed, untrusted, unsupported-repository,
+unsupported-action, and requester-mismatched markers still fail closed. This
+does not expand repository, trusted-actor, action, fixed-Inbox, Dispatcher, or
+Runner authority.
+
 ## Production CLI
 
 Run from the repository root:

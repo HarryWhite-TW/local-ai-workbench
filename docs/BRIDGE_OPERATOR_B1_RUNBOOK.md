@@ -40,13 +40,26 @@ B1 accepts request markers only from configured Inbox Issue comments. GitHub
 comment author metadata is the authoritative identity surface. Markers in the
 Inbox Issue body are ignored and are not authorized requests.
 
-B1 parses every marker-like Inbox comment before selecting the current request.
+B1 treats fixed Inbox Issue `#147` as a shared control surface for exactly
+`HarryWhite-TW/local-ai-workbench` and
+`HarryWhite-TW/human-approval-automation-gateway`. It parses and globally
+validates every marker-like Inbox comment before selecting the current request.
 Malformed marker-like comments, duplicate field names, untrusted comment
-authors, wrong repository, unsupported action, `requested_by` mismatch, invalid
-ids, invalid branch, invalid HEAD, zero current valid requests, or multiple
-current valid requests fail closed. Expired historical requests are permitted
-only when their complete non-time semantics are otherwise valid and exactly one
-current valid request remains.
+authors, unsupported repositories, unsupported actions, `requested_by`
+mismatches, invalid ids, invalid branches, invalid HEADs, invalid expiry
+formats, zero current valid requests, or multiple current valid requests fail
+closed.
+
+After global safety validation, lifecycle classification and current-request
+ambiguity are scoped to the configured target repository. Valid history for
+the other supported repository is excluded from consumed, expired, current,
+processed-identity, and selection counts; it is not treated as authority and
+does not produce `wrong_repository`. Malformed, untrusted, or unauthorized
+markers still fail closed regardless of which repository they name. Expired
+historical requests for the configured target are permitted only when their
+complete non-time semantics are otherwise valid and exactly one current valid
+request remains. This scoping does not add a repository, actor, action, Issue,
+or execution authority.
 
 The current request must be exactly one standalone comment line:
 
