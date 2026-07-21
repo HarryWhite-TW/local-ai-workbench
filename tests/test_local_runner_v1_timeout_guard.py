@@ -2895,6 +2895,7 @@ def test_trusted_runtime_evaluator_uses_committed_baseline_not_candidate(tmp_pat
         tmp_path,
         f"""
         $script:RepoPath = {repo.as_posix()!r}
+        $script:ControlRepoRoot = {repo.as_posix()!r}
         $env:PYTHONPATH = {candidate_root.as_posix()!r}
         $env:TEMP = {snapshot_parent.as_posix()!r}
         $env:TMP = {snapshot_parent.as_posix()!r}

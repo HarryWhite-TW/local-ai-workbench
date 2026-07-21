@@ -269,7 +269,7 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
         )
         + "\n"
         + textwrap.dedent(body),
-        encoding="utf-8",
+        encoding="utf-8-sig",
     )
     return _run_powershell(
         [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
@@ -285,10 +285,6 @@ def test_provider_safe_path_normalization_handles_non_ascii_without_providerpath
     result = run_dispatcher_core_script(
         tmp_path,
         f"""
-        function Resolve-Path {{
-            param([string]$LiteralPath, [object]$ErrorAction)
-            return [pscustomobject]@{{ Path = [System.IO.Path]::GetFullPath($LiteralPath) }}
-        }}
         $actual = ConvertTo-NormalizedProviderPath -Path {target.as_posix()!r}
         $expected = [System.IO.Path]::GetFullPath({target.as_posix()!r}).TrimEnd("\\", "/")
         if (-not [string]::Equals($actual, $expected, [System.StringComparison]::OrdinalIgnoreCase)) {{
@@ -300,6 +296,8 @@ def test_provider_safe_path_normalization_handles_non_ascii_without_providerpath
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ok" in result.stdout
+    normalizer_source = _dispatcher_core().split("function Assert-RepoRoot", 1)[0]
+    assert ".ProviderPath" not in normalizer_source
 
 
 def test_reviewbundle_cross_repo_runner_arguments_bind_hag_target(tmp_path):
