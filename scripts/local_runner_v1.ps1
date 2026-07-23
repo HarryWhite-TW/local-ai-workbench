@@ -24,7 +24,9 @@ param(
     [string]$ReviewedCodexPath = "",
     [string]$ApprovalToken = "",
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
-    [string]$RepoPath = ""
+    [string]$RepoPath = "",
+    [string]$MachineEvidencePath = "",
+    [switch]$SuppressReviewBundleComment
 )
 
 Set-StrictMode -Version Latest
@@ -59,6 +61,15 @@ $CandidateEvidenceProfile = "local_git_candidate_observation.v1"
 $LocalIsolationProvider = "codex_cli_workspace_write"
 $script:CommitApprovedLocalCommitCreated = "unknown"
 $script:CommitApprovedCommitSha = ""
+
+# DP4-B opt-in only.  The existing ReviewBundle path is unchanged unless both
+# switches are supplied by a parent-controlled caller.
+if ($SuppressReviewBundleComment -and [string]::IsNullOrWhiteSpace($MachineEvidencePath)) {
+    throw "SuppressReviewBundleComment requires MachineEvidencePath."
+}
+if ((-not [string]::IsNullOrWhiteSpace($MachineEvidencePath)) -and $Mode -ne "ReviewBundle") {
+    throw "MachineEvidencePath is ReviewBundle-only."
+}
 
 function Invoke-Captured {
     param(
