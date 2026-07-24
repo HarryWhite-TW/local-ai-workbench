@@ -25,11 +25,29 @@ param(
     [string]$ApprovalToken = "",
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
     [string]$RepoPath = "",
+    [string]$ReviewedGhPath = "",
     [string]$MachineEvidencePath = "",
+    [string]$DisplayPilotRequestId = "",
     [switch]$SuppressReviewBundleComment
 )
 
 Set-StrictMode -Version Latest
+$machineEvidencePathVariable = Get-Variable -Name MachineEvidencePath -ErrorAction SilentlyContinue
+if ($null -eq $machineEvidencePathVariable) {
+    $MachineEvidencePath = ""
+}
+$suppressReviewBundleCommentVariable = Get-Variable -Name SuppressReviewBundleComment -ErrorAction SilentlyContinue
+if ($null -eq $suppressReviewBundleCommentVariable) {
+    $SuppressReviewBundleComment = $false
+}
+$reviewedGhPathVariable = Get-Variable -Name ReviewedGhPath -ErrorAction SilentlyContinue
+if ($null -eq $reviewedGhPathVariable) {
+    $ReviewedGhPath = ""
+}
+$displayPilotRequestIdVariable = Get-Variable -Name DisplayPilotRequestId -ErrorAction SilentlyContinue
+if ($null -eq $displayPilotRequestIdVariable) {
+    $DisplayPilotRequestId = ""
+}
 $ErrorActionPreference = "Stop"
 
 $RunnerName = "local-runner-v1"
@@ -62,13 +80,48 @@ $LocalIsolationProvider = "codex_cli_workspace_write"
 $script:CommitApprovedLocalCommitCreated = "unknown"
 $script:CommitApprovedCommitSha = ""
 
-# DP4-B opt-in only.  The existing ReviewBundle path is unchanged unless both
-# switches are supplied by a parent-controlled caller.
+# DP4-B opt-in only. The existing ReviewBundle path is unchanged unless a
+# machine-evidence path is supplied by a parent-controlled caller.
+function Test-DisplayPilotRequestIdSafe {
+    param(
+        [AllowNull()]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value) -or
+        $Value -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$' -or
+        $Value.EndsWith(".", [System.StringComparison]::Ordinal) -or
+        $Value.EndsWith(" ", [System.StringComparison]::Ordinal)) {
+        return $false
+    }
+    $baseName = @($Value -split '\.', 2)[0].ToUpperInvariant()
+    $reserved = @("CON", "PRN", "AUX", "NUL") +
+        @(1..9 | ForEach-Object { "COM$_" }) +
+        @(1..9 | ForEach-Object { "LPT$_" })
+    return ($reserved -notcontains $baseName)
+}
+
 if ($SuppressReviewBundleComment -and [string]::IsNullOrWhiteSpace($MachineEvidencePath)) {
     throw "SuppressReviewBundleComment requires MachineEvidencePath."
 }
 if ((-not [string]::IsNullOrWhiteSpace($MachineEvidencePath)) -and $Mode -ne "ReviewBundle") {
     throw "MachineEvidencePath is ReviewBundle-only."
+}
+if (-not [string]::IsNullOrWhiteSpace($MachineEvidencePath)) {
+    if (-not (Test-DisplayPilotRequestIdSafe -Value $DisplayPilotRequestId)) {
+        throw "MachineEvidencePath requires a Windows-safe DisplayPilotRequestId."
+    }
+    $machineEvidenceFullPath = [System.IO.Path]::GetFullPath($MachineEvidencePath)
+    $machineEvidenceRequestDirectory = [System.IO.Path]::GetFileName(
+        [System.IO.Path]::GetDirectoryName($machineEvidenceFullPath)
+    )
+    if (-not [string]::Equals(
+        $machineEvidenceRequestDirectory,
+        $DisplayPilotRequestId,
+        [System.StringComparison]::Ordinal
+    )) {
+        throw "MachineEvidencePath request directory must match DisplayPilotRequestId."
+    }
 }
 
 function Invoke-Captured {
@@ -1518,6 +1571,26 @@ function Resolve-GitHubCliCommand {
     return [string]$selected[0].Source
 }
 
+function Resolve-ReviewedGitHubCliPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-AbsoluteCodexLauncherPath -Path $Path)) {
+        throw "ReviewedGhPath must be an absolute Windows path."
+    }
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+        throw "ReviewedGhPath does not exist: $fullPath"
+    }
+    $extension = [System.IO.Path]::GetExtension($fullPath).ToLowerInvariant()
+    if ($extension -notin @(".exe", ".cmd", ".bat", ".com")) {
+        throw "ReviewedGhPath has an unsafe launcher suffix '$extension'."
+    }
+    return $fullPath
+}
+
 function ConvertTo-NativeArgumentString {
     param(
         [Parameter(Mandatory = $true)]
@@ -2910,6 +2983,173 @@ function Post-IssueComment {
     return $commentResult
 }
 
+function New-DisplayPilotMachineEvidence {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$IssueNumberText,
+        [Parameter(Mandatory = $true)]
+        [string]$Branch,
+        [Parameter(Mandatory = $true)]
+        [string]$HeadBefore,
+        [Parameter(Mandatory = $true)]
+        [string]$HeadAfter,
+        [Parameter(Mandatory = $true)]
+        [string]$CodexExitCode,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("passed", "failed", "not_run")]
+        [string]$CodexStatus,
+        [Parameter(Mandatory = $true)]
+        [bool]$CodexTimedOut,
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeContractBinding,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$ChangedFiles,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$FinalStatus,
+        [Parameter(Mandatory = $true)]
+        [bool]$StagedAreaClean,
+        [Parameter(Mandatory = $true)]
+        [object]$ExecutionAssurance
+    )
+
+    $blockedReasons = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::Equals([string]$RuntimeContractBinding.status, "passed", [System.StringComparison]::Ordinal)) {
+        $blockedReasons.Add("runtime_contract_$([string]$RuntimeContractBinding.status)")
+    }
+    $bindingReasonsProperty = $RuntimeContractBinding.PSObject.Properties["reasons"]
+    if ($null -ne $bindingReasonsProperty) {
+        foreach ($reason in @($bindingReasonsProperty.Value)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$reason)) {
+                $blockedReasons.Add([string]$reason)
+            }
+        }
+    }
+    if ($CodexTimedOut) {
+        $blockedReasons.Add("codex_timeout")
+    }
+    if ($CodexStatus -eq "failed") {
+        $blockedReasons.Add("codex_failed")
+    }
+    elseif ($CodexStatus -eq "not_run") {
+        $blockedReasons.Add("codex_not_run")
+    }
+    if (-not $StagedAreaClean) {
+        $blockedReasons.Add("staged_changes_detected")
+    }
+    if (-not [string]::Equals($HeadBefore, $HeadAfter, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $blockedReasons.Add("unexpected_head_movement")
+    }
+    if (-not [string]::Equals([string]$ExecutionAssurance.observable_evidence, "verified", [System.StringComparison]::Ordinal)) {
+        $blockedReasons.Add("execution_assurance_unverified")
+    }
+
+    $resultStatus = if ($blockedReasons.Count -eq 0) { "success" } else { "blocked" }
+    return [ordered]@{
+        protocol = "lawb.display_pilot.runner_machine_evidence.v1"
+        schema_version = 1
+        request_id = $DisplayPilotRequestId
+        repository = $Repo
+        issue = [int]$IssueNumberText
+        repo_path = $RepoPath
+        branch = $Branch
+        head_before = $HeadBefore
+        head_after = $HeadAfter
+        codex_exit_code = $CodexExitCode
+        codex_status = $CodexStatus
+        codex_timed_out = $CodexTimedOut
+        runtime_contract_binding = $RuntimeContractBinding
+        changed_files = @($ChangedFiles)
+        final_git_status = $FinalStatus
+        staged_area_clean = $StagedAreaClean
+        execution_assurance = $ExecutionAssurance
+        result_status = $resultStatus
+        blocked_reasons = @($blockedReasons | Select-Object -Unique)
+        safety_flags = [ordered]@{
+            github_write_performed = $false
+            result_packet_written = $false
+            codex_side_action_executed = ($CodexStatus -ne "not_run")
+            runner_invoked = $true
+            dispatcher_invoked = $false
+            watcher_invoked = $false
+            broad_scan_performed = $false
+            commit_performed = $false
+            push_performed = $false
+            pr_created = $false
+            merge_performed = $false
+            issue_closed = $false
+            label_changed = $false
+        }
+        review_bundle_comment_suppressed = $false
+        github_comment_posted = $false
+    }
+}
+
+function Write-DisplayPilotMachineEvidence {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Evidence
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MachineEvidencePath)) {
+        return
+    }
+    $fullPath = [System.IO.Path]::GetFullPath($MachineEvidencePath)
+    $parent = [System.IO.Path]::GetDirectoryName($fullPath)
+    if ([string]::IsNullOrWhiteSpace($parent) -or -not (Test-Path -LiteralPath $parent -PathType Container)) {
+        throw "MachineEvidencePath parent directory does not exist."
+    }
+    $temporaryPath = Join-Path -Path $parent -ChildPath (
+        ".{0}.{1}.tmp" -f [System.IO.Path]::GetFileName($fullPath), [guid]::NewGuid().ToString("N")
+    )
+    try {
+        $Evidence.safety_flags.result_packet_written = $true
+        $json = $Evidence | ConvertTo-Json -Depth 20
+        Set-Content -LiteralPath $temporaryPath -Value $json -Encoding UTF8
+        Move-Item -LiteralPath $temporaryPath -Destination $fullPath -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Complete-ReviewBundleOutcome {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Comment,
+        [AllowNull()]
+        [scriptblock]$EvidenceFactory = $null
+    )
+
+    if ([string]::IsNullOrWhiteSpace($MachineEvidencePath)) {
+        return Post-IssueComment -Comment $Comment
+    }
+    if ($null -eq $EvidenceFactory) {
+        throw "Machine evidence inputs are required for the opt-in path."
+    }
+    $evidence = & $EvidenceFactory
+
+    if ($SuppressReviewBundleComment) {
+        $evidence.review_bundle_comment_suppressed = $true
+        $evidence.github_comment_posted = $false
+        $evidence.safety_flags.github_write_performed = $false
+        Write-DisplayPilotMachineEvidence -Evidence $evidence
+        return [pscustomobject]@{
+            ExitCode = 0
+            Stdout = "ReviewBundle comment suppressed; machine evidence written."
+            Stderr = ""
+        }
+    }
+
+    $postResult = Post-IssueComment -Comment $Comment
+    $evidence.review_bundle_comment_suppressed = $false
+    $evidence.safety_flags.github_write_performed = ($postResult.ExitCode -eq 0)
+    $evidence.github_comment_posted = ($postResult.ExitCode -eq 0)
+    Write-DisplayPilotMachineEvidence -Evidence $evidence
+    return $postResult
+}
+
 function Get-SafeCommitTitle {
     param(
         [AllowNull()]
@@ -3328,7 +3568,12 @@ if ($Mode -eq "ApprovalStateDiagnostic") {
     exit 0
 }
 
-$Gh = Resolve-GitHubCliCommand
+$Gh = if ([string]::IsNullOrWhiteSpace($ReviewedGhPath)) {
+    Resolve-GitHubCliCommand
+}
+else {
+    Resolve-ReviewedGitHubCliPath -Path $ReviewedGhPath
+}
 
 if ($Mode -eq "CommitApprovalStateDiagnostic") {
     Write-CommitApprovalStateDiagnostic
@@ -3430,7 +3675,27 @@ if (-not [string]::IsNullOrWhiteSpace($initialStatus)) {
         -FinalIndexClean $initialNoStage `
         -FinalHeadMatchesInitial $true
 
-    $postResult = Post-IssueComment -Comment $comment
+    $postResult = Complete-ReviewBundleOutcome `
+        -Comment $comment `
+        -EvidenceFactory {
+            $machineBinding = New-RuntimeContractNotPresent
+            $machineAssurance = New-ExecutionAssurance `
+                -RuntimeContractBinding $machineBinding `
+                -ObservableEvidence "unverified"
+            New-DisplayPilotMachineEvidence `
+                -IssueNumberText ([string]$IssueNumber) `
+                -Branch $branch `
+                -HeadBefore $headBefore `
+                -HeadAfter $headBefore `
+                -CodexExitCode "not run; repo dirty before start" `
+                -CodexStatus "not_run" `
+                -CodexTimedOut $false `
+                -RuntimeContractBinding $machineBinding `
+                -ChangedFiles @(Convert-FileTextToArray -Text (Get-ModifiedFilesFromStatus -Status $initialStatus)) `
+                -FinalStatus $initialStatus `
+                -StagedAreaClean $initialNoStage `
+                -ExecutionAssurance $machineAssurance
+        }
     if ($postResult.ExitCode -ne 0) {
         Write-Error "Repo is dirty before start, and posting the failure bundle failed: $($postResult.Stderr)"
     }
@@ -3470,7 +3735,27 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
         -FinalIndexClean $true `
         -FinalHeadMatchesInitial $true
 
-    $postResult = Post-IssueComment -Comment $comment
+    $postResult = Complete-ReviewBundleOutcome `
+        -Comment $comment `
+        -EvidenceFactory {
+            $machineBinding = New-RuntimeContractNotPresent
+            $machineAssurance = New-ExecutionAssurance `
+                -RuntimeContractBinding $machineBinding `
+                -ObservableEvidence "unverified"
+            New-DisplayPilotMachineEvidence `
+                -IssueNumberText ([string]$IssueNumber) `
+                -Branch $branch `
+                -HeadBefore $headBefore `
+                -HeadAfter $headBefore `
+                -CodexExitCode "not run; issue missing write-capable marker" `
+                -CodexStatus "not_run" `
+                -CodexTimedOut $false `
+                -RuntimeContractBinding $machineBinding `
+                -ChangedFiles @() `
+                -FinalStatus "(clean)" `
+                -StagedAreaClean $true `
+                -ExecutionAssurance $machineAssurance
+        }
     if ($postResult.ExitCode -ne 0) {
         throw "gh issue comment failed with exit code $($postResult.ExitCode): $($postResult.Stderr)"
     }
@@ -3528,7 +3813,26 @@ if ([string]::Equals([string]$runtimeContractBinding.status, "contract_violation
         -FinalIndexClean $true `
         -FinalHeadMatchesInitial $true `
         -RuntimeContractBinding $runtimeContractBinding
-    $postResult = Post-IssueComment -Comment $comment
+    $postResult = Complete-ReviewBundleOutcome `
+        -Comment $comment `
+        -EvidenceFactory {
+            $machineAssurance = New-ExecutionAssurance `
+                -RuntimeContractBinding $runtimeContractBinding `
+                -ObservableEvidence "violation"
+            New-DisplayPilotMachineEvidence `
+                -IssueNumberText ([string]$IssueNumber) `
+                -Branch $branch `
+                -HeadBefore $headBefore `
+                -HeadAfter $headBefore `
+                -CodexExitCode "not run; runtime contract violation" `
+                -CodexStatus "not_run" `
+                -CodexTimedOut $false `
+                -RuntimeContractBinding $runtimeContractBinding `
+                -ChangedFiles @() `
+                -FinalStatus "(clean)" `
+                -StagedAreaClean $true `
+                -ExecutionAssurance $machineAssurance
+        }
     if ($postResult.ExitCode -ne 0) {
         throw "Runtime contract violation blocked Codex, and posting the failure bundle failed: $($postResult.Stderr)"
     }
@@ -3714,7 +4018,24 @@ $comment = New-ReviewBundleComment `
     -CandidateEvidenceManifest $postExecutionManifest `
     -CandidatePathsReviewable $candidatePathsReviewable
 
-$commentResult = Post-IssueComment -Comment $comment
+$commentResult = Complete-ReviewBundleOutcome `
+    -Comment $comment `
+    -EvidenceFactory {
+        $machineCodexStatus = if ($codexResult.ExitCode -eq 0) { "passed" } else { "failed" }
+        New-DisplayPilotMachineEvidence `
+            -IssueNumberText ([string]$IssueNumber) `
+            -Branch $branch `
+            -HeadBefore $headBefore `
+            -HeadAfter $headAfter `
+            -CodexExitCode ([string]$codexResult.ExitCode) `
+            -CodexStatus $machineCodexStatus `
+            -CodexTimedOut ([bool]$codexResult.TimedOut) `
+            -RuntimeContractBinding $runtimeContractBinding `
+            -ChangedFiles $actualChangedFiles `
+            -FinalStatus $finalStatus `
+            -StagedAreaClean $finalIndexClean `
+            -ExecutionAssurance $executionAssurance
+    }
 if ($commentResult.ExitCode -ne 0) {
     throw "gh issue comment failed with exit code $($commentResult.ExitCode): $($commentResult.Stderr)"
 }
