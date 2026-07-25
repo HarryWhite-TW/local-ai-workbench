@@ -356,8 +356,6 @@ def _invoke_runner(
         ],
         cwd=target_repo_root,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
         shell=False,
         check=False,
         timeout=RUNNER_TIMEOUT_SECONDS,

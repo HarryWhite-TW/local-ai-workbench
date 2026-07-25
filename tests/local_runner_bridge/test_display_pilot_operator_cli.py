@@ -620,8 +620,61 @@ def test_runner_invocation_uses_reviewed_powershell_gh_and_timeout(
     assert observed["argv"][gh_index + 1] == str(tmp_path / "reviewed-gh.exe")
     request_index = observed["argv"].index("-DisplayPilotRequestId")
     assert observed["argv"][request_index + 1] == "req-reviewed-9"
+    assert observed["cwd"] == str(tmp_path / "target")
+    assert observed["capture_output"] is True
     assert observed["timeout"] == cli.RUNNER_TIMEOUT_SECONDS
     assert observed["shell"] is False
+    assert observed["check"] is False
+    for keyword in ("text", "encoding", "errors", "universal_newlines"):
+        assert keyword not in observed
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+@pytest.mark.parametrize("stream_name", ["stdout", "stderr"])
+def test_runner_capture_accepts_invalid_utf8_bytes(tmp_path, stream_name):
+    target = tmp_path / "target"
+    target.mkdir()
+    fake_runner = tmp_path / "fake_runner.ps1"
+    stream_method = {
+        "stdout": "OpenStandardOutput",
+        "stderr": "OpenStandardError",
+    }[stream_name]
+    fake_runner.write_text(
+        "\n".join(
+            [
+                f"$stream = [Console]::{stream_method}()",
+                "$stream.WriteByte(0xB1)",
+                "$stream.Flush()",
+                "exit 23",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    evidence_path = tmp_path / "evidence.json"
+    codex_path = tmp_path / "must-not-run-codex.cmd"
+    gh_path = tmp_path / "must-not-run-gh.exe"
+    request = {
+        "selector": {
+            "target_issue": 9,
+            "request_id": f"req-invalid-byte-{stream_name}",
+        }
+    }
+
+    code = cli._invoke_runner(
+        request,
+        evidence_path,
+        powershell_path=powershell(),
+        runner_path=str(fake_runner),
+        target_repo_root=str(target),
+        codex_path=str(codex_path),
+        gh_path=str(gh_path),
+    )
+
+    assert code == 23
+    assert fake_runner.parent == tmp_path
+    assert not evidence_path.exists()
+    assert not codex_path.exists()
+    assert not gh_path.exists()
 
 
 def test_start_production_issue_reader_treats_missing_selector_as_idle(
