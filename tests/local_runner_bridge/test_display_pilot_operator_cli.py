@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,21 @@ from local_runner_bridge import display_pilot_operator_cli as cli
 
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+def powershell():
+    reviewed = os.environ.get("LAWB_TEST_POWERSHELL_PATH")
+    if reviewed is not None:
+        path = Path(reviewed)
+        if not path.is_absolute():
+            pytest.fail("LAWB_TEST_POWERSHELL_PATH must be an absolute path")
+        if not path.is_file():
+            pytest.fail("LAWB_TEST_POWERSHELL_PATH must identify an existing file")
+        return str(path)
+    shell = shutil.which("pwsh") or shutil.which("powershell")
+    if shell is None:
+        pytest.skip("PowerShell is required")
+    return shell
 
 
 def _setup_argv(state, lawb, hgw, target):
@@ -257,12 +273,9 @@ def test_invalid_arguments_and_sensitive_paths_are_not_dumped(tmp_path, monkeypa
 
 
 def test_powershell_wrapper_propagates_cli_exit_code(tmp_path):
-    shell = shutil.which("pwsh") or shutil.which("powershell")
-    if shell is None:
-        pytest.skip("PowerShell is required")
     completed = subprocess.run(
         [
-            shell,
+            powershell(),
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
@@ -283,9 +296,6 @@ def test_powershell_wrapper_propagates_cli_exit_code(tmp_path):
 
 
 def test_powershell_wrapper_resolves_src_layout_for_successful_setup(tmp_path):
-    shell = shutil.which("pwsh") or shutil.which("powershell")
-    if shell is None:
-        pytest.skip("PowerShell is required")
     state = tmp_path / "state"
     lawb = tmp_path / "lawb"
     hgw = tmp_path / "hgw"
@@ -294,7 +304,7 @@ def test_powershell_wrapper_resolves_src_layout_for_successful_setup(tmp_path):
         root.mkdir()
     completed = subprocess.run(
         [
-            shell,
+            powershell(),
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",

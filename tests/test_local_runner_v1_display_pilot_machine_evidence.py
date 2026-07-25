@@ -1,4 +1,6 @@
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -21,13 +23,26 @@ from local_runner_bridge.display_pilot_transport import (
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "local_runner_v1.ps1"
 HEAD = "a" * 40
+ANSI_CSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def powershell():
+    reviewed = os.environ.get("LAWB_TEST_POWERSHELL_PATH")
+    if reviewed is not None:
+        path = Path(reviewed)
+        if not path.is_absolute():
+            pytest.fail("LAWB_TEST_POWERSHELL_PATH must be an absolute path")
+        if not path.is_file():
+            pytest.fail("LAWB_TEST_POWERSHELL_PATH must identify an existing file")
+        return str(path)
     shell = shutil.which("pwsh") or shutil.which("powershell")
     if shell is None:
         pytest.skip("PowerShell is required")
     return shell
+
+
+def normalized_powershell_error(value):
+    return re.sub(rb"\s+", b"", ANSI_CSI.sub(b"", value))
 
 
 def runner_core():
@@ -220,7 +235,9 @@ def test_machine_path_requires_request_id_and_matching_request_directory(tmp_pat
         binary=True,
     )
     assert missing.returncode != 0
-    assert b"requires a Windows-safe DisplayPilotRequestId" in missing.stderr
+    assert normalized_powershell_error(
+        b"MachineEvidencePath requires a Windows-safe DisplayPilotRequestId."
+    ) in normalized_powershell_error(missing.stderr)
 
     mismatch = run_script(
         tmp_path,
@@ -245,7 +262,9 @@ def test_machine_path_rejects_windows_unsafe_request_id(tmp_path, request_id):
         binary=True,
     )
     assert result.returncode != 0
-    assert b"requires a Windows-safe DisplayPilotRequestId" in result.stderr
+    assert normalized_powershell_error(
+        b"MachineEvidencePath requires a Windows-safe DisplayPilotRequestId."
+    ) in normalized_powershell_error(result.stderr)
 
 
 def test_default_path_posts_existing_comment_and_writes_no_machine_file(tmp_path):
