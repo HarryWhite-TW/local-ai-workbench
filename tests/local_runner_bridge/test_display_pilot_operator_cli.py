@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -250,6 +251,114 @@ def test_start_failure_exit_is_propagated(tmp_path, monkeypatch, capsys):
     ]
 
 
+@pytest.mark.parametrize(
+    "missing_option",
+    ["--lawb-root", "--hgw-root", "--target-repo-root"],
+)
+def test_recover_requires_each_protected_root(
+    tmp_path,
+    monkeypatch,
+    capsys,
+    missing_option,
+):
+    monkeypatch.setattr(
+        cli,
+        "recover_incident",
+        lambda **kwargs: pytest.fail("recovery boundary must not be reached"),
+    )
+    values = {
+        "--state-root": str(tmp_path / "state"),
+        "--request-id": "req-reviewed-9",
+        "--target-issue": "9",
+        "--in-flight-sha256": "A" * 64,
+        "--lawb-root": str(tmp_path / "lawb"),
+        "--hgw-root": str(tmp_path / "hgw"),
+        "--target-repo-root": str(tmp_path / "hag"),
+    }
+    argv = ["recover"]
+    for option, value in values.items():
+        if option != missing_option:
+            argv.extend((option, value))
+
+    assert cli.main(argv) == 2
+
+    assert json.loads(capsys.readouterr().out)["blocked_reasons"] == [
+        "required_recovery_argument_missing"
+    ]
+
+
+def test_cli_recover_invokes_only_offline_recovery_boundary(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    observed = {}
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("live or repository boundary must not be reached")
+
+    def fake_recover(**kwargs):
+        observed.update(kwargs)
+        return {
+            "protocol": "lawb.display_pilot.recovery.v1",
+            "result": "success",
+            "recovery_status": "recovered",
+            "runner_invoked": False,
+            "codex_invoked": False,
+            "github_write_performed": False,
+            "repository_mutation_performed": False,
+        }
+
+    for name in (
+        "verify_start_prerequisites",
+        "_start",
+        "_read_issue",
+        "_invoke_runner",
+        "render_from_evidence",
+        "_git",
+    ):
+        monkeypatch.setattr(cli, name, forbidden)
+    monkeypatch.setattr(cli, "recover_incident", fake_recover)
+    state = tmp_path / "state"
+    lawb = tmp_path / "lawb"
+    hgw = tmp_path / "hgw"
+    hag = tmp_path / "hag"
+
+    code = cli.main(
+        [
+            "recover",
+            "--state-root",
+            str(state),
+            "--request-id",
+            "req-reviewed-9",
+            "--target-issue",
+            "9",
+            "--in-flight-sha256",
+            "A" * 64,
+            "--lawb-root",
+            str(lawb),
+            "--hgw-root",
+            str(hgw),
+            "--target-repo-root",
+            str(hag),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert output["recovery_status"] == "recovered"
+    assert observed["state_root"] == str(state)
+    assert observed["request_id"] == "req-reviewed-9"
+    assert observed["target_issue"] == 9
+    assert observed["in_flight_sha256"] == "A" * 64
+    assert observed["forbidden_state_roots"] == (
+        cli.CONTROL_ROOT,
+        str(lawb),
+        str(hgw),
+        str(hag),
+    )
+
+
 def test_invalid_arguments_and_sensitive_paths_are_not_dumped(tmp_path, monkeypatch, capsys):
     assert cli.main([]) == 2
     assert json.loads(capsys.readouterr().out)["result"] == "blocked"
@@ -329,6 +438,113 @@ def test_powershell_wrapper_resolves_src_layout_for_successful_setup(tmp_path):
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout)["result"] == "success"
     assert (state / "requests").is_dir()
+
+
+@pytest.mark.parametrize("missing_option", ["-LawbRoot", "-HgwRoot", "-TargetRepoRoot"])
+def test_powershell_recover_requires_each_protected_root(
+    tmp_path,
+    missing_option,
+):
+    values = {
+        "-StateRoot": str(tmp_path / "state"),
+        "-RequestId": "req-wrapper-9",
+        "-TargetIssue": "9",
+        "-InFlightSha256": "A" * 64,
+        "-LawbRoot": str(tmp_path / "lawb"),
+        "-HgwRoot": str(tmp_path / "hgw"),
+        "-TargetRepoRoot": str(tmp_path / "hag"),
+    }
+    argv = [
+        powershell(),
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(REPO / "scripts" / "display_pilot.ps1"),
+        "-Action",
+        "recover",
+    ]
+    for option, value in values.items():
+        if option != missing_option:
+            argv.extend((option, value))
+
+    completed = subprocess.run(
+        argv,
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert not (tmp_path / "state" / "operator.lock").exists()
+    assert not (tmp_path / "state" / "replay_tombstones").exists()
+
+
+def test_powershell_wrapper_forwards_only_explicit_recovery_arguments(tmp_path):
+    state = tmp_path / "state"
+    lawb = tmp_path / "lawb"
+    hgw = tmp_path / "hgw"
+    hag = tmp_path / "hag"
+    for root in (lawb, hgw, hag):
+        root.mkdir()
+    request = state / "requests" / "req-wrapper-9"
+    request.mkdir(parents=True)
+    raw = (
+        json.dumps(
+            {
+                "request_id": "req-wrapper-9",
+                "target_issue": 9,
+                "state": "delegating_runner",
+                "at": "2026-07-24T00:00:00+00:00",
+            }
+        ).encode("utf-8")
+        + b"\n"
+    )
+    (state / "in_flight.json").write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+
+    completed = subprocess.run(
+        [
+            powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(REPO / "scripts" / "display_pilot.ps1"),
+            "-Action",
+            "recover",
+            "-StateRoot",
+            str(state),
+            "-RequestId",
+            "req-wrapper-9",
+            "-TargetIssue",
+            "9",
+            "-InFlightSha256",
+            digest,
+            "-LawbRoot",
+            str(lawb),
+            "-HgwRoot",
+            str(hgw),
+            "-TargetRepoRoot",
+            str(hag),
+            "-MaxCycles",
+            "999",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    output = json.loads(completed.stdout)
+    assert output["result"] == "success"
+    assert output["recovery_status"] == "recovered"
+    assert output["runner_invoked"] is False
+    assert output["codex_invoked"] is False
+    assert output["github_write_performed"] is False
+    assert not (state / "in_flight.json").exists()
 
 
 def _start_arguments(tmp_path):
@@ -600,11 +816,19 @@ def test_runner_invocation_uses_reviewed_powershell_gh_and_timeout(
     def fake_run(argv, **kwargs):
         observed["argv"] = argv
         observed.update(kwargs)
-        return type("Completed", (), {"returncode": 2})()
+        return type(
+            "Completed",
+            (),
+            {
+                "returncode": 2,
+                "stdout": b"raw-out",
+                "stderr": b"raw-err",
+            },
+        )()
 
     monkeypatch.setattr(cli.subprocess, "run", fake_run)
     request = {"selector": {"target_issue": 9, "request_id": "req-reviewed-9"}}
-    code = cli._invoke_runner(
+    result = cli._invoke_runner(
         request,
         tmp_path / "evidence.json",
         powershell_path=str(tmp_path / "reviewed-pwsh.exe"),
@@ -614,7 +838,12 @@ def test_runner_invocation_uses_reviewed_powershell_gh_and_timeout(
         gh_path=str(tmp_path / "reviewed-gh.exe"),
     )
 
-    assert code == 2
+    assert result.process_started is True
+    assert result.exit_code == 2
+    assert result.timed_out is False
+    assert result.launch_exception is None
+    assert result.stdout == b"raw-out"
+    assert result.stderr == b"raw-err"
     assert observed["argv"][0] == str(tmp_path / "reviewed-pwsh.exe")
     gh_index = observed["argv"].index("-ReviewedGhPath")
     assert observed["argv"][gh_index + 1] == str(tmp_path / "reviewed-gh.exe")
@@ -660,7 +889,7 @@ def test_runner_capture_accepts_invalid_utf8_bytes(tmp_path, stream_name):
         }
     }
 
-    code = cli._invoke_runner(
+    result = cli._invoke_runner(
         request,
         evidence_path,
         powershell_path=powershell(),
@@ -670,11 +899,80 @@ def test_runner_capture_accepts_invalid_utf8_bytes(tmp_path, stream_name):
         gh_path=str(gh_path),
     )
 
-    assert code == 23
+    assert result.process_started is True
+    assert result.exit_code == 23
+    assert result.timed_out is False
+    assert getattr(result, stream_name) == b"\xb1"
     assert fake_runner.parent == tmp_path
     assert not evidence_path.exists()
     assert not codex_path.exists()
     assert not gh_path.exists()
+
+
+def test_runner_timeout_returns_partial_raw_bytes_without_retry(
+    tmp_path,
+    monkeypatch,
+):
+    calls = []
+
+    def timed_out(argv, **kwargs):
+        calls.append((argv, kwargs))
+        raise subprocess.TimeoutExpired(
+            argv,
+            kwargs["timeout"],
+            output=b"partial-\xff",
+            stderr=b"error-\xfe",
+        )
+
+    monkeypatch.setattr(cli.subprocess, "run", timed_out)
+    result = cli._invoke_runner(
+        {"selector": {"target_issue": 9, "request_id": "req-timeout"}},
+        tmp_path / "evidence.json",
+        powershell_path=str(tmp_path / "pwsh.exe"),
+        runner_path=str(tmp_path / "runner.ps1"),
+        target_repo_root=str(tmp_path / "target"),
+        codex_path=str(tmp_path / "codex.cmd"),
+        gh_path=str(tmp_path / "gh.exe"),
+    )
+
+    assert len(calls) == 1
+    assert result.process_started is True
+    assert result.exit_code is None
+    assert result.timed_out is True
+    assert result.launch_exception is None
+    assert result.stdout == b"partial-\xff"
+    assert result.stderr == b"error-\xfe"
+
+
+def test_runner_launch_exception_returns_bounded_exact_process_fact(
+    tmp_path,
+    monkeypatch,
+):
+    message = "x" * 1500
+
+    def launch_failure(*args, **kwargs):
+        raise FileNotFoundError(message)
+
+    monkeypatch.setattr(cli.subprocess, "run", launch_failure)
+    result = cli._invoke_runner(
+        {"selector": {"target_issue": 9, "request_id": "req-launch"}},
+        tmp_path / "evidence.json",
+        powershell_path=str(tmp_path / "missing-pwsh.exe"),
+        runner_path=str(tmp_path / "runner.ps1"),
+        target_repo_root=str(tmp_path / "target"),
+        codex_path=str(tmp_path / "codex.cmd"),
+        gh_path=str(tmp_path / "gh.exe"),
+    )
+
+    assert result.process_started is False
+    assert result.exit_code is None
+    assert result.timed_out is False
+    assert result.launch_exception == {
+        "type": "builtins.FileNotFoundError",
+        "message": "x" * cli.RUNNER_LAUNCH_EXCEPTION_MESSAGE_CHARS,
+    }
+    assert result.stdout == b""
+    assert result.stderr == b""
 
 
 def test_start_production_issue_reader_treats_missing_selector_as_idle(

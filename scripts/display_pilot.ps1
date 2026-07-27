@@ -1,9 +1,12 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("setup", "verify", "start")]
+    [ValidateSet("setup", "verify", "start", "recover")]
     [string]$Action,
     [Parameter(Mandatory = $true)]
     [string]$StateRoot,
+    [string]$RequestId = "",
+    [int]$TargetIssue = 0,
+    [string]$InFlightSha256 = "",
     [string]$LawbRoot = "",
     [string]$LawbBranch = "",
     [string]$LawbHead = "",
@@ -26,41 +29,74 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $repoPython = Join-Path $repoRoot ".venv-course\Scripts\python.exe"
 $repoSrc = Join-Path $repoRoot "src"
 $moduleBootstrap = "import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); sys.argv[0]='display_pilot_operator_cli'; runpy.run_module('local_runner_bridge.display_pilot_operator_cli',run_name='__main__')"
-$arguments = @(
-    "-c",
-    $moduleBootstrap,
-    $repoSrc,
-    $Action,
-    "--state-root",
-    $StateRoot,
-    "--max-cycles",
-    [string]$MaxCycles,
-    "--poll-interval-seconds",
-    [string]$PollIntervalSeconds
-)
 
-foreach ($binding in @(
-    @("--lawb-root", $LawbRoot),
-    @("--lawb-branch", $LawbBranch),
-    @("--lawb-head", $LawbHead),
-    @("--hgw-root", $HgwRoot),
-    @("--target-repo-root", $TargetRepoRoot),
-    @("--python-path", $PythonPath),
-    @("--powershell-path", $PowerShellPath),
-    @("--gh-path", $GhPath),
-    @("--codex-path", $CodexPath),
-    @("--runner-path", $RunnerPath)
-)) {
-    if (-not [string]::IsNullOrWhiteSpace([string]$binding[1])) {
-        $arguments += [string]$binding[0]
-        $arguments += [string]$binding[1]
+if ($Action -eq "recover") {
+    if (
+        [string]::IsNullOrWhiteSpace($RequestId) -or
+        $TargetIssue -le 0 -or
+        [string]::IsNullOrWhiteSpace($InFlightSha256) -or
+        [string]::IsNullOrWhiteSpace($LawbRoot) -or
+        [string]::IsNullOrWhiteSpace($HgwRoot) -or
+        [string]::IsNullOrWhiteSpace($TargetRepoRoot)
+    ) {
+        throw "recover requires RequestId, TargetIssue, InFlightSha256, LawbRoot, HgwRoot, and TargetRepoRoot"
     }
+    $arguments = @(
+        "-c",
+        $moduleBootstrap,
+        $repoSrc,
+        $Action,
+        "--state-root",
+        $StateRoot,
+        "--request-id",
+        $RequestId,
+        "--target-issue",
+        [string]$TargetIssue,
+        "--in-flight-sha256",
+        $InFlightSha256,
+        "--lawb-root",
+        $LawbRoot,
+        "--hgw-root",
+        $HgwRoot,
+        "--target-repo-root",
+        $TargetRepoRoot
+    )
 }
-
-foreach ($path in $LawbExpectedModifiedFile) {
-    if (-not [string]::IsNullOrWhiteSpace($path)) {
-        $arguments += "--lawb-expected-modified-file"
-        $arguments += $path
+else {
+    $arguments = @(
+        "-c",
+        $moduleBootstrap,
+        $repoSrc,
+        $Action,
+        "--state-root",
+        $StateRoot,
+        "--max-cycles",
+        [string]$MaxCycles,
+        "--poll-interval-seconds",
+        [string]$PollIntervalSeconds
+    )
+    foreach ($binding in @(
+        @("--lawb-root", $LawbRoot),
+        @("--lawb-branch", $LawbBranch),
+        @("--lawb-head", $LawbHead),
+        @("--hgw-root", $HgwRoot),
+        @("--target-repo-root", $TargetRepoRoot),
+        @("--python-path", $PythonPath),
+        @("--powershell-path", $PowerShellPath),
+        @("--gh-path", $GhPath),
+        @("--codex-path", $CodexPath),
+        @("--runner-path", $RunnerPath)
+    )) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$binding[1])) {
+            $arguments += [string]$binding[0]
+            $arguments += [string]$binding[1]
+        }
+    }
+    foreach ($path in $LawbExpectedModifiedFile) {
+        if (-not [string]::IsNullOrWhiteSpace($path)) {
+            $arguments += "--lawb-expected-modified-file"
+            $arguments += $path
+        }
     }
 }
 

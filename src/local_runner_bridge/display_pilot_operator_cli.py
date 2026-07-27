@@ -7,6 +7,8 @@ import json
 import os
 import re
 import subprocess
+import time
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -15,7 +17,10 @@ from .display_pilot_hgw_adapter import render_from_evidence, verify_hgw_checkout
 from .display_pilot_operator import (
     DEFAULT_MAX_CYCLES,
     DEFAULT_POLL_INTERVAL_SECONDS,
+    RUNNER_LAUNCH_EXCEPTION_MESSAGE_CHARS,
+    RunnerInvocationResult,
     _path_is_within,
+    recover_incident,
     run_foreground,
 )
 from .display_pilot_transport import (
@@ -67,8 +72,11 @@ def _summary(result: str, reasons: list[str] | None = None) -> dict[str, Any]:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("setup", "verify", "start"))
+    parser.add_argument("action", choices=("setup", "verify", "start", "recover"))
     parser.add_argument("--state-root", required=True)
+    parser.add_argument("--request-id")
+    parser.add_argument("--target-issue", type=int)
+    parser.add_argument("--in-flight-sha256")
     parser.add_argument("--lawb-root")
     parser.add_argument("--lawb-branch")
     parser.add_argument("--lawb-head")
@@ -326,41 +334,93 @@ def _invoke_runner(
     target_repo_root: str,
     codex_path: str,
     gh_path: str,
-) -> int:
+) -> RunnerInvocationResult:
     issue = request["selector"]["target_issue"]
-    completed = subprocess.run(
-        [
-            powershell_path,
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            runner_path,
-            "-IssueNumber",
-            str(issue),
-            "-Mode",
-            "ReviewBundle",
-            "-Repo",
-            TARGET_REPOSITORY,
-            "-RepoPath",
-            target_repo_root,
-            "-ReviewedCodexPath",
-            codex_path,
-            "-ReviewedGhPath",
-            gh_path,
-            "-MachineEvidencePath",
-            str(evidence_path),
-            "-DisplayPilotRequestId",
-            request["selector"]["request_id"],
-            "-SuppressReviewBundleComment",
-        ],
-        cwd=target_repo_root,
-        capture_output=True,
-        shell=False,
-        check=False,
-        timeout=RUNNER_TIMEOUT_SECONDS,
-    )
-    return completed.returncode
+    argv = [
+        powershell_path,
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        runner_path,
+        "-IssueNumber",
+        str(issue),
+        "-Mode",
+        "ReviewBundle",
+        "-Repo",
+        TARGET_REPOSITORY,
+        "-RepoPath",
+        target_repo_root,
+        "-ReviewedCodexPath",
+        codex_path,
+        "-ReviewedGhPath",
+        gh_path,
+        "-MachineEvidencePath",
+        str(evidence_path),
+        "-DisplayPilotRequestId",
+        request["selector"]["request_id"],
+        "-SuppressReviewBundleComment",
+    ]
+    started_at = datetime.now(timezone.utc).isoformat()
+    started_clock = time.perf_counter()
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=target_repo_root,
+            capture_output=True,
+            shell=False,
+            check=False,
+            timeout=RUNNER_TIMEOUT_SECONDS,
+        )
+        return RunnerInvocationResult(
+            process_started=True,
+            exit_code=completed.returncode,
+            timed_out=False,
+            launch_exception=None,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            duration_ms=max(
+                0.0,
+                (time.perf_counter() - started_clock) * 1_000,
+            ),
+            stdout=getattr(completed, "stdout", None) or b"",
+            stderr=getattr(completed, "stderr", None) or b"",
+        )
+    except subprocess.TimeoutExpired as exc:
+        return RunnerInvocationResult(
+            process_started=True,
+            exit_code=None,
+            timed_out=True,
+            launch_exception=None,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            duration_ms=max(
+                0.0,
+                (time.perf_counter() - started_clock) * 1_000,
+            ),
+            stdout=exc.output if type(exc.output) is bytes else b"",
+            stderr=exc.stderr if type(exc.stderr) is bytes else b"",
+        )
+    except Exception as exc:
+        return RunnerInvocationResult(
+            process_started=False,
+            exit_code=None,
+            timed_out=False,
+            launch_exception={
+                "type": f"{type(exc).__module__}.{type(exc).__qualname__}",
+                "message": str(exc)[
+                    :RUNNER_LAUNCH_EXCEPTION_MESSAGE_CHARS
+                ],
+            },
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            duration_ms=max(
+                0.0,
+                (time.perf_counter() - started_clock) * 1_000,
+            ),
+            stdout=b"",
+            stderr=b"",
+        )
 
 
 def _validated_runtime_config(value: Any) -> dict[str, str] | None:
@@ -426,6 +486,8 @@ def _start(
         runner=runner,
         hgw_renderer=renderer,
         python_path=config["python_path"],
+        runner_path=config["runner_path"],
+        powershell_path=config["powershell_path"],
         forbidden_state_roots=(
             config["lawb_root"],
             config["hgw_root"],
@@ -443,7 +505,32 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(_summary("blocked", ["invalid_arguments"]), sort_keys=True))
         return 2
 
-    if arguments.action == "setup":
+    if arguments.action == "recover":
+        required = (
+            arguments.request_id,
+            arguments.target_issue,
+            arguments.in_flight_sha256,
+            arguments.lawb_root,
+            arguments.hgw_root,
+            arguments.target_repo_root,
+        )
+        if any(not value for value in required):
+            output = _summary("blocked", ["required_recovery_argument_missing"])
+        else:
+            protected_roots = (
+                CONTROL_ROOT,
+                arguments.lawb_root,
+                arguments.hgw_root,
+                arguments.target_repo_root,
+            )
+            output = recover_incident(
+                state_root=arguments.state_root,
+                request_id=arguments.request_id,
+                target_issue=arguments.target_issue,
+                in_flight_sha256=arguments.in_flight_sha256,
+                forbidden_state_roots=protected_roots,
+            )
+    elif arguments.action == "setup":
         root = Path(arguments.state_root).resolve()
         protected_roots = (
             arguments.lawb_root,
