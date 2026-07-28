@@ -195,6 +195,52 @@ function Invoke-CapturedCommand([string]$CommandPath, [string[]]$Arguments, [str
     }
 }
 
+function Invoke-CodexVersionProbe([string]$CommandPath, [string]$WorkingDirectory) {
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    Push-Location $WorkingDirectory
+    try {
+        try {
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = "Continue"
+                $extension = [System.IO.Path]::GetExtension($CommandPath).ToLowerInvariant()
+                if ($extension -in @(".cmd", ".bat")) {
+                    $cmd = if ($env:COMSPEC) { $env:COMSPEC } else { "cmd.exe" }
+                    & $cmd "/d" "/c" $CommandPath "--version" 1> $stdoutPath 2> $stderrPath
+                }
+                else {
+                    & $CommandPath "--version" 1> $stdoutPath 2> $stderrPath
+                }
+                $exitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
+            }
+            finally {
+                $ErrorActionPreference = $previousErrorActionPreference
+            }
+            $stdout = @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue)
+            $stderrText = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+            return [ordered]@{
+                exit_code = $exitCode
+                output = $stdout
+                text = ($stdout -join "`n")
+                safe_stderr = ConvertTo-SafeBootstrapError $stderrText
+            }
+        }
+        catch {
+            return [ordered]@{
+                exit_code = 1
+                output = @()
+                text = ""
+                safe_stderr = ConvertTo-SafeBootstrapError $_.Exception.Message
+            }
+        }
+    }
+    finally {
+        Pop-Location
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-VersionLine([string]$CommandPath, [string]$WorkingDirectory) {
     if (-not $CommandPath) { return $null }
     $result = Invoke-CapturedCommand -CommandPath $CommandPath -Arguments @("--version") -WorkingDirectory $WorkingDirectory
@@ -224,10 +270,13 @@ function Get-CodexFacts([string]$CommandPath, [string]$WorkingDirectory, [string
     $commandVersion = $null
     $commandUsable = $false
     if ($resolvedCommandPath) {
-        $result = Invoke-CapturedCommand -CommandPath $resolvedCommandPath -Arguments @("--version") -WorkingDirectory $WorkingDirectory
+        $result = Invoke-CodexVersionProbe -CommandPath $resolvedCommandPath -WorkingDirectory $WorkingDirectory
         if ($result.exit_code -eq 0) {
-            $commandVersion = (@($result.output) | Select-Object -First 1)
-            $commandUsable = [bool]$commandVersion
+            $candidateVersion = (@($result.output) | Where-Object { ([string]$_).Trim() } | Select-Object -First 1)
+            if ($candidateVersion -and (Parse-VersionTuple ([string]$candidateVersion))) {
+                $commandVersion = [string]$candidateVersion
+                $commandUsable = $true
+            }
         }
     }
     $package = Get-CodexPackageVersion -NpmPrefix $NpmPrefix
@@ -641,6 +690,8 @@ try {
 
     $existingCodex = Resolve-ExistingFileCaseInsensitive $expectedCodex
     $codexPath = if ($existingCodex) { $existingCodex } else { Resolve-CommandPath @("codex.exe", "codex.cmd", "codex.bat", "codex") }
+    $codexInstallAction = "install_codex_$($Manifest.codex.version)"
+    $codexInstalledAction = "installed_codex_$($Manifest.codex.version)"
     $codexFacts = Get-CodexFacts -CommandPath $codexPath -WorkingDirectory $ResolvedRepoRoot -NpmPrefix $npmPrefix -ExpectedVersion $Manifest.codex.version
     $codexFacts.expected_path = $expectedCodex
     $codexReady = $codexPath -and $codexFacts.ready
@@ -649,11 +700,11 @@ try {
         Add-Unique $Summary.actions_skipped_reused "reused_codex"
     }
     elseif ($Apply -and $npmPath -and $nodePath -and $Summary.blockers.Count -eq 0) {
-        Add-Unique $Summary.actions_planned "install_codex_0.141.0"
+        Add-Unique $Summary.actions_planned $codexInstallAction
         New-Item -ItemType Directory -Force -Path $npmPrefix | Out-Null
         $installCodex = Invoke-CapturedCommand -CommandPath $npmPath -Arguments @("install", "--global", "--prefix", $npmPrefix, "$($Manifest.codex.package)@$($Manifest.codex.version)") -WorkingDirectory $ResolvedRepoRoot
         if ($installCodex.exit_code -eq 0) {
-            Add-Unique $Summary.actions_performed "installed_codex_0.141.0"
+            Add-Unique $Summary.actions_performed $codexInstalledAction
             $existingCodex = Resolve-ExistingFileCaseInsensitive $expectedCodex
             $codexPath = $existingCodex
             $codexFacts = Get-CodexFacts -CommandPath $codexPath -WorkingDirectory $ResolvedRepoRoot -NpmPrefix $npmPrefix -ExpectedVersion $Manifest.codex.version
@@ -666,7 +717,7 @@ try {
         }
         else {
             Add-Unique $Summary.attention "codex_install_failed"
-            Set-FailureDiagnostic -Summary $Summary -FailedAction "install_codex_0.141.0" -FailedStage "npm_install" -SafeError $installCodex.text -NextManualAction "inspect npm/node setup or run focused restore"
+            Set-FailureDiagnostic -Summary $Summary -FailedAction $codexInstallAction -FailedStage "npm_install" -SafeError $installCodex.text -NextManualAction "inspect npm/node setup or run focused restore"
         }
     }
     else {

@@ -10,6 +10,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "bootstrap_course_environment.ps1"
+MANIFEST = ROOT / "scripts" / "bootstrap_manifest.json"
 
 
 def powershell():
@@ -101,7 +102,7 @@ if "%1"=="install" if "%2"=="--global" (
   mkdir "%~4" 2>nul
   > "%~4\\codex.cmd" echo @echo off
   >> "%~4\\codex.cmd" echo echo codex %%*^>^> "%%LAW_BOOTSTRAP_COMMAND_LOG%%"
-  >> "%~4\\codex.cmd" echo if "%%1"=="--version" echo codex-cli 0.141.0^& exit /b 0
+  >> "%~4\\codex.cmd" echo if "%%1"=="--version" echo codex-cli 0.145.0^& exit /b 0
   exit /b 0
 )
 exit /b 0
@@ -128,7 +129,7 @@ def fake_codex(bin_dir: Path) -> None:
         bin_dir / "codex.cmd",
         """@echo off
 echo codex %*>> "%LAW_BOOTSTRAP_COMMAND_LOG%"
-if "%1"=="--version" echo codex-cli 0.141.0& exit /b 0
+if "%1"=="--version" echo codex-cli 0.145.0& exit /b 0
 exit /b 9
 """,
     )
@@ -190,7 +191,7 @@ def seed_expected_codex(local_appdata: Path, *, name="codex.cmd") -> None:
         target / name,
         """@echo off
 echo codex %*>> "%LAW_BOOTSTRAP_COMMAND_LOG%"
-if "%1"=="--version" echo codex-cli 0.141.0& exit /b 0
+if "%1"=="--version" echo codex-cli 0.145.0& exit /b 0
 exit /b 9
 """,
     )
@@ -209,7 +210,29 @@ exit /b 9
     )
 
 
-def seed_expected_codex_package(local_appdata: Path, version="0.141.0") -> None:
+def seed_expected_codex_streams(
+    local_appdata: Path,
+    *,
+    stdout: str | None,
+    stderr: str | None,
+    exit_code: int,
+) -> None:
+    target = local_appdata / "LocalAIWorkbench" / "npm"
+    target.mkdir(parents=True)
+    lines = [
+        "@echo off",
+        'echo codex %*>> "%LAW_BOOTSTRAP_COMMAND_LOG%"',
+        'if not "%1"=="--version" exit /b 9',
+    ]
+    if stdout is not None:
+        lines.append(f"echo {stdout}")
+    if stderr is not None:
+        lines.append(f"echo {stderr} 1>&2")
+    lines.append(f"exit /b {exit_code}")
+    write_cmd(target / "codex.cmd", "\n".join(lines) + "\n")
+
+
+def seed_expected_codex_package(local_appdata: Path, version="0.145.0") -> None:
     package_dir = local_appdata / "LocalAIWorkbench" / "npm" / "node_modules" / "@openai" / "codex"
     package_dir.mkdir(parents=True)
     (package_dir / "package.json").write_text(
@@ -220,12 +243,44 @@ def seed_expected_codex_package(local_appdata: Path, version="0.141.0") -> None:
 
 def test_cmd_invocation_uses_comspec_argument_vector():
     script = SCRIPT.read_text(encoding="utf-8")
+    captured_command = script.split("function Invoke-CapturedCommand", 1)[1].split(
+        "function Invoke-CodexVersionProbe", 1
+    )[0]
+    codex_probe = script.split("function Invoke-CodexVersionProbe", 1)[1].split(
+        "function Get-VersionLine", 1
+    )[0]
 
     assert 'return & $cmd "/d" "/c" $CommandPath @Arguments 2>&1' in script
     assert '"/s"' not in script
     assert "ConvertTo-CmdArgument" not in script
     assert "$line =" not in script
     assert "$allArgs" not in script
+    assert "function Invoke-CodexVersionProbe" in script
+    assert '& $cmd "/d" "/c" $CommandPath "--version" 1> $stdoutPath 2> $stderrPath' in script
+    assert "$result = Invoke-CodexVersionProbe" in script
+    assert "Start-Process" not in script
+    assert script.count('$ErrorActionPreference = "Stop"') == 1
+    assert "$previousErrorActionPreference = $ErrorActionPreference" in codex_probe
+    assert '$ErrorActionPreference = "Continue"' in codex_probe
+    assert "finally {" in codex_probe
+    assert "$ErrorActionPreference = $previousErrorActionPreference" in codex_probe
+    assert codex_probe.index("$previousErrorActionPreference = $ErrorActionPreference") < codex_probe.index(
+        '$ErrorActionPreference = "Continue"'
+    )
+    assert codex_probe.index('$ErrorActionPreference = "Continue"') < codex_probe.index(
+        '& $cmd "/d" "/c" $CommandPath "--version"'
+    )
+    assert codex_probe.index('& $cmd "/d" "/c" $CommandPath "--version"') < codex_probe.index(
+        "$ErrorActionPreference = $previousErrorActionPreference"
+    )
+    assert '$ErrorActionPreference = "Continue"' not in captured_command
+
+
+def test_canonical_manifest_pins_reviewed_codex_exactly():
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+    assert manifest["codex"]["package"] == "@openai/codex"
+    assert manifest["codex"]["version"] == "0.145.0"
 
 
 def test_audit_mode_creates_or_modifies_nothing(tmp_path):
@@ -720,7 +775,7 @@ def test_audit_detects_expected_codex_cmd_in_localappdata(tmp_path):
     assert result.returncode == 0
     assert payload["detected"]["codex"]["ready"] is True
     assert payload["detected"]["codex"]["command_usable"] is True
-    assert payload["detected"]["codex"]["command_version"] == "codex-cli 0.141.0"
+    assert payload["detected"]["codex"]["command_version"] == "codex-cli 0.145.0"
     assert payload["detected"]["codex"]["installed_version_source"] == "command"
     assert "codex_missing_or_wrong_version" not in payload["attention"]
     assert "codex --version" in commands
@@ -746,7 +801,7 @@ def test_audit_detects_expected_codex_cmd_in_path_with_spaces(tmp_path):
 
     assert result.returncode == 0
     assert payload["detected"]["codex"]["command_usable"] is True
-    assert payload["detected"]["codex"]["command_version"] == "codex-cli 0.141.0"
+    assert payload["detected"]["codex"]["command_version"] == "codex-cli 0.145.0"
     assert payload["detected"]["codex"]["ready"] is True
     assert "reused_codex" in payload["actions_skipped_reused"]
 
@@ -774,6 +829,102 @@ def test_audit_detects_expected_codex_cmd_case_variant(tmp_path):
     assert "codex_missing_or_wrong_version" not in payload["attention"]
 
 
+@pytest.mark.parametrize(
+    (
+        "stdout",
+        "stderr",
+        "exit_code",
+        "expected_usable",
+        "expected_version",
+        "expected_ready",
+    ),
+    [
+        (
+            "codex-cli 0.145.0",
+            "WARNING: proceeding, even though PATH aliases were unavailable",
+            0,
+            True,
+            "codex-cli 0.145.0",
+            True,
+        ),
+        ("codex-cli 0.145.0", "fatal diagnostic", 7, False, None, False),
+        (None, "codex-cli 0.145.0", 0, False, None, False),
+        ("launcher completed", "warning", 0, False, None, False),
+        ("codex-cli 0.141.0", None, 0, True, "codex-cli 0.141.0", False),
+    ],
+)
+def test_codex_probe_uses_exit_code_and_stdout_only(
+    tmp_path,
+    stdout,
+    stderr,
+    exit_code,
+    expected_usable,
+    expected_version,
+    expected_ready,
+):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_python(bin_dir)
+    fake_node_npm(bin_dir)
+    fake_gh(bin_dir)
+    seed_working_venv(repo, bin_dir)
+    local_appdata = tmp_path / "localappdata"
+    seed_expected_codex_streams(
+        local_appdata,
+        stdout=stdout,
+        stderr=stderr,
+        exit_code=exit_code,
+    )
+    seed_expected_codex_package(local_appdata)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env)
+    codex = payload["detected"]["codex"]
+
+    assert result.returncode == 0
+    assert codex["command_usable"] is expected_usable
+    assert codex["command_version"] == expected_version
+    assert codex["installed_version"] == "0.145.0"
+    assert codex["ready"] is expected_ready
+    if expected_ready:
+        assert "codex_command_unusable" not in payload["attention"]
+        assert "codex_missing_or_wrong_version" not in payload["attention"]
+
+
+def test_codex_probe_with_stderr_warning_supports_reviewed_path_with_spaces(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_python(bin_dir)
+    fake_node_npm(bin_dir)
+    fake_gh(bin_dir)
+    seed_working_venv(repo, bin_dir)
+    local_appdata = tmp_path / "Local App Data With Spaces"
+    seed_expected_codex_streams(
+        local_appdata,
+        stdout="codex-cli 0.145.0",
+        stderr="WARNING: benign diagnostic",
+        exit_code=0,
+    )
+    seed_expected_codex_package(local_appdata)
+    env = make_env(tmp_path, bin_dir, log)
+    env["LAWB_BOOTSTRAP_LOCALAPPDATA"] = str(local_appdata)
+
+    result, payload = run_bootstrap(repo, env)
+    codex = payload["detected"]["codex"]
+
+    assert result.returncode == 0
+    assert codex["path"].lower() == str(local_appdata / "LocalAIWorkbench" / "npm" / "codex.cmd").lower()
+    assert codex["command_usable"] is True
+    assert codex["command_version"] == "codex-cli 0.145.0"
+    assert codex["ready"] is True
+
+
 def test_codex_command_failure_with_package_metadata_is_not_ready(tmp_path):
     repo = make_repo(tmp_path)
     bin_dir = tmp_path / "bin"
@@ -794,7 +945,7 @@ echo codex %*>> "%LAW_BOOTSTRAP_COMMAND_LOG%"
 exit /b 1
 """,
     )
-    seed_expected_codex_package(local_appdata, "0.141.0")
+    seed_expected_codex_package(local_appdata, "0.145.0")
     env = make_env(tmp_path, bin_dir, log)
 
     result, payload = run_bootstrap(repo, env)
@@ -803,7 +954,7 @@ exit /b 1
     assert payload["detected"]["codex"]["ready"] is False
     assert payload["detected"]["codex"]["command_usable"] is False
     assert payload["detected"]["codex"]["command_version"] is None
-    assert payload["detected"]["codex"]["installed_version"] == "0.141.0"
+    assert payload["detected"]["codex"]["installed_version"] == "0.145.0"
     assert payload["detected"]["codex"]["installed_version_source"] == "package_json"
     assert "reused_codex" not in payload["actions_skipped_reused"]
     assert "codex_command_unusable" in payload["attention"]
@@ -827,8 +978,10 @@ def test_codex_install_uses_global_prefix_and_real_shim_layout(tmp_path):
     expected = tmp_path / "localappdata" / "LocalAIWorkbench" / "npm" / "codex.cmd"
 
     assert result.returncode == 0
-    assert f"npm install --global --prefix {expected.parent} @openai/codex@0.141.0" in commands
+    assert f"npm install --global --prefix {expected.parent} @openai/codex@0.145.0" in commands
     assert expected.is_file()
+    assert "install_codex_0.145.0" in payload["actions_planned"]
+    assert "installed_codex_0.145.0" in payload["actions_performed"]
     assert payload["detected"]["codex"]["path"].lower() == str(expected).lower()
     assert payload["detected"]["codex"]["command_usable"] is True
     assert payload["detected"]["codex"]["ready"] is True
@@ -854,7 +1007,7 @@ echo codex %*>> "%LAW_BOOTSTRAP_COMMAND_LOG%"
 exit /b 1
 """,
     )
-    seed_expected_codex_package(local_appdata, "0.141.0")
+    seed_expected_codex_package(local_appdata, "0.145.0")
     env = make_env(tmp_path, bin_dir, log)
     env["LAWB_BOOTSTRAP_LOCALAPPDATA"] = str(local_appdata)
 
@@ -862,7 +1015,7 @@ exit /b 1
 
     assert result.returncode == 0
     assert payload["detected"]["codex"]["command_usable"] is False
-    assert payload["detected"]["codex"]["installed_version"] == "0.141.0"
+    assert payload["detected"]["codex"]["installed_version"] == "0.145.0"
     assert payload["detected"]["codex"]["ready"] is False
     assert "reused_codex" not in payload["actions_skipped_reused"]
     assert "codex_command_unusable" in payload["attention"]
@@ -879,7 +1032,7 @@ def test_codex_missing_command_with_package_metadata_is_not_ready(tmp_path):
     fake_gh(bin_dir)
     seed_working_venv(repo, bin_dir)
     local_appdata = tmp_path / "localappdata"
-    seed_expected_codex_package(local_appdata, "0.141.0")
+    seed_expected_codex_package(local_appdata, "0.145.0")
     env = make_env(tmp_path, bin_dir, log)
 
     result, payload = run_bootstrap(repo, env)
@@ -887,12 +1040,13 @@ def test_codex_missing_command_with_package_metadata_is_not_ready(tmp_path):
     assert result.returncode == 0
     assert payload["detected"]["codex"]["ready"] is False
     assert payload["detected"]["codex"]["path"] is None
-    assert payload["detected"]["codex"]["installed_version"] == "0.141.0"
+    assert payload["detected"]["codex"]["installed_version"] == "0.145.0"
     assert "reused_codex" not in payload["actions_skipped_reused"]
     assert "codex_missing_or_wrong_version" in payload["attention"]
 
 
-def test_codex_wrong_command_version_with_correct_package_metadata_is_not_ready(tmp_path):
+@pytest.mark.parametrize("version", ["0.141.0", "0.140.0"])
+def test_codex_wrong_command_version_with_correct_package_metadata_is_not_ready(tmp_path, version):
     repo = make_repo(tmp_path)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -903,8 +1057,8 @@ def test_codex_wrong_command_version_with_correct_package_metadata_is_not_ready(
     fake_gh(bin_dir)
     seed_working_venv(repo, bin_dir)
     local_appdata = tmp_path / "localappdata"
-    seed_expected_codex_wrong_version(local_appdata, version="0.140.0")
-    seed_expected_codex_package(local_appdata, "0.141.0")
+    seed_expected_codex_wrong_version(local_appdata, version=version)
+    seed_expected_codex_package(local_appdata, "0.145.0")
     env = make_env(tmp_path, bin_dir, log)
 
     result, payload = run_bootstrap(repo, env)
@@ -912,8 +1066,8 @@ def test_codex_wrong_command_version_with_correct_package_metadata_is_not_ready(
     assert result.returncode == 0
     assert payload["detected"]["codex"]["ready"] is False
     assert payload["detected"]["codex"]["command_usable"] is True
-    assert payload["detected"]["codex"]["command_version"] == "codex-cli 0.140.0"
-    assert payload["detected"]["codex"]["installed_version"] == "0.141.0"
+    assert payload["detected"]["codex"]["command_version"] == f"codex-cli {version}"
+    assert payload["detected"]["codex"]["installed_version"] == "0.145.0"
     assert "reused_codex" not in payload["actions_skipped_reused"]
     assert "codex_missing_or_wrong_version" in payload["attention"]
 

@@ -137,7 +137,7 @@ def make_paths(tmp_path, *, codex_name="codex.cmd"):
             {
                 "protocol": "lawb.bootstrap_course_environment_manifest.v1",
                 "paths": {"venv": ".venv-course"},
-                "codex": {"version": "0.141.0"},
+                "codex": {"version": "0.145.0"},
             }
         ),
         encoding="utf-8",
@@ -596,21 +596,42 @@ def test_contract_drift_reasons_are_deterministic(monkeypatch, tmp_path):
     assert summary["operational_readiness"] is True
 
 
+def test_codex_manifest_version_match_is_exact(monkeypatch, tmp_path):
+    exact = run_check(
+        tmp_path / "exact",
+        runner=FakeRunner(codex_version="codex-cli 0.145.0"),
+        monkeypatch=monkeypatch,
+    )
+    stale = run_check(
+        tmp_path / "stale",
+        runner=FakeRunner(codex_version="codex-cli 0.141.0"),
+        monkeypatch=monkeypatch,
+    )
+
+    assert exact["bootstrap_contract"]["manifest_codex_version"] == "0.145.0"
+    assert exact["codex_cli"]["version"] == "0.145.0"
+    assert exact["codex_cli"]["version_matches_manifest"] is True
+    assert "codex_version_differs_from_manifest" not in exact["status_reasons"]
+    assert stale["codex_cli"]["version"] == "0.141.0"
+    assert stale["codex_cli"]["version_matches_manifest"] is False
+    assert "codex_version_differs_from_manifest" in stale["status_reasons"]
+
+
 def test_manifest_invalid_schema_blocks(monkeypatch, tmp_path):
     invalid_manifests = [
         None,
         "invalid_json",
         [],
         {},
-        {"protocol": "x", "paths": [], "codex": {"version": "0.141.0"}},
-        {"protocol": "x", "paths": {}, "codex": {"version": "0.141.0"}},
-        {"protocol": "x", "paths": {"venv": {}}, "codex": {"version": "0.141.0"}},
-        {"protocol": "x", "paths": {"venv": []}, "codex": {"version": "0.141.0"}},
-        {"protocol": "x", "paths": {"venv": 1}, "codex": {"version": "0.141.0"}},
-        {"protocol": "x", "paths": {"venv": True}, "codex": {"version": "0.141.0"}},
-        {"protocol": "x", "paths": {"venv": None}, "codex": {"version": "0.141.0"}},
-        {"protocol": "x", "paths": {"venv": ""}, "codex": {"version": "0.141.0"}},
-        {"protocol": "x", "paths": {"venv": "   "}, "codex": {"version": "0.141.0"}},
+        {"protocol": "x", "paths": [], "codex": {"version": "0.145.0"}},
+        {"protocol": "x", "paths": {}, "codex": {"version": "0.145.0"}},
+        {"protocol": "x", "paths": {"venv": {}}, "codex": {"version": "0.145.0"}},
+        {"protocol": "x", "paths": {"venv": []}, "codex": {"version": "0.145.0"}},
+        {"protocol": "x", "paths": {"venv": 1}, "codex": {"version": "0.145.0"}},
+        {"protocol": "x", "paths": {"venv": True}, "codex": {"version": "0.145.0"}},
+        {"protocol": "x", "paths": {"venv": None}, "codex": {"version": "0.145.0"}},
+        {"protocol": "x", "paths": {"venv": ""}, "codex": {"version": "0.145.0"}},
+        {"protocol": "x", "paths": {"venv": "   "}, "codex": {"version": "0.145.0"}},
         {"protocol": "x", "paths": {"venv": ".venv-course"}, "codex": []},
         {"protocol": "x", "paths": {"venv": ".venv-course"}, "codex": {}},
     ]
@@ -787,7 +808,7 @@ def test_ready_exit_attention_exit_blocked_exit_and_json_human(monkeypatch, caps
             "repository": {"repository_matches": True, "current_branch": EXPECTED_BRANCH, "head": EXPECTED_HEAD},
             "python": {"reviewed_python_path": str(py), "python_version": "Python 3.14.3", "required_imports_ready": True},
             "github_cli": {"selected_path": str(gh), "version": "gh version 2.95.0", "authenticated": True, "repository_read_matches": True},
-            "codex_cli": {"selected_path": str(codex), "version": "0.141.0", "safe_launcher": True},
+            "codex_cli": {"selected_path": str(codex), "version": "0.145.0", "safe_launcher": True},
             "fresh_shell": {
                 "python": {"fresh_shell_resolved_path": str(py)},
                 "gh": {"fresh_shell_resolved_path": str(gh)},

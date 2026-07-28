@@ -12,7 +12,7 @@
   },
   "codex": {
     "package": "@openai/codex",
-    "version": "0.141.0",
+    "version": "0.145.0",
     "minimum_node_major": 18
   },
   "paths": {
