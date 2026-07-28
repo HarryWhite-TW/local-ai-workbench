@@ -184,7 +184,7 @@ Write-Output '{"status":"READY","operational_readiness":true,"status_reasons":[]
     shutil.copy2(fake_rec02_tool, gh)
     codex = localappdata / "LocalAIWorkbench" / "npm" / "codex.cmd"
     codex.parent.mkdir(parents=True)
-    codex.write_text("@echo off\r\necho codex-cli 0.141.0\r\n", encoding="utf-8")
+    codex.write_text("@echo off\r\necho codex-cli 0.145.0\r\n", encoding="utf-8")
     (repo / "tracked.txt").write_text("fixture", encoding="utf-8")
     _git(repo, "init", "-b", "rec02-test")
     _git(repo, "remote", "add", "origin", "https://github.com/HarryWhite-TW/local-ai-workbench.git")

@@ -93,6 +93,10 @@ It must not use:
 
 Omit `-CompleteRecovery` to run the read-only audit path. It creates no venv, installs nothing, changes no Git identity or PATH, and does not start browser authentication.
 
+The repository-native reviewed Codex baseline is exactly `0.145.0`. Audit-only mode requires the reviewed launcher to match that manifest version exactly; it does not install, upgrade, downgrade, or otherwise change the runtime.
+
+`-Apply` and `-CompleteRecovery` remain separately governed recovery actions. Do not use either merely to silence a Codex version mismatch.
+
 ### Case D: GitHub authentication is missing
 
 Without an explicitly approved complete-recovery package that includes conditional browser authentication, `gh auth login --web` remains a separately approved, user-visible operation.
