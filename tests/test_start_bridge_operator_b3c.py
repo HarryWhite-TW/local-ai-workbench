@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import ast
+import ctypes
 import json
 import os
 import shutil
 import subprocess
+import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -14,6 +18,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER_SOURCE = REPO_ROOT / "scripts" / "start_bridge_operator_b3c.ps1"
 EXPECTED_ORIGIN = "https://github.com/HarryWhite-TW/local-ai-workbench.git"
 HAG_ORIGIN = "https://github.com/HarryWhite-TW/human-approval-automation-gateway.git"
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from local_runner_bridge.bridge_operator_b1 import (  # noqa: E402
+    CommentRecord,
+    IssueRecord,
+    LocalReadiness,
+    run_bridge_operator_b1_dry_run,
+)
 
 
 def powershell() -> str:
@@ -37,7 +49,11 @@ def run_process(args: list[str], *, cwd: Path, env: dict[str, str] | None = None
 
 
 def run_process_bytes(
-    args: list[str], *, cwd: Path, env: dict[str, str] | None = None
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         args,
@@ -45,6 +61,42 @@ def run_process_bytes(
         env=env,
         capture_output=True,
         text=False,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def windows_process_exists(process_id: int) -> bool:
+    process_query_limited_information = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(
+        process_query_limited_information,
+        False,
+        process_id,
+    )
+    if not handle:
+        return False
+    ctypes.windll.kernel32.CloseHandle(handle)
+    return True
+
+
+def wait_for_windows_process_exit(process_id: int, timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not windows_process_exists(process_id):
+            return True
+        time.sleep(0.05)
+    return not windows_process_exists(process_id)
+
+
+def terminate_windows_process_tree(process_id: int) -> None:
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    taskkill = Path(system_root) / "System32" / "taskkill.exe"
+    if not taskkill.is_file():
+        return
+    subprocess.run(
+        [str(taskkill), "/PID", str(process_id), "/T", "/F"],
+        capture_output=True,
+        timeout=5,
         check=False,
     )
 
@@ -107,6 +159,57 @@ $result = ConvertFrom-NativeBytes `
     -Bytes ([byte[]]@({byte_values})) `
     -EncodingPolicy "{policy}"
 $json = $result | ConvertTo-Json -Compress
+$bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(
+    $json + [Environment]::NewLine
+)
+[Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)
+""",
+        encoding="ascii",
+    )
+    result = run_process_bytes(
+        [
+            powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(probe),
+        ],
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.decode("utf-8", errors="strict"))
+
+
+def run_status_outcome_probe(
+    tmp_path: Path,
+    native_result: dict,
+    expected_comment_id: int | None = None,
+) -> dict:
+    functions = (
+        launcher_function_source("Get-JsonObject", "Get-ObjectProperty")
+        + launcher_function_source("Get-ObjectProperty", "Test-TrueProperty")
+        + launcher_function_source(
+            "Get-StatusWriteOutcome",
+            "Test-AbsoluteExistingFile",
+        )
+    )
+    encoded = __import__("base64").b64encode(
+        json.dumps(native_result, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    expected = "$null" if expected_comment_id is None else str(expected_comment_id)
+    probe = tmp_path / "status-outcome-probe.ps1"
+    probe.write_text(
+        functions
+        + f"""
+$nativeJson = [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String('{encoded}')
+)
+$nativeResult = $nativeJson | ConvertFrom-Json
+$outcome = Get-StatusWriteOutcome `
+    -NativeResult $nativeResult `
+    -ExpectedCommentId {expected}
+$json = $outcome | ConvertTo-Json -Compress
 $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(
     $json + [Environment]::NewLine
 )
@@ -272,6 +375,84 @@ exit /b %B3C_TEST_OPERATOR_EXIT%
     )
 
 
+def write_fake_gh(path: Path, helper: Path) -> None:
+    helper.write_text(
+        r"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+args = sys.argv[1:]
+method = args[args.index("--method") + 1]
+endpoint = args[args.index("--method") + 2]
+request_body = sys.stdin.buffer.read()
+log_path = Path(os.environ["B3C_TEST_GH_LOG"])
+invocation_count = 1
+if log_path.exists():
+    invocation_count += sum(
+        1 for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()
+    )
+record = {
+    "executable_path": os.environ["B3C_TEST_GH_EXECUTABLE"],
+    "method": method,
+    "endpoint": endpoint,
+    "args": args,
+    "request_body": request_body.decode("utf-8", errors="strict"),
+    "invocation_count": invocation_count,
+}
+with log_path.open("a", encoding="utf-8", newline="\n") as stream:
+    stream.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+mode = os.environ.get("B3C_TEST_GH_MODE", "success")
+is_create = method == "POST"
+if (is_create and mode == "create_failure") or (
+    not is_create and mode == "update_failure"
+):
+    raise SystemExit(7)
+if (is_create and mode == "create_timeout") or (
+    not is_create and mode == "update_timeout"
+):
+    time.sleep(3)
+if is_create and mode == "create_tree_timeout":
+    Path(os.environ["B3C_TEST_GH_CHILD_PID"]).write_text(
+        str(os.getpid()),
+        encoding="ascii",
+    )
+    time.sleep(60)
+if (is_create and mode == "create_invalid_utf8") or (
+    not is_create and mode == "update_invalid_utf8"
+):
+    sys.stdout.buffer.write(b"\x81")
+    raise SystemExit(0)
+if (is_create and mode == "create_malformed") or (
+    not is_create and mode == "update_malformed"
+):
+    sys.stdout.write("{not-json")
+    raise SystemExit(0)
+if is_create and mode == "create_missing_id":
+    sys.stdout.write("{}")
+    raise SystemExit(0)
+if is_create and mode == "create_non_integer_id":
+    sys.stdout.write('{"id":"45123"}')
+    raise SystemExit(0)
+comment_id = 45123
+if not is_create and mode == "update_id_mismatch":
+    comment_id = 45124
+sys.stdout.write(json.dumps({"id": comment_id}, separators=(",", ":")))
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    path.write_text(
+        f'@echo off\r\n"{sys.executable}" "{helper}" %*\r\nexit /b %ERRORLEVEL%\r\n',
+        encoding="ascii",
+    )
+
+
 def ready_bootstrap_payload(
     *,
     python_path: Path,
@@ -316,8 +497,10 @@ class LauncherHarness:
         self.bootstrap_log = base / "bootstrap-log.json"
         self.operator_json = base / "operator.json"
         self.operator_log = base / "operator-log.txt"
+        self.gh_log = base / "status-gh-log.jsonl"
+        self.gh_helper = base / "fake-status-gh.py"
         self.python = self.tools / "reviewed python.cmd"
-        self.gh = self.tools / "gh.exe"
+        self.gh = self.tools / "reviewed status gh.cmd"
         self.codex = self.tools / "codex.cmd"
 
     def create(
@@ -333,7 +516,7 @@ class LauncherHarness:
         shutil.copy2(LAUNCHER_SOURCE, self.scripts / LAUNCHER_SOURCE.name)
         write_fake_bootstrap(self.scripts / "bootstrap_course_environment.ps1")
         write_fake_operator(self.python)
-        self.gh.write_bytes(b"fake-gh")
+        write_fake_gh(self.gh, self.gh_helper)
         self.codex.write_text("@echo off\r\nexit /b 0\r\n", encoding="ascii")
         self.write_bootstrap(
             ready_bootstrap_payload(
@@ -365,6 +548,9 @@ class LauncherHarness:
                 "B3C_TEST_OPERATOR_JSON": str(self.operator_json),
                 "B3C_TEST_OPERATOR_LOG": str(self.operator_log),
                 "B3C_TEST_OPERATOR_EXIT": "0",
+                "B3C_TEST_GH_LOG": str(self.gh_log),
+                "B3C_TEST_GH_EXECUTABLE": str(self.gh),
+                "B3C_TEST_GH_MODE": "success",
                 "LOCALAPPDATA": str(self.base / "local app data"),
             }
         )
@@ -380,8 +566,14 @@ class LauncherHarness:
         *extra: str,
         env: dict[str, str] | None = None,
         state: Path | None = None,
+        wall_timeout: float | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict]:
-        raw_result = self.run_raw(*extra, env=env, state=state)
+        raw_result = self.run_raw(
+            *extra,
+            env=env,
+            state=state,
+            wall_timeout=wall_timeout,
+        )
         assert not raw_result.stdout.startswith(b"\xef\xbb\xbf")
         stdout = raw_result.stdout.decode("utf-8")
         stderr = raw_result.stderr.decode("utf-8")
@@ -400,6 +592,7 @@ class LauncherHarness:
         *extra: str,
         env: dict[str, str] | None = None,
         state: Path | None = None,
+        wall_timeout: float | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         selected_state = self.state if state is None else state
         return run_process_bytes(
@@ -416,7 +609,28 @@ class LauncherHarness:
             ],
             cwd=self.repo,
             env=env or self.env(),
+            timeout=wall_timeout,
         )
+
+
+def read_gh_calls(harness: LauncherHarness) -> list[dict]:
+    if not harness.gh_log.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in harness.gh_log.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def status_payload(call: dict) -> dict:
+    api_input = json.loads(call["request_body"])
+    comment_body = api_input["body"].replace("\r\n", "\n")
+    assert comment_body.startswith(
+        "LAWBRIDGE-STATUS protocol=lawb.bridge_status.v1\n\n```json\n"
+    )
+    assert comment_body.endswith("\n```")
+    return json.loads(comment_body.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
 
 
 @pytest.fixture
@@ -585,30 +799,41 @@ def test_codex_missing_unusable_or_mismatched_fails_closed(
 def test_dirty_worktree_fails_closed(harness: LauncherHarness):
     (harness.repo / "dirty.txt").write_text("dirty", encoding="utf-8")
 
-    result, payload = harness.run()
+    result, payload = harness.run("-PublishStatus")
+    remote = status_payload(read_gh_calls(harness)[0])
 
     assert result.returncode == 2
     assert "control_repository_worktree_dirty" in payload["blocked_reasons"]
+    assert remote["repository"] == "HarryWhite-TW/local-ai-workbench"
+    assert remote["branch"] == ""
+    assert remote["head"] == ""
 
 
 def test_staged_files_are_reported_separately(harness: LauncherHarness):
     (harness.repo / "staged.txt").write_text("staged", encoding="utf-8")
     git(harness.repo, "add", "staged.txt")
 
-    result, payload = harness.run()
+    result, payload = harness.run("-PublishStatus")
+    remote = status_payload(read_gh_calls(harness)[0])
 
     assert result.returncode == 2
     assert "control_repository_worktree_dirty" in payload["blocked_reasons"]
     assert "control_repository_staged_changes_present" in payload["blocked_reasons"]
+    assert remote["branch"] == ""
+    assert remote["head"] == ""
 
 
 def test_wrong_origin_fails_closed(tmp_path: Path):
     fixture = LauncherHarness(tmp_path).create(origin="https://github.com/example/wrong.git")
 
-    result, payload = fixture.run()
+    result, payload = fixture.run("-PublishStatus")
+    remote = status_payload(read_gh_calls(fixture)[0])
 
     assert result.returncode == 2
     assert "control_repository_origin_mismatch" in payload["blocked_reasons"]
+    assert remote["repository"] == "HarryWhite-TW/local-ai-workbench"
+    assert remote["branch"] == ""
+    assert remote["head"] == ""
 
 
 def test_non_git_root_fails_closed(tmp_path: Path):
@@ -879,6 +1104,7 @@ def test_cmd_ampersand_argument_is_rejected_without_command_injection(
     )
 
     assert result["contract_error"] == "native_cmd_argument_unsupported_metacharacter"
+    assert result["invocation_error"] == ""
     assert result["process_started"] is False
     assert result["stdout"] == ""
     assert not invoked_marker.exists()
@@ -914,6 +1140,81 @@ def test_other_cmd_metacharacters_fail_closed_before_process_start(
     assert result["process_started"] is False
     assert not invoked_marker.exists()
     assert not injection_marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_comment_id", "classification", "comment_id"),
+    [
+        (
+            {
+                "process_started": False,
+                "invocation_error": "process did not start",
+            },
+            None,
+            "failed",
+            None,
+        ),
+        (
+            {
+                "contract_error": "native_cmd_argument_unsupported_metacharacter",
+            },
+            None,
+            "failed",
+            None,
+        ),
+        ({"exit_code": 7}, None, "uncertain", None),
+        (
+            {"exit_code": 9009, "invocation_error": "failure after process start"},
+            None,
+            "uncertain",
+            None,
+        ),
+        ({"timed_out": True}, None, "uncertain", None),
+        ({"stream_drain_timed_out": True}, None, "uncertain", None),
+        (
+            {"decode_error": "stdout:native_output_not_utf8"},
+            None,
+            "uncertain",
+            None,
+        ),
+        ({"stdout": "{}"}, None, "uncertain", None),
+        ({"stdout": '{"id":45123}'}, None, "success", 45123),
+        ({"stdout": '{"id":45123}'}, 45123, "success", 45123),
+        ({"stdout": '{"id":45124}'}, 45123, "uncertain", None),
+    ],
+)
+def test_status_write_outcome_requires_verified_success_after_process_start(
+    tmp_path: Path,
+    overrides: dict,
+    expected_comment_id: int | None,
+    classification: str,
+    comment_id: int | None,
+):
+    native_result = {
+        "exit_code": 0,
+        "stdout": '{"id":45123}',
+        "decode_error": "",
+        "contract_error": "",
+        "invocation_error": "",
+        "process_started": True,
+        "timed_out": False,
+        "process_tree_termination_attempted": False,
+        "process_tree_termination_succeeded": False,
+        "post_kill_wait_timed_out": False,
+        "stream_drain_timed_out": False,
+    }
+    native_result.update(overrides)
+
+    outcome = run_status_outcome_probe(
+        tmp_path,
+        native_result,
+        expected_comment_id,
+    )
+
+    assert outcome == {
+        "classification": classification,
+        "comment_id": comment_id,
+    }
 
 
 REDACTION_CASES = [
@@ -1071,42 +1372,57 @@ def test_argument_array_preserves_hag_target_path_with_spaces(tmp_path: Path):
 
 def test_hag_preflight_requires_explicit_target_root(harness: LauncherHarness):
     result, payload = harness.run(
+        "-PublishStatus",
         "-Repository",
         "HarryWhite-TW/human-approval-automation-gateway",
     )
+    remote = status_payload(read_gh_calls(harness)[0])
 
     assert result.returncode == 2
     assert "target_repo_root_required" in payload["blocked_reasons"]
     assert payload["operator_invoked"] is False
+    assert remote["repository"] == "HarryWhite-TW/human-approval-automation-gateway"
+    assert remote["branch"] == ""
+    assert remote["head"] == ""
 
 
 def test_hag_preflight_rejects_invalid_target_root_syntax(harness: LauncherHarness):
     result, payload = harness.run(
+        "-PublishStatus",
         "-Repository",
         "HarryWhite-TW/human-approval-automation-gateway",
         "-TargetRepoRoot",
         str(harness.base / "invalid<root"),
     )
+    remote = status_payload(read_gh_calls(harness)[0])
 
     assert result.returncode == 2
     assert "target_repo_root_invalid" in payload["blocked_reasons"]
     assert payload["operator_invoked"] is False
+    assert remote["repository"] == "HarryWhite-TW/human-approval-automation-gateway"
+    assert remote["branch"] == ""
+    assert remote["head"] == ""
 
 
 def test_hag_preflight_rejects_missing_target_repository(harness: LauncherHarness):
     missing = harness.base / "missing HAG repo"
 
     result, payload = harness.run(
+        "-PublishStatus",
         "-Repository",
         "HarryWhite-TW/human-approval-automation-gateway",
         "-TargetRepoRoot",
         str(missing),
     )
+    remote = status_payload(read_gh_calls(harness)[0])
 
     assert result.returncode == 2
     assert "target_repository_root_unavailable" in payload["blocked_reasons"]
     assert payload["operator_invoked"] is False
     assert not missing.exists()
+    assert remote["repository"] == "HarryWhite-TW/human-approval-automation-gateway"
+    assert remote["branch"] == ""
+    assert remote["head"] == ""
 
 
 def test_hag_preflight_rejects_wrong_origin(tmp_path: Path):
@@ -1236,6 +1552,752 @@ def test_operator_benign_stderr_exit_zero_remains_successful(harness: LauncherHa
     assert "benign child warning" in payload["operator_stderr_summary"]
     assert "PATH=" not in payload["operator_stderr_summary"]
     assert "B3C_TEST_" not in payload["operator_stderr_summary"]
+
+
+def test_status_publication_is_not_requested_by_default(harness: LauncherHarness):
+    result, payload = harness.run()
+
+    assert result.returncode == 0
+    assert read_gh_calls(harness) == []
+    assert payload["status_publication_requested"] is False
+    assert payload["status_publication_attempted"] is False
+    assert payload["status_comment_create_attempted"] is False
+    assert payload["status_comment_create_succeeded"] is False
+    assert payload["status_comment_update_attempted"] is False
+    assert payload["status_comment_update_succeeded"] is False
+    assert payload["status_comment_id"] is None
+    assert payload["status_publication_result"] == "not_requested"
+    assert payload["status_publication_blocked_reason"] == ""
+    assert len(payload["status_publication_run_id"]) == 32
+    assert payload["github_write_performed_directly"] is False
+
+
+def test_ready_preflight_publish_status_creates_one_fixed_comment(
+    harness: LauncherHarness,
+):
+    control_branch = git(harness.repo, "branch", "--show-current").stdout.strip()
+    control_head = git(harness.repo, "rev-parse", "HEAD").stdout.strip()
+    result, payload = harness.run(
+        "-PublishStatus",
+        env=harness.env(
+            GH_HOST="example.invalid",
+            GH_REPO="attacker/redirected-repository",
+        ),
+    )
+    calls = read_gh_calls(harness)
+    remote = status_payload(calls[0])
+
+    assert result.returncode == 0
+    assert payload["result"] == "ready"
+    assert len(calls) == 1
+    assert calls[0]["executable_path"] == str(harness.gh)
+    assert calls[0]["method"] == "POST"
+    hostname_index = calls[0]["args"].index("--hostname")
+    assert calls[0]["args"][hostname_index + 1] == "github.com"
+    assert (
+        calls[0]["endpoint"]
+        == "repos/HarryWhite-TW/local-ai-workbench/issues/147/comments"
+    )
+    assert remote["protocol"] == "lawb.bridge_status.v1"
+    assert remote["stage"] == "preflight"
+    assert remote["result"] == "ready"
+    assert remote["repository"] == "HarryWhite-TW/local-ai-workbench"
+    assert remote["branch"] == control_branch
+    assert remote["head"] == control_head
+    assert remote["next_action"] == "start_foreground"
+    assert payload["status_comment_create_succeeded"] is True
+    assert payload["status_comment_update_attempted"] is False
+    assert payload["status_comment_id"] == 45123
+    assert payload["status_publication_result"] == "created"
+    assert payload["github_write_performed_directly"] is True
+
+
+def test_foreground_publish_status_creates_then_updates_same_comment_once(
+    harness: LauncherHarness,
+):
+    child = {
+        "result": "success",
+        "request_id": "status-request-001",
+        "target_issue": 188,
+        "dispatcher_invoked": True,
+        "dispatcher_result_writeback_reached": True,
+        "dispatcher_result_writeback_verified": True,
+        "target_result_verified": True,
+    }
+    harness.operator_json.write_text(json.dumps(child), encoding="utf-8")
+
+    result, payload = harness.run("-StartForeground", "-PublishStatus")
+    calls = read_gh_calls(harness)
+    create_payload = status_payload(calls[0])
+    update_payload = status_payload(calls[1])
+    operator_log = harness.operator_log.read_text(encoding="utf-8", errors="replace")
+
+    assert result.returncode == 0
+    assert payload["result"] == "completed"
+    assert [call["method"] for call in calls] == ["POST", "PATCH"]
+    assert calls[0]["endpoint"].endswith("/issues/147/comments")
+    assert (
+        calls[1]["endpoint"]
+        == "repos/HarryWhite-TW/local-ai-workbench/issues/comments/45123"
+    )
+    assert create_payload["result"] == "running"
+    assert create_payload["operator_invoked"] is False
+    assert create_payload["repository"] == update_payload["repository"]
+    assert create_payload["branch"] == update_payload["branch"]
+    assert create_payload["head"] == update_payload["head"]
+    assert update_payload["stage"] == "final"
+    assert update_payload["result"] == "completed"
+    assert update_payload["operator_invoked"] is True
+    assert update_payload["request_id"] == "status-request-001"
+    assert update_payload["target_issue"] == 188
+    assert update_payload["dispatcher_invoked"] is True
+    assert operator_log.count("INVOCATION") == 1
+    assert payload["status_comment_create_succeeded"] is True
+    assert payload["status_comment_update_succeeded"] is True
+    assert payload["status_publication_result"] == "updated"
+
+
+@pytest.mark.parametrize(
+    ("child", "expected_reasons"),
+    [
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": ["target_issue_closed"],
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "target_issue_closed",
+            ],
+        ),
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": [
+                    "operator_process_failed",
+                    "target_issue_closed",
+                    "target_issue_closed",
+                ],
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "target_issue_closed",
+            ],
+        ),
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": ["token=OPERATOR_STATUS_SENTINEL_SECRET"],
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "unknown_blocked_reason",
+            ],
+        ),
+        (
+            {"result": "blocked"},
+            ["operator_process_failed", "operator_reported_blocked"],
+        ),
+        (
+            {"result": "blocked", "blocked_reasons": None},
+            ["operator_process_failed", "operator_reported_blocked"],
+        ),
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": "target_issue_closed",
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "unknown_blocked_reason",
+            ],
+        ),
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": [{"token": "OPERATOR_STATUS_SENTINEL_SECRET"}],
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "unknown_blocked_reason",
+            ],
+        ),
+    ],
+    ids=[
+        "actionable-code",
+        "deduplicated-wrapper-and-child",
+        "unsafe-code-redacted",
+        "missing",
+        "null",
+        "unexpected-scalar-type",
+        "nested-object",
+    ],
+)
+def test_foreground_blocked_status_safely_includes_operator_reason_codes(
+    harness: LauncherHarness,
+    child: dict,
+    expected_reasons: list[str],
+):
+    harness.operator_json.write_text(json.dumps(child), encoding="utf-8")
+
+    result, payload = harness.run(
+        "-StartForeground",
+        "-PublishStatus",
+        env=harness.env(B3C_TEST_OPERATOR_EXIT="2"),
+    )
+    calls = read_gh_calls(harness)
+    create_remote = status_payload(calls[0])
+    update_remote = status_payload(calls[1])
+    all_request_bodies = "\n".join(call["request_body"] for call in calls)
+    operator_log = harness.operator_log.read_text(encoding="utf-8", errors="replace")
+
+    assert result.returncode == 2
+    assert [call["method"] for call in calls] == ["POST", "PATCH"]
+    assert create_remote["blocked_reasons"] == []
+    assert update_remote["result"] == "blocked"
+    assert update_remote["next_action"] == "review_blocked_reasons"
+    assert update_remote["blocked_reasons"] == expected_reasons
+    assert payload["operator_summary"] == child
+    assert payload["operator_invoked"] is True
+    assert operator_log.count("INVOCATION") == 1
+    assert "operator_summary" not in all_request_bodies
+    assert "OPERATOR_STATUS_SENTINEL_SECRET" not in all_request_bodies
+
+
+def test_blocked_preflight_publishes_one_blocked_comment_without_operator(
+    harness: LauncherHarness,
+):
+    control_branch = git(harness.repo, "branch", "--show-current").stdout.strip()
+    control_head = git(harness.repo, "rev-parse", "HEAD").stdout.strip()
+    (harness.state / "operator.lock").write_text("active", encoding="utf-8")
+
+    result, payload = harness.run("-StartForeground", "-PublishStatus")
+    calls = read_gh_calls(harness)
+    remote = status_payload(calls[0])
+
+    assert result.returncode == 2
+    assert len(calls) == 1
+    assert calls[0]["method"] == "POST"
+    assert remote["result"] == "blocked"
+    assert remote["blocked_reasons"] == ["operator_lock_present"]
+    assert remote["branch"] == control_branch
+    assert remote["head"] == control_head
+    assert remote["next_action"] == "review_blocked_reasons"
+    assert payload["operator_invoked"] is False
+    assert payload["status_comment_update_attempted"] is False
+    assert not harness.operator_log.exists()
+
+
+def test_unavailable_status_publication_blocks_without_write_or_operator(
+    harness: LauncherHarness,
+):
+    bootstrap = ready_bootstrap_payload(
+        python_path=harness.python,
+        gh_path=harness.gh,
+        codex_path=harness.codex,
+    )
+    bootstrap["detected"]["gh"]["authenticated"] = False
+    harness.write_bootstrap(bootstrap)
+
+    result, payload = harness.run("-StartForeground", "-PublishStatus")
+
+    assert result.returncode == 2
+    assert read_gh_calls(harness) == []
+    assert payload["operator_invoked"] is False
+    assert "status_publication_unavailable" in payload["blocked_reasons"]
+    assert payload["status_publication_attempted"] is False
+    assert payload["status_publication_result"] == "unavailable"
+    assert (
+        payload["status_publication_blocked_reason"]
+        == "status_publication_unavailable"
+    )
+    assert payload["github_write_performed_directly"] is False
+
+
+def test_create_process_started_nonzero_is_uncertain_without_retry_or_operator(
+    harness: LauncherHarness,
+):
+    result, payload = harness.run(
+        "-StartForeground",
+        "-PublishStatus",
+        env=harness.env(B3C_TEST_GH_MODE="create_failure"),
+    )
+
+    assert result.returncode == 2
+    assert len(read_gh_calls(harness)) == 1
+    assert payload["operator_invoked"] is False
+    assert (
+        "status_publication_create_outcome_uncertain"
+        in payload["blocked_reasons"]
+    )
+    assert payload["status_comment_create_attempted"] is True
+    assert payload["status_comment_create_succeeded"] is False
+    assert payload["status_comment_update_attempted"] is False
+    assert payload["status_comment_id"] is None
+    assert payload["status_publication_result"] == "create_outcome_uncertain"
+    assert payload["github_write_performed_directly"] is False
+    assert not harness.operator_log.exists()
+
+
+def test_create_prestart_contract_failure_is_explicit_and_blocks_operator(
+    harness: LauncherHarness,
+):
+    unsafe_gh = harness.tools / "reviewed status gh%blocked.cmd"
+    shutil.copy2(harness.gh, unsafe_gh)
+    harness.write_bootstrap(
+        ready_bootstrap_payload(
+            python_path=harness.python,
+            gh_path=unsafe_gh,
+            codex_path=harness.codex,
+        )
+    )
+
+    result, payload = harness.run("-StartForeground", "-PublishStatus")
+
+    assert result.returncode == 2
+    assert read_gh_calls(harness) == []
+    assert payload["operator_invoked"] is False
+    assert "status_publication_create_failed" in payload["blocked_reasons"]
+    assert payload["status_comment_create_attempted"] is True
+    assert payload["status_comment_create_succeeded"] is False
+    assert payload["status_comment_update_attempted"] is False
+    assert payload["status_publication_result"] == "create_failed"
+    assert payload["github_write_performed_directly"] is False
+    assert not harness.operator_log.exists()
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "create_invalid_utf8",
+        "create_malformed",
+        "create_missing_id",
+        "create_non_integer_id",
+        "create_timeout",
+    ],
+)
+def test_create_uncertain_outcome_fails_closed_without_retry_or_operator(
+    harness: LauncherHarness,
+    mode: str,
+):
+    args = ["-StartForeground", "-PublishStatus"]
+    if mode == "create_timeout":
+        args += ["-TimeoutSeconds", "1"]
+    result, payload = harness.run(
+        *args,
+        env=harness.env(B3C_TEST_GH_MODE=mode),
+    )
+
+    assert result.returncode == 2
+    assert len(read_gh_calls(harness)) == 1
+    assert payload["operator_invoked"] is False
+    assert (
+        "status_publication_create_outcome_uncertain"
+        in payload["blocked_reasons"]
+    )
+    assert payload["status_publication_result"] == "create_outcome_uncertain"
+    assert payload["status_comment_id"] is None
+    assert payload["status_comment_update_attempted"] is False
+    assert not harness.operator_log.exists()
+
+
+def test_create_timeout_terminates_process_tree_with_bounded_stream_drain(
+    harness: LauncherHarness,
+):
+    child_pid_path = harness.base / "timed-out-gh-child.pid"
+    path_hijack = harness.base / "path hijack"
+    path_hijack.mkdir()
+    taskkill_marker = harness.base / "path-taskkill-was-used.txt"
+    (path_hijack / "taskkill.cmd").write_text(
+        '@echo off\r\n'
+        '>"%B3C_TEST_TASKKILL_MARKER%" echo PATH taskkill was used\r\n'
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    env = harness.env(
+        B3C_TEST_GH_MODE="create_tree_timeout",
+        B3C_TEST_GH_CHILD_PID=str(child_pid_path),
+        B3C_TEST_TASKKILL_MARKER=str(taskkill_marker),
+    )
+    env["PATH"] = str(path_hijack) + os.pathsep + env["PATH"]
+
+    child_pid: int | None = None
+    started_at = time.monotonic()
+    try:
+        result, payload = harness.run(
+            "-StartForeground",
+            "-PublishStatus",
+            "-TimeoutSeconds",
+            "1",
+            env=env,
+            wall_timeout=12,
+        )
+        elapsed_seconds = time.monotonic() - started_at
+        assert child_pid_path.is_file()
+        child_pid = int(child_pid_path.read_text(encoding="ascii"))
+
+        assert result.returncode == 2
+        assert elapsed_seconds < 12
+        assert len(read_gh_calls(harness)) == 1
+        assert payload["operator_invoked"] is False
+        assert payload["status_publication_result"] == "create_outcome_uncertain"
+        assert payload["status_comment_update_attempted"] is False
+        assert not harness.operator_log.exists()
+        assert wait_for_windows_process_exit(child_pid, 5)
+        assert not taskkill_marker.exists()
+    finally:
+        if child_pid is not None and windows_process_exists(child_pid):
+            terminate_windows_process_tree(child_pid)
+
+
+def test_native_timeout_cleanup_uses_only_trusted_bounded_primitives():
+    source = launcher_function_source(
+        "Stop-NativeProcessTree",
+        "Test-NativeCaptureDecoded",
+    )
+
+    assert (
+        'Join-Path ([System.Environment]::SystemDirectory) "taskkill.exe"'
+        in source
+    )
+    assert '"/PID " + [string]$TargetProcessId + " /T /F"' in source
+    assert (
+        "$taskkill.WaitForExit($ProcessTreeTerminationTimeoutMilliseconds)"
+        in source
+    )
+    assert "$taskkill.WaitForExit($CleanupCommandKillWaitMilliseconds)" in source
+    assert (
+        "$process.WaitForExit(\n"
+        "                    $PostTerminationWaitTimeoutMilliseconds\n"
+        "                )"
+        in source
+    )
+    assert (
+        "[System.Threading.Tasks.Task]::WaitAll(\n"
+        "                [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask),\n"
+        "                $StreamDrainTimeoutMilliseconds\n"
+        "            )"
+        in source
+    )
+
+
+def test_update_process_started_nonzero_is_uncertain_without_operator_rerun(
+    harness: LauncherHarness,
+):
+    harness.operator_json.write_text(json.dumps({"result": "success"}), encoding="utf-8")
+
+    result, payload = harness.run(
+        "-StartForeground",
+        "-PublishStatus",
+        env=harness.env(B3C_TEST_GH_MODE="update_failure"),
+    )
+    calls = read_gh_calls(harness)
+    operator_log = harness.operator_log.read_text(encoding="utf-8", errors="replace")
+
+    assert result.returncode == 2
+    assert [call["method"] for call in calls] == ["POST", "PATCH"]
+    assert operator_log.count("INVOCATION") == 1
+    assert (
+        "status_publication_update_outcome_uncertain"
+        in payload["blocked_reasons"]
+    )
+    assert payload["operator_summary"] == {"result": "success"}
+    assert payload["status_comment_create_succeeded"] is True
+    assert payload["status_comment_update_succeeded"] is False
+    assert payload["status_publication_result"] == "update_outcome_uncertain"
+    assert payload["github_write_performed_directly"] is True
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "update_invalid_utf8",
+        "update_malformed",
+        "update_id_mismatch",
+        "update_timeout",
+    ],
+)
+def test_update_uncertain_outcome_does_not_retry_or_replace_comment(
+    harness: LauncherHarness,
+    mode: str,
+):
+    harness.operator_json.write_text(json.dumps({"result": "success"}), encoding="utf-8")
+
+    args = ["-StartForeground", "-PublishStatus"]
+    if mode == "update_timeout":
+        args += ["-TimeoutSeconds", "1"]
+    result, payload = harness.run(
+        *args,
+        env=harness.env(B3C_TEST_GH_MODE=mode),
+    )
+    calls = read_gh_calls(harness)
+    operator_log = harness.operator_log.read_text(encoding="utf-8", errors="replace")
+
+    assert result.returncode == 2
+    assert [call["method"] for call in calls] == ["POST", "PATCH"]
+    assert len([call for call in calls if call["method"] == "POST"]) == 1
+    assert len([call for call in calls if call["method"] == "PATCH"]) == 1
+    assert operator_log.count("INVOCATION") == 1
+    assert (
+        "status_publication_update_outcome_uncertain"
+        in payload["blocked_reasons"]
+    )
+    assert payload["status_publication_result"] == "update_outcome_uncertain"
+
+
+def test_hag_target_keeps_status_destination_fixed_to_control_inbox(tmp_path: Path):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "clean status HAG"
+    init_git_repo(target, HAG_ORIGIN)
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "target fixture")
+    target_branch = git(target, "branch", "--show-current").stdout.strip()
+    target_head = git(target, "rev-parse", "HEAD").stdout.strip()
+    control_head = git(fixture.repo, "rev-parse", "HEAD").stdout.strip()
+    fixture.operator_json.write_text(
+        json.dumps({"result": "success"}),
+        encoding="utf-8",
+    )
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        "-PublishStatus",
+        "-Repository",
+        "HarryWhite-TW/human-approval-automation-gateway",
+        "-TargetRepoRoot",
+        str(target),
+        env=fixture.env(
+            GH_HOST="example.invalid",
+            GH_REPO="attacker/redirected-repository",
+        ),
+    )
+    calls = read_gh_calls(fixture)
+    create_remote = status_payload(calls[0])
+    update_remote = status_payload(calls[1])
+
+    assert result.returncode == 0
+    assert payload["result"] == "completed"
+    assert len(calls) == 2
+    assert (
+        calls[0]["endpoint"]
+        == "repos/HarryWhite-TW/local-ai-workbench/issues/147/comments"
+    )
+    assert (
+        calls[1]["endpoint"]
+        == "repos/HarryWhite-TW/local-ai-workbench/issues/comments/45123"
+    )
+    for call in calls:
+        hostname_index = call["args"].index("--hostname")
+        assert call["args"][hostname_index + 1] == "github.com"
+    assert (
+        create_remote["repository"]
+        == "HarryWhite-TW/human-approval-automation-gateway"
+    )
+    assert create_remote["branch"] == target_branch
+    assert create_remote["head"] == target_head
+    assert create_remote["head"] != control_head
+    assert update_remote["repository"] == create_remote["repository"]
+    assert update_remote["branch"] == create_remote["branch"]
+    assert update_remote["head"] == create_remote["head"]
+
+
+STATUS_SENTINELS = (
+    "ghp_STATUS_SENTINEL_12345678",
+    "github_pat_STATUS_SENTINEL_12345678",
+    "sk-STATUS_SENTINEL_12345678",
+    "sk-proj-STATUS_SENTINEL_12345678",
+    "Authorization: Bearer STATUS_SENTINEL_12345678",
+    "password=STATUS_SENTINEL_PASSWORD_12345678",
+)
+
+
+def test_remote_payload_is_whitelisted_and_contains_no_local_or_credential_data(
+    harness: LauncherHarness,
+):
+    secret_text = " ; ".join(STATUS_SENTINELS)
+    child = {
+        "result": "success",
+        "request_id": "safe-request-001",
+        "target_issue": 147,
+        "dispatcher_invoked": True,
+        "dispatcher_result_writeback_reached": True,
+        "dispatcher_result_writeback_verified": False,
+        "target_result_verified": False,
+        "repo_root": str(harness.repo),
+        "target_repo_root": str(harness.base / "target"),
+        "state_dir": str(harness.state),
+        "reviewed_python_path": str(harness.python),
+        "reviewed_gh_path": str(harness.gh),
+        "reviewed_codex_path": str(harness.codex),
+        "dispatcher_stdout": secret_text,
+        "dispatcher_stderr": secret_text,
+        "arbitrary_environment": dict(os.environ),
+    }
+    harness.operator_json.write_text(
+        json.dumps(child, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result, payload = harness.run(
+        "-StartForeground",
+        "-PublishStatus",
+        env=harness.env(B3C_TEST_OPERATOR_STDERR=secret_text),
+    )
+    calls = read_gh_calls(harness)
+    remote = status_payload(calls[1])
+    all_request_bodies = "\n".join(call["request_body"] for call in calls)
+    allowed = [
+        "protocol",
+        "run_id",
+        "observed_at_utc",
+        "stage",
+        "result",
+        "repository",
+        "branch",
+        "head",
+        "launch_requested",
+        "operator_invoked",
+        "request_id",
+        "target_issue",
+        "dispatcher_invoked",
+        "dispatcher_result_writeback_reached",
+        "dispatcher_result_writeback_verified",
+        "target_result_verified",
+        "blocked_reasons",
+        "next_action",
+    ]
+
+    assert result.returncode == 0
+    assert list(remote) == allowed
+    assert set(remote) <= set(allowed)
+    assert remote["request_id"] == "safe-request-001"
+    assert remote["target_issue"] == 147
+    for forbidden in (
+        str(harness.repo),
+        str(harness.state),
+        str(harness.python),
+        str(harness.gh),
+        str(harness.codex),
+        "repo_root",
+        "target_repo_root",
+        "state_dir",
+        "reviewed_python_path",
+        "reviewed_gh_path",
+        "reviewed_codex_path",
+        "dispatcher_stdout",
+        "dispatcher_stderr",
+        "arbitrary_environment",
+    ):
+        assert forbidden not in all_request_bodies
+    for sentinel in STATUS_SENTINELS:
+        assert sentinel not in all_request_bodies
+    assert payload["operator_summary"] == child
+
+
+def _b1_request_marker() -> str:
+    return (
+        "BRIDGE-INBOX-REQUEST "
+        "protocol=lawb.bridge_inbox_request.v1 "
+        "request_id=status-isolation-001 "
+        "repo=HarryWhite-TW/local-ai-workbench "
+        "target_issue=137 "
+        "target_dispatch_request_id=status-isolation-dispatch "
+        "branch=feature/status-isolation "
+        "head=4c46cb02738c55f06884eff989598182a6070a92 "
+        "expires=20260730T010000Z "
+        "action=run-reviewbundle "
+        "requested_by=chatgpt"
+    )
+
+
+def _b1_dispatch_marker() -> str:
+    return (
+        "CHATGPT-DISPATCH "
+        "protocol=lawb.dispatch.v1 "
+        "action=run-reviewbundle "
+        "issue=137 "
+        "repo=HarryWhite-TW/local-ai-workbench "
+        "branch=feature/status-isolation "
+        "head=4c46cb02738c55f06884eff989598182a6070a92 "
+        "expires=20260730T010000Z "
+        "requested_by=chatgpt "
+        "request_id=status-isolation-dispatch"
+    )
+
+
+class StatusIsolationGitHub:
+    def __init__(self, inbox_comments: list[CommentRecord]) -> None:
+        self.inbox_comments = inbox_comments
+
+    def get_issue(self, issue_number: int) -> IssueRecord:
+        return IssueRecord(number=issue_number, state="open", body="")
+
+    def list_issue_comments(self, issue_number: int) -> list[CommentRecord]:
+        if issue_number == 147:
+            return self.inbox_comments
+        return [
+            CommentRecord(
+                id=9002,
+                body=_b1_dispatch_marker(),
+                author="HarryWhite-TW",
+            )
+        ]
+
+
+def _run_b1_status_isolation(comments: list[CommentRecord]) -> dict:
+    return run_bridge_operator_b1_dry_run(
+        inbox_issue=147,
+        repo_root=REPO_ROOT,
+        github_client=StatusIsolationGitHub(comments),
+        local_checker=lambda root: LocalReadiness(
+            repo_root=str(REPO_ROOT.resolve()),
+            branch="feature/status-isolation",
+            head="4c46cb02738c55f06884eff989598182a6070a92",
+            clean=True,
+            gh_available=True,
+            gh_authenticated=True,
+            gh_read_available=True,
+        ),
+        now_utc=datetime(2026, 7, 29, 1, 0, 0, tzinfo=timezone.utc),
+    )
+
+
+def test_b1_ignores_status_marker_without_expanding_request_authority():
+    status_comment = CommentRecord(
+        id=9000,
+        body=(
+            "LAWBRIDGE-STATUS protocol=lawb.bridge_status.v1\n\n"
+            '```json\n{"repo":"HarryWhite-TW/local-ai-workbench",'
+            '"action":"run-reviewbundle","branch":"feature/status-isolation",'
+            '"head":"4c46cb02738c55f06884eff989598182a6070a92"}\n```'
+        ),
+        author="HarryWhite-TW",
+    )
+    request_comment = CommentRecord(
+        id=9001,
+        body=_b1_request_marker(),
+        author="HarryWhite-TW",
+    )
+
+    mixed = _run_b1_status_isolation([status_comment, request_comment])
+    status_only = _run_b1_status_isolation([status_comment])
+
+    assert mixed["result"] == "success"
+    assert mixed["request_id"] == "status-isolation-001"
+    assert mixed["inbox_comment_id"] == 9001
+    assert status_only["result"] == "blocked"
+    assert status_only["blocked_reasons"] == ["missing_request"]
+    assert status_only.get("request_id") is None
+    assert status_only.get("target_issue") is None
+    assert status_only.get("requested_action") is None
+    assert status_only.get("expected_branch") is None
+    assert status_only.get("expected_head") is None
 
 
 def test_safety_flags_remain_false_and_no_direct_higher_authority(

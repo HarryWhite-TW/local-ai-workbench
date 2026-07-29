@@ -17,6 +17,7 @@ Bridge Operator, Dispatcher, Runner, Codex, or a GitHub write path.
 [CmdletBinding()]
 param(
     [switch]$StartForeground,
+    [switch]$PublishStatus,
     [ValidateSet(
         "HarryWhite-TW/local-ai-workbench",
         "HarryWhite-TW/human-approval-automation-gateway"
@@ -39,6 +40,15 @@ $Protocol = "lawb.bridge_operator_b3c_launcher.v1"
 $ControlRepository = "HarryWhite-TW/local-ai-workbench"
 $HagRepository = "HarryWhite-TW/human-approval-automation-gateway"
 $SupportedRepositories = @($ControlRepository, $HagRepository)
+$StatusProtocol = "lawb.bridge_status.v1"
+$StatusMarker = "LAWBRIDGE-STATUS"
+$StatusHostname = "github.com"
+$StatusCreateEndpoint = "repos/HarryWhite-TW/local-ai-workbench/issues/147/comments"
+$StatusUpdateEndpointPrefix = "repos/HarryWhite-TW/local-ai-workbench/issues/comments"
+$ProcessTreeTerminationTimeoutMilliseconds = 3000
+$CleanupCommandKillWaitMilliseconds = 1000
+$PostTerminationWaitTimeoutMilliseconds = 2000
+$StreamDrainTimeoutMilliseconds = 3000
 $BootstrapScript = Join-Path -Path $PSScriptRoot -ChildPath "bootstrap_course_environment.ps1"
 $ControlRepoRoot = [System.IO.Path]::GetFullPath(
     (Join-Path -Path $PSScriptRoot -ChildPath "..")
@@ -251,6 +261,52 @@ function ConvertFrom-NativeBytes {
     }
 }
 
+function Stop-NativeProcessTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$TargetProcessId
+    )
+    $taskkillPath = Join-Path ([System.Environment]::SystemDirectory) "taskkill.exe"
+    if (-not (Test-Path -LiteralPath $taskkillPath -PathType Leaf)) {
+        return $false
+    }
+
+    $taskkill = $null
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $taskkillPath
+        $startInfo.Arguments = (
+            "/PID " + [string]$TargetProcessId + " /T /F"
+        )
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+
+        $taskkill = New-Object System.Diagnostics.Process
+        $taskkill.StartInfo = $startInfo
+        [void]$taskkill.Start()
+        if (-not $taskkill.WaitForExit($ProcessTreeTerminationTimeoutMilliseconds)) {
+            try {
+                $taskkill.Kill()
+            }
+            catch {
+            }
+            [void]$taskkill.WaitForExit($CleanupCommandKillWaitMilliseconds)
+            return $false
+        }
+        return $taskkill.ExitCode -eq 0
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if ($null -ne $taskkill) {
+            $taskkill.Dispose()
+        }
+    }
+}
+
 function Invoke-CapturedNative {
     param(
         [Parameter(Mandatory = $true)]
@@ -260,13 +316,21 @@ function Invoke-CapturedNative {
         [string]$WorkingDirectory,
         [Parameter(Mandatory = $true)]
         [ValidateSet("utf-8", "cp950", "auto")]
-        [string]$EncodingPolicy
+        [string]$EncodingPolicy,
+        [ValidateRange(0, 86400)]
+        [int]$ProcessTimeoutSeconds = 0,
+        [AllowNull()][string]$StandardInputText = $null
     )
 
     $exitCode = 9009
     $invocationError = ""
     $contractError = ""
     $processStarted = $false
+    $timedOut = $false
+    $processTreeTerminationAttempted = $false
+    $processTreeTerminationSucceeded = $false
+    $postKillWaitTimedOut = $false
+    $streamDrainTimedOut = $false
     $stdoutBytes = [byte[]]@()
     $stderrBytes = [byte[]]@()
     $process = $null
@@ -311,22 +375,62 @@ function Invoke-CapturedNative {
         $startInfo.CreateNoWindow = $true
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
+        $startInfo.RedirectStandardInput = $null -ne $StandardInputText
 
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $startInfo
         [void]$process.Start()
         $processStarted = $true
+        if ($null -ne $StandardInputText) {
+            $stdinBytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes(
+                $StandardInputText
+            )
+            $process.StandardInput.BaseStream.Write(
+                $stdinBytes,
+                0,
+                $stdinBytes.Length
+            )
+            $process.StandardInput.Close()
+        }
         $stdoutBuffer = New-Object System.IO.MemoryStream
         $stderrBuffer = New-Object System.IO.MemoryStream
         $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdoutBuffer)
         $stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderrBuffer)
-        $process.WaitForExit()
-        $exitCode = $process.ExitCode
-        [System.Threading.Tasks.Task]::WaitAll(
-            [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask)
-        )
-        $stdoutBytes = $stdoutBuffer.ToArray()
-        $stderrBytes = $stderrBuffer.ToArray()
+        if ($ProcessTimeoutSeconds -gt 0) {
+            $completed = $process.WaitForExit($ProcessTimeoutSeconds * 1000)
+            if (-not $completed) {
+                $timedOut = $true
+                $processTreeTerminationAttempted = $true
+                $terminationCommandSucceeded = Stop-NativeProcessTree `
+                    -TargetProcessId $process.Id
+                $postKillCompleted = $process.WaitForExit(
+                    $PostTerminationWaitTimeoutMilliseconds
+                )
+                $postKillWaitTimedOut = -not $postKillCompleted
+                $processTreeTerminationSucceeded = (
+                    $terminationCommandSucceeded -and $postKillCompleted
+                )
+            }
+            if ($process.HasExited) {
+                $exitCode = $process.ExitCode
+            }
+            $streamDrainCompleted = [System.Threading.Tasks.Task]::WaitAll(
+                [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask),
+                $StreamDrainTimeoutMilliseconds
+            )
+            $streamDrainTimedOut = -not $streamDrainCompleted
+        }
+        else {
+            $process.WaitForExit()
+            $exitCode = $process.ExitCode
+            [System.Threading.Tasks.Task]::WaitAll(
+                [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask)
+            )
+        }
+        if (-not $streamDrainTimedOut) {
+            $stdoutBytes = $stdoutBuffer.ToArray()
+            $stderrBytes = $stderrBuffer.ToArray()
+        }
     }
     catch {
         if ([string]::IsNullOrWhiteSpace($contractError)) {
@@ -371,7 +475,13 @@ function Invoke-CapturedNative {
         stderr_encoding = $stderrResult.encoding
         decode_error = ($decodeErrors -join ",")
         contract_error = $contractError
+        invocation_error = $invocationError
         process_started = $processStarted
+        timed_out = $timedOut
+        process_tree_termination_attempted = $processTreeTerminationAttempted
+        process_tree_termination_succeeded = $processTreeTerminationSucceeded
+        post_kill_wait_timed_out = $postKillWaitTimedOut
+        stream_drain_timed_out = $streamDrainTimedOut
     }
 }
 
@@ -593,6 +703,217 @@ function Test-TrueProperty {
     return (Get-ObjectProperty -Object $Object -Name $Name) -eq $true
 }
 
+function ConvertTo-SafeStatusReasonCodes {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$Reasons
+    )
+    $safeReasons = [System.Collections.ArrayList]::new()
+    foreach ($reasonValue in @($Reasons)) {
+        $reason = [string]$reasonValue
+        if ($reason -notmatch '^[a-z0-9_]+$') {
+            $reason = "unknown_blocked_reason"
+        }
+        if (-not $safeReasons.Contains($reason)) {
+            [void]$safeReasons.Add($reason)
+        }
+    }
+    return @($safeReasons)
+}
+
+function Get-OperatorStatusBlockedReasonValues {
+    param([AllowNull()][object]$OperatorSummary)
+    if ($null -eq $OperatorSummary) {
+        return @()
+    }
+    $property = $OperatorSummary.PSObject.Properties["blocked_reasons"]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return @()
+    }
+    $value = $property.Value
+    if ($value -isnot [System.Array]) {
+        return @("unknown_blocked_reason")
+    }
+    return @($value)
+}
+
+function Get-ValidStatusRequestId {
+    param([AllowNull()][object]$OperatorSummary)
+    $value = [string](Get-ObjectProperty -Object $OperatorSummary -Name "request_id")
+    if ($value -match '^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$') {
+        return $value
+    }
+    return $null
+}
+
+function Get-ValidStatusTargetIssue {
+    param([AllowNull()][object]$OperatorSummary)
+    $value = Get-ObjectProperty -Object $OperatorSummary -Name "target_issue"
+    if (($value -is [int] -or $value -is [long]) -and [long]$value -gt 0) {
+        return [long]$value
+    }
+    return $null
+}
+
+function New-StatusPayload {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunId,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("preflight", "operator", "final")]
+        [string]$Stage,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("ready", "running", "completed", "blocked")]
+        [string]$Result,
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [AllowEmptyString()][string]$Branch,
+        [AllowEmptyString()][string]$Head,
+        [Parameter(Mandatory = $true)][bool]$LaunchRequested,
+        [Parameter(Mandatory = $true)][bool]$OperatorInvoked,
+        [AllowNull()][object]$OperatorSummary,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$BlockedReasons,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet(
+            "start_foreground",
+            "review_blocked_reasons",
+            "review_operator_result"
+        )]
+        [string]$NextAction
+    )
+    $payload = [ordered]@{
+        protocol = $StatusProtocol
+        run_id = $RunId
+        observed_at_utc = [DateTime]::UtcNow.ToString(
+            "yyyy-MM-ddTHH:mm:ssZ",
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+        stage = $Stage
+        result = $Result
+        repository = $Repository
+        branch = if ($Branch -match '^[A-Za-z0-9][A-Za-z0-9._/\-]{0,255}$') {
+            $Branch
+        }
+        else {
+            ""
+        }
+        head = if ($Head -match '^[0-9a-f]{40}$') { $Head } else { "" }
+        launch_requested = $LaunchRequested
+        operator_invoked = $OperatorInvoked
+    }
+    $requestId = Get-ValidStatusRequestId -OperatorSummary $OperatorSummary
+    if ($null -ne $requestId) {
+        $payload.request_id = $requestId
+    }
+    $targetIssue = Get-ValidStatusTargetIssue -OperatorSummary $OperatorSummary
+    if ($null -ne $targetIssue) {
+        $payload.target_issue = $targetIssue
+    }
+    $payload.dispatcher_invoked = (
+        (Get-ObjectProperty -Object $OperatorSummary -Name "dispatcher_invoked") -eq $true
+    )
+    $payload.dispatcher_result_writeback_reached = (
+        (Get-ObjectProperty -Object $OperatorSummary `
+            -Name "dispatcher_result_writeback_reached") -eq $true
+    )
+    $payload.dispatcher_result_writeback_verified = (
+        (Get-ObjectProperty -Object $OperatorSummary `
+            -Name "dispatcher_result_writeback_verified") -eq $true
+    )
+    $payload.target_result_verified = (
+        (Get-ObjectProperty -Object $OperatorSummary -Name "target_result_verified") -eq $true
+    )
+    $payload.blocked_reasons = @(
+        ConvertTo-SafeStatusReasonCodes -Reasons $BlockedReasons
+    )
+    $payload.next_action = $NextAction
+    return $payload
+}
+
+function New-StatusComment {
+    param([Parameter(Mandatory = $true)][object]$Payload)
+    $json = $Payload | ConvertTo-Json -Depth 20 -Compress
+    return (
+        "$StatusMarker protocol=$StatusProtocol" +
+        [Environment]::NewLine +
+        [Environment]::NewLine +
+        '```json' +
+        [Environment]::NewLine +
+        $json +
+        [Environment]::NewLine +
+        '```'
+    )
+}
+
+function Invoke-StatusCommentWrite {
+    param(
+        [Parameter(Mandatory = $true)][string]$GhPath,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("POST", "PATCH")]
+        [string]$Method,
+        [Parameter(Mandatory = $true)][string]$Endpoint,
+        [Parameter(Mandatory = $true)][object]$Payload,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][int]$ProcessTimeoutSeconds
+    )
+    $body = New-StatusComment -Payload $Payload
+    $apiInput = [ordered]@{ body = $body } | ConvertTo-Json -Compress
+    return Invoke-CapturedNative `
+        -CommandPath $GhPath `
+        -Arguments @(
+            "api",
+            "--hostname", $StatusHostname,
+            "--method", $Method,
+            $Endpoint,
+            "--input", "-"
+        ) `
+        -WorkingDirectory $WorkingDirectory `
+        -EncodingPolicy "utf-8" `
+        -ProcessTimeoutSeconds $ProcessTimeoutSeconds `
+        -StandardInputText $apiInput
+}
+
+function Get-StatusWriteOutcome {
+    param(
+        [Parameter(Mandatory = $true)][object]$NativeResult,
+        [AllowNull()][object]$ExpectedCommentId
+    )
+    if (-not $NativeResult.process_started -or
+        -not [string]::IsNullOrWhiteSpace([string]$NativeResult.contract_error)) {
+        return [pscustomobject]@{ classification = "failed"; comment_id = $null }
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$NativeResult.invocation_error) -or
+        $NativeResult.timed_out -or
+        $NativeResult.stream_drain_timed_out -or
+        -not [string]::IsNullOrWhiteSpace([string]$NativeResult.decode_error)) {
+        return [pscustomobject]@{ classification = "uncertain"; comment_id = $null }
+    }
+    if ($NativeResult.exit_code -ne 0) {
+        return [pscustomobject]@{ classification = "uncertain"; comment_id = $null }
+    }
+    try {
+        $response = Get-JsonObject -JsonText $NativeResult.stdout
+        $responseId = Get-ObjectProperty -Object $response -Name "id"
+        if (-not ($responseId -is [int] -or $responseId -is [long]) -or
+            [long]$responseId -le 0) {
+            throw "invalid_comment_id"
+        }
+        $commentId = [long]$responseId
+        if ($null -ne $ExpectedCommentId -and
+            $commentId -ne [long]$ExpectedCommentId) {
+            throw "comment_id_mismatch"
+        }
+        return [pscustomobject]@{
+            classification = "success"
+            comment_id = $commentId
+        }
+    }
+    catch {
+        return [pscustomobject]@{ classification = "uncertain"; comment_id = $null }
+    }
+}
+
 function Test-AbsoluteExistingFile {
     param([AllowNull()][string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or
@@ -674,6 +995,9 @@ function Inspect-OperatorState {
 $blockedReasons = [System.Collections.ArrayList]::new()
 $branch = ""
 $head = ""
+$statusBranch = ""
+$statusHead = ""
+$controlRepositoryValidated = $false
 $bootstrapStatus = "NOT_RUN"
 $reviewedPythonPath = ""
 $reviewedGhPath = ""
@@ -682,6 +1006,18 @@ $operatorSummary = $null
 $operatorExitCode = $null
 $operatorStderrSummary = ""
 $operatorInvoked = $false
+$statusPublicationCapable = $false
+$statusPublicationAttempted = $false
+$statusCommentCreateAttempted = $false
+$statusCommentCreateSucceeded = $false
+$statusCommentUpdateAttempted = $false
+$statusCommentUpdateSucceeded = $false
+$statusCommentId = $null
+$statusPublicationResult = if ($PublishStatus) { "pending" } else { "not_requested" }
+$statusPublicationBlockedReason = ""
+$statusPublicationRunId = [guid]::NewGuid().ToString("N")
+$statusCommentNeedsUpdate = $false
+$githubWritePerformedDirectly = $false
 
 if ([string]::IsNullOrWhiteSpace($StateDir)) {
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
@@ -707,6 +1043,7 @@ if ([string]::IsNullOrWhiteSpace($gitPath)) {
     Add-BlockedReason -Reasons $blockedReasons -Reason "git_unavailable"
 }
 else {
+    $controlReasonCountBefore = $blockedReasons.Count
     $repoEvidence = Test-ExactRepository `
         -GitPath $gitPath `
         -RepositoryRoot $ControlRepoRoot `
@@ -715,6 +1052,11 @@ else {
         -Reasons $blockedReasons
     $branch = $repoEvidence.branch
     $head = $repoEvidence.head
+    $controlRepositoryValidated = (
+        $blockedReasons.Count -eq $controlReasonCountBefore -and
+        $branch -match '^[A-Za-z0-9][A-Za-z0-9._/\-]{0,255}$' -and
+        $head -match '^[0-9a-f]{40}$'
+    )
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ResolvedStateDir)) {
@@ -796,6 +1138,9 @@ else {
                 -not (Test-AbsoluteExistingFile -Path $reviewedGhPath)) {
                 Add-BlockedReason -Reasons $blockedReasons -Reason "reviewed_gh_not_ready_or_authenticated"
             }
+            else {
+                $statusPublicationCapable = $true
+            }
             if (-not (Test-TrueProperty -Object $codex -Name "command_usable") -or
                 -not (Test-TrueProperty -Object $codex -Name "ready") -or
                 -not (Test-AbsoluteExistingFile -Path $reviewedCodexPath)) {
@@ -817,6 +1162,10 @@ if (-not ($Repository -in $SupportedRepositories)) {
 $ResolvedTargetRepoRoot = ""
 if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]::Ordinal)) {
     $ResolvedTargetRepoRoot = $ControlRepoRoot
+    if ($controlRepositoryValidated) {
+        $statusBranch = $branch
+        $statusHead = $head
+    }
 }
 elseif ([string]::Equals($Repository, $HagRepository, [System.StringComparison]::Ordinal)) {
     if ([string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
@@ -831,12 +1180,88 @@ elseif ([string]::Equals($Repository, $HagRepository, [System.StringComparison]:
         }
         if (-not [string]::IsNullOrWhiteSpace($ResolvedTargetRepoRoot) -and
             -not [string]::IsNullOrWhiteSpace($gitPath)) {
-            [void](Test-ExactRepository `
+            $targetReasonCountBefore = $blockedReasons.Count
+            $targetRepoEvidence = Test-ExactRepository `
                 -GitPath $gitPath `
                 -RepositoryRoot $ResolvedTargetRepoRoot `
                 -ExpectedRepository $Repository `
                 -ReasonPrefix "target_repository" `
-                -Reasons $blockedReasons)
+                -Reasons $blockedReasons
+            if ($blockedReasons.Count -eq $targetReasonCountBefore) {
+                $statusBranch = $targetRepoEvidence.branch
+                $statusHead = $targetRepoEvidence.head
+            }
+        }
+    }
+}
+
+if ($PublishStatus) {
+    if (-not $statusPublicationCapable) {
+        Add-BlockedReason -Reasons $blockedReasons -Reason "status_publication_unavailable"
+        $statusPublicationResult = "unavailable"
+        $statusPublicationBlockedReason = "status_publication_unavailable"
+    }
+    else {
+        $preflightBlocked = $blockedReasons.Count -gt 0
+        if ($StartForeground -and -not $preflightBlocked) {
+            $statusStage = "operator"
+            $statusResult = "running"
+            $statusNextAction = "review_operator_result"
+            $statusCommentNeedsUpdate = $true
+        }
+        elseif ($preflightBlocked) {
+            $statusStage = "preflight"
+            $statusResult = "blocked"
+            $statusNextAction = "review_blocked_reasons"
+        }
+        else {
+            $statusStage = "preflight"
+            $statusResult = "ready"
+            $statusNextAction = "start_foreground"
+        }
+        $statusPayload = New-StatusPayload `
+            -RunId $statusPublicationRunId `
+            -Stage $statusStage `
+            -Result $statusResult `
+            -Repository $Repository `
+            -Branch $statusBranch `
+            -Head $statusHead `
+            -LaunchRequested ([bool]$StartForeground) `
+            -OperatorInvoked $false `
+            -OperatorSummary $null `
+            -BlockedReasons @($blockedReasons) `
+            -NextAction $statusNextAction
+        $statusPublicationAttempted = $true
+        $statusCommentCreateAttempted = $true
+        $createNativeResult = Invoke-StatusCommentWrite `
+            -GhPath $reviewedGhPath `
+            -Method "POST" `
+            -Endpoint $StatusCreateEndpoint `
+            -Payload $statusPayload `
+            -WorkingDirectory $ControlRepoRoot `
+            -ProcessTimeoutSeconds $TimeoutSeconds
+        $createOutcome = Get-StatusWriteOutcome `
+            -NativeResult $createNativeResult `
+            -ExpectedCommentId $null
+        if ($createOutcome.classification -eq "success") {
+            $statusCommentCreateSucceeded = $true
+            $statusCommentId = [long]$createOutcome.comment_id
+            $statusPublicationResult = "created"
+            $githubWritePerformedDirectly = $true
+        }
+        elseif ($createOutcome.classification -eq "failed") {
+            Add-BlockedReason -Reasons $blockedReasons `
+                -Reason "status_publication_create_failed"
+            $statusPublicationResult = "create_failed"
+            $statusPublicationBlockedReason = "status_publication_create_failed"
+            $statusCommentNeedsUpdate = $false
+        }
+        else {
+            Add-BlockedReason -Reasons $blockedReasons `
+                -Reason "status_publication_create_outcome_uncertain"
+            $statusPublicationResult = "create_outcome_uncertain"
+            $statusPublicationBlockedReason = "status_publication_create_outcome_uncertain"
+            $statusCommentNeedsUpdate = $false
         }
     }
 }
@@ -910,6 +1335,69 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
     }
 }
 
+$resultBeforeStatusUpdate = if ($blockedReasons.Count -gt 0) {
+    "blocked"
+}
+elseif ($StartForeground) {
+    "completed"
+}
+else {
+    "ready"
+}
+if ($PublishStatus -and $statusCommentNeedsUpdate -and
+    $statusCommentCreateSucceeded -and $null -ne $statusCommentId) {
+    $updateNextAction = if ($resultBeforeStatusUpdate -eq "completed") {
+        "review_operator_result"
+    }
+    else {
+        "review_blocked_reasons"
+    }
+    $finalStatusBlockedReasons = @($blockedReasons) + @(
+        Get-OperatorStatusBlockedReasonValues -OperatorSummary $operatorSummary
+    )
+    $updatePayload = New-StatusPayload `
+        -RunId $statusPublicationRunId `
+        -Stage "final" `
+        -Result $resultBeforeStatusUpdate `
+        -Repository $Repository `
+        -Branch $statusBranch `
+        -Head $statusHead `
+        -LaunchRequested ([bool]$StartForeground) `
+        -OperatorInvoked $operatorInvoked `
+        -OperatorSummary $operatorSummary `
+        -BlockedReasons $finalStatusBlockedReasons `
+        -NextAction $updateNextAction
+    $statusPublicationAttempted = $true
+    $statusCommentUpdateAttempted = $true
+    $updateNativeResult = Invoke-StatusCommentWrite `
+        -GhPath $reviewedGhPath `
+        -Method "PATCH" `
+        -Endpoint ($StatusUpdateEndpointPrefix + "/" + [string]$statusCommentId) `
+        -Payload $updatePayload `
+        -WorkingDirectory $ControlRepoRoot `
+        -ProcessTimeoutSeconds $TimeoutSeconds
+    $updateOutcome = Get-StatusWriteOutcome `
+        -NativeResult $updateNativeResult `
+        -ExpectedCommentId $statusCommentId
+    if ($updateOutcome.classification -eq "success") {
+        $statusCommentUpdateSucceeded = $true
+        $statusPublicationResult = "updated"
+        $githubWritePerformedDirectly = $true
+    }
+    elseif ($updateOutcome.classification -eq "failed") {
+        Add-BlockedReason -Reasons $blockedReasons `
+            -Reason "status_publication_update_failed"
+        $statusPublicationResult = "update_failed"
+        $statusPublicationBlockedReason = "status_publication_update_failed"
+    }
+    else {
+        Add-BlockedReason -Reasons $blockedReasons `
+            -Reason "status_publication_update_outcome_uncertain"
+        $statusPublicationResult = "update_outcome_uncertain"
+        $statusPublicationBlockedReason = "status_publication_update_outcome_uncertain"
+    }
+}
+
 $result = if ($blockedReasons.Count -gt 0) {
     "blocked"
 }
@@ -951,13 +1439,23 @@ $summary = [ordered]@{
     operator_exit_code = $operatorExitCode
     operator_stderr_summary = $operatorStderrSummary
     operator_summary = $operatorSummary
+    status_publication_requested = [bool]$PublishStatus
+    status_publication_attempted = $statusPublicationAttempted
+    status_comment_create_attempted = $statusCommentCreateAttempted
+    status_comment_create_succeeded = $statusCommentCreateSucceeded
+    status_comment_update_attempted = $statusCommentUpdateAttempted
+    status_comment_update_succeeded = $statusCommentUpdateSucceeded
+    status_comment_id = $statusCommentId
+    status_publication_result = $statusPublicationResult
+    status_publication_blocked_reason = $statusPublicationBlockedReason
+    status_publication_run_id = $statusPublicationRunId
     path_binding_scope = "process_only"
     manual_poll_once_is_recovery = $true
     background_service_started = $false
     dispatcher_invoked_directly = $false
     runner_invoked_directly = $false
     codex_invoked_directly = $false
-    github_write_performed_directly = $false
+    github_write_performed_directly = $githubWritePerformedDirectly
     path_persisted = $false
     authentication_repair_performed = $false
     install_performed = $false
