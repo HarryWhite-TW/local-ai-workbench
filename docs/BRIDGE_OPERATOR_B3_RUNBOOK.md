@@ -53,7 +53,40 @@ unsupported-action, and requester-mismatched markers still fail closed. This
 does not expand repository, trusted-actor, action, fixed-Inbox, Dispatcher, or
 Runner authority.
 
-## Production CLI
+## Canonical Repository Launcher
+
+Run the canonical launcher from the repository root for routine local use:
+
+```powershell
+.\scripts\start_bridge_operator_b3c.ps1
+```
+
+This default invocation is preflight-only. It verifies the repository, reviewed
+runtime bindings, and existing operator state without reading Inbox `#147` or
+invoking B3. It does not create another Bridge or polling loop.
+
+One bounded foreground B3-C run requires an explicit switch:
+
+```powershell
+.\scripts\start_bridge_operator_b3c.ps1 `
+  -StartForeground `
+  -MaxCycles 1 `
+  -PollIntervalSeconds 0 `
+  -TimeoutSeconds 600
+```
+
+The launcher reuses the existing B3-C CLI. Its reviewed `PATH` and `PYTHONPATH`
+bindings are process-local only: it does not install tools, repair
+authentication, or persist a PATH change. Manual Dispatcher `PollOnce` remains
+recovery only, not the routine entrypoint.
+
+The direct `python -m local_runner_bridge.bridge_operator_b3_cli` command below
+is an advanced/internal command, not the preferred routine entrypoint. This
+launcher node does not prove a real live B3-C task, daily UX,
+`B3C-STATUS-01`, `B3C-OPS-02`, `HOME-B3C-02`, startup, tray, service, or MCP
+acceptance.
+
+## Advanced/Internal CLI Invocation
 
 Run from the repository root:
 
