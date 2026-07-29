@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -13,6 +14,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER_SOURCE = REPO_ROOT / "scripts" / "start_bridge_operator_b3c.ps1"
 EXPECTED_ORIGIN = "https://github.com/HarryWhite-TW/local-ai-workbench.git"
 HAG_ORIGIN = "https://github.com/HarryWhite-TW/human-approval-automation-gateway.git"
+
+
+def powershell() -> str:
+    found = shutil.which("powershell.exe") or shutil.which("powershell")
+    if not found:
+        pytest.skip("Windows PowerShell is required for B3-C launcher tests")
+    return found
 
 
 def run_process(args: list[str], *, cwd: Path, env: dict[str, str] | None = None):
@@ -48,6 +56,43 @@ def launcher_function_source(start_name: str, next_name: str) -> str:
     return source[start:end]
 
 
+def run_stderr_summary_probe(tmp_path: Path, text: str) -> str:
+    function = launcher_function_source(
+        "Get-SafeStderrSummary",
+        "ConvertTo-WindowsCommandLineArgument",
+    )
+    encoded = __import__("base64").b64encode(text.encode("utf-8")).decode("ascii")
+    probe = tmp_path / "stderr-summary-probe.ps1"
+    probe.write_text(
+        function
+        + f"""
+$text = [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String('{encoded}')
+)
+$result = [ordered]@{{ summary = Get-SafeStderrSummary -Text $text }}
+$json = $result | ConvertTo-Json -Compress
+$bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(
+    $json + [Environment]::NewLine
+)
+[Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)
+""",
+        encoding="ascii",
+    )
+    result = run_process_bytes(
+        [
+            powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(probe),
+        ],
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.decode("utf-8", errors="strict"))["summary"]
+
+
 def run_decoder_probe(tmp_path: Path, data: bytes, policy: str) -> dict:
     functions = launcher_function_source(
         "ConvertFrom-NativeBytes",
@@ -71,7 +116,7 @@ $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(
     )
     result = run_process_bytes(
         [
-            "powershell.exe",
+            powershell(),
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
@@ -120,7 +165,7 @@ $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(
     env["B3C_TEST_CMD_INVOKED"] = str(invoked_marker)
     result = run_process_bytes(
         [
-            "powershell.exe",
+            powershell(),
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
@@ -359,7 +404,7 @@ class LauncherHarness:
         selected_state = self.state if state is None else state
         return run_process_bytes(
             [
-                "powershell.exe",
+                powershell(),
                 "-NoProfile",
                 "-ExecutionPolicy",
                 "Bypass",
@@ -379,6 +424,77 @@ def harness(tmp_path: Path) -> LauncherHarness:
     return LauncherHarness(tmp_path).create()
 
 
+def test_powershell_resolver_skips_safely_when_unavailable(monkeypatch):
+    discoveries: list[str] = []
+
+    def unavailable(name: str) -> None:
+        discoveries.append(name)
+        return None
+
+    monkeypatch.setattr(shutil, "which", unavailable)
+
+    with pytest.raises(pytest.skip.Exception, match="Windows PowerShell is required"):
+        powershell()
+
+    assert discoveries == ["powershell.exe", "powershell"]
+
+
+def test_powershell_subprocess_invocations_are_mediated_by_resolver():
+    source = Path(__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    process_call_names = {"run_process", "run_process_bytes", "subprocess.run"}
+    process_calls: list[ast.Call] = []
+    powershell_process_calls: list[ast.Call] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            call_name = node.func.id
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+        ):
+            call_name = f"{node.func.value.id}.{node.func.attr}"
+        else:
+            continue
+        if call_name not in process_call_names or not node.args:
+            continue
+
+        process_calls.append(node)
+        command = node.args[0]
+        if not isinstance(command, (ast.List, ast.Tuple)) or not command.elts:
+            continue
+        executable = command.elts[0]
+        assert not (
+            isinstance(executable, ast.Constant)
+            and isinstance(executable.value, str)
+            and executable.value.lower() in {"powershell.exe", "powershell"}
+        )
+        arguments = {
+            element.value
+            for element in command.elts[1:]
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        }
+        if arguments.intersection({"-NoProfile", "-ExecutionPolicy"}):
+            assert (
+                isinstance(executable, ast.Call)
+                and isinstance(executable.func, ast.Name)
+                and executable.func.id == "powershell"
+            )
+            powershell_process_calls.append(node)
+        elif (
+            isinstance(executable, ast.Call)
+            and isinstance(executable.func, ast.Name)
+            and executable.func.id == "powershell"
+        ):
+            powershell_process_calls.append(node)
+
+    assert 'shutil.which("powershell.exe") or shutil.which("powershell")' in source
+    assert process_calls
+    assert powershell_process_calls
+
+
 def test_default_invocation_is_preflight_only_and_ready(harness: LauncherHarness):
     result, payload = harness.run()
 
@@ -388,6 +504,7 @@ def test_default_invocation_is_preflight_only_and_ready(harness: LauncherHarness
     assert payload["phase"] == "preflight"
     assert payload["launch_requested"] is False
     assert payload["operator_invoked"] is False
+    assert payload["target_repo_root"] == str(harness.repo)
     assert payload["bootstrap_status"] == "READY"
     assert not harness.operator_log.exists()
 
@@ -799,6 +916,97 @@ def test_other_cmd_metacharacters_fail_closed_before_process_start(
     assert not injection_marker.exists()
 
 
+REDACTION_CASES = [
+    (
+        "authorization_bearer",
+        "Authorization: Bearer ghp_REDACTION_SENTINEL_12345678",
+        "ghp_REDACTION_SENTINEL_12345678",
+    ),
+    (
+        "json_token",
+        '{"token":"github_pat_REDACTION_SENTINEL_12345678"}',
+        "github_pat_REDACTION_SENTINEL_12345678",
+    ),
+    (
+        "password",
+        "password=REDACTION_SENTINEL_PASSWORD_12345678",
+        "REDACTION_SENTINEL_PASSWORD_12345678",
+    ),
+    (
+        "gho",
+        "gho_REDACTION_SENTINEL_12345678",
+        "gho_REDACTION_SENTINEL_12345678",
+    ),
+    (
+        "ghs",
+        "ghs_REDACTION_SENTINEL_12345678",
+        "ghs_REDACTION_SENTINEL_12345678",
+    ),
+    (
+        "ghu",
+        "ghu_REDACTION_SENTINEL_12345678",
+        "ghu_REDACTION_SENTINEL_12345678",
+    ),
+    (
+        "ghr",
+        "ghr_REDACTION_SENTINEL_12345678",
+        "ghr_REDACTION_SENTINEL_12345678",
+    ),
+    (
+        "openai",
+        "sk-REDACTION_SENTINEL_12345678",
+        "sk-REDACTION_SENTINEL_12345678",
+    ),
+    (
+        "openai_project",
+        "sk-proj-REDACTION_SENTINEL_12345678",
+        "sk-proj-REDACTION_SENTINEL_12345678",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case_name", "credential_text", "sentinel"),
+    REDACTION_CASES,
+    ids=[case[0] for case in REDACTION_CASES],
+)
+def test_safe_stderr_summary_redacts_credential_sentinels_before_truncation(
+    tmp_path: Path,
+    case_name: str,
+    credential_text: str,
+    sentinel: str,
+):
+    text = f"diagnostic before {credential_text} diagnostic after " + ("x" * 700)
+
+    summary = run_stderr_summary_probe(tmp_path, text)
+
+    assert case_name
+    assert sentinel not in summary
+    assert "diagnostic before" in summary
+    assert "[REDACTED]" in summary
+    assert summary.endswith("...[truncated]")
+
+
+def test_final_launcher_json_stderr_summary_contains_no_credential_sentinel(
+    harness: LauncherHarness,
+):
+    harness.operator_json.write_text(json.dumps({"result": "success"}), encoding="utf-8")
+    stderr_text = " ; ".join(case[1] for case in REDACTION_CASES)
+
+    result, payload = harness.run(
+        "-StartForeground",
+        env=harness.env(B3C_TEST_OPERATOR_STDERR=stderr_text),
+    )
+    serialized = json.dumps(payload, ensure_ascii=False)
+
+    assert result.returncode == 0
+    assert payload["result"] == "completed"
+    assert "[REDACTED]" in payload["operator_stderr_summary"]
+    for _, _, sentinel in REDACTION_CASES:
+        assert sentinel not in payload["operator_stderr_summary"]
+        assert sentinel not in serialized
+
+
 def test_explicit_foreground_uses_existing_b3_cli_and_mode(harness: LauncherHarness):
     harness.operator_json.write_text(json.dumps({"result": "success"}), encoding="utf-8")
 
@@ -861,9 +1069,8 @@ def test_argument_array_preserves_hag_target_path_with_spaces(tmp_path: Path):
     assert f'--target-repo-root "{target}"' in log
 
 
-def test_hag_requires_explicit_target_root(harness: LauncherHarness):
+def test_hag_preflight_requires_explicit_target_root(harness: LauncherHarness):
     result, payload = harness.run(
-        "-StartForeground",
         "-Repository",
         "HarryWhite-TW/human-approval-automation-gateway",
     )
@@ -871,6 +1078,98 @@ def test_hag_requires_explicit_target_root(harness: LauncherHarness):
     assert result.returncode == 2
     assert "target_repo_root_required" in payload["blocked_reasons"]
     assert payload["operator_invoked"] is False
+
+
+def test_hag_preflight_rejects_invalid_target_root_syntax(harness: LauncherHarness):
+    result, payload = harness.run(
+        "-Repository",
+        "HarryWhite-TW/human-approval-automation-gateway",
+        "-TargetRepoRoot",
+        str(harness.base / "invalid<root"),
+    )
+
+    assert result.returncode == 2
+    assert "target_repo_root_invalid" in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+
+
+def test_hag_preflight_rejects_missing_target_repository(harness: LauncherHarness):
+    missing = harness.base / "missing HAG repo"
+
+    result, payload = harness.run(
+        "-Repository",
+        "HarryWhite-TW/human-approval-automation-gateway",
+        "-TargetRepoRoot",
+        str(missing),
+    )
+
+    assert result.returncode == 2
+    assert "target_repository_root_unavailable" in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+    assert not missing.exists()
+
+
+def test_hag_preflight_rejects_wrong_origin(tmp_path: Path):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "wrong origin HAG"
+    init_git_repo(target, "https://github.com/example/wrong.git")
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "target fixture")
+
+    result, payload = fixture.run(
+        "-Repository",
+        "HarryWhite-TW/human-approval-automation-gateway",
+        "-TargetRepoRoot",
+        str(target),
+    )
+
+    assert result.returncode == 2
+    assert "target_repository_origin_mismatch" in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+
+
+def test_hag_preflight_rejects_dirty_repository(tmp_path: Path):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "dirty HAG"
+    init_git_repo(target, HAG_ORIGIN)
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "target fixture")
+    (target / "dirty.txt").write_text("dirty", encoding="utf-8")
+
+    result, payload = fixture.run(
+        "-Repository",
+        "HarryWhite-TW/human-approval-automation-gateway",
+        "-TargetRepoRoot",
+        str(target),
+    )
+
+    assert result.returncode == 2
+    assert "target_repository_worktree_dirty" in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+
+
+def test_valid_hag_preflight_is_ready_without_operator_invocation(tmp_path: Path):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "clean HAG"
+    init_git_repo(target, HAG_ORIGIN)
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "target fixture")
+
+    result, payload = fixture.run(
+        "-Repository",
+        "HarryWhite-TW/human-approval-automation-gateway",
+        "-TargetRepoRoot",
+        str(target),
+    )
+
+    assert result.returncode == 0
+    assert payload["result"] == "ready"
+    assert payload["target_repo_root"] == str(target.resolve())
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
 
 
 def test_fake_operator_success_is_retained_losslessly(harness: LauncherHarness):

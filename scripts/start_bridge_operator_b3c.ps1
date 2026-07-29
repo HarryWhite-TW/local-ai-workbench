@@ -62,7 +62,30 @@ function Get-SafeStderrSummary {
     if ([string]::IsNullOrWhiteSpace($Text)) {
         return ""
     }
-    $safe = $Text -replace '(?i)(token|password|secret|authorization)\s*[:=]\s*\S+', '$1=[REDACTED]'
+    $safe = $Text
+    $safe = $safe -replace (
+        '(?i)(["'']?(?:authorization|token|password|secret|credential)["'']?' +
+        '\s*[:=]\s*["''])([^"''\r\n]*)(["''])'
+    ), '$1[REDACTED]$3'
+    $safe = $safe -replace (
+        '(?im)\b(authorization|token|password|secret|credential)\b' +
+        '\s*[:=]\s*(?:Bearer\s+)?[^\s,;}\]]+'
+    ), '$1=[REDACTED]'
+    $safe = $safe -replace (
+        '(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}'
+    ), 'Bearer [REDACTED]'
+    $safe = $safe -replace (
+        '(?i)\b(?:gho|ghp|ghs|ghu|ghr)_[A-Za-z0-9_]{8,}\b'
+    ), '[REDACTED]'
+    $safe = $safe -replace (
+        '(?i)\bgithub_pat_[A-Za-z0-9_]{8,}\b'
+    ), '[REDACTED]'
+    $safe = $safe -replace (
+        '(?i)\bsk-proj-[A-Za-z0-9_-]{8,}\b'
+    ), '[REDACTED]'
+    $safe = $safe -replace (
+        '(?i)\bsk-[A-Za-z0-9_-]{8,}\b'
+    ), '[REDACTED]'
     $safe = $safe.Trim()
     if ($safe.Length -gt 600) {
         return $safe.Substring(0, 600) + "...[truncated]"
@@ -787,16 +810,16 @@ else {
     }
 }
 
-if ($StartForeground -and -not ($Repository -in $SupportedRepositories)) {
+if (-not ($Repository -in $SupportedRepositories)) {
     Add-BlockedReason -Reasons $blockedReasons -Reason "unsupported_target_repository"
 }
 
 $ResolvedTargetRepoRoot = ""
-if ($StartForeground) {
-    if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]::Ordinal)) {
-        $ResolvedTargetRepoRoot = $ControlRepoRoot
-    }
-    elseif ([string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
+if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]::Ordinal)) {
+    $ResolvedTargetRepoRoot = $ControlRepoRoot
+}
+elseif ([string]::Equals($Repository, $HagRepository, [System.StringComparison]::Ordinal)) {
+    if ([string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
         Add-BlockedReason -Reasons $blockedReasons -Reason "target_repo_root_required"
     }
     else {
