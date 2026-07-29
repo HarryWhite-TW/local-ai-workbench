@@ -80,10 +80,103 @@ bindings are process-local only: it does not install tools, repair
 authentication, or persist a PATH change. Manual Dispatcher `PollOnce` remains
 recovery only, not the routine entrypoint.
 
+### Optional ChatGPT-readable status publication
+
+Status publication is disabled by default. The ordinary preflight command and
+`-StartForeground` by itself make no status API call and preserve
+`github_write_performed_directly=false`. Publication requires the explicit
+`-PublishStatus` switch:
+
+```powershell
+.\scripts\start_bridge_operator_b3c.ps1 -PublishStatus
+```
+
+The destination is hard-coded to
+`HarryWhite-TW/local-ai-workbench` Issue `#147`. It cannot be redirected by a
+launcher argument, target repository, or remote request. Even when B3-C targets
+HAG, the status destination remains the control repository Inbox. Every status
+API call also fixes `--hostname github.com`; `GH_HOST`, `GH_REPO`, launcher
+arguments, target repository configuration, and remote request text cannot
+redirect it. The launcher uses only the authenticated, reviewed `gh` executable
+returned by bootstrap; it does not discover a replacement, repair
+authentication, or create an Issue.
+
+Each invocation has a new 32-character lowercase GUID `run_id`. A status
+comment begins with:
+
+```text
+LAWBRIDGE-STATUS protocol=lawb.bridge_status.v1
+```
+
+The marker is a machine-readable status surface, not discussion and not B1
+request authority. B1 continues to recognize only a standalone
+`BRIDGE-INBOX-REQUEST` marker; status JSON cannot supply repository, action,
+branch, HEAD, target Issue, or request authority.
+
+For preflight-only use, the launcher creates at most one final `ready` or
+`blocked` comment and performs no update. For
+`-StartForeground -PublishStatus`, a ready preflight creates one `running`
+comment. Only a successful create response containing a positive integer
+comment identity permits the operator to start. After the one foreground run,
+the launcher updates that same identity at most once with the final
+`completed` or `blocked` status. It never searches for or reuses an older
+status comment, creates a replacement comment, or retries create/update.
+
+If the reviewed `gh` is unavailable or unauthenticated, the launcher performs
+no publication and blocks locally with `status_publication_unavailable`. An
+explicit create/update failure means that the write process definitely did not
+start, including a local invocation-contract rejection. Once the process has
+started, any result without a verified zero exit and matching positive-integer
+comment identity is uncertain; this includes invocation exceptions, nonzero
+exit, timeout, undecodable or malformed response, missing/invalid identity, and
+update identity mismatch. Uncertain create blocks the operator; uncertain
+update does not rerun it. Both cases fail closed without a retry or replacement
+comment, and an uncertain result alone never sets
+`github_write_performed_directly=true`.
+
+The status `repository`, `branch`, and `head` describe the validated execution
+target. The local-ai-workbench target uses the validated control checkout
+identity. A valid HAG target uses the independently validated HAG checkout
+branch and HEAD, never the control checkout HEAD. If the HAG target is missing
+or invalid, its status still names the HAG repository but publishes empty
+`branch` and `head` fields with the relevant blocker.
+
+The remote JSON is rebuilt from this whitelist only, in stable order:
+
+- `protocol`
+- `run_id`
+- `observed_at_utc`
+- `stage`
+- `result`
+- `repository`
+- `branch`
+- `head`
+- `launch_requested`
+- `operator_invoked`
+- valid `request_id`, when present
+- positive integer `target_issue`, when present
+- `dispatcher_invoked`
+- `dispatcher_result_writeback_reached`
+- `dispatcher_result_writeback_verified`
+- `target_result_verified`
+- sanitized and deduplicated `blocked_reasons`
+- deterministic-code `next_action`
+
+The remote surface excludes local repository/target/state paths, reviewed tool
+paths, usernames, credentials, tokens, environment values, stdout, stderr,
+`operator_stderr_summary`, raw operator summaries, Task Packets, source, diffs,
+logs, evidence files, and GitHub API response bodies. Unexpected blocked reason
+text becomes `unknown_blocked_reason`; it is never copied verbatim.
+
+This implementation package uses only fake `gh` tests. It does not perform or
+claim a live Issue write, live daily-UX acceptance, `HOME-B3C-02`,
+`B3C-OPS-02`, startup, tray, service, or MCP acceptance. Any real status
+publication remains a separately supervised operation.
+
 The direct `python -m local_runner_bridge.bridge_operator_b3_cli` command below
 is an advanced/internal command, not the preferred routine entrypoint. This
-launcher node does not prove a real live B3-C task, daily UX,
-`B3C-STATUS-01`, `B3C-OPS-02`, `HOME-B3C-02`, startup, tray, service, or MCP
+launcher node does not prove a real live B3-C task, daily UX, live status
+publication, `B3C-OPS-02`, `HOME-B3C-02`, startup, tray, service, or MCP
 acceptance.
 
 ## Advanced/Internal CLI Invocation
