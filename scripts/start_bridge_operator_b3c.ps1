@@ -45,6 +45,10 @@ $StatusMarker = "LAWBRIDGE-STATUS"
 $StatusHostname = "github.com"
 $StatusCreateEndpoint = "repos/HarryWhite-TW/local-ai-workbench/issues/147/comments"
 $StatusUpdateEndpointPrefix = "repos/HarryWhite-TW/local-ai-workbench/issues/comments"
+$ProcessTreeTerminationTimeoutMilliseconds = 3000
+$CleanupCommandKillWaitMilliseconds = 1000
+$PostTerminationWaitTimeoutMilliseconds = 2000
+$StreamDrainTimeoutMilliseconds = 3000
 $BootstrapScript = Join-Path -Path $PSScriptRoot -ChildPath "bootstrap_course_environment.ps1"
 $ControlRepoRoot = [System.IO.Path]::GetFullPath(
     (Join-Path -Path $PSScriptRoot -ChildPath "..")
@@ -257,6 +261,52 @@ function ConvertFrom-NativeBytes {
     }
 }
 
+function Stop-NativeProcessTree {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$TargetProcessId
+    )
+    $taskkillPath = Join-Path ([System.Environment]::SystemDirectory) "taskkill.exe"
+    if (-not (Test-Path -LiteralPath $taskkillPath -PathType Leaf)) {
+        return $false
+    }
+
+    $taskkill = $null
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $taskkillPath
+        $startInfo.Arguments = (
+            "/PID " + [string]$TargetProcessId + " /T /F"
+        )
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+
+        $taskkill = New-Object System.Diagnostics.Process
+        $taskkill.StartInfo = $startInfo
+        [void]$taskkill.Start()
+        if (-not $taskkill.WaitForExit($ProcessTreeTerminationTimeoutMilliseconds)) {
+            try {
+                $taskkill.Kill()
+            }
+            catch {
+            }
+            [void]$taskkill.WaitForExit($CleanupCommandKillWaitMilliseconds)
+            return $false
+        }
+        return $taskkill.ExitCode -eq 0
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if ($null -ne $taskkill) {
+            $taskkill.Dispose()
+        }
+    }
+}
+
 function Invoke-CapturedNative {
     param(
         [Parameter(Mandatory = $true)]
@@ -277,6 +327,10 @@ function Invoke-CapturedNative {
     $contractError = ""
     $processStarted = $false
     $timedOut = $false
+    $processTreeTerminationAttempted = $false
+    $processTreeTerminationSucceeded = $false
+    $postKillWaitTimedOut = $false
+    $streamDrainTimedOut = $false
     $stdoutBytes = [byte[]]@()
     $stderrBytes = [byte[]]@()
     $process = $null
@@ -346,26 +400,37 @@ function Invoke-CapturedNative {
             $completed = $process.WaitForExit($ProcessTimeoutSeconds * 1000)
             if (-not $completed) {
                 $timedOut = $true
-                try {
-                    $process.Kill()
-                }
-                catch {
-                }
-                $process.WaitForExit()
+                $processTreeTerminationAttempted = $true
+                $terminationCommandSucceeded = Stop-NativeProcessTree `
+                    -TargetProcessId $process.Id
+                $postKillCompleted = $process.WaitForExit(
+                    $PostTerminationWaitTimeoutMilliseconds
+                )
+                $postKillWaitTimedOut = -not $postKillCompleted
+                $processTreeTerminationSucceeded = (
+                    $terminationCommandSucceeded -and $postKillCompleted
+                )
             }
-            else {
-                $process.WaitForExit()
+            if ($process.HasExited) {
+                $exitCode = $process.ExitCode
             }
+            $streamDrainCompleted = [System.Threading.Tasks.Task]::WaitAll(
+                [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask),
+                $StreamDrainTimeoutMilliseconds
+            )
+            $streamDrainTimedOut = -not $streamDrainCompleted
         }
         else {
             $process.WaitForExit()
+            $exitCode = $process.ExitCode
+            [System.Threading.Tasks.Task]::WaitAll(
+                [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask)
+            )
         }
-        $exitCode = $process.ExitCode
-        [System.Threading.Tasks.Task]::WaitAll(
-            [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask)
-        )
-        $stdoutBytes = $stdoutBuffer.ToArray()
-        $stderrBytes = $stderrBuffer.ToArray()
+        if (-not $streamDrainTimedOut) {
+            $stdoutBytes = $stdoutBuffer.ToArray()
+            $stderrBytes = $stderrBuffer.ToArray()
+        }
     }
     catch {
         if ([string]::IsNullOrWhiteSpace($contractError)) {
@@ -413,6 +478,10 @@ function Invoke-CapturedNative {
         invocation_error = $invocationError
         process_started = $processStarted
         timed_out = $timedOut
+        process_tree_termination_attempted = $processTreeTerminationAttempted
+        process_tree_termination_succeeded = $processTreeTerminationSucceeded
+        post_kill_wait_timed_out = $postKillWaitTimedOut
+        stream_drain_timed_out = $streamDrainTimedOut
     }
 }
 
@@ -653,6 +722,22 @@ function ConvertTo-SafeStatusReasonCodes {
     return @($safeReasons)
 }
 
+function Get-OperatorStatusBlockedReasonValues {
+    param([AllowNull()][object]$OperatorSummary)
+    if ($null -eq $OperatorSummary) {
+        return @()
+    }
+    $property = $OperatorSummary.PSObject.Properties["blocked_reasons"]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return @()
+    }
+    $value = $property.Value
+    if ($value -isnot [System.Array]) {
+        return @("unknown_blocked_reason")
+    }
+    return @($value)
+}
+
 function Get-ValidStatusRequestId {
     param([AllowNull()][object]$OperatorSummary)
     $value = [string](Get-ObjectProperty -Object $OperatorSummary -Name "request_id")
@@ -800,6 +885,7 @@ function Get-StatusWriteOutcome {
     }
     if (-not [string]::IsNullOrWhiteSpace([string]$NativeResult.invocation_error) -or
         $NativeResult.timed_out -or
+        $NativeResult.stream_drain_timed_out -or
         -not [string]::IsNullOrWhiteSpace([string]$NativeResult.decode_error)) {
         return [pscustomobject]@{ classification = "uncertain"; comment_id = $null }
     }
@@ -911,6 +997,7 @@ $branch = ""
 $head = ""
 $statusBranch = ""
 $statusHead = ""
+$controlRepositoryValidated = $false
 $bootstrapStatus = "NOT_RUN"
 $reviewedPythonPath = ""
 $reviewedGhPath = ""
@@ -956,6 +1043,7 @@ if ([string]::IsNullOrWhiteSpace($gitPath)) {
     Add-BlockedReason -Reasons $blockedReasons -Reason "git_unavailable"
 }
 else {
+    $controlReasonCountBefore = $blockedReasons.Count
     $repoEvidence = Test-ExactRepository `
         -GitPath $gitPath `
         -RepositoryRoot $ControlRepoRoot `
@@ -964,6 +1052,11 @@ else {
         -Reasons $blockedReasons
     $branch = $repoEvidence.branch
     $head = $repoEvidence.head
+    $controlRepositoryValidated = (
+        $blockedReasons.Count -eq $controlReasonCountBefore -and
+        $branch -match '^[A-Za-z0-9][A-Za-z0-9._/\-]{0,255}$' -and
+        $head -match '^[0-9a-f]{40}$'
+    )
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ResolvedStateDir)) {
@@ -1069,8 +1162,10 @@ if (-not ($Repository -in $SupportedRepositories)) {
 $ResolvedTargetRepoRoot = ""
 if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]::Ordinal)) {
     $ResolvedTargetRepoRoot = $ControlRepoRoot
-    $statusBranch = $branch
-    $statusHead = $head
+    if ($controlRepositoryValidated) {
+        $statusBranch = $branch
+        $statusHead = $head
+    }
 }
 elseif ([string]::Equals($Repository, $HagRepository, [System.StringComparison]::Ordinal)) {
     if ([string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
@@ -1257,6 +1352,9 @@ if ($PublishStatus -and $statusCommentNeedsUpdate -and
     else {
         "review_blocked_reasons"
     }
+    $finalStatusBlockedReasons = @($blockedReasons) + @(
+        Get-OperatorStatusBlockedReasonValues -OperatorSummary $operatorSummary
+    )
     $updatePayload = New-StatusPayload `
         -RunId $statusPublicationRunId `
         -Stage "final" `
@@ -1267,7 +1365,7 @@ if ($PublishStatus -and $statusCommentNeedsUpdate -and
         -LaunchRequested ([bool]$StartForeground) `
         -OperatorInvoked $operatorInvoked `
         -OperatorSummary $operatorSummary `
-        -BlockedReasons @($blockedReasons) `
+        -BlockedReasons $finalStatusBlockedReasons `
         -NextAction $updateNextAction
     $statusPublicationAttempted = $true
     $statusCommentUpdateAttempted = $true

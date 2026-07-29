@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import ast
+import ctypes
 import json
 import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,7 +49,11 @@ def run_process(args: list[str], *, cwd: Path, env: dict[str, str] | None = None
 
 
 def run_process_bytes(
-    args: list[str], *, cwd: Path, env: dict[str, str] | None = None
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(
         args,
@@ -55,6 +61,42 @@ def run_process_bytes(
         env=env,
         capture_output=True,
         text=False,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def windows_process_exists(process_id: int) -> bool:
+    process_query_limited_information = 0x1000
+    handle = ctypes.windll.kernel32.OpenProcess(
+        process_query_limited_information,
+        False,
+        process_id,
+    )
+    if not handle:
+        return False
+    ctypes.windll.kernel32.CloseHandle(handle)
+    return True
+
+
+def wait_for_windows_process_exit(process_id: int, timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not windows_process_exists(process_id):
+            return True
+        time.sleep(0.05)
+    return not windows_process_exists(process_id)
+
+
+def terminate_windows_process_tree(process_id: int) -> None:
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    taskkill = Path(system_root) / "System32" / "taskkill.exe"
+    if not taskkill.is_file():
+        return
+    subprocess.run(
+        [str(taskkill), "/PID", str(process_id), "/T", "/F"],
+        capture_output=True,
+        timeout=5,
         check=False,
     )
 
@@ -375,6 +417,12 @@ if (is_create and mode == "create_timeout") or (
     not is_create and mode == "update_timeout"
 ):
     time.sleep(3)
+if is_create and mode == "create_tree_timeout":
+    Path(os.environ["B3C_TEST_GH_CHILD_PID"]).write_text(
+        str(os.getpid()),
+        encoding="ascii",
+    )
+    time.sleep(60)
 if (is_create and mode == "create_invalid_utf8") or (
     not is_create and mode == "update_invalid_utf8"
 ):
@@ -518,8 +566,14 @@ class LauncherHarness:
         *extra: str,
         env: dict[str, str] | None = None,
         state: Path | None = None,
+        wall_timeout: float | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict]:
-        raw_result = self.run_raw(*extra, env=env, state=state)
+        raw_result = self.run_raw(
+            *extra,
+            env=env,
+            state=state,
+            wall_timeout=wall_timeout,
+        )
         assert not raw_result.stdout.startswith(b"\xef\xbb\xbf")
         stdout = raw_result.stdout.decode("utf-8")
         stderr = raw_result.stderr.decode("utf-8")
@@ -538,6 +592,7 @@ class LauncherHarness:
         *extra: str,
         env: dict[str, str] | None = None,
         state: Path | None = None,
+        wall_timeout: float | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         selected_state = self.state if state is None else state
         return run_process_bytes(
@@ -554,6 +609,7 @@ class LauncherHarness:
             ],
             cwd=self.repo,
             env=env or self.env(),
+            timeout=wall_timeout,
         )
 
 
@@ -743,30 +799,41 @@ def test_codex_missing_unusable_or_mismatched_fails_closed(
 def test_dirty_worktree_fails_closed(harness: LauncherHarness):
     (harness.repo / "dirty.txt").write_text("dirty", encoding="utf-8")
 
-    result, payload = harness.run()
+    result, payload = harness.run("-PublishStatus")
+    remote = status_payload(read_gh_calls(harness)[0])
 
     assert result.returncode == 2
     assert "control_repository_worktree_dirty" in payload["blocked_reasons"]
+    assert remote["repository"] == "HarryWhite-TW/local-ai-workbench"
+    assert remote["branch"] == ""
+    assert remote["head"] == ""
 
 
 def test_staged_files_are_reported_separately(harness: LauncherHarness):
     (harness.repo / "staged.txt").write_text("staged", encoding="utf-8")
     git(harness.repo, "add", "staged.txt")
 
-    result, payload = harness.run()
+    result, payload = harness.run("-PublishStatus")
+    remote = status_payload(read_gh_calls(harness)[0])
 
     assert result.returncode == 2
     assert "control_repository_worktree_dirty" in payload["blocked_reasons"]
     assert "control_repository_staged_changes_present" in payload["blocked_reasons"]
+    assert remote["branch"] == ""
+    assert remote["head"] == ""
 
 
 def test_wrong_origin_fails_closed(tmp_path: Path):
     fixture = LauncherHarness(tmp_path).create(origin="https://github.com/example/wrong.git")
 
-    result, payload = fixture.run()
+    result, payload = fixture.run("-PublishStatus")
+    remote = status_payload(read_gh_calls(fixture)[0])
 
     assert result.returncode == 2
     assert "control_repository_origin_mismatch" in payload["blocked_reasons"]
+    assert remote["repository"] == "HarryWhite-TW/local-ai-workbench"
+    assert remote["branch"] == ""
+    assert remote["head"] == ""
 
 
 def test_non_git_root_fails_closed(tmp_path: Path):
@@ -1103,6 +1170,7 @@ def test_other_cmd_metacharacters_fail_closed_before_process_start(
             None,
         ),
         ({"timed_out": True}, None, "uncertain", None),
+        ({"stream_drain_timed_out": True}, None, "uncertain", None),
         (
             {"decode_error": "stdout:native_output_not_utf8"},
             None,
@@ -1130,6 +1198,10 @@ def test_status_write_outcome_requires_verified_success_after_process_start(
         "invocation_error": "",
         "process_started": True,
         "timed_out": False,
+        "process_tree_termination_attempted": False,
+        "process_tree_termination_succeeded": False,
+        "post_kill_wait_timed_out": False,
+        "stream_drain_timed_out": False,
     }
     native_result.update(overrides)
 
@@ -1585,9 +1657,123 @@ def test_foreground_publish_status_creates_then_updates_same_comment_once(
     assert payload["status_publication_result"] == "updated"
 
 
+@pytest.mark.parametrize(
+    ("child", "expected_reasons"),
+    [
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": ["target_issue_closed"],
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "target_issue_closed",
+            ],
+        ),
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": [
+                    "operator_process_failed",
+                    "target_issue_closed",
+                    "target_issue_closed",
+                ],
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "target_issue_closed",
+            ],
+        ),
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": ["token=OPERATOR_STATUS_SENTINEL_SECRET"],
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "unknown_blocked_reason",
+            ],
+        ),
+        (
+            {"result": "blocked"},
+            ["operator_process_failed", "operator_reported_blocked"],
+        ),
+        (
+            {"result": "blocked", "blocked_reasons": None},
+            ["operator_process_failed", "operator_reported_blocked"],
+        ),
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": "target_issue_closed",
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "unknown_blocked_reason",
+            ],
+        ),
+        (
+            {
+                "result": "blocked",
+                "blocked_reasons": [{"token": "OPERATOR_STATUS_SENTINEL_SECRET"}],
+            },
+            [
+                "operator_process_failed",
+                "operator_reported_blocked",
+                "unknown_blocked_reason",
+            ],
+        ),
+    ],
+    ids=[
+        "actionable-code",
+        "deduplicated-wrapper-and-child",
+        "unsafe-code-redacted",
+        "missing",
+        "null",
+        "unexpected-scalar-type",
+        "nested-object",
+    ],
+)
+def test_foreground_blocked_status_safely_includes_operator_reason_codes(
+    harness: LauncherHarness,
+    child: dict,
+    expected_reasons: list[str],
+):
+    harness.operator_json.write_text(json.dumps(child), encoding="utf-8")
+
+    result, payload = harness.run(
+        "-StartForeground",
+        "-PublishStatus",
+        env=harness.env(B3C_TEST_OPERATOR_EXIT="2"),
+    )
+    calls = read_gh_calls(harness)
+    create_remote = status_payload(calls[0])
+    update_remote = status_payload(calls[1])
+    all_request_bodies = "\n".join(call["request_body"] for call in calls)
+    operator_log = harness.operator_log.read_text(encoding="utf-8", errors="replace")
+
+    assert result.returncode == 2
+    assert [call["method"] for call in calls] == ["POST", "PATCH"]
+    assert create_remote["blocked_reasons"] == []
+    assert update_remote["result"] == "blocked"
+    assert update_remote["next_action"] == "review_blocked_reasons"
+    assert update_remote["blocked_reasons"] == expected_reasons
+    assert payload["operator_summary"] == child
+    assert payload["operator_invoked"] is True
+    assert operator_log.count("INVOCATION") == 1
+    assert "operator_summary" not in all_request_bodies
+    assert "OPERATOR_STATUS_SENTINEL_SECRET" not in all_request_bodies
+
+
 def test_blocked_preflight_publishes_one_blocked_comment_without_operator(
     harness: LauncherHarness,
 ):
+    control_branch = git(harness.repo, "branch", "--show-current").stdout.strip()
+    control_head = git(harness.repo, "rev-parse", "HEAD").stdout.strip()
     (harness.state / "operator.lock").write_text("active", encoding="utf-8")
 
     result, payload = harness.run("-StartForeground", "-PublishStatus")
@@ -1599,6 +1785,8 @@ def test_blocked_preflight_publishes_one_blocked_comment_without_operator(
     assert calls[0]["method"] == "POST"
     assert remote["result"] == "blocked"
     assert remote["blocked_reasons"] == ["operator_lock_present"]
+    assert remote["branch"] == control_branch
+    assert remote["head"] == control_head
     assert remote["next_action"] == "review_blocked_reasons"
     assert payload["operator_invoked"] is False
     assert payload["status_comment_update_attempted"] is False
@@ -1716,6 +1904,86 @@ def test_create_uncertain_outcome_fails_closed_without_retry_or_operator(
     assert payload["status_comment_id"] is None
     assert payload["status_comment_update_attempted"] is False
     assert not harness.operator_log.exists()
+
+
+def test_create_timeout_terminates_process_tree_with_bounded_stream_drain(
+    harness: LauncherHarness,
+):
+    child_pid_path = harness.base / "timed-out-gh-child.pid"
+    path_hijack = harness.base / "path hijack"
+    path_hijack.mkdir()
+    taskkill_marker = harness.base / "path-taskkill-was-used.txt"
+    (path_hijack / "taskkill.cmd").write_text(
+        '@echo off\r\n'
+        '>"%B3C_TEST_TASKKILL_MARKER%" echo PATH taskkill was used\r\n'
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
+    env = harness.env(
+        B3C_TEST_GH_MODE="create_tree_timeout",
+        B3C_TEST_GH_CHILD_PID=str(child_pid_path),
+        B3C_TEST_TASKKILL_MARKER=str(taskkill_marker),
+    )
+    env["PATH"] = str(path_hijack) + os.pathsep + env["PATH"]
+
+    child_pid: int | None = None
+    started_at = time.monotonic()
+    try:
+        result, payload = harness.run(
+            "-StartForeground",
+            "-PublishStatus",
+            "-TimeoutSeconds",
+            "1",
+            env=env,
+            wall_timeout=12,
+        )
+        elapsed_seconds = time.monotonic() - started_at
+        assert child_pid_path.is_file()
+        child_pid = int(child_pid_path.read_text(encoding="ascii"))
+
+        assert result.returncode == 2
+        assert elapsed_seconds < 12
+        assert len(read_gh_calls(harness)) == 1
+        assert payload["operator_invoked"] is False
+        assert payload["status_publication_result"] == "create_outcome_uncertain"
+        assert payload["status_comment_update_attempted"] is False
+        assert not harness.operator_log.exists()
+        assert wait_for_windows_process_exit(child_pid, 5)
+        assert not taskkill_marker.exists()
+    finally:
+        if child_pid is not None and windows_process_exists(child_pid):
+            terminate_windows_process_tree(child_pid)
+
+
+def test_native_timeout_cleanup_uses_only_trusted_bounded_primitives():
+    source = launcher_function_source(
+        "Stop-NativeProcessTree",
+        "Test-NativeCaptureDecoded",
+    )
+
+    assert (
+        'Join-Path ([System.Environment]::SystemDirectory) "taskkill.exe"'
+        in source
+    )
+    assert '"/PID " + [string]$TargetProcessId + " /T /F"' in source
+    assert (
+        "$taskkill.WaitForExit($ProcessTreeTerminationTimeoutMilliseconds)"
+        in source
+    )
+    assert "$taskkill.WaitForExit($CleanupCommandKillWaitMilliseconds)" in source
+    assert (
+        "$process.WaitForExit(\n"
+        "                    $PostTerminationWaitTimeoutMilliseconds\n"
+        "                )"
+        in source
+    )
+    assert (
+        "[System.Threading.Tasks.Task]::WaitAll(\n"
+        "                [System.Threading.Tasks.Task[]]@($stdoutTask, $stderrTask),\n"
+        "                $StreamDrainTimeoutMilliseconds\n"
+        "            )"
+        in source
+    )
 
 
 def test_update_process_started_nonzero_is_uncertain_without_operator_rerun(

@@ -134,12 +134,25 @@ update does not rerun it. Both cases fail closed without a retry or replacement
 comment, and an uncertain result alone never sets
 `github_write_performed_directly=true`.
 
+For a timed status write, the launcher terminates the exact native process tree
+with the operating-system-bound `%SystemRoot%\System32\taskkill.exe` and
+`/PID <captured process id> /T /F`; `PATH` cannot redirect that cleanup.
+The tree-termination command, its forced-cleanup wait, the post-termination
+process wait, and stdout/stderr drain are all independently bounded to 3000,
+1000, 2000, and 3000 milliseconds respectively. A timeout or unconfirmed
+cleanup/drain remains an uncertain write outcome, so create does not start the
+operator and update is never retried or replaced.
+
 The status `repository`, `branch`, and `head` describe the validated execution
 target. The local-ai-workbench target uses the validated control checkout
-identity. A valid HAG target uses the independently validated HAG checkout
-branch and HEAD, never the control checkout HEAD. If the HAG target is missing
-or invalid, its status still names the HAG repository but publishes empty
-`branch` and `head` fields with the relevant blocker.
+identity only after the control origin, clean worktree/index, branch, and
+40-character lowercase HEAD all pass exact validation. Failed control
+validation publishes empty `branch` and `head` fields even when Git can still
+read untrusted values. Later unrelated blockers do not erase an already
+validated control identity. A valid HAG target uses the independently validated
+HAG checkout branch and HEAD, never the control checkout HEAD. If the HAG
+target is missing or invalid, its status still names the HAG repository but
+publishes empty `branch` and `head` fields with the relevant blocker.
 
 The remote JSON is rebuilt from this whitelist only, in stable order:
 
@@ -167,6 +180,12 @@ paths, usernames, credentials, tokens, environment values, stdout, stderr,
 `operator_stderr_summary`, raw operator summaries, Task Packets, source, diffs,
 logs, evidence files, and GitHub API response bodies. Unexpected blocked reason
 text becomes `unknown_blocked_reason`; it is never copied verbatim.
+The final foreground update also imports only the child operator summary's
+`blocked_reasons` array, merges it after launcher-owned reasons, and applies the
+same validation and stable deduplication. Missing or null child reasons add
+nothing; a non-array value, nested object, or unsafe string adds only
+`unknown_blocked_reason`. The create payload never includes child reasons, and
+the raw operator summary is never published.
 
 This implementation package uses only fake `gh` tests. It does not perform or
 claim a live Issue write, live daily-UX acceptance, `HOME-B3C-02`,
