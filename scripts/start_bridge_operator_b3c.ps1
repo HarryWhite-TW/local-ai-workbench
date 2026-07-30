@@ -266,44 +266,505 @@ function Stop-NativeProcessTree {
         [Parameter(Mandatory = $true)]
         [int]$TargetProcessId
     )
+    $cleanupTimer = [System.Diagnostics.Stopwatch]::StartNew()
     $taskkillPath = Join-Path ([System.Environment]::SystemDirectory) "taskkill.exe"
-    if (-not (Test-Path -LiteralPath $taskkillPath -PathType Leaf)) {
+    $taskkillSucceeded = $false
+    $taskkill = $null
+    if (Test-Path -LiteralPath $taskkillPath -PathType Leaf) {
+        try {
+            $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $startInfo.FileName = $taskkillPath
+            $startInfo.Arguments = (
+                "/PID " + [string]$TargetProcessId + " /T /F"
+            )
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+
+            $taskkill = New-Object System.Diagnostics.Process
+            $taskkill.StartInfo = $startInfo
+            [void]$taskkill.Start()
+            $taskkillWaitMilliseconds = [Math]::Max(
+                0,
+                $ProcessTreeTerminationTimeoutMilliseconds -
+                    [int]$cleanupTimer.ElapsedMilliseconds
+            )
+            if ($taskkillWaitMilliseconds -le 0 -or
+                -not $taskkill.WaitForExit($taskkillWaitMilliseconds)) {
+                try {
+                    $taskkill.Kill()
+                }
+                catch {
+                }
+                $cleanupCommandWaitMilliseconds = [Math]::Min(
+                    $CleanupCommandKillWaitMilliseconds,
+                    [Math]::Max(
+                        0,
+                        $ProcessTreeTerminationTimeoutMilliseconds -
+                            [int]$cleanupTimer.ElapsedMilliseconds
+                    )
+                )
+                if ($cleanupCommandWaitMilliseconds -gt 0) {
+                    [void]$taskkill.WaitForExit($cleanupCommandWaitMilliseconds)
+                }
+            }
+            else {
+                $taskkillSucceeded = $taskkill.ExitCode -eq 0
+            }
+        }
+        catch {
+        }
+        finally {
+            if ($null -ne $taskkill) {
+                $taskkill.Dispose()
+            }
+        }
+    }
+    if ($taskkillSucceeded) {
+        return $true
+    }
+
+    $fallbackTimeoutMilliseconds = [Math]::Max(
+        0,
+        $ProcessTreeTerminationTimeoutMilliseconds -
+            [int]$cleanupTimer.ElapsedMilliseconds
+    )
+    return Stop-NativeProcessTreeWithToolhelp `
+        -TargetProcessId $TargetProcessId `
+        -TimeoutMilliseconds $fallbackTimeoutMilliseconds
+}
+
+function Stop-NativeProcessTreeWithToolhelp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$TargetProcessId,
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutMilliseconds
+    )
+    if ($TimeoutMilliseconds -le 0) {
         return $false
     }
 
-    $taskkill = $null
+    $fallbackTimer = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $startInfo.FileName = $taskkillPath
-        $startInfo.Arguments = (
-            "/PID " + [string]$TargetProcessId + " /T /F"
-        )
-        $startInfo.UseShellExecute = $false
-        $startInfo.CreateNoWindow = $true
-        $startInfo.RedirectStandardOutput = $true
-        $startInfo.RedirectStandardError = $true
+        if ($null -eq ("B3CLauncherProcessTree" -as [type])) {
+            Add-Type -Language CSharp -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 
-        $taskkill = New-Object System.Diagnostics.Process
-        $taskkill.StartInfo = $startInfo
-        [void]$taskkill.Start()
-        if (-not $taskkill.WaitForExit($ProcessTreeTerminationTimeoutMilliseconds)) {
-            try {
-                $taskkill.Kill()
+public static class B3CLauncherProcessTree
+{
+    private const uint SnapshotProcesses = 0x00000002;
+    private const uint ProcessTerminate = 0x00000001;
+    private const uint Synchronize = 0x00100000;
+    private const uint WaitObject0 = 0x00000000;
+    private const int PerProcessWaitMilliseconds = 250;
+    private static readonly IntPtr InvalidHandle = new IntPtr(-1);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ProcessEntry
+    {
+        public uint Size;
+        public uint UsageCount;
+        public uint ProcessId;
+        public IntPtr DefaultHeapId;
+        public uint ModuleId;
+        public uint ThreadCount;
+        public uint ParentProcessId;
+        public int BasePriority;
+        public uint Flags;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string ExecutableName;
+    }
+
+    private sealed class ProcessNode
+    {
+        public int ProcessId;
+        public int ParentProcessId;
+        public int Depth;
+    }
+
+    private sealed class ProcessSnapshot
+    {
+        public readonly Dictionary<int, int> ParentByProcess =
+            new Dictionary<int, int>();
+        public readonly Dictionary<int, List<int>> ChildrenByParent =
+            new Dictionary<int, List<int>>();
+    }
+
+    private sealed class ProcessEvidence
+    {
+        public int ParentProcessId;
+        public int Depth;
+        public IntPtr Handle;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateToolhelp32Snapshot(
+        uint flags,
+        uint processId
+    );
+
+    [DllImport(
+        "kernel32.dll",
+        CharSet = CharSet.Unicode,
+        SetLastError = true
+    )]
+    private static extern bool Process32FirstW(
+        IntPtr snapshot,
+        ref ProcessEntry entry
+    );
+
+    [DllImport(
+        "kernel32.dll",
+        CharSet = CharSet.Unicode,
+        SetLastError = true
+    )]
+    private static extern bool Process32NextW(
+        IntPtr snapshot,
+        ref ProcessEntry entry
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(
+        uint desiredAccess,
+        bool inheritHandle,
+        uint processId
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool TerminateProcess(
+        IntPtr process,
+        uint exitCode
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(
+        IntPtr handle,
+        uint milliseconds
+    );
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    private static ProcessSnapshot CaptureSnapshot()
+    {
+        var result = new ProcessSnapshot();
+        IntPtr snapshot = CreateToolhelp32Snapshot(SnapshotProcesses, 0);
+        if (snapshot == InvalidHandle)
+        {
+            throw new InvalidOperationException("process_snapshot_failed");
+        }
+        try
+        {
+            var entry = new ProcessEntry();
+            entry.Size = (uint)Marshal.SizeOf(entry);
+            if (!Process32FirstW(snapshot, ref entry))
+            {
+                throw new InvalidOperationException(
+                    "process_snapshot_read_failed"
+                );
             }
-            catch {
+            do
+            {
+                int parentId = unchecked((int)entry.ParentProcessId);
+                int processId = unchecked((int)entry.ProcessId);
+                result.ParentByProcess[processId] = parentId;
+                List<int> children;
+                if (!result.ChildrenByParent.TryGetValue(
+                    parentId,
+                    out children
+                ))
+                {
+                    children = new List<int>();
+                    result.ChildrenByParent[parentId] = children;
+                }
+                children.Add(processId);
+                entry.Size = (uint)Marshal.SizeOf(entry);
             }
-            [void]$taskkill.WaitForExit($CleanupCommandKillWaitMilliseconds)
+            while (Process32NextW(snapshot, ref entry));
+        }
+        finally
+        {
+            CloseHandle(snapshot);
+        }
+        return result;
+    }
+
+    private static List<ProcessNode> SelectTree(
+        int rootProcessId,
+        ProcessSnapshot snapshot,
+        Dictionary<int, ProcessEvidence> evidenceByProcess
+    )
+    {
+        var result = new List<ProcessNode>();
+        var pending = new Stack<ProcessNode>();
+        var seen = new HashSet<int>();
+        var expanded = new HashSet<int>();
+        int rootParent;
+        if (snapshot.ParentByProcess.TryGetValue(rootProcessId, out rootParent))
+        {
+            pending.Push(new ProcessNode {
+                ProcessId = rootProcessId,
+                ParentProcessId = rootParent,
+                Depth = 0
+            });
+        }
+        else
+        {
+            expanded.Add(rootProcessId);
+            List<int> rootChildren;
+            if (snapshot.ChildrenByParent.TryGetValue(
+                rootProcessId,
+                out rootChildren
+            ))
+            {
+                foreach (int childId in rootChildren)
+                {
+                    pending.Push(new ProcessNode {
+                        ProcessId = childId,
+                        ParentProcessId = rootProcessId,
+                        Depth = 1
+                    });
+                }
+            }
+        }
+        foreach (KeyValuePair<int, ProcessEvidence> item in evidenceByProcess)
+        {
+            if (item.Value.Handle == IntPtr.Zero ||
+                !expanded.Add(item.Key))
+            {
+                continue;
+            }
+            List<int> knownChildren;
+            if (snapshot.ChildrenByParent.TryGetValue(
+                item.Key,
+                out knownChildren
+            ))
+            {
+                foreach (int childId in knownChildren)
+                {
+                    pending.Push(new ProcessNode {
+                        ProcessId = childId,
+                        ParentProcessId = item.Key,
+                        Depth = item.Value.Depth + 1
+                    });
+                }
+            }
+        }
+        while (pending.Count > 0)
+        {
+            ProcessNode node = pending.Pop();
+            if (!seen.Add(node.ProcessId))
+            {
+                continue;
+            }
+            result.Add(node);
+            expanded.Add(node.ProcessId);
+            List<int> children;
+            if (snapshot.ChildrenByParent.TryGetValue(
+                node.ProcessId,
+                out children
+            ))
+            {
+                foreach (int childId in children)
+                {
+                    pending.Push(new ProcessNode {
+                        ProcessId = childId,
+                        ParentProcessId = node.ProcessId,
+                        Depth = node.Depth + 1
+                    });
+                }
+            }
+        }
+        result.Sort(delegate(ProcessNode left, ProcessNode right) {
+            int depthOrder = right.Depth.CompareTo(left.Depth);
+            return depthOrder != 0
+                ? depthOrder
+                : left.ProcessId.CompareTo(right.ProcessId);
+        });
+        return result;
+    }
+
+    private static int RemainingMilliseconds(
+        Stopwatch timer,
+        int timeoutMilliseconds
+    )
+    {
+        long remaining = (long)timeoutMilliseconds -
+            timer.ElapsedMilliseconds;
+        return remaining <= 0
+            ? 0
+            : (int)Math.Min(Int32.MaxValue, remaining);
+    }
+
+    private static bool IsExited(IntPtr handle)
+    {
+        return WaitForSingleObject(handle, 0) == WaitObject0;
+    }
+
+    public static bool TryTerminate(
+        int rootProcessId,
+        int timeoutMilliseconds
+    )
+    {
+        var timer = Stopwatch.StartNew();
+        var evidenceByProcess = new Dictionary<int, ProcessEvidence>();
+        try
+        {
+            while (RemainingMilliseconds(timer, timeoutMilliseconds) > 0)
+            {
+                ProcessSnapshot snapshot = CaptureSnapshot();
+                List<ProcessNode> tree = SelectTree(
+                    rootProcessId,
+                    snapshot,
+                    evidenceByProcess
+                );
+                foreach (ProcessNode node in tree)
+                {
+                    ProcessEvidence evidence;
+                    if (!evidenceByProcess.TryGetValue(
+                        node.ProcessId,
+                        out evidence
+                    ))
+                    {
+                        evidence = new ProcessEvidence {
+                            ParentProcessId = node.ParentProcessId,
+                            Depth = node.Depth,
+                            Handle = IntPtr.Zero
+                        };
+                        evidenceByProcess[node.ProcessId] = evidence;
+                    }
+                    if (evidence.Handle == IntPtr.Zero)
+                    {
+                        evidence.Handle = OpenProcess(
+                            ProcessTerminate | Synchronize,
+                            false,
+                            unchecked((uint)node.ProcessId)
+                        );
+                    }
+                }
+
+                foreach (ProcessNode node in tree)
+                {
+                    ProcessEvidence evidence =
+                        evidenceByProcess[node.ProcessId];
+                    if (evidence.Handle == IntPtr.Zero ||
+                        IsExited(evidence.Handle))
+                    {
+                        continue;
+                    }
+                    bool terminationRequested = TerminateProcess(
+                        evidence.Handle,
+                        1
+                    );
+                    if (!terminationRequested && !IsExited(evidence.Handle))
+                    {
+                        continue;
+                    }
+                    int remaining = RemainingMilliseconds(
+                        timer,
+                        timeoutMilliseconds
+                    );
+                    if (remaining <= 0)
+                    {
+                        break;
+                    }
+                    uint waitMilliseconds = unchecked((uint)Math.Min(
+                        remaining,
+                        PerProcessWaitMilliseconds
+                    ));
+                    WaitForSingleObject(
+                        evidence.Handle,
+                        waitMilliseconds
+                    );
+                }
+
+                bool allBoundProcessesExited = true;
+                foreach (
+                    ProcessEvidence evidence in evidenceByProcess.Values
+                )
+                {
+                    if (evidence.Handle != IntPtr.Zero &&
+                        !IsExited(evidence.Handle))
+                    {
+                        allBoundProcessesExited = false;
+                        break;
+                    }
+                }
+                ProcessSnapshot verificationSnapshot = CaptureSnapshot();
+                List<ProcessNode> remainingTree = SelectTree(
+                    rootProcessId,
+                    verificationSnapshot,
+                    evidenceByProcess
+                );
+                bool unverifiedProcessRemains = false;
+                foreach (ProcessNode node in remainingTree)
+                {
+                    ProcessEvidence evidence;
+                    if (!evidenceByProcess.TryGetValue(
+                            node.ProcessId,
+                            out evidence
+                        ) ||
+                        evidence.Handle == IntPtr.Zero ||
+                        !IsExited(evidence.Handle))
+                    {
+                        unverifiedProcessRemains = true;
+                        break;
+                    }
+                }
+                if (allBoundProcessesExited &&
+                    !unverifiedProcessRemains)
+                {
+                    return true;
+                }
+                int sleepMilliseconds = Math.Min(
+                    RemainingMilliseconds(timer, timeoutMilliseconds),
+                    10
+                );
+                if (sleepMilliseconds > 0)
+                {
+                    System.Threading.Thread.Sleep(sleepMilliseconds);
+                }
+            }
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            foreach (
+                ProcessEvidence evidence in evidenceByProcess.Values
+            )
+            {
+                if (evidence.Handle != IntPtr.Zero)
+                {
+                    CloseHandle(evidence.Handle);
+                }
+            }
+        }
+    }
+}
+'@
+        }
+        $remainingMilliseconds = $TimeoutMilliseconds -
+            [int]$fallbackTimer.ElapsedMilliseconds
+        if ($remainingMilliseconds -le 0) {
             return $false
         }
-        return $taskkill.ExitCode -eq 0
+        return [B3CLauncherProcessTree]::TryTerminate(
+            $TargetProcessId,
+            $remainingMilliseconds
+        )
     }
     catch {
         return $false
-    }
-    finally {
-        if ($null -ne $taskkill) {
-            $taskkill.Dispose()
-        }
     }
 }
 
@@ -325,6 +786,7 @@ function Invoke-CapturedNative {
     $exitCode = 9009
     $invocationError = ""
     $contractError = ""
+    $cleanupError = ""
     $processStarted = $false
     $timedOut = $false
     $processTreeTerminationAttempted = $false
@@ -410,6 +872,9 @@ function Invoke-CapturedNative {
                 $processTreeTerminationSucceeded = (
                     $terminationCommandSucceeded -and $postKillCompleted
                 )
+                if (-not $processTreeTerminationSucceeded) {
+                    $cleanupError = "native_process_tree_cleanup_unverified"
+                }
             }
             if ($process.HasExited) {
                 $exitCode = $process.ExitCode
@@ -476,6 +941,7 @@ function Invoke-CapturedNative {
         decode_error = ($decodeErrors -join ",")
         contract_error = $contractError
         invocation_error = $invocationError
+        cleanup_error = $cleanupError
         process_started = $processStarted
         timed_out = $timedOut
         process_tree_termination_attempted = $processTreeTerminationAttempted
@@ -884,6 +1350,7 @@ function Get-StatusWriteOutcome {
         return [pscustomobject]@{ classification = "failed"; comment_id = $null }
     }
     if (-not [string]::IsNullOrWhiteSpace([string]$NativeResult.invocation_error) -or
+        -not [string]::IsNullOrWhiteSpace([string]$NativeResult.cleanup_error) -or
         $NativeResult.timed_out -or
         $NativeResult.stream_drain_timed_out -or
         -not [string]::IsNullOrWhiteSpace([string]$NativeResult.decode_error)) {
@@ -1240,6 +1707,12 @@ if ($PublishStatus) {
             -Payload $statusPayload `
             -WorkingDirectory $ControlRepoRoot `
             -ProcessTimeoutSeconds $TimeoutSeconds
+        if (-not [string]::IsNullOrWhiteSpace(
+            [string]$createNativeResult.cleanup_error
+        )) {
+            Add-BlockedReason -Reasons $blockedReasons `
+                -Reason "status_publication_process_cleanup_unverified"
+        }
         $createOutcome = Get-StatusWriteOutcome `
             -NativeResult $createNativeResult `
             -ExpectedCommentId $null
@@ -1376,6 +1849,12 @@ if ($PublishStatus -and $statusCommentNeedsUpdate -and
         -Payload $updatePayload `
         -WorkingDirectory $ControlRepoRoot `
         -ProcessTimeoutSeconds $TimeoutSeconds
+    if (-not [string]::IsNullOrWhiteSpace(
+        [string]$updateNativeResult.cleanup_error
+    )) {
+        Add-BlockedReason -Reasons $blockedReasons `
+            -Reason "status_publication_process_cleanup_unverified"
+    }
     $updateOutcome = Get-StatusWriteOutcome `
         -NativeResult $updateNativeResult `
         -ExpectedCommentId $statusCommentId
