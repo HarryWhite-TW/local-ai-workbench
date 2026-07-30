@@ -400,3 +400,59 @@ Manual `PollOnce` remains the recovery path, not the target daily workflow:
 B3-C does not authorize startup behavior, tray UX, MCP, trusted-actor changes,
 action allowlist changes, or any commit/push/close/label/PR/merge behavior.
 Those changes require separate approval.
+
+## Optional Visible Login Startup Adapter
+
+The separately approved B3-C login-startup adapter manages one current-user
+Windows Startup-folder file:
+
+```text
+LocalAIWorkbench-BridgeOperator-B3C.cmd
+```
+
+It is disabled by default and has no implicit operation. Inspect, enable, or
+disable it explicitly from the repository root:
+
+```powershell
+.\scripts\configure_bridge_operator_b3c_startup.ps1 -Status
+.\scripts\configure_bridge_operator_b3c_startup.ps1 -Enable
+.\scripts\configure_bridge_operator_b3c_startup.ps1 -Disable
+```
+
+Every command emits one JSON summary. Status is read-only and distinguishes an
+absent entry, the exact enabled entry, unrecognized content, drifted/invalid
+managed content, and a blocked adapter. Enable is idempotent only for the exact
+managed content. Disable removes only that exact content and is idempotent when
+the entry is absent. Both refuse an unrecognized or drifted file.
+
+The managed command opens a visible Windows PowerShell console and invokes the
+canonical repository launcher with fixed values:
+
+```text
+-StartForeground
+-MaxCycles 100
+-PollIntervalSeconds 30
+-TimeoutSeconds 600
+-StateDir %LOCALAPPDATA%\LocalAIWorkbench\BridgeOperator
+```
+
+This starts a bounded 100-cycle session. With 30 seconds between cycles, the
+nominal polling window is about 50 minutes (99 intervals, plus bounded cycle
+processing time), not a permanent background service or an infinite loop.
+The existing `pause.flag` and `stop.flag` mechanisms remain available:
+`pause.flag` pauses request processing for subsequent cycles, while
+`stop.flag` exits the foreground loop cleanly.
+
+The file is deterministic UTF-8 without a BOM and carries the ownership marker
+`LAWBRIDGE-B3C-STARTUP-MANAGED`. The adapter uses only the logged-in user's
+standard Startup folder. Its temporary-directory override is test-only and
+requires the explicit `LAWB_STARTUP_ADAPTER_TEST_ONLY=1` test-process guard.
+
+This adapter does not start the operator while configuring it, create a
+scheduled task, Registry autorun entry, Windows service, tray process,
+persistent PATH change, authentication material, or another execution path.
+It does not represent Task Scheduler, Registry, service, tray, or unbounded
+loop behavior. The canonical launcher retains repository/tool/state preflight,
+fixed Inbox `#147`, one-task behavior, locking, pause/stop controls, logging,
+durable duplicate suppression, and no Codex auto-retry. Manual Dispatcher
+`PollOnce` remains recovery only.
