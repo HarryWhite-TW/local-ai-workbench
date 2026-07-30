@@ -232,6 +232,149 @@ $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(
     return json.loads(result.stdout.decode("utf-8", errors="strict"))
 
 
+def run_taskkill_success_verification_probe(tmp_path: Path) -> dict:
+    fake_taskkill = tmp_path / "fake-taskkill.exe"
+    taskkill_marker = tmp_path / "fake-taskkill-invoked.txt"
+    child_pid_path = tmp_path / "fake-taskkill-child.pid"
+    child_helper = tmp_path / "fake-taskkill-child.py"
+    root_helper = tmp_path / "fake-taskkill-root.py"
+    child_helper.write_text(
+        "import time\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    root_helper.write_text(
+        "import os\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "child = subprocess.Popen([sys.executable, os.environ['B3C_TEST_CHILD']])\n"
+        "Path(os.environ['B3C_TEST_CHILD_PID']).write_text(\n"
+        "    str(child.pid), encoding='ascii'\n"
+        ")\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    source = launcher_function_source(
+        "Stop-NativeProcessTree",
+        "Invoke-CapturedNative",
+    )
+    trusted_taskkill = (
+        'Join-Path ([System.Environment]::SystemDirectory) "taskkill.exe"'
+    )
+    assert source.count(trusted_taskkill) == 1
+    source = source.replace(
+        trusted_taskkill,
+        f"'{str(fake_taskkill).replace(chr(39), chr(39) * 2)}'",
+    )
+    probe = tmp_path / "taskkill-success-verification-probe.ps1"
+    probe.write_text(
+        f"""
+$ProcessTreeTerminationTimeoutMilliseconds = 3000
+$CleanupCommandKillWaitMilliseconds = 1000
+Add-Type -Language CSharp -OutputType ConsoleApplication `
+    -OutputAssembly '{str(fake_taskkill).replace("'", "''")}' `
+    -TypeDefinition @'
+using System;
+using System.IO;
+
+public static class Program
+{{
+    public static int Main(string[] arguments)
+    {{
+        File.WriteAllText(
+            Environment.GetEnvironmentVariable("B3C_TEST_TASKKILL_MARKER"),
+            String.Join(" ", arguments)
+        );
+        return 0;
+    }}
+}}
+'@
+{source}
+$startInfo = New-Object System.Diagnostics.ProcessStartInfo
+$startInfo.FileName = '{sys.executable.replace("'", "''")}'
+$startInfo.Arguments = '"{str(root_helper).replace('"', '\\"')}"'
+$startInfo.WorkingDirectory = '{str(tmp_path).replace("'", "''")}'
+$startInfo.UseShellExecute = $false
+$startInfo.CreateNoWindow = $true
+$startInfo.RedirectStandardOutput = $true
+$startInfo.RedirectStandardError = $true
+$root = New-Object System.Diagnostics.Process
+$root.StartInfo = $startInfo
+[void]$root.Start()
+$childDeadline = [DateTime]::UtcNow.AddSeconds(5)
+while (-not (Test-Path -LiteralPath $env:B3C_TEST_CHILD_PID) -and
+    [DateTime]::UtcNow -lt $childDeadline) {{
+    Start-Sleep -Milliseconds 20
+}}
+if (-not (Test-Path -LiteralPath $env:B3C_TEST_CHILD_PID)) {{
+    throw "child_pid_not_published"
+}}
+$childId = [int](
+    Get-Content -LiteralPath $env:B3C_TEST_CHILD_PID -Raw -Encoding ASCII
+)
+$timer = [Diagnostics.Stopwatch]::StartNew()
+$terminationSucceeded = Stop-NativeProcessTree -TargetProcessId $root.Id
+$elapsedMilliseconds = $timer.ElapsedMilliseconds
+$childRunningAfterStop = $false
+try {{
+    $child = [Diagnostics.Process]::GetProcessById($childId)
+    $childRunningAfterStop = -not $child.HasExited
+    if ($childRunningAfterStop) {{
+        $child.Kill()
+        [void]$child.WaitForExit(1000)
+    }}
+    $child.Dispose()
+}}
+catch [System.ArgumentException] {{
+}}
+$rootRunningAfterStop = -not $root.HasExited
+if ($rootRunningAfterStop) {{
+    $root.Kill()
+    [void]$root.WaitForExit(1000)
+}}
+$root.Dispose()
+$result = [ordered]@{{
+    process_tree_termination_succeeded = [bool]$terminationSucceeded
+    child_running_after_stop = $childRunningAfterStop
+    root_running_after_stop = $rootRunningAfterStop
+    elapsed_milliseconds = $elapsedMilliseconds
+    taskkill_marker_exists = Test-Path -LiteralPath $env:B3C_TEST_TASKKILL_MARKER
+}}
+$json = $result | ConvertTo-Json -Compress
+$bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(
+    $json + [Environment]::NewLine
+)
+[Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)
+""",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "B3C_TEST_CHILD": str(child_helper),
+            "B3C_TEST_CHILD_PID": str(child_pid_path),
+            "B3C_TEST_TASKKILL_MARKER": str(taskkill_marker),
+        }
+    )
+    result = run_process_bytes(
+        [
+            powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(probe),
+        ],
+        cwd=tmp_path,
+        env=env,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.decode("utf-8", errors="strict"))
+
+
 def run_cmd_argument_probe(tmp_path: Path, argument: str) -> tuple[dict, Path, Path]:
     functions = launcher_function_source(
         "ConvertTo-WindowsCommandLineArgument",
@@ -1962,6 +2105,16 @@ def test_create_timeout_terminates_process_tree_with_bounded_stream_drain(
             terminate_windows_process_tree(child_pid)
 
 
+def test_taskkill_exit_zero_still_verifies_and_terminates_descendants(tmp_path):
+    result = run_taskkill_success_verification_probe(tmp_path)
+
+    assert result["taskkill_marker_exists"] is True
+    assert result["process_tree_termination_succeeded"] is True
+    assert result["child_running_after_stop"] is False
+    assert result["root_running_after_stop"] is False
+    assert result["elapsed_milliseconds"] < 3000
+
+
 def test_native_timeout_cleanup_uses_only_trusted_bounded_primitives():
     source = launcher_function_source(
         "Stop-NativeProcessTree",
@@ -1985,15 +2138,20 @@ def test_native_timeout_cleanup_uses_only_trusted_bounded_primitives():
     assert source.count("CaptureSnapshot()") >= 2
     assert "verificationSnapshot" in source
     assert "evidenceByProcess" in source
+    assert "[B3CLauncherProcessTree]::Bind(" in source
     assert "[B3CLauncherProcessTree]::TryTerminate(" in source
+    assert "[B3CLauncherProcessTree]::Release(" in source
+    stop_source = launcher_function_source(
+        "Stop-NativeProcessTree",
+        "New-NativeProcessTreeEvidence",
+    )
+    assert stop_source.index("New-NativeProcessTreeEvidence") < (
+        stop_source.index("$taskkill.Start()")
+    )
+    assert "if ($taskkillSucceeded)" not in stop_source
     assert (
         "$ProcessTreeTerminationTimeoutMilliseconds -\n"
         "            [int]$cleanupTimer.ElapsedMilliseconds"
-        in source
-    )
-    assert (
-        "$TimeoutMilliseconds -\n"
-        "            [int]$fallbackTimer.ElapsedMilliseconds"
         in source
     )
     assert "Get-CimInstance" not in source

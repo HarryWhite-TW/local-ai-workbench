@@ -267,8 +267,9 @@ function Stop-NativeProcessTree {
         [int]$TargetProcessId
     )
     $cleanupTimer = [System.Diagnostics.Stopwatch]::StartNew()
+    $treeEvidenceId = New-NativeProcessTreeEvidence `
+        -TargetProcessId $TargetProcessId
     $taskkillPath = Join-Path ([System.Environment]::SystemDirectory) "taskkill.exe"
-    $taskkillSucceeded = $false
     $taskkill = $null
     if (Test-Path -LiteralPath $taskkillPath -PathType Leaf) {
         try {
@@ -309,9 +310,6 @@ function Stop-NativeProcessTree {
                     [void]$taskkill.WaitForExit($cleanupCommandWaitMilliseconds)
                 }
             }
-            else {
-                $taskkillSucceeded = $taskkill.ExitCode -eq 0
-            }
         }
         catch {
         }
@@ -321,32 +319,31 @@ function Stop-NativeProcessTree {
             }
         }
     }
-    if ($taskkillSucceeded) {
-        return $true
-    }
-
     $fallbackTimeoutMilliseconds = [Math]::Max(
         0,
         $ProcessTreeTerminationTimeoutMilliseconds -
             [int]$cleanupTimer.ElapsedMilliseconds
     )
-    return Stop-NativeProcessTreeWithToolhelp `
-        -TargetProcessId $TargetProcessId `
-        -TimeoutMilliseconds $fallbackTimeoutMilliseconds
+    try {
+        if ([string]::IsNullOrWhiteSpace([string]$treeEvidenceId)) {
+            return $false
+        }
+        return Stop-NativeProcessTreeWithToolhelp `
+            -EvidenceId $treeEvidenceId `
+            -TimeoutMilliseconds $fallbackTimeoutMilliseconds
+    }
+    finally {
+        if (-not [string]::IsNullOrWhiteSpace([string]$treeEvidenceId)) {
+            [B3CLauncherProcessTree]::Release($treeEvidenceId)
+        }
+    }
 }
 
-function Stop-NativeProcessTreeWithToolhelp {
+function New-NativeProcessTreeEvidence {
     param(
         [Parameter(Mandatory = $true)]
-        [int]$TargetProcessId,
-        [Parameter(Mandatory = $true)]
-        [int]$TimeoutMilliseconds
+        [int]$TargetProcessId
     )
-    if ($TimeoutMilliseconds -le 0) {
-        return $false
-    }
-
-    $fallbackTimer = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         if ($null -eq ("B3CLauncherProcessTree" -as [type])) {
             Add-Type -Language CSharp -ErrorAction Stop -TypeDefinition @'
@@ -402,6 +399,18 @@ public static class B3CLauncherProcessTree
         public int Depth;
         public IntPtr Handle;
     }
+
+    private sealed class ProcessSession
+    {
+        public int RootProcessId;
+        public bool BindingFailed;
+        public readonly Dictionary<int, ProcessEvidence> EvidenceByProcess =
+            new Dictionary<int, ProcessEvidence>();
+    }
+
+    private static readonly object SessionLock = new object();
+    private static readonly Dictionary<string, ProcessSession> Sessions =
+        new Dictionary<string, ProcessSession>();
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateToolhelp32Snapshot(
@@ -607,52 +616,101 @@ public static class B3CLauncherProcessTree
         return WaitForSingleObject(handle, 0) == WaitObject0;
     }
 
+    private static void BindTree(
+        ProcessSession session,
+        List<ProcessNode> tree
+    )
+    {
+        foreach (ProcessNode node in tree)
+        {
+            ProcessEvidence evidence;
+            if (!session.EvidenceByProcess.TryGetValue(
+                node.ProcessId,
+                out evidence
+            ))
+            {
+                evidence = new ProcessEvidence {
+                    ParentProcessId = node.ParentProcessId,
+                    Depth = node.Depth,
+                    Handle = IntPtr.Zero
+                };
+                session.EvidenceByProcess[node.ProcessId] = evidence;
+            }
+            if (evidence.Handle == IntPtr.Zero)
+            {
+                evidence.Handle = OpenProcess(
+                    ProcessTerminate | Synchronize,
+                    false,
+                    unchecked((uint)node.ProcessId)
+                );
+                if (evidence.Handle == IntPtr.Zero)
+                {
+                    session.BindingFailed = true;
+                }
+            }
+        }
+    }
+
+    public static string Bind(int rootProcessId)
+    {
+        var session = new ProcessSession {
+            RootProcessId = rootProcessId,
+            BindingFailed = false
+        };
+        ProcessSnapshot snapshot = CaptureSnapshot();
+        List<ProcessNode> tree = SelectTree(
+            rootProcessId,
+            snapshot,
+            session.EvidenceByProcess
+        );
+        BindTree(session, tree);
+        ProcessEvidence rootEvidence;
+        if (!session.EvidenceByProcess.TryGetValue(
+                rootProcessId,
+                out rootEvidence
+            ) ||
+            rootEvidence.Handle == IntPtr.Zero)
+        {
+            session.BindingFailed = true;
+        }
+        string evidenceId = Guid.NewGuid().ToString("N");
+        lock (SessionLock)
+        {
+            Sessions[evidenceId] = session;
+        }
+        return evidenceId;
+    }
+
     public static bool TryTerminate(
-        int rootProcessId,
+        string evidenceId,
         int timeoutMilliseconds
     )
     {
+        ProcessSession session;
+        lock (SessionLock)
+        {
+            if (!Sessions.TryGetValue(evidenceId, out session))
+            {
+                return false;
+            }
+        }
         var timer = Stopwatch.StartNew();
-        var evidenceByProcess = new Dictionary<int, ProcessEvidence>();
         try
         {
             while (RemainingMilliseconds(timer, timeoutMilliseconds) > 0)
             {
                 ProcessSnapshot snapshot = CaptureSnapshot();
                 List<ProcessNode> tree = SelectTree(
-                    rootProcessId,
+                    session.RootProcessId,
                     snapshot,
-                    evidenceByProcess
+                    session.EvidenceByProcess
                 );
-                foreach (ProcessNode node in tree)
-                {
-                    ProcessEvidence evidence;
-                    if (!evidenceByProcess.TryGetValue(
-                        node.ProcessId,
-                        out evidence
-                    ))
-                    {
-                        evidence = new ProcessEvidence {
-                            ParentProcessId = node.ParentProcessId,
-                            Depth = node.Depth,
-                            Handle = IntPtr.Zero
-                        };
-                        evidenceByProcess[node.ProcessId] = evidence;
-                    }
-                    if (evidence.Handle == IntPtr.Zero)
-                    {
-                        evidence.Handle = OpenProcess(
-                            ProcessTerminate | Synchronize,
-                            false,
-                            unchecked((uint)node.ProcessId)
-                        );
-                    }
-                }
+                BindTree(session, tree);
 
                 foreach (ProcessNode node in tree)
                 {
                     ProcessEvidence evidence =
-                        evidenceByProcess[node.ProcessId];
+                        session.EvidenceByProcess[node.ProcessId];
                     if (evidence.Handle == IntPtr.Zero ||
                         IsExited(evidence.Handle))
                     {
@@ -686,7 +744,8 @@ public static class B3CLauncherProcessTree
 
                 bool allBoundProcessesExited = true;
                 foreach (
-                    ProcessEvidence evidence in evidenceByProcess.Values
+                    ProcessEvidence evidence in
+                        session.EvidenceByProcess.Values
                 )
                 {
                     if (evidence.Handle != IntPtr.Zero &&
@@ -698,15 +757,15 @@ public static class B3CLauncherProcessTree
                 }
                 ProcessSnapshot verificationSnapshot = CaptureSnapshot();
                 List<ProcessNode> remainingTree = SelectTree(
-                    rootProcessId,
+                    session.RootProcessId,
                     verificationSnapshot,
-                    evidenceByProcess
+                    session.EvidenceByProcess
                 );
                 bool unverifiedProcessRemains = false;
                 foreach (ProcessNode node in remainingTree)
                 {
                     ProcessEvidence evidence;
-                    if (!evidenceByProcess.TryGetValue(
+                    if (!session.EvidenceByProcess.TryGetValue(
                             node.ProcessId,
                             out evidence
                         ) ||
@@ -717,7 +776,8 @@ public static class B3CLauncherProcessTree
                         break;
                     }
                 }
-                if (allBoundProcessesExited &&
+                if (!session.BindingFailed &&
+                    allBoundProcessesExited &&
                     !unverifiedProcessRemains)
                 {
                     return true;
@@ -737,30 +797,57 @@ public static class B3CLauncherProcessTree
         {
             return false;
         }
-        finally
+    }
+
+    public static void Release(string evidenceId)
+    {
+        ProcessSession session = null;
+        lock (SessionLock)
         {
-            foreach (
-                ProcessEvidence evidence in evidenceByProcess.Values
-            )
+            if (Sessions.TryGetValue(evidenceId, out session))
             {
-                if (evidence.Handle != IntPtr.Zero)
-                {
-                    CloseHandle(evidence.Handle);
-                }
+                Sessions.Remove(evidenceId);
+            }
+        }
+        if (session == null)
+        {
+            return;
+        }
+        foreach (
+            ProcessEvidence evidence in session.EvidenceByProcess.Values
+        )
+        {
+            if (evidence.Handle != IntPtr.Zero)
+            {
+                CloseHandle(evidence.Handle);
             }
         }
     }
 }
 '@
         }
-        $remainingMilliseconds = $TimeoutMilliseconds -
-            [int]$fallbackTimer.ElapsedMilliseconds
-        if ($remainingMilliseconds -le 0) {
-            return $false
-        }
+        return [B3CLauncherProcessTree]::Bind($TargetProcessId)
+    }
+    catch {
+        return ""
+    }
+}
+
+function Stop-NativeProcessTreeWithToolhelp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$EvidenceId,
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutMilliseconds
+    )
+    if ($TimeoutMilliseconds -le 0 -or
+        [string]::IsNullOrWhiteSpace($EvidenceId)) {
+        return $false
+    }
+    try {
         return [B3CLauncherProcessTree]::TryTerminate(
-            $TargetProcessId,
-            $remainingMilliseconds
+            $EvidenceId,
+            $TimeoutMilliseconds
         )
     }
     catch {
