@@ -1,19 +1,23 @@
 # ChatGPT-First Daily UX Pilot Closeout — 2026-07-31
 
-## Publication status
+## Status semantics
 
-`EVIDENCE ACCEPTED — DURABLE PUBLICATION PENDING`
-
-The accepted capability verdict is:
+The evidence-supported capability verdict is:
 
 ```text
-CHATGPT-ONLY DAILY UX ACCEPTED
+CHATGPT-FIRST CORE DAILY UX ACCEPTED
 — MANUAL FOREGROUND, BOUNDED, NO ROUTINE TASK/RESULT RELAY
 ```
 
-On a feature branch, this file is a publication candidate only. The verdict becomes Local AI Workbench durable current truth only after the exact reviewed PR #249 candidate, the corresponding `PLANS.md` status entry, and the Engineering Records Index pointer are merged into `master` and post-merge canonical verification passes.
+Repository-local interpretation is branch-sensitive:
 
-This record closes the bounded daily-UX proof only after that publication gate. It does not reopen or replace the already completed Workflow v1 closeout, change the Local Document-to-Knowledge Workbench product identity, or claim completion of the full Human-Governed Workflow Display Pilot.
+- on a feature branch or open PR, this file is candidate publication content;
+- on canonical `master`, this file states the durable evidence-supported verdict;
+- operational closeout is fully synchronized only after an independent post-merge check confirms that canonical `master` contains the exact reviewed content and that no applicable truth surface drifted.
+
+This wording intentionally avoids embedding a transient `pending` or `completed` flag that would become stale when the same reviewed content moves from a feature branch to `master`.
+
+This record closes only the bounded daily-UX proof. It does not reopen or replace the already completed Workflow v1 closeout, change the Local Document-to-Knowledge Workbench product identity, or claim completion of the full Human-Governed Workflow Display Pilot.
 
 ## Accepted user experience
 
@@ -43,7 +47,7 @@ Target repository: `HarryWhite-TW/human-approval-automation-gateway`
 
 Bound identity:
 
-- target Issue: `#6`;
+- target Issue: HAG Issue `#6`;
 - local branch: `hag-02-risk-analysis-core`;
 - original full HEAD: `9ad6e64908d6a610140e504a6e777ffb5da818ff`;
 - Inbox request: `b3c-daily-ux-01-hag-02-inbox-6-20260731T040800Z-r1`;
@@ -51,13 +55,13 @@ Bound identity:
 
 Durable evidence:
 
-- Inbox request comment: `5139148417`;
-- corrected dispatch comment: `5139390007`;
-- completed Bridge status comment: `5139411981`;
-- Runner ReviewBundle comment: `5139431417`;
-- matching `LAWBRUNNER-RESULT` comment: `5139431571`;
-- hash-bound source and test evidence comment: `5139502531`;
-- ChatGPT semantic acceptance comment: `5139553822`.
+- LAWB Issue `#147` Inbox request comment `5139148417`;
+- HAG Issue `#6` corrected dispatch comment `5139390007`;
+- LAWB Issue `#147` completed Bridge status comment `5139411981`;
+- HAG Issue `#6` Runner ReviewBundle comment `5139431417`;
+- HAG Issue `#6` matching `LAWBRUNNER-RESULT` comment `5139431571`;
+- HAG Issue `#6` hash-bound source and test evidence comment `5139502531`;
+- HAG Issue `#6` ChatGPT semantic acceptance comment `5139553822`.
 
 The completed Bridge status recorded:
 
@@ -73,7 +77,7 @@ The accepted HAG-02 local candidate changed exactly six approved files, retained
 
 ### Launcher preflight boundary
 
-The retained HAG-02 candidate intentionally made the target checkout dirty. The canonical launcher published Bridge status comment `5139709504` with:
+The retained HAG-02 candidate intentionally made the target checkout dirty. The canonical launcher published LAWB Issue `#147` Bridge status comment `5139709504` with:
 
 - `stage=preflight`;
 - `result=blocked`;
@@ -86,7 +90,7 @@ The candidate hashes, dirty-path manifest, staged state, branch, and HEAD were c
 
 ### Operator / B1 boundary
 
-Before the corrected dispatch marker existed, Bridge status comment `5139364732` recorded `target_dispatch_request_not_found`. Operator ran, but Dispatcher, Runner, and Codex did not. The request was not consumed. This is retained as real fail-closed evidence for a missing exact target dispatch request.
+Before the corrected dispatch marker existed, LAWB Issue `#147` Bridge status comment `5139364732` recorded `target_dispatch_request_not_found`. Operator ran, but Dispatcher, Runner, and Codex did not. The request was not consumed. This is retained as real fail-closed evidence for a missing exact target dispatch request.
 
 ## Capability matrix
 
@@ -95,10 +99,10 @@ The current classification vocabulary is restricted to `VERIFIED`, `PARTIAL`, `U
 | Capability | Classification | Evidence and authority qualifier |
 |---|---|---|
 | ChatGPT-first bounded engineering interaction | VERIFIED | Success case completed without routine task/result relay |
-| Fixed-Inbox to Bridge to Dispatcher/Runner/Codex path | VERIFIED | HAG Issue #6 and Inbox #147 durable evidence |
+| Fixed-Inbox to Bridge to Dispatcher/Runner/Codex path | VERIFIED | HAG Issue #6 and LAWB Issue #147 durable evidence |
 | ChatGPT direct technical adjudication from GitHub evidence | VERIFIED | Hash-bound evidence and reviewer acceptance |
-| Launcher dirty-target fail closed | VERIFIED | Status comment `5139709504` |
-| Operator missing-dispatch fail closed | VERIFIED | Status comment `5139364732` |
+| Launcher dirty-target fail closed | VERIFIED | LAWB Issue #147 status comment `5139709504` |
+| Operator missing-dispatch fail closed | VERIFIED | LAWB Issue #147 status comment `5139364732` |
 | Automatic commit, push, PR, merge, Issue close, or deployment | DEFERRED | Not authorized by the accepted daily-UX contract; each remains separately approval-gated |
 | Zero-touch operation | UNVERIFIED | Not claimed; reviewed setup and foreground start remain user-visible steps |
 | Permanent background service | DEFERRED | Not part of this bounded foreground closeout |
