@@ -69,27 +69,34 @@ Bridge Operator remains development workflow tooling and portfolio engineering e
 
 ## ChatGPT-First Daily UX Pilot Publication
 
-Publication status on this feature branch:
+Repository-local interpretation is branch-sensitive:
 
-```text
-EVIDENCE ACCEPTED
-DURABLE PUBLICATION PENDING PR #249 MERGE AND POST-MERGE VERIFICATION
-```
+- on a feature branch or open PR, this section is candidate publication content;
+- on canonical `master`, this section states the durable evidence-supported verdict;
+- operational synchronization is complete only after an independent post-merge check confirms the exact reviewed content and no applicable truth-surface drift.
+
+This wording deliberately avoids a transient `pending` or `completed` flag that would become stale after merge.
 
 The accepted bounded capability verdict is:
 
 ```text
-CHATGPT-ONLY DAILY UX ACCEPTED
+CHATGPT-FIRST CORE DAILY UX ACCEPTED
 — MANUAL FOREGROUND, BOUNDED, NO ROUTINE TASK/RESULT RELAY
 ```
 
-This verdict becomes Local AI Workbench durable current truth only when the exact reviewed PR #249 content, including this `PLANS.md` entry and the Engineering Records Index pointer, is merged into `master` and post-merge canonical verification passes.
+The real external-repository success case used HAG Issue #6. Evidence anchors are:
 
-The real external-repository success case used HAG Issue #6. Evidence anchors are Inbox request `5139148417`, dispatch `5139390007`, completed Bridge status `5139411981`, Runner ReviewBundle `5139431417`, distinct matching `LAWBRUNNER-RESULT` `5139431571`, hash-bound source/test evidence `5139502531`, and ChatGPT semantic acceptance `5139553822`.
+- LAWB Issue `#147` Inbox request comment `5139148417`;
+- HAG Issue `#6` corrected dispatch comment `5139390007`;
+- LAWB Issue `#147` completed Bridge status comment `5139411981`;
+- HAG Issue `#6` Runner ReviewBundle comment `5139431417`;
+- HAG Issue `#6` distinct matching `LAWBRUNNER-RESULT` comment `5139431571`;
+- HAG Issue `#6` hash-bound source/test evidence comment `5139502531`;
+- HAG Issue `#6` ChatGPT semantic acceptance comment `5139553822`.
 
-Fail-closed evidence includes launcher-preflight dirty-target status `5139709504` and Operator exact-dispatch failure status `5139364732`. The user did not routinely relay task packets, terminal output, raw diffs, tests, result JSON, ReviewBundle content, or the Codex report between interfaces.
+Fail-closed evidence includes LAWB Issue `#147` launcher-preflight dirty-target status comment `5139709504` and LAWB Issue `#147` Operator exact-dispatch failure status comment `5139364732`. The user did not routinely relay task packets, terminal output, raw diffs, tests, result JSON, ReviewBundle content, or the Codex report between interfaces.
 
-The detailed capability matrix, operating boundary, publication condition, and non-claims are recorded in `docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md`.
+The detailed capability matrix, operating boundary, publication semantics, and non-claims are recorded in `docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md`.
 
 The accepted HAG-02 candidate remains local and unstaged. It is not published on HAG `main`; `HAG-02-PUBLICATION-01` is the next controlled dependency, and HAG-03 is not activated. Zero-touch operation, a permanent background service, restart-safe unattended queueing, parallel isolation, automatic remote actions, independent Workflow runtime cutover, and the complete Display-Ready package remain unproven, deferred, or partial as classified in the closeout record.
 
@@ -257,7 +264,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
-- 2026-07-31: Prepared the ChatGPT-first daily-UX durable-truth publication candidate. The success case, launcher-preflight fail-closed case, and Operator exact-dispatch fail-closed case are accepted evidence; PR #249 must still be exact-head reviewed, merged, and post-merge verified before this becomes canonical `master` truth. HAG-02 remains a local unstaged candidate and HAG-03 is not activated.
+- 2026-07-31: Recorded the evidence-supported ChatGPT-first core daily-UX verdict with merge-stable branch-sensitive semantics. The success case, launcher-preflight fail-closed case, and Operator exact-dispatch fail-closed case are accepted evidence; operational synchronization still requires independent post-merge exact-content and no-drift verification. HAG-02 remains a local unstaged candidate and HAG-03 is not activated.
 - 2026-07-18: Prepared the final post-tracker repository truth-sync proposal with intended status `DONE — FINAL DURABLE TRUTH SYNCHRONIZED`, recording PR #213 reviewed head `60be637db0c237db3d53408a272fd3aaba98ec8b`, canonical merge `317cd7e9fedb153daa034c1e698819042e2e4564`, Tracker #168 final `DONE` comment `5010353117`, intermediate `REVIEW` comment `5005537101`, and final residual-review anchor `5010099708`. The proposal becomes current truth only when its exact reviewed content merges into `master`; post-merge verification requires no second wording update. No later node or authority is activated.
 - 2026-07-17: Published the pre-final durable-status candidate through PR #212 after PR #211 exact-head review at `4d3b649da9c953480c5053ae8e0b1707315de3e6`, canonical merge at `38d3e96263b671a72141d0ab92b61b91a85e6c36`, post-merge canonical verification, tracker #168 checkpoint comment `4998971940`, and the pre-PR-#212 residual review. PR #212 review found that tracker ordering still leaves Workflow v1 Final Closeout and Workflow v1 in `REVIEW`; the first three mandatory nodes remain `DONE`. Historical PR #203/#204 integrity incidents and all limitations, non-claims, deferred scope, and no-auto-activation boundaries remain preserved.
 - 2026-07-16: Accepted the bounded acceptance-integrity correction at `a95d05388ad77963ee8cb44c0b7710a49a9d8421`, the Windows PowerShell child-environment correction at technical correction HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682`, and the full Phase C target flow with verdict `ACCEPTED — PHASE_C_FULL_TARGET_FLOW_VALIDATED`. At that checkpoint PR #211 was the active correction/publication PR, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; its head still required fresh verification. Issues #207 and #209 preserve the first-attempt environment and outdated-Codex failures; Issues #208 and #210 preserve the corrected status and review-bundle successes plus separately observed duplicate suppression without rerun. Workflow v1 was then `REVIEW`, not `DONE`, and review-finding correction, asynchronous rereview, merge, post-merge canonical verification, tracker #168 synchronization, and a pre-PR-#212 residual review were pending. No later node or authority was activated.
@@ -271,7 +278,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - 2026-07-13: Recorded the user-approved `RV2-P1-SYNC` post-RV2-03 rebaseline. At that time, defined the four-node Workflow v1 completion boundary and narrowed the next code-node candidate to inactive `RV2-04N`; classified RV2-05/07/08/09 as `DEFER`, RV2-06 as `PARTIALLY ABSORBED`, Issue #188 as `CONDITIONAL / PARTIALLY ABSORBED`, and the Native-vs-Bridge benchmark as conditional, without activating implementation or expanding authority.
 - 2026-07-12: Recorded the accepted WF-REENTRY native-capability overlap adjudication. Repositioned the Workflow as the Human-Governed AI Engineering Control Layer, retained the governance and specialized safety core, thinned universal transport assumptions, marked native dispatch as a replacement candidate with readback still unproven, classified Direction Lock transport strategy as `REVIEW_REQUIRED` for future explicit change-control review without modifying the Direction Lock, and activated no implementation node.
 - 2026-07-12: Added the ECO-DOC-01 durable strategy and product-validation records. Reaffirmed Workflow Mainline as the ecosystem first priority, preserved n8n/Gateway as a bounded ecosystem component, recorded Phase 5.1–5.3 as `PASS WITH SMALL GAPS — BOUNDED FOLLOW-UP JUSTIFIED`, and did not activate Phase 5.4, RV2-04, repository separation, or any later node.
-- 2026-07-11: Closed OPT-06 and OPT-07 workflow experiments. OPT-06 produced a `GO — conditional default` recommendation for systematic debugging on ambiguous, safety-relevant, environment-sensitive, or evidence-heavy work. OPT-07 was accepted as `NO-GO` after `codebase-memory-mcp` v0.9.0 reduced comparable exploration operations by only `13.04%`, missed safety-critical Dispatcher/Runner and durable-evidence relations, and completed full rollback without repository or configuration residue. No later node was activated.
+- 2026-07-11: Closed OPT-06 and OPT-07 workflow experiments. OPT-06 produced a `GO — conditional default` recommendation for systematic debugging on ambiguous, safety-relevant, environment-sensitive, or evidence-heavy work. OPT-07 was accepted as `NO-GO` after `codebase-memory-mcp` v0.9.0 reduced comparable exploration operations by only `13.04%` and missed safety-critical Dispatcher/Runner and durable-evidence relations, and completed full rollback without repository or configuration residue. No later node was activated.
 - 2026-07-11: Closed REC-02 after final semantic acceptance and PR #192 merge at canonical commit `9d458becce35d1098244b15b4fe7044d78c8f4c9`; 111 unique related tests passed on the final code state. The combined one-shot suite was environment-blocked by antivirus interference with temporary fake executables and nested-process hangs, so split-module final-state evidence was used. RV2-04, Issue #188, OPT-06, and all later nodes remain inactive unless separately approved.
 - 2026-07-10: Activated REC-02 under explicit approval for Course Host Complete Recovery v2 implementation; final acceptance remains required and no later node is activated.
 - 2026-07-10: Closed RV2-03 after formal Primary Operational Host acceptance passed: exactly one normal Dispatcher/Runner/Codex execution succeeded, complete local state loss reconciled durably without rerun, the duplicate gate blocked later execution, and no automatic retry or unexpected GitHub write occurred. RV2-04, REC-02, Issue #188, and OPT nodes remain inactive unless separately approved.
