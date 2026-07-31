@@ -1,10 +1,19 @@
 # ChatGPT-First Daily UX Pilot Closeout — 2026-07-31
 
-## Status
+## Publication status
 
-`CHATGPT-ONLY DAILY UX ACCEPTED — MANUAL FOREGROUND, BOUNDED, NO ROUTINE TASK/RESULT RELAY`
+`EVIDENCE ACCEPTED — DURABLE PUBLICATION PENDING`
 
-This record closes the bounded daily-UX proof only. It does not reopen or replace the already completed Workflow v1 closeout, change the Local Document-to-Knowledge Workbench product identity, or claim completion of the full Human-Governed Workflow Display Pilot.
+The accepted capability verdict is:
+
+```text
+CHATGPT-ONLY DAILY UX ACCEPTED
+— MANUAL FOREGROUND, BOUNDED, NO ROUTINE TASK/RESULT RELAY
+```
+
+On a feature branch, this file is a publication candidate only. The verdict becomes Local AI Workbench durable current truth only after the exact reviewed PR #249 candidate, the corresponding `PLANS.md` status entry, and the Engineering Records Index pointer are merged into `master` and post-merge canonical verification passes.
+
+This record closes the bounded daily-UX proof only after that publication gate. It does not reopen or replace the already completed Workflow v1 closeout, change the Local Document-to-Knowledge Workbench product identity, or claim completion of the full Human-Governed Workflow Display Pilot.
 
 ## Accepted user experience
 
@@ -45,7 +54,8 @@ Durable evidence:
 - Inbox request comment: `5139148417`;
 - corrected dispatch comment: `5139390007`;
 - completed Bridge status comment: `5139411981`;
-- Runner ReviewBundle / matching result comment: `5139431417`;
+- Runner ReviewBundle comment: `5139431417`;
+- matching `LAWBRUNNER-RESULT` comment: `5139431571`;
 - hash-bound source and test evidence comment: `5139502531`;
 - ChatGPT semantic acceptance comment: `5139553822`.
 
@@ -80,20 +90,22 @@ Before the corrected dispatch marker existed, Bridge status comment `5139364732`
 
 ## Capability matrix
 
-| Capability | Current classification | Evidence boundary |
+The current classification vocabulary is restricted to `VERIFIED`, `PARTIAL`, `UNVERIFIED`, `DEFERRED`, `NOT_APPLICABLE`, and `REJECTED`.
+
+| Capability | Classification | Evidence and authority qualifier |
 |---|---|---|
 | ChatGPT-first bounded engineering interaction | VERIFIED | Success case completed without routine task/result relay |
 | Fixed-Inbox to Bridge to Dispatcher/Runner/Codex path | VERIFIED | HAG Issue #6 and Inbox #147 durable evidence |
 | ChatGPT direct technical adjudication from GitHub evidence | VERIFIED | Hash-bound evidence and reviewer acceptance |
 | Launcher dirty-target fail closed | VERIFIED | Status comment `5139709504` |
 | Operator missing-dispatch fail closed | VERIFIED | Status comment `5139364732` |
-| Automatic commit, push, PR, merge, Issue close, or deployment | DEFERRED / NOT AUTHORIZED | Separate permanent or remote approval remains required |
-| Zero-touch operation | UNVERIFIED / NOT CLAIMED | Reviewed setup and foreground start remain user-visible steps |
-| Permanent background service | NOT CLAIMED | Foreground bounded execution only |
-| Restart-safe unattended queue | NOT CLAIMED | Outside this daily-UX closeout |
-| Parallel multi-task isolation | NOT CLAIMED | Outside this daily-UX closeout |
-| Full independent Workflow runtime cutover | NOT CLAIMED | Local AI Workbench remains runtime and rollback/reference host |
-| Full Display-Ready GitHub presentation package | OPEN | Documentation, demo package, sample rendering, and interview guide remain separate |
+| Automatic commit, push, PR, merge, Issue close, or deployment | DEFERRED | Not authorized by the accepted daily-UX contract; each remains separately approval-gated |
+| Zero-touch operation | UNVERIFIED | Not claimed; reviewed setup and foreground start remain user-visible steps |
+| Permanent background service | DEFERRED | Not part of this bounded foreground closeout |
+| Restart-safe unattended queue | DEFERRED | Outside this daily-UX closeout |
+| Parallel multi-task isolation | DEFERRED | Outside this daily-UX closeout |
+| Full independent Workflow runtime cutover | DEFERRED | Local AI Workbench remains runtime and rollback/reference host |
+| Full Display-Ready GitHub presentation package | PARTIAL | Core daily UX is accepted; demo, sample rendering, and interview package remain open |
 
 ## HAG-02 publication boundary
 
