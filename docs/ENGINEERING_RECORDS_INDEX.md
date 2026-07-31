@@ -32,12 +32,12 @@ Recommended future session read order:
 - Accepted correction/publication PR: #211 on retained branch `workflow-v1-phase-c-powershell-env-correction`; accepted reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`; external Codex exact-head review completed with no major issues; canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36`; post-merge canonical verification completed
 - Tracker #168 historical intermediate synchronization: comment `5005537101`; it records PR #212 post-merge evidence and the then-current `REVIEW` state
 - Tracker #168 reviewer-controlled final residual-review result anchor: comment `5010099708`; it records `ACCEPTED — FINAL RESIDUAL REVIEW PASSED`
-- PR #213 final durable-status transition: exact reviewed head `60be637db0c237db3d53408a272fd3aaba98ec8b`; canonical merge `317cd7e9fedb153daa034c1e698819042e2e4564`; post-merge verification completed
+- PR #213 final durable-status transition: exact reviewed head `60be637db0c237db3d53408a272fd3aaba98ec8b`; canonical merge `317cd7e9fedb153daa034c1e698819042e2e4564`; post-merge canonical verification completed
 - Tracker #168 final `DONE` publication: comment `5010353117`
 - Acceptance-integrity correction baseline: `a95d05388ad77963ee8cb44c0b7710a49a9d8421`
 - Phase C evidence Issues: #207 first `maybe-status-check` failure; #208 corrected success; #209 first `run-reviewbundle` failure; #210 restored-CLI success and independent PASS
 - PR #203: Final Closeout candidate publication; commit `368934f5c93d210c485d49180bc1c347d7d3647c`; canonical merge `c36a1b820e6f6786267057aa05d25697b9f1deca`
-- PR #204: attempted `REVIEW` -> `DONE` transition; commit `240e47a77da753c9ff2a8c1d9677b515682`; canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`
+- PR #204: attempted `REVIEW` -> `DONE` transition; commit `240e47a77da753c9ffb619e79be1c15e20b23e7a`; canonical merge `b20a12c07cd2de7105b94b34ed2996b06f59b84a`
 - RV2-03 accepted historical node: Issue `#175`
 - Deferred workflow-hardening anchor: Issue `#188`
 - Records and closeout planning anchor: Issue `#190`
@@ -66,7 +66,7 @@ This entry is navigation, not implementation authority or a replacement for curr
 - OPT-03: `docs/POST_RV2_03_WORKFLOW_OPTIMIZATION_BENCHMARK_OPT03.md` records the historical A/B workflow benchmark.
 - OPT-04: `docs/POST_RV2_03_UI_MOCKUP_FIRST_BENCHMARK_OPT04.md` records the mockup-first benchmark and UI contract pattern.
 - OPT-05: `docs/POST_RV2_03_SYSTEMATIC_DEBUGGING_PROFILE_BENCHMARK_OPT05.md` records the systematic debugging profile benchmark.
-- OPT-06: completed as a Chat-only REC-02 retrospective; result `GO — conditional default` for ambiguous, safety-relevant, environment-sensitive, or evidence-heavy debugging. It created no repository artifact and added no authority.
+- OPT-06: completed as a Chat-only REC-02 retrospective; result `GO — conditional default` for ambiguous, safety-relevant, environment-sensitive, or evidence-heavy work. It created no repository artifact and added no authority.
 - OPT-07: `docs/POST_RV2_03_CODEBASE_MEMORY_BENCHMARK_OPT07.md` records the isolated `codebase-memory-mcp` v0.9.0 CLI benchmark; result `DONE / NO-GO`, with `13.04%` exploration-cost reduction, incomplete safety-critical relations, complete rollback, and no adoption for the current workflow.
 
 ## OPT-06 / OPT-07 Status
