@@ -66,7 +66,7 @@ This entry is navigation, not implementation authority or a replacement for curr
 - OPT-03: `docs/POST_RV2_03_WORKFLOW_OPTIMIZATION_BENCHMARK_OPT03.md` records the historical A/B workflow benchmark.
 - OPT-04: `docs/POST_RV2_03_UI_MOCKUP_FIRST_BENCHMARK_OPT04.md` records the mockup-first benchmark and UI contract pattern.
 - OPT-05: `docs/POST_RV2_03_SYSTEMATIC_DEBUGGING_PROFILE_BENCHMARK_OPT05.md` records the systematic debugging profile benchmark.
-- OPT-06: completed as a Chat-only REC-02 retrospective; result `GO — conditional default` for ambiguous, safety-relevant, environment-sensitive, or evidence-heavy work. It created no repository artifact and added no authority.
+- OPT-06: completed as a Chat-only REC-02 retrospective; result `GO — conditional default` for ambiguous, safety-relevant, environment-sensitive, or evidence-heavy debugging. It created no repository artifact and added no authority.
 - OPT-07: `docs/POST_RV2_03_CODEBASE_MEMORY_BENCHMARK_OPT07.md` records the isolated `codebase-memory-mcp` v0.9.0 CLI benchmark; result `DONE / NO-GO`, with `13.04%` exploration-cost reduction, incomplete safety-critical relations, complete rollback, and no adoption for the current workflow.
 
 ## OPT-06 / OPT-07 Status
