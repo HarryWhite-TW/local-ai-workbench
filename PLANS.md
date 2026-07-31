@@ -67,6 +67,39 @@ Engineering record navigation and OPT-series artifacts are indexed in `docs/ENGI
 
 Bridge Operator remains development workflow tooling and portfolio engineering evidence, not product runtime.
 
+## ChatGPT-First Daily UX Pilot Publication
+
+Repository-local interpretation is branch-sensitive:
+
+- on a feature branch or open PR, this section is candidate publication content;
+- on canonical `master`, this section states the durable evidence-supported verdict;
+- operational synchronization is complete only after an independent post-merge check confirms the exact reviewed content and no applicable truth-surface drift.
+
+This wording deliberately avoids a transient `pending` or `completed` flag that would become stale after merge.
+
+The accepted bounded capability verdict is:
+
+```text
+CHATGPT-FIRST CORE DAILY UX ACCEPTED
+— MANUAL FOREGROUND, BOUNDED, NO ROUTINE TASK/RESULT RELAY
+```
+
+The real external-repository success case used HAG Issue #6. Evidence anchors are:
+
+- LAWB Issue `#147` Inbox request comment `5139148417`;
+- HAG Issue `#6` corrected dispatch comment `5139390007`;
+- LAWB Issue `#147` completed Bridge status comment `5139411981`;
+- HAG Issue `#6` Runner ReviewBundle comment `5139431417`;
+- HAG Issue `#6` distinct matching `LAWBRUNNER-RESULT` comment `5139431571`;
+- HAG Issue `#6` hash-bound source/test evidence comment `5139502531`;
+- HAG Issue `#6` ChatGPT semantic acceptance comment `5139553822`.
+
+Fail-closed evidence includes LAWB Issue `#147` launcher-preflight dirty-target status comment `5139709504` and LAWB Issue `#147` Operator exact-dispatch failure status comment `5139364732`. The user did not routinely relay task packets, terminal output, raw diffs, tests, result JSON, ReviewBundle content, or the Codex report between interfaces.
+
+The detailed capability matrix, operating boundary, publication semantics, and non-claims are recorded in `docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md`.
+
+The accepted HAG-02 candidate remains local and unstaged. It is not published on HAG `main`; `HAG-02-PUBLICATION-01` is the next controlled dependency, and HAG-03 is not activated. Zero-touch operation, a permanent background service, restart-safe unattended queueing, parallel isolation, automatic remote actions, independent Workflow runtime cutover, and the complete Display-Ready package remain unproven, deferred, or partial as classified in the closeout record.
+
 ## Bridge Roadmap v2 Position
 
 The active execution-governance specification is:
@@ -231,6 +264,7 @@ The original M1 plan is retained here as historical baseline evidence.
 - Real E2E automation
 
 ## Change Log
+- 2026-07-31: Recorded the evidence-supported ChatGPT-first core daily-UX verdict with merge-stable branch-sensitive semantics. The success case, launcher-preflight fail-closed case, and Operator exact-dispatch fail-closed case are accepted evidence; operational synchronization still requires independent post-merge exact-content and no-drift verification. HAG-02 remains a local unstaged candidate and HAG-03 is not activated.
 - 2026-07-18: Prepared the final post-tracker repository truth-sync proposal with intended status `DONE — FINAL DURABLE TRUTH SYNCHRONIZED`, recording PR #213 reviewed head `60be637db0c237db3d53408a272fd3aaba98ec8b`, canonical merge `317cd7e9fedb153daa034c1e698819042e2e4564`, Tracker #168 final `DONE` comment `5010353117`, intermediate `REVIEW` comment `5005537101`, and final residual-review anchor `5010099708`. The proposal becomes current truth only when its exact reviewed content merges into `master`; post-merge verification requires no second wording update. No later node or authority is activated.
 - 2026-07-17: Published the pre-final durable-status candidate through PR #212 after PR #211 exact-head review at `4d3b649da9c953480c5053ae8e0b1707315de3e6`, canonical merge at `38d3e96263b671a72141d0ab92b61b91a85e6c36`, post-merge canonical verification, tracker #168 checkpoint comment `4998971940`, and the pre-PR-#212 residual review. PR #212 review found that tracker ordering still leaves Workflow v1 Final Closeout and Workflow v1 in `REVIEW`; the first three mandatory nodes remain `DONE`. Historical PR #203/#204 integrity incidents and all limitations, non-claims, deferred scope, and no-auto-activation boundaries remain preserved.
 - 2026-07-16: Accepted the bounded acceptance-integrity correction at `a95d05388ad77963ee8cb44c0b7710a49a9d8421`, the Windows PowerShell child-environment correction at technical correction HEAD `6ee0698f69ec8642925f9ff2a8c1d9677b515682`, and the full Phase C target flow with verdict `ACCEPTED — PHASE_C_FULL_TARGET_FLOW_VALIDATED`. At that checkpoint PR #211 was the active correction/publication PR, opened from initial publication head `423b52e7dd0495df2002a2fa2bd5fb551a6c1cdb`; its head still required fresh verification. Issues #207 and #209 preserve the first-attempt environment and outdated-Codex failures; Issues #208 and #210 preserve the corrected status and review-bundle successes plus separately observed duplicate suppression without rerun. Workflow v1 was then `REVIEW`, not `DONE`, and review-finding correction, asynchronous rereview, merge, post-merge canonical verification, tracker #168 synchronization, and a pre-PR-#212 residual review were pending. No later node or authority was activated.
