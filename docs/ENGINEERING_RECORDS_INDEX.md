@@ -27,7 +27,7 @@ Recommended future session read order:
 ## Current Important Anchors
 
 - Roadmap v2 tracker: Issue `#168`
-- ChatGPT-first daily-UX closeout candidate: `docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md`; accepted evidence supports the bounded manual-foreground/no-routine-relay verdict, but the record becomes durable `master` truth only after exact-head review, PR #249 merge, and post-merge verification. Its evidence anchors include ReviewBundle `5139431417`, distinct matching `LAWBRUNNER-RESULT` `5139431571`, launcher-preflight fail closed `5139709504`, and Operator exact-dispatch fail closed `5139364732`.
+- ChatGPT-first daily-UX closeout record: `docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md`. Its evidence-supported verdict is `CHATGPT-FIRST CORE DAILY UX ACCEPTED — MANUAL FOREGROUND, BOUNDED, NO ROUTINE TASK/RESULT RELAY`. Repository-local interpretation is branch-sensitive: on a feature branch/open PR it is candidate publication content; on canonical `master` it states durable evidence-supported truth; operational synchronization still requires an independent post-merge exact-content and no-drift check. Evidence anchors include HAG Issue `#6` Runner ReviewBundle comment `5139431417`, HAG Issue `#6` matching `LAWBRUNNER-RESULT` comment `5139431571`, LAWB Issue `#147` launcher-preflight fail-closed status comment `5139709504`, and LAWB Issue `#147` Operator exact-dispatch fail-closed status comment `5139364732`.
 - Workflow v1 Final Closeout record: `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`; it is the primary architecture, evidence, limitation, demonstration, and conditional final-transition record
 - Accepted correction/publication PR: #211 on retained branch `workflow-v1-phase-c-powershell-env-correction`; accepted reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`; external Codex exact-head review completed with no major issues; canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36`; post-merge canonical verification completed
 - Tracker #168 historical intermediate synchronization: comment `5005537101`; it records PR #212 post-merge evidence and the then-current `REVIEW` state
@@ -90,7 +90,7 @@ This entry is navigation, not implementation authority or a replacement for curr
 
 - `README.md` may contain stale current-status language.
 - Issue bodies may lag behind append-only comments.
-- The ChatGPT-first daily-UX feature branch and PR #249 are candidate truth until exact-head merge and post-merge verification; do not read the bounded verdict as canonical `master` status before that gate.
+- Interpret the ChatGPT-first daily-UX record by repository location: feature branch/open PR means candidate publication content; canonical `master` means durable evidence-supported content. In either case, independent post-merge verification is required before declaring operational synchronization complete.
 - Tracker #168 comment `4998971940` is a historical pre-PR-#212 `REVIEW` checkpoint. Comment `5005537101` is the intermediate PR #212 evidence synchronization that retained `REVIEW`. Comment `5010099708` is the reviewer-controlled final residual-review result anchor. Comment `5010353117` is the paired tracker final `DONE` publication.
 - Old PR bodies and old handoffs are historical evidence, not current truth.
 - `docs/SEMI_AUTOMATED_WORKFLOW_V1.md` and `docs/SEMI_AUTOMATED_WORKFLOW_V1_PROOF_REPORT.md` are historical operating/proof evidence, not current Workflow v1 completion truth.
