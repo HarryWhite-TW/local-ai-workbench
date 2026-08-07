@@ -179,6 +179,12 @@ Rules:
 
 ## Node Lifecycle And Close Rule
 
+The following lifecycle applies when entering or adjudicating a node's
+activation, execution authority, closeout, or next-node transition. Bounded
+implementation, test, repair, and evidence follow-ups within the same thread,
+governing version, active node, and outcome may rely on the already confirmed
+context unless a relevant fact changes or an ambiguity appears.
+
 For each execution node:
 
 1. Read governing documents, tracker, and active node.
@@ -706,7 +712,10 @@ The roadmap may evaluate whether Codex can expose a stable machine-readable dist
 
 ## Required Roadmap Read Audit
 
-After this specification is merged, every Roadmap v2 planning or execution task must read:
+After this specification is merged, confirm the following sources when a fresh
+thread first bootstraps Roadmap work, when the governing version or active node
+changes, or when work adjudicates Roadmap sequencing, node activation,
+closeout, or authority:
 
 1. `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`;
 2. `docs/BRIDGE_OPERATOR_V0_SPEC.md`;
@@ -714,7 +723,7 @@ After this specification is merged, every Roadmap v2 planning or execution task 
 4. the Roadmap v2 tracker;
 5. the active node Issue when one exists.
 
-It must emit:
+At those points, emit:
 
 ```text
 ROADMAP-V2-READ-AUDIT protocol=lawb.bridge_roadmap_v2_read.v1
@@ -733,7 +742,17 @@ product_runtime_boundary_preserved=<true|false>
 failure_reason=<none or exact reason>
 ```
 
-If this specification is missing, unreadable, not merged, or not acknowledged for Roadmap v2 work, stop before producing a Codex execution task or performing a Roadmap v2 write.
+Within the same thread, governing version, active node, and bounded outcome,
+ordinary implementation, test, repair, and evidence follow-ups do not require a
+full reread of the governing documents, tracker, and active node or a repeated
+`ROADMAP-V2-READ-AUDIT`. Reconfirm and re-emit when a relevant governing fact
+changes or a genuine sequencing or authority ambiguity appears.
+
+If this specification or another required source is missing, unreadable,
+unmerged where a merged source is required, or cannot be acknowledged at a
+required bootstrap, sequencing, activation, closeout, or authority decision,
+stop before the affected decision or Roadmap write. The absence of a repeated
+audit during an unchanged bounded follow-up is not itself a stop condition.
 
 ## Drift Detection
 

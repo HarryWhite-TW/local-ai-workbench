@@ -24,9 +24,8 @@ This file cannot weaken root repository-wide safety.
 - ChatGPT remains the primary user interface.
 - GitHub remains the auditable task and result surface.
 - Manual copy/paste and manual `PollOnce` are fallback or recovery paths.
-- Bridge Operator Phase B is the approved next workflow direction.
-- Phase C / MCP remains deferred until Phase B is stable.
-- This Governance Reset task does not implement Phase B or B1.
+- Current Roadmap sequencing and the active or next node must come from the applicable current plan and active task, tracker, or node source when the work actually requires a sequencing, activation, closeout, or authority decision.
+- This scoped rule file does not own, freeze, or activate the current or next Roadmap phase or node.
 
 ## Authority Hierarchy
 
@@ -44,10 +43,11 @@ silently create a new current requirement.
 
 ## Bridge Task Sizing
 
-- A bounded vertical slice may modify multiple explicitly approved bridge modules when one end-to-end outcome requires it.
-- Do not split an integrated outcome solely to satisfy an arbitrary file-count limit.
+- A bounded vertical slice may modify multiple explicitly approved bridge modules and include the implementation, test, repair, and evidence steps required for one end-to-end outcome.
+- Do not split an integrated outcome solely to satisfy an arbitrary file-count or technical-step limit.
 - File count alone is not the risk model.
 - Risk is determined by authority, side effects, external access, persistence, execution scope, and recovery behavior.
+- Stop for a separate approval when the work would materially expand the approved objective, authority, side effects, or scope, not merely because the bounded outcome spans several files or steps.
 - Architecture audits may read the complete explicitly scoped bridge folder.
 
 ## Preserved Prohibitions

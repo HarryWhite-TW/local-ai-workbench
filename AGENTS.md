@@ -58,9 +58,12 @@ integrity incident task must also read and follow
 ## Task Boundaries And Modes
 
 Task size is governed by objective, authority, side effects, allowed paths, and
-verification needs, not file count alone. If a task appears to expand beyond
-the approved objective or authority boundary, stop and report the decision that
-needs user approval.
+verification needs, not file count or the number of technical steps. One
+bounded outcome may span multiple approved files, modules, implementation
+steps, tests, repairs, and evidence checks without being split solely for those
+reasons. Stop only when the work would materially expand the approved
+objective, authority, side effects, or scope, and report the decision that needs
+user approval.
 
 ### MICRO PATCH
 
@@ -92,12 +95,11 @@ needs user approval.
 
 ## Verification
 
-- After code changes, run `pytest -q` by default when the repo provides a pytest-based test suite, unless the user gives a narrower command.
+- Choose verification in proportion to blast radius: begin with targeted checks, add related or adjacent checks when shared contracts or call sites are affected, and run the full suite only when materially justified by risk, blast radius, or explicit acceptance requirements.
 - Acceptance must cover the primary goal top-down, not only local implementation gates. Review direct call sites for shared contract changes, distinguish asynchronous review completion from no review observed, and keep trusted acceptance oracles independent of the candidate they judge.
 - For CLI-related changes, run the documented CLI command from `README.md` or project docs. If no CLI entrypoint exists, report that explicitly in the final report.
 - For Docker-related changes, run `docker build` and `docker run` for the affected flow. If Docker assets are absent, report that the check is not applicable.
-- For documentation-only or governance-only changes, verify the written description still matches current repo behavior, commands, visible structure, and approved authority.
-- If a task does not modify code, explain why `pytest -q` was not run.
+- For documentation-only or governance-only changes, use relevant text, diff, and consistency checks to verify the written description against current repo behavior, commands, visible structure, and approved authority. Do not run `pytest` solely as a procedural formality; run executable checks only when the changed contract or acceptance risk materially justifies them.
 - If a requested verification cannot be run, report the exact blocker instead of claiming it passed.
 - Report verification results and blockers honestly.
 
@@ -111,7 +113,7 @@ needs user approval.
 
 - If a required file anchor or expected code section is missing, stop and report instead of guessing.
 - If build or tests fail after one focused repair attempt, stop and report the failure, changed files, and suspected cause.
-- If the task appears larger than requested, stop and propose smaller follow-up tasks.
+- If the task would materially expand the approved objective, authority, side effects, or scope, stop and propose a separately approved follow-up.
 - If the requested change conflicts with `README.md`, `AGENTS.md`, `PLANS.md`, a scoped `AGENTS.md`, or an explicit task document, stop and report the conflict.
 - Do not continue into unrelated cleanup, refactors, or visual polish after the requested task is complete.
 
@@ -119,7 +121,8 @@ needs user approval.
 
 - Do not inspect unrelated files.
 - Do not summarize the whole repository unless explicitly asked.
-- Use `README.md`, `AGENTS.md`, scoped `AGENTS.md` files, `PLANS.md`, and explicit task documents as the primary context.
+- Read the applicable root and scoped `AGENTS.md` files and the task-specific canonical sources needed for the current outcome. Read `README.md`, `PLANS.md`, roadmaps, historical handoffs, and other context only when directly relevant; do not reload unrelated context for every bounded follow-up.
 - For engineering-record navigation and post-RV2-03 workflow artifacts, read `docs/ENGINEERING_RECORDS_INDEX.md`. The index is a navigation aid, not a replacement for fresh current-state verification.
 - Prefer targeted file reads over broad repository exploration.
+- Do not create planning, status, handoff, architecture, framework, or governance documents by default. Add a document only when it is an explicit deliverable, required canonical durable truth, or cannot be represented in an applicable existing source.
 - Keep final reports short and structured according to the user's requested format when one is provided.

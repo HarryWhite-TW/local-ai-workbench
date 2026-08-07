@@ -55,17 +55,19 @@ Manual foreground `PollOnce` is also a recovery path once Bridge Operator Phase 
 
 This document is the source of truth for the bridge direction.
 
-Before producing Codex execution instructions for bridge-related work, the task must read this plan and emit a PLAN-READ-AUDIT. If the proposed work does not align with the primary goal, it must identify whether the work is support, fallback, or drift_detected before continuing.
+Confirm this plan and emit a PLAN-READ-AUDIT when a fresh Codex thread first handles Bridge direction, when the governing version changes, when adjudicating architecture, authority, or Roadmap sequencing, or when a genuine direction ambiguity appears. If the proposed work does not align with the primary goal, identify whether the work is support, fallback, or drift_detected before continuing.
 
-For any task involving Bridge Operator behavior, automatic polling, Bridge Inbox semantics, Windows startup, local operator UX, or MCP / ChatGPT App integration, the task must also read `docs/BRIDGE_OPERATOR_V0_SPEC.md` and emit its required `BRIDGE-OPERATOR-SPEC-READ-AUDIT`.
+At those bootstrap or direction-sensitive points, work involving Bridge Operator behavior, automatic polling, Bridge Inbox semantics, Windows startup, local operator UX, or MCP / ChatGPT App integration must also confirm `docs/BRIDGE_OPERATOR_V0_SPEC.md` and emit its required `BRIDGE-OPERATOR-SPEC-READ-AUDIT`.
 
-After Roadmap v2 is merged, any Roadmap v2 planning, node creation, Codex task, implementation, live execution, closeout, or sequencing decision must also read `docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md`, the Roadmap v2 tracker, and the active node Issue when one exists, then emit the required `ROADMAP-V2-READ-AUDIT`.
+After Roadmap v2 is merged, fresh-thread Roadmap bootstrap and work that adjudicates Roadmap sequencing, node activation, closeout, or authority must also confirm `docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md`, the Roadmap v2 tracker, and the active node Issue when one exists, then emit the required `ROADMAP-V2-READ-AUDIT`.
+
+Within the same thread, governing version, and bounded outcome, implementation, test, repair, and evidence follow-ups may rely on the already confirmed governing context. They do not require a full reread or repeated read-audit unless the governing version, active node, authority question, or direction-relevant facts change, or a genuine ambiguity appears.
 
 GitHub issues, runner packets, ReviewBundles, audit headers, implementation notes, tracker entries, and node Issues may carry task-specific detail, but they must not override this plan, the approved Bridge Operator specification, or an active merged Roadmap v2 specification unless the user explicitly updates the governing document through approved change control.
 
 ## PLAN-READ-AUDIT Format
 
-Future bridge-related tasks must emit this audit shape after reading the plan:
+When the Source-Of-Truth Rule requires confirmation, emit this audit shape after reading the plan:
 
 ```text
 PLAN-READ-AUDIT protocol=lawb.direction_lock_plan_read.v1
@@ -101,7 +103,7 @@ plan_version=v1.2
 primary_goal=chatgpt_dispatches_to_codex_and_reads_results_back
 issue_role=<core|support|fallback>
 manual_copy_paste_is_target=false
-must_emit_plan_read_audit=true
+must_emit_plan_read_audit_when_required=true
 ```
 
 Bridge Operator-related issues must also include:
@@ -125,15 +127,20 @@ tracker_issue=<number>
 must_emit_roadmap_v2_read_audit=true
 ```
 
+The two `must_emit_*_read_audit=true` binding fields retain their existing
+names. Here, `true` requires the corresponding audit only at the conditional
+points defined by the Source-Of-Truth Rule; it does not require a repeated audit
+for an unchanged bounded follow-up.
+
 ## Stop Rule
 
-If the Direction Lock Plan is missing, unreadable, or not acknowledged with PLAN-READ-AUDIT, bridge-related work must stop before producing Codex execution instructions.
+If a required bootstrap or direction-sensitive confirmation cannot read this Direction Lock Plan, stop before making the affected direction, architecture, authority, or sequencing decision.
 
-If a Bridge Operator-related task does not read and acknowledge `docs/BRIDGE_OPERATOR_V0_SPEC.md`, it must stop before planning or implementation.
+If `docs/BRIDGE_OPERATOR_V0_SPEC.md` cannot be confirmed when the Source-Of-Truth Rule requires it, stop before the affected Bridge Operator planning or implementation.
 
-After Roadmap v2 adoption, if a Roadmap v2 task does not read and acknowledge the merged specification, tracker, and active node when one exists, it must stop before producing Codex execution instructions or performing a Roadmap v2 write.
+After Roadmap v2 adoption, if a required Roadmap bootstrap, sequencing, activation, closeout, or authority adjudication cannot confirm the merged specification, tracker, and active node when one exists, stop before the affected decision or Roadmap write.
 
-Do not continue by silently falling back to manual relay language, a stale Issue, an unmerged proposed specification, or a future planned node. Stop, report the missing plan-read condition, and ask for ChatGPT review.
+The absence of a repeated audit during an unchanged same-thread bounded follow-up is not itself a stop condition. A missing required governing source, a real direction or authority conflict, or reliance on manual relay language, a stale Issue, an unmerged proposed specification, or a future planned node as current authority remains a stop condition and requires ChatGPT review.
 
 Any task that expands polling scope, startup behavior, action allowlists, write authority, approval authority, external connectivity, trusted actors, the primary host model, the audit surface, or the product boundary must stop for explicit user approval first.
 
