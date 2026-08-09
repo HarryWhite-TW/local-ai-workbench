@@ -7,9 +7,10 @@ import os
 import re
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from local_runner_bridge.bridge_operator_b1 import (
     CONSUMED,
@@ -25,7 +26,6 @@ from local_runner_bridge.bridge_operator_b2 import (
     DispatcherInvocationResult,
     build_dispatcher_command,
     default_dispatcher_invoker,
-    _read_matching_results,
 )
 from local_runner_bridge.durable_evidence_provider import GitHubIssueCommentEvidenceProvider
 from local_runner_bridge.durable_evidence_reconciliation import (
@@ -33,10 +33,30 @@ from local_runner_bridge.durable_evidence_reconciliation import (
     ReconciliationDecision,
     resolve_durable_completion,
 )
+from local_runner_bridge.bridge_operator_lifecycle_state import (
+    DISPATCHED_NOT_LOCALLY_SETTLED,
+    PREPARED,
+    PROCESSED,
+    LifecycleEvidenceError,
+    append_jsonl_durable,
+    capture_current_process_identity,
+    create_lock_payload,
+    inspect_expected_process,
+    inspect_lock_file,
+    load_in_flight,
+    new_in_flight_payload,
+    parse_utc,
+    quarantine_lock,
+    remove_exact_json,
+    updated_in_flight_payload,
+    validate_process_identity,
+    validate_session_id,
+    write_durable_json,
+    write_exclusive_json,
+)
 
 SUMMARY_PROTOCOL = "lawb.bridge_operator_b3_dry_run_loop_summary.v1"
 HEARTBEAT_PROTOCOL = "lawb.bridge_operator_b3_heartbeat.v1"
-LOCK_PROTOCOL = "lawb.bridge_operator_b3_lock.v1"
 STATE_PROTOCOL = "lawb.bridge_operator_b3_state.v1"
 OBSERVATION_PROTOCOL = "lawb.bridge_operator_b3_dry_run_observation.v1"
 PROCESSED_REQUEST_PROTOCOL = "lawb.bridge_operator_b3_processed_request.v1"
@@ -47,9 +67,12 @@ B3C_MODE = "b3c-run-reviewbundle"
 B3B_ALLOWED_ACTION = "maybe-status-check"
 B3C_ALLOWED_ACTION = "run-reviewbundle"
 
-DEFAULT_MAX_CYCLES_LIMIT = 100
+DEFAULT_MAX_CYCLES_LIMIT = 960
 DEFAULT_MAX_POLL_INTERVAL_SECONDS = 3600.0
 DEFAULT_READ_RETRY_COUNT = 2
+HEALTH_PROBE_REQUEST_EXPIRY_SECONDS = 300
+HEALTH_PROBE_RESULT_TIMEOUT_SECONDS = 120
+HEALTH_PROBE_TO_REAL_TASK_SECONDS = 60
 SAFE_WAIT_B1_REASONS = frozenset({"missing_request", "no_current_request_after_consumption"})
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$")
 
@@ -73,6 +96,10 @@ def run_bridge_operator_b3_dry_run_loop(
     dispatcher_invoker: Any | None = None,
     timeout_seconds: int | None = None,
     durable_evidence_provider: Any | None = None,
+    operator_session_id: str | None = None,
+    process_identity: dict[str, Any] | None = None,
+    process_probe: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    lifecycle_fault_injector: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Run a visible bounded loop, dry-run by default."""
     control_root = Path(control_repo_root if control_repo_root is not None else repo_root).resolve()
@@ -80,9 +107,38 @@ def run_bridge_operator_b3_dry_run_loop(
     summary = _base_summary(repository, inbox_issue, control_root, target_root, mode)
     summary["configured_max_cycles"] = max_cycles
     summary["configured_poll_interval_seconds"] = poll_interval_seconds
+    configured_timeout = (
+        timeout_seconds
+        if timeout_seconds is not None
+        else DEFAULT_TIMEOUT_SECONDS
+    )
+    summary["configured_timeout_seconds"] = configured_timeout
+    started_at = _now(now_utc)
+    session_id = operator_session_id or uuid4().hex
+    try:
+        session_id = validate_session_id(session_id)
+        current_process_identity = validate_process_identity(
+            process_identity or capture_current_process_identity()
+        )
+    except LifecycleEvidenceError as error:
+        _block(summary, str(error))
+        return _finalize_summary(summary)
+    summary["operator_session_id"] = session_id
+    summary["process_identity"] = current_process_identity
+    summary["started_at_utc"] = _format_time(started_at)
+    valid_for_seconds = max(
+        float(configured_timeout),
+        float(max_cycles) * float(poll_interval_seconds),
+    )
+    summary["valid_until_utc"] = _format_time(
+        started_at + timedelta(seconds=valid_for_seconds)
+    )
     sleep = sleeper or time.sleep
     lock_acquired = False
     lock_path: Path | None = None
+    owned_lock_payload: dict[str, Any] | None = None
+    in_flight_path: Path | None = None
+    startup_recovery_non_success = False
 
     state_root = _resolve_state_dir(state_dir)
     if state_root is None:
@@ -118,14 +174,127 @@ def run_bridge_operator_b3_dry_run_loop(
         _write_log(state_root, "failed", str(error), summary)
         return _finalize_summary(summary)
 
+    control_client = github_client or GitHubApiClient(DEFAULT_REPOSITORY)
+    target_client = target_github_client
+    if target_client is None:
+        target_client = (
+            control_client
+            if repository == DEFAULT_REPOSITORY
+            else GitHubApiClient(repository)
+        )
+
     lock_path = state_root / "operator.lock"
+    in_flight_path = state_root / "in_flight.json"
+    probe = process_probe or inspect_expected_process
     try:
-        _acquire_lock(lock_path, repository, inbox_issue, mode, _now(now_utc))
+        existing_in_flight = load_in_flight(in_flight_path)
+    except LifecycleEvidenceError as error:
+        _block(summary, str(error))
+        summary["in_flight_present"] = True
+        summary["exceptional_recovery_reason"] = "in_flight_invalid_manual_recovery_required"
+        _record_failure(state_root, summary, str(error), _now(now_utc))
+        _write_log(state_root, "blocked", str(error), summary)
+        return _finalize_summary(summary)
+    summary["in_flight_present"] = existing_in_flight is not None
+    if existing_in_flight is not None:
+        summary["in_flight_stage"] = existing_in_flight["stage"]
+        summary["in_flight_operator_session_id"] = existing_in_flight[
+            "operator_session_id"
+        ]
+
+    lock_assessment = inspect_lock_file(lock_path, process_probe=probe)
+    _copy_lock_assessment(summary, lock_assessment)
+    if lock_assessment["present"]:
+        if lock_assessment["metadata_status"] != "complete":
+            reason = (
+                "legacy_lock_manual_recovery_required"
+                if lock_assessment["metadata_status"] == "legacy"
+                else "lock_metadata_invalid_manual_recovery_required"
+            )
+            _block(summary, reason)
+            _record_failure(state_root, summary, reason, _now(now_utc))
+            _write_log(state_root, "blocked", reason, summary)
+            return _finalize_summary(summary)
+        if not lock_assessment["quarantine_safe"]:
+            reason = (
+                "active_lock_present"
+                if lock_assessment["process_status"] == "live"
+                else "dead_lock_recovery_uncertain"
+            )
+            _block(summary, reason)
+            _record_failure(state_root, summary, reason, _now(now_utc))
+            _write_log(state_root, "blocked", reason, summary)
+            return _finalize_summary(summary)
+        if existing_in_flight is not None:
+            if not _lock_matches_in_flight(lock_assessment, existing_in_flight):
+                reason = "lock_in_flight_identity_mismatch"
+                _block(summary, reason)
+                summary["exceptional_recovery_reason"] = reason
+                _record_failure(state_root, summary, reason, _now(now_utc))
+                _write_log(state_root, "blocked", reason, summary)
+                return _finalize_summary(summary)
+            recovery = _recover_existing_in_flight(
+                state_root=state_root,
+                in_flight=existing_in_flight,
+                repository=repository,
+                client=target_client,
+                provider=durable_evidence_provider,
+                cycle=0,
+                now=_now(now_utc),
+                summary=summary,
+            )
+            if recovery["reason"] is not None:
+                reason = str(recovery["reason"])
+                _block(summary, reason)
+                _record_failure(state_root, summary, reason, _now(now_utc))
+                _write_log(state_root, "blocked", reason, summary)
+                return _finalize_summary(summary)
+            startup_recovery_non_success = bool(recovery["settled_non_success"])
+            existing_in_flight = None
+            summary["in_flight_present"] = False
+        try:
+            quarantined = quarantine_lock(
+                lock_path,
+                expected_sha256=str(lock_assessment["evidence_sha256"]),
+                operator_session_id=str(lock_assessment["operator_session_id"]),
+            )
+        except (OSError, LifecycleEvidenceError) as error:
+            reason = str(error) if isinstance(error, LifecycleEvidenceError) else "lock_quarantine_failed"
+            _block(summary, reason)
+            summary["exceptional_recovery_reason"] = reason
+            _record_failure(state_root, summary, reason, _now(now_utc))
+            _write_log(state_root, "blocked", reason, summary)
+            return _finalize_summary(summary)
+        summary["lock_quarantined"] = True
+        summary["quarantined_lock_path"] = str(quarantined)
+    elif existing_in_flight is not None:
+        reason = "in_flight_without_lock_manual_recovery_required"
+        _block(summary, reason)
+        summary["exceptional_recovery_reason"] = reason
+        _record_failure(state_root, summary, reason, _now(now_utc))
+        _write_log(state_root, "blocked", reason, summary)
+        return _finalize_summary(summary)
+
+    try:
+        owned_lock_payload = create_lock_payload(
+            operator_session_id=session_id,
+            process_identity=current_process_identity,
+            created_at=_now(now_utc),
+            repository=repository,
+            inbox_issue=inbox_issue,
+            mode=mode,
+        )
+        write_exclusive_json(lock_path, owned_lock_payload)
         lock_acquired = True
     except FileExistsError:
         _block(summary, "active_lock_present")
         _record_failure(state_root, summary, "active_lock_present", _now(now_utc))
         _write_log(state_root, "blocked", "active_lock_present", summary)
+        return _finalize_summary(summary)
+    except LifecycleEvidenceError as error:
+        _block(summary, str(error))
+        _record_failure(state_root, summary, str(error), _now(now_utc))
+        _write_log(state_root, "blocked", str(error), summary)
         return _finalize_summary(summary)
     except OSError as error:
         _block(summary, "lock_unavailable")
@@ -142,12 +311,15 @@ def run_bridge_operator_b3_dry_run_loop(
         _write_state(state_root, "running", summary, _now(now_utc))
         _write_log(state_root, "started", "dry_run_loop_started", summary)
 
-        control_client = github_client or GitHubApiClient(DEFAULT_REPOSITORY)
-        target_client = target_github_client
-        if target_client is None:
-            target_client = (
-                control_client if repository == DEFAULT_REPOSITORY else GitHubApiClient(repository)
-            )
+        if startup_recovery_non_success:
+            reason = "restart_reconciled_terminal_non_success"
+            _block(summary, reason)
+            _record_failure(state_root, summary, reason, _now(now_utc))
+            _write_log(state_root, "reconciled", reason, summary)
+            _write_state(state_root, "blocked", summary, _now(now_utc))
+            _write_heartbeat(state_root, "blocked", 0, summary, _now(now_utc))
+            return _finalize_summary(summary)
+
         for cycle in range(1, max_cycles + 1):
             summary["cycles_started"] = cycle
             summary["current_delegation_outcome"] = None
@@ -209,6 +381,9 @@ def run_bridge_operator_b3_dry_run_loop(
                             dispatcher_invoker=dispatcher_invoker,
                             timeout_seconds=timeout_seconds,
                             durable_evidence_provider=durable_evidence_provider,
+                            operator_session_id=session_id,
+                            process_identity=current_process_identity,
+                            lifecycle_fault_injector=lifecycle_fault_injector,
                         )
                         if reason is not None:
                             _record_failure(state_root, summary, reason, _now(now_utc))
@@ -263,11 +438,32 @@ def run_bridge_operator_b3_dry_run_loop(
         _write_heartbeat(state_root, summary["phase"], summary["cycles_completed"], summary, _now(now_utc))
         return summary
     finally:
-        if lock_acquired and lock_path is not None:
+        unresolved_in_flight = bool(
+            in_flight_path is not None and in_flight_path.exists()
+        )
+        summary["in_flight_present"] = unresolved_in_flight
+        if unresolved_in_flight:
             try:
-                lock_path.unlink()
+                observed_in_flight = load_in_flight(in_flight_path)
+            except LifecycleEvidenceError:
+                observed_in_flight = None
+            if observed_in_flight is not None:
+                summary["in_flight_stage"] = observed_in_flight["stage"]
+                summary["in_flight_operator_session_id"] = observed_in_flight[
+                    "operator_session_id"
+                ]
+        if (
+            lock_acquired
+            and lock_path is not None
+            and owned_lock_payload is not None
+            and not unresolved_in_flight
+        ):
+            try:
+                remove_exact_json(lock_path, owned_lock_payload)
             except FileNotFoundError:
                 pass
+            except (OSError, LifecycleEvidenceError):
+                _block(summary, "lock_release_failed")
 
 
 def _base_summary(
@@ -292,7 +488,26 @@ def _base_summary(
         "mode": mode,
         "configured_max_cycles": None,
         "configured_poll_interval_seconds": None,
+        "configured_timeout_seconds": None,
+        "operator_session_id": None,
+        "process_identity": None,
+        "started_at_utc": None,
+        "valid_until_utc": None,
+        "health_probe_request_expiry_seconds": HEALTH_PROBE_REQUEST_EXPIRY_SECONDS,
+        "health_probe_result_timeout_seconds": HEALTH_PROBE_RESULT_TIMEOUT_SECONDS,
+        "health_probe_to_real_task_seconds": HEALTH_PROBE_TO_REAL_TASK_SECONDS,
+        "health_probe_request_remaining_seconds": None,
         "lock_acquired": False,
+        "lock_metadata_status": "not_present",
+        "lock_process_status": "not_observed",
+        "lock_descendant_status": "not_observed",
+        "lock_quarantined": False,
+        "quarantined_lock_path": None,
+        "exceptional_recovery_reason": None,
+        "in_flight_present": False,
+        "in_flight_stage": None,
+        "in_flight_operator_session_id": None,
+        "restart_reconciliation_performed": False,
         "loop_started": False,
         "cycles_started": 0,
         "cycles_completed": 0,
@@ -314,6 +529,9 @@ def _base_summary(
         "durable_reconciliation_matched_evidence_ids": [],
         "durable_reconciliation_diagnostics": [],
         "durable_completion_reconciled": False,
+        "terminal_result": None,
+        "terminal_settlement": None,
+        "terminal_observed_at_utc": None,
         "request_id": None,
         "inbox_comment_id": None,
         "target_issue": None,
@@ -434,28 +652,6 @@ def _validate_state_files(state_dir: Path) -> None:
             raise ValueError("corrupted_state") from error
 
 
-def _acquire_lock(
-    lock_path: Path,
-    repository: str,
-    inbox_issue: int,
-    mode: str,
-    now: datetime,
-) -> None:
-    payload = {
-        "protocol": LOCK_PROTOCOL,
-        "pid": os.getpid(),
-        "created_at_utc": _format_time(now),
-        "repo": repository,
-        "inbox_issue": inbox_issue,
-        "mode": mode,
-    }
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-    fd = os.open(str(lock_path), flags)
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-        json.dump(payload, handle, sort_keys=True)
-        handle.write("\n")
-
-
 def _run_b1_with_bounded_retry(
     *,
     state_root: Path,
@@ -521,6 +717,330 @@ def _first_b1_blocked_reason(summary: dict[str, Any]) -> str:
     return str(reasons[0]) if reasons else "b1_validation_failed"
 
 
+def _copy_lock_assessment(
+    summary: dict[str, Any], assessment: dict[str, Any]
+) -> None:
+    summary["lock_metadata_status"] = assessment.get("metadata_status")
+    summary["lock_process_status"] = assessment.get("process_status")
+    summary["lock_descendant_status"] = assessment.get("descendant_status")
+    summary["lock_operator_session_id"] = assessment.get(
+        "operator_session_id"
+    )
+    summary["lock_process_identity"] = assessment.get("process_identity")
+    summary["lock_descendant_pids"] = list(
+        assessment.get("descendant_pids") or []
+    )
+    summary["exceptional_recovery_reason"] = assessment.get(
+        "exceptional_recovery_reason"
+    )
+
+
+def _lock_matches_in_flight(
+    assessment: dict[str, Any], in_flight: dict[str, Any]
+) -> bool:
+    return (
+        assessment.get("operator_session_id")
+        == in_flight.get("operator_session_id")
+        and assessment.get("process_identity")
+        == in_flight.get("process_identity")
+        and assessment.get("repository")
+        == in_flight.get("target_repository")
+    )
+
+
+def _reconciliation_provider(
+    provider: Any | None,
+    client: Any,
+    repository: str,
+) -> Any:
+    return provider or GitHubIssueCommentEvidenceProvider(
+        client,
+        repository=repository,
+    )
+
+
+def _request_identity_from_b1(
+    b1_summary: dict[str, Any], repository: str
+) -> RequestIdentity:
+    return RequestIdentity(
+        repository=repository,
+        issue_number=int(b1_summary["target_issue"]),
+        surface="issue_comment",
+        request_id=str(b1_summary["target_dispatch_request_id"]),
+        action=str(b1_summary["requested_action"]),
+        branch=str(b1_summary["expected_branch"]),
+        head=str(b1_summary["expected_head"]),
+    )
+
+
+def _request_identity_from_in_flight(
+    in_flight: dict[str, Any],
+) -> RequestIdentity:
+    return RequestIdentity(
+        repository=str(in_flight["target_repository"]),
+        issue_number=int(in_flight["target_issue"]),
+        surface="issue_comment",
+        request_id=str(in_flight["dispatch_request_id"]),
+        action=str(in_flight["action"]),
+        branch=str(in_flight["branch"]),
+        head=str(in_flight["expected_head"]),
+    )
+
+
+def _resolve_reconciliation(
+    request: RequestIdentity,
+    provider: Any,
+    summary: dict[str, Any],
+) -> Any:
+    summary["durable_reconciliation_performed"] = True
+    summary["durable_reconciliation_read_attempts"] += 1
+    return resolve_durable_completion(
+        request,
+        provider,
+        frozenset(TRUSTED_ACTORS),
+    )
+
+
+def _terminal_evidence(reconciliation: Any, now: datetime) -> dict[str, Any]:
+    terminal_result = str(reconciliation.terminal_result)
+    return {
+        "evidence_id": str(reconciliation.matched_evidence_ids[0]),
+        "author": str(reconciliation.terminal_author),
+        "result": terminal_result,
+        "settlement": (
+            "settled_success"
+            if terminal_result == "success"
+            else "settled_non_success"
+        ),
+        "reconciliation_decision": reconciliation.decision.value,
+        "reconciliation_reason": reconciliation.reason.value,
+        "observed_at_utc": _format_time(now),
+    }
+
+
+def _health_probe_request_validity(
+    expires: Any,
+    now: datetime,
+) -> tuple[str | None, float | None]:
+    if not isinstance(expires, str):
+        return "health_probe_expiry_invalid", None
+    try:
+        expires_at = datetime.strptime(
+            expires,
+            "%Y%m%dT%H%M%SZ",
+        ).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return "health_probe_expiry_invalid", None
+    remaining = (expires_at - now.astimezone(timezone.utc)).total_seconds()
+    if remaining <= 0:
+        return "health_probe_expired", remaining
+    if remaining > HEALTH_PROBE_REQUEST_EXPIRY_SECONDS:
+        return "health_probe_expiry_exceeds_5_minutes", remaining
+    return None, remaining
+
+
+def _post_dispatch_reconciliation_reason(reconciliation: Any) -> str:
+    return {
+        "MULTIPLE_MATCHING_COMPLETIONS": "multiple_matching_results",
+        "UNTRUSTED_AUTHOR": "untrusted_result_author",
+        "MALFORMED_EVIDENCE": "malformed_result_evidence",
+        "UNSUPPORTED_PROTOCOL": "unsupported_result_protocol",
+        "UNSUPPORTED_TERMINAL_RESULT": "unsupported_terminal_result",
+        "CONFLICTING_EVIDENCE": "conflicting_result_evidence",
+        "REPOSITORY_MISMATCH": "target_result_identity_mismatch",
+        "ISSUE_MISMATCH": "target_result_identity_mismatch",
+        "SURFACE_MISMATCH": "target_result_identity_mismatch",
+        "ACTION_MISMATCH": "target_result_identity_mismatch",
+        "BRANCH_MISMATCH": "target_result_identity_mismatch",
+        "HEAD_MISMATCH": "target_result_identity_mismatch",
+    }.get(reconciliation.reason.value, "durable_reconciliation_blocked")
+
+
+def _invoke_lifecycle_fault(
+    injector: Callable[[str], None] | None,
+    stage: str,
+    summary: dict[str, Any],
+) -> str | None:
+    if injector is None:
+        return None
+    try:
+        injector(stage)
+    except Exception as error:
+        summary["fault_injection_stage"] = stage
+        summary["fault_injection_error_type"] = type(error).__name__
+        reason = f"fault_injected_{stage}"
+        _block(summary, reason)
+        return reason
+    return None
+
+
+def _processed_record_matches_in_flight(
+    record: dict[str, Any], in_flight: dict[str, Any]
+) -> bool:
+    return (
+        (record.get("target_repository") or DEFAULT_REPOSITORY)
+        == in_flight.get("target_repository")
+        and record.get("target_issue") == in_flight.get("target_issue")
+        and record.get("target_dispatch_request_id")
+        == in_flight.get("dispatch_request_id")
+        and record.get("requested_action") == in_flight.get("action")
+        and record.get("expected_branch") == in_flight.get("branch")
+        and record.get("expected_head") == in_flight.get("expected_head")
+    )
+
+
+def _b1_identity_from_in_flight(
+    in_flight: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "request_id": in_flight["request_id"],
+        "target_repository": in_flight["target_repository"],
+        "target_issue": in_flight["target_issue"],
+        "target_dispatch_request_id": in_flight["dispatch_request_id"],
+        "requested_action": in_flight["action"],
+        "expected_branch": in_flight["branch"],
+        "expected_head": in_flight["expected_head"],
+    }
+
+
+def _recover_existing_in_flight(
+    *,
+    state_root: Path,
+    in_flight: dict[str, Any],
+    repository: str,
+    client: Any,
+    provider: Any | None,
+    cycle: int,
+    now: datetime,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    outcome = {"reason": None, "settled_non_success": False}
+    summary["restart_reconciliation_performed"] = True
+    summary["in_flight_stage"] = in_flight["stage"]
+    summary["in_flight_operator_session_id"] = in_flight[
+        "operator_session_id"
+    ]
+    summary["request_id"] = in_flight["request_id"]
+    summary["target_repository"] = in_flight["target_repository"]
+    summary["target_issue"] = in_flight["target_issue"]
+    summary["target_dispatch_request_id"] = in_flight[
+        "dispatch_request_id"
+    ]
+    summary["requested_action"] = in_flight["action"]
+    summary["expected_branch"] = in_flight["branch"]
+    summary["expected_head"] = in_flight["expected_head"]
+    if in_flight["target_repository"] != repository:
+        outcome["reason"] = "in_flight_target_repository_mismatch"
+        return outcome
+
+    processed_path = state_root / "processed_requests.jsonl"
+    try:
+        records = (
+            _read_processed_request_records(
+                processed_path,
+                repository=repository,
+            )
+            if processed_path.exists()
+            else {}
+        )
+    except (OSError, ValueError):
+        outcome["reason"] = "corrupted_state"
+        return outcome
+    existing = records.get(str(in_flight["request_id"]))
+    if existing is not None:
+        if (
+            in_flight["stage"] == PREPARED
+            or not _processed_record_matches_in_flight(existing, in_flight)
+        ):
+            outcome["reason"] = "processed_in_flight_identity_conflict"
+            return outcome
+        try:
+            remove_exact_json(state_root / "in_flight.json", in_flight)
+        except (OSError, LifecycleEvidenceError):
+            outcome["reason"] = "in_flight_release_failed"
+            return outcome
+        summary["processed_request_already_seen"] = True
+        summary["in_flight_present"] = False
+        summary["in_flight_stage"] = None
+        summary["phase"] = "restart_processed"
+        summary["current_delegation_outcome"] = "restart_local_processed_record"
+        outcome["settled_non_success"] = (
+            existing.get("terminal_settlement") == "settled_non_success"
+        )
+        return outcome
+
+    if in_flight["stage"] == PREPARED:
+        outcome["reason"] = "prepared_in_flight_uncertain"
+        return outcome
+    if in_flight["stage"] == PROCESSED:
+        outcome["reason"] = "processed_in_flight_record_missing"
+        return outcome
+
+    reconciliation = _resolve_reconciliation(
+        _request_identity_from_in_flight(in_flight),
+        _reconciliation_provider(provider, client, repository),
+        summary,
+    )
+    _copy_reconciliation_result(summary, reconciliation)
+    if reconciliation.decision not in {
+        ReconciliationDecision.COMPLETED,
+        ReconciliationDecision.SETTLED_NON_SUCCESS,
+    }:
+        outcome["reason"] = "dispatched_in_flight_uncertain"
+        return outcome
+
+    try:
+        _append_reconciled_processed_request(
+            state_root,
+            _b1_identity_from_in_flight(in_flight),
+            reconciliation,
+            cycle,
+            now,
+            dispatcher_invoked=True,
+        )
+    except (OSError, LifecycleEvidenceError):
+        outcome["reason"] = "processed_request_write_failed"
+        return outcome
+    terminal = _terminal_evidence(reconciliation, now)
+    summary["terminal_observed_at_utc"] = terminal["observed_at_utc"]
+    processed_in_flight = updated_in_flight_payload(
+        in_flight,
+        stage=PROCESSED,
+        dispatcher_invoked=True,
+        terminal_evidence=terminal,
+        updated_at=now,
+    )
+    try:
+        write_durable_json(
+            state_root / "in_flight.json",
+            processed_in_flight,
+            operator_session_id=in_flight["operator_session_id"],
+        )
+        remove_exact_json(
+            state_root / "in_flight.json",
+            processed_in_flight,
+        )
+    except (OSError, LifecycleEvidenceError):
+        outcome["reason"] = "restart_processed_transition_failed"
+        return outcome
+    summary["processed_request_written"] = True
+    summary["durable_completion_reconciled"] = True
+    summary["dispatcher_result_writeback_reached"] = True
+    summary["dispatcher_result_writeback_verified"] = True
+    summary["target_result_verified"] = True
+    summary["target_result_comment_id"] = terminal["evidence_id"]
+    summary["target_result_author"] = terminal["author"]
+    summary["in_flight_present"] = False
+    summary["in_flight_stage"] = None
+    summary["phase"] = "restart_reconciled"
+    summary["current_delegation_outcome"] = "restart_terminal_reconciled"
+    outcome["settled_non_success"] = (
+        reconciliation.decision
+        == ReconciliationDecision.SETTLED_NON_SUCCESS
+    )
+    return outcome
+
+
 def _append_observation_if_new(
     state_dir: Path,
     b1_summary: dict[str, Any],
@@ -566,15 +1086,30 @@ def _delegate_b3_request(
     dispatcher_invoker: Any | None,
     timeout_seconds: int | None,
     durable_evidence_provider: Any | None,
+    operator_session_id: str,
+    process_identity: dict[str, Any],
+    lifecycle_fault_injector: Callable[[str], None] | None,
 ) -> str | None:
     summary["current_delegation_outcome"] = None
     action = b1_summary.get("requested_action")
     if summary.get("mode") == B3B_MODE and action != B3B_ALLOWED_ACTION:
         _block(summary, "run_reviewbundle_not_enabled_in_b3b")
         return "run_reviewbundle_not_enabled_in_b3b"
-    if summary.get("mode") == B3C_MODE and action != B3C_ALLOWED_ACTION:
-        _block(summary, "maybe_status_check_not_enabled_in_b3c")
-        return "maybe_status_check_not_enabled_in_b3c"
+    if summary.get("mode") == B3C_MODE and action not in {
+        B3B_ALLOWED_ACTION,
+        B3C_ALLOWED_ACTION,
+    }:
+        _block(summary, "unsupported_action_in_b3c")
+        return "unsupported_action_in_b3c"
+    if action == B3B_ALLOWED_ACTION:
+        expiry_error, remaining_seconds = _health_probe_request_validity(
+            b1_summary.get("expires"),
+            now,
+        )
+        summary["health_probe_request_remaining_seconds"] = remaining_seconds
+        if expiry_error is not None:
+            _block(summary, expiry_error)
+            return expiry_error
     readiness = b1_summary.get("local_readiness") or {}
     if readiness.get("clean") is not True:
         _block(summary, "dirty_repository")
@@ -600,37 +1135,37 @@ def _delegate_b3_request(
         summary["current_delegation_outcome"] = "local_processed_request_already_seen"
         return None
 
-    reconciliation_provider = durable_evidence_provider or GitHubIssueCommentEvidenceProvider(
+    reconciliation_provider = _reconciliation_provider(
+        durable_evidence_provider,
         client,
-        repository=repository,
+        repository,
     )
-    request_identity = RequestIdentity(
-        repository=repository,
-        issue_number=int(b1_summary["target_issue"]),
-        surface="issue_comment",
-        request_id=str(b1_summary["target_dispatch_request_id"]),
-        action=str(b1_summary["requested_action"]),
-        branch=str(b1_summary["expected_branch"]),
-        head=str(b1_summary["expected_head"]),
-    )
-    summary["durable_reconciliation_performed"] = True
-    summary["durable_reconciliation_read_attempts"] += 1
-    reconciliation = resolve_durable_completion(
+    request_identity = _request_identity_from_b1(b1_summary, repository)
+    reconciliation = _resolve_reconciliation(
         request_identity,
         reconciliation_provider,
-        frozenset(TRUSTED_ACTORS),
+        summary,
     )
     _copy_reconciliation_result(summary, reconciliation)
-    if reconciliation.decision == ReconciliationDecision.COMPLETED:
+    if reconciliation.decision in {
+        ReconciliationDecision.COMPLETED,
+        ReconciliationDecision.SETTLED_NON_SUCCESS,
+    }:
         _append_reconciled_processed_request(
             state_root,
             b1_summary,
             reconciliation,
             cycle,
             now,
+            dispatcher_invoked=False,
         )
         summary["processed_request_written"] = True
         summary["durable_completion_reconciled"] = True
+        summary["terminal_observed_at_utc"] = _format_time(now)
+        if reconciliation.decision == ReconciliationDecision.SETTLED_NON_SUCCESS:
+            summary["current_delegation_outcome"] = "durable_terminal_non_success_reconciled"
+            _block(summary, "durable_terminal_non_success")
+            return "durable_terminal_non_success"
         summary["phase"] = "reconciled_completed"
         summary["current_delegation_outcome"] = "durable_completion_reconciled"
         return None
@@ -644,8 +1179,58 @@ def _delegate_b3_request(
         _block(summary, "durable_reconciliation_unexpected_decision")
         return "durable_reconciliation_unexpected_decision"
 
+    fault_reason = _invoke_lifecycle_fault(
+        lifecycle_fault_injector,
+        "before_durable_admit",
+        summary,
+    )
+    if fault_reason is not None:
+        return fault_reason
+
+    in_flight_path = state_root / "in_flight.json"
+    in_flight = new_in_flight_payload(
+        request_id=request_id,
+        target_repository=repository,
+        target_issue=int(b1_summary["target_issue"]),
+        dispatch_request_id=str(b1_summary["target_dispatch_request_id"]),
+        action=str(action),
+        branch=str(b1_summary["expected_branch"]),
+        expected_head=str(b1_summary["expected_head"]).lower(),
+        operator_session_id=operator_session_id,
+        process_identity=process_identity,
+        prepared_at=now,
+    )
+    try:
+        write_durable_json(
+            in_flight_path,
+            in_flight,
+            operator_session_id=operator_session_id,
+        )
+    except (OSError, LifecycleEvidenceError):
+        _block(summary, "in_flight_write_failed")
+        return "in_flight_write_failed"
+    summary["in_flight_present"] = True
+    summary["in_flight_stage"] = PREPARED
+    summary["in_flight_operator_session_id"] = operator_session_id
+
+    fault_reason = _invoke_lifecycle_fault(
+        lifecycle_fault_injector,
+        "after_prepared_before_dispatch",
+        summary,
+    )
+    if fault_reason is not None:
+        return fault_reason
+
     invoker = dispatcher_invoker or default_dispatcher_invoker
-    timeout = timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
+    configured_timeout = (
+        timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
+    )
+    timeout = (
+        min(configured_timeout, HEALTH_PROBE_RESULT_TIMEOUT_SECONDS)
+        if action == B3B_ALLOWED_ACTION
+        else configured_timeout
+    )
+    summary["effective_dispatcher_timeout_seconds"] = timeout
     args = build_dispatcher_command(
         repo_root=control_repo_root,
         target_repo_root=repo_root,
@@ -676,6 +1261,25 @@ def _delegate_b3_request(
     summary["dispatcher_stdout"] = invocation.stdout
     summary["dispatcher_stderr"] = invocation.stderr
 
+    if not summary.get("dispatcher_missing"):
+        in_flight = updated_in_flight_payload(
+            in_flight,
+            stage=DISPATCHED_NOT_LOCALLY_SETTLED,
+            dispatcher_invoked=True,
+            terminal_evidence=None,
+            updated_at=now,
+        )
+        try:
+            write_durable_json(
+                in_flight_path,
+                in_flight,
+                operator_session_id=operator_session_id,
+            )
+        except (OSError, LifecycleEvidenceError):
+            _block(summary, "in_flight_dispatch_transition_failed")
+            return "in_flight_dispatch_transition_failed"
+        summary["in_flight_stage"] = DISPATCHED_NOT_LOCALLY_SETTLED
+
     if summary.get("dispatcher_missing"):
         _block(summary, "dispatcher_missing")
         return "dispatcher_missing"
@@ -686,43 +1290,90 @@ def _delegate_b3_request(
         _block(summary, "dispatcher_nonzero_exit")
         return "dispatcher_nonzero_exit"
 
-    result_lookup_summary = {
-        "target_issue": b1_summary["target_issue"],
-        "requested_action": b1_summary["requested_action"],
-        "repository": repository,
-        "expected_branch": b1_summary["expected_branch"],
-        "expected_head": b1_summary["expected_head"],
-        "target_dispatch_request_id": b1_summary["target_dispatch_request_id"],
-    }
-    matches = _read_matching_results(client, result_lookup_summary)
-    if matches["read_error"] is not None:
-        _block(summary, "github_read_unavailable")
-        summary["github_read_error_type"] = matches["read_error"]
-        return "github_read_unavailable"
-    if matches["matching_count"] == 0:
+    fault_reason = _invoke_lifecycle_fault(
+        lifecycle_fault_injector,
+        "after_dispatch_before_processed",
+        summary,
+    )
+    if fault_reason is not None:
+        return fault_reason
+
+    reconciliation = _resolve_reconciliation(
+        request_identity,
+        reconciliation_provider,
+        summary,
+    )
+    _copy_reconciliation_result(summary, reconciliation)
+    if reconciliation.decision == ReconciliationDecision.NOT_FOUND:
         _block(summary, "target_result_missing")
         return "target_result_missing"
-    if matches["matching_count"] > 1:
-        summary["dispatcher_result_writeback_reached"] = True
-        _block(summary, "multiple_matching_results")
-        return "multiple_matching_results"
+    if reconciliation.decision == ReconciliationDecision.ERROR:
+        _block(summary, "github_read_unavailable")
+        return "github_read_unavailable"
+    if reconciliation.decision == ReconciliationDecision.BLOCKED:
+        reason = _post_dispatch_reconciliation_reason(reconciliation)
+        if reconciliation.matched_evidence_ids:
+            summary["dispatcher_result_writeback_reached"] = True
+        _block(summary, reason)
+        return reason
+    if reconciliation.decision not in {
+        ReconciliationDecision.COMPLETED,
+        ReconciliationDecision.SETTLED_NON_SUCCESS,
+    }:
+        _block(summary, "durable_reconciliation_unexpected_decision")
+        return "durable_reconciliation_unexpected_decision"
 
-    match = matches["matches"][0]
+    terminal = _terminal_evidence(reconciliation, now)
+    summary["terminal_observed_at_utc"] = terminal["observed_at_utc"]
     summary["dispatcher_result_writeback_reached"] = True
-    summary["target_result_comment_id"] = match["comment_id"]
-    summary["target_result_author"] = match["author"]
-    if match["author"] not in TRUSTED_ACTORS:
-        _block(summary, "untrusted_result_author")
-        return "untrusted_result_author"
-    payload = match["payload"]
-    if str(payload.get("result") or "") != "success":
-        _block(summary, "target_result_not_success")
-        return "target_result_not_success"
-
+    summary["target_result_comment_id"] = reconciliation.matched_evidence_ids[0]
+    summary["target_result_author"] = reconciliation.terminal_author
     summary["target_result_verified"] = True
     summary["dispatcher_result_writeback_verified"] = True
-    _append_processed_request(state_root, b1_summary, match, cycle, now)
+    _append_processed_request(
+        state_root,
+        b1_summary,
+        terminal,
+        cycle,
+        now,
+    )
     summary["processed_request_written"] = True
+    in_flight = updated_in_flight_payload(
+        in_flight,
+        stage=PROCESSED,
+        dispatcher_invoked=True,
+        terminal_evidence=terminal,
+        updated_at=now,
+    )
+    try:
+        write_durable_json(
+            in_flight_path,
+            in_flight,
+            operator_session_id=operator_session_id,
+        )
+    except (OSError, LifecycleEvidenceError):
+        _block(summary, "in_flight_processed_transition_failed")
+        return "in_flight_processed_transition_failed"
+    summary["in_flight_stage"] = PROCESSED
+
+    fault_reason = _invoke_lifecycle_fault(
+        lifecycle_fault_injector,
+        "after_processed_durable",
+        summary,
+    )
+    if fault_reason is not None:
+        return fault_reason
+    try:
+        remove_exact_json(in_flight_path, in_flight)
+    except (OSError, LifecycleEvidenceError):
+        _block(summary, "in_flight_release_failed")
+        return "in_flight_release_failed"
+    summary["in_flight_present"] = False
+    summary["in_flight_stage"] = None
+    if reconciliation.decision == ReconciliationDecision.SETTLED_NON_SUCCESS:
+        summary["current_delegation_outcome"] = "verified_terminal_non_success"
+        _block(summary, "target_result_not_success")
+        return "target_result_not_success"
     summary["current_delegation_outcome"] = "verified_dispatcher_result"
     return None
 
@@ -730,7 +1381,7 @@ def _delegate_b3_request(
 def _append_processed_request(
     state_dir: Path,
     b1_summary: dict[str, Any],
-    match: dict[str, Any],
+    terminal: dict[str, Any],
     cycle: int,
     now: datetime,
 ) -> None:
@@ -746,15 +1397,16 @@ def _append_processed_request(
         "requested_action": b1_summary.get("requested_action"),
         "expected_branch": b1_summary.get("expected_branch"),
         "expected_head": b1_summary.get("expected_head"),
-        "target_result_comment_id": match.get("comment_id"),
-        "target_result_author": match.get("author"),
+        "target_result_comment_id": terminal.get("evidence_id"),
+        "target_result_author": terminal.get("author"),
+        "terminal_result": terminal.get("result"),
+        "terminal_settlement": terminal.get("settlement"),
+        "terminal_observed_at_utc": terminal.get("observed_at_utc"),
         "dispatcher_invoked": True,
         "result_verified": True,
         "lifecycle_state": CONSUMED,
     }
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        json.dump(payload, handle, sort_keys=True)
-        handle.write("\n")
+    append_jsonl_durable(path, payload)
 
 
 def _append_reconciled_processed_request(
@@ -763,6 +1415,8 @@ def _append_reconciled_processed_request(
     reconciliation: Any,
     cycle: int,
     now: datetime,
+    *,
+    dispatcher_invoked: bool,
 ) -> None:
     path = state_dir / "processed_requests.jsonl"
     payload = {
@@ -778,15 +1432,22 @@ def _append_reconciled_processed_request(
         "expected_head": b1_summary.get("expected_head"),
         "lifecycle_state": CONSUMED,
         "completion_source": "durable_evidence_reconciliation",
-        "dispatcher_invoked": False,
+        "dispatcher_invoked": dispatcher_invoked,
         "result_verified": True,
         "reconciliation_decision": reconciliation.decision.value,
         "reconciliation_reason": reconciliation.reason.value,
         "reconciliation_matched_evidence_ids": list(reconciliation.matched_evidence_ids),
+        "terminal_result": reconciliation.terminal_result,
+        "terminal_settlement": (
+            "settled_success"
+            if reconciliation.terminal_result == "success"
+            else "settled_non_success"
+        ),
+        "terminal_observed_at_utc": _format_time(now),
+        "target_result_comment_id": reconciliation.matched_evidence_ids[0],
+        "target_result_author": reconciliation.terminal_author,
     }
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        json.dump(payload, handle, sort_keys=True)
-        handle.write("\n")
+    append_jsonl_durable(path, payload)
 
 
 def _read_observed_request_identities(path: Path) -> set[tuple[str, str]]:
@@ -876,6 +1537,24 @@ def _validate_processed_request_record(payload: Any) -> None:
         raise ValueError("invalid_processed_request")
     if "result_verified" in payload and payload.get("result_verified") is not True:
         raise ValueError("invalid_processed_request")
+    terminal_result = payload.get("terminal_result")
+    terminal_settlement = payload.get("terminal_settlement")
+    if "terminal_result" in payload or "terminal_settlement" in payload:
+        if terminal_result not in {"success", "failure", "blocked"}:
+            raise ValueError("invalid_processed_request")
+        expected_settlement = (
+            "settled_success"
+            if terminal_result == "success"
+            else "settled_non_success"
+        )
+        if terminal_settlement != expected_settlement:
+            raise ValueError("invalid_processed_request")
+    terminal_observed_at = payload.get("terminal_observed_at_utc")
+    if (
+        "terminal_observed_at_utc" in payload
+        and parse_utc(terminal_observed_at) is None
+    ):
+        raise ValueError("invalid_processed_request")
     target_repository = payload.get("target_repository")
     if target_repository is not None and target_repository not in SUPPORTED_TARGET_REPOSITORIES:
         raise ValueError("invalid_processed_request")
@@ -901,15 +1580,23 @@ def _validate_processed_request_record(payload: Any) -> None:
 
 
 def _validate_reconciled_processed_record(payload: dict[str, Any]) -> None:
-    if payload.get("dispatcher_invoked") is not False:
+    if type(payload.get("dispatcher_invoked")) is not bool:
         raise ValueError("invalid_processed_request")
     if payload.get("result_verified") is not True:
         raise ValueError("invalid_processed_request")
     if payload.get("lifecycle_state") != CONSUMED:
         raise ValueError("invalid_processed_request")
-    if payload.get("reconciliation_decision") != "COMPLETED":
-        raise ValueError("invalid_processed_request")
-    if payload.get("reconciliation_reason") != "EXACTLY_ONE_TRUSTED_MATCH":
+    decision_reason = (
+        payload.get("reconciliation_decision"),
+        payload.get("reconciliation_reason"),
+    )
+    if decision_reason not in {
+        ("COMPLETED", "EXACTLY_ONE_TRUSTED_MATCH"),
+        (
+            "SETTLED_NON_SUCCESS",
+            "EXACTLY_ONE_TRUSTED_NON_SUCCESS_MATCH",
+        ),
+    }:
         raise ValueError("invalid_processed_request")
     evidence_ids = payload.get("reconciliation_matched_evidence_ids")
     if (
@@ -1038,6 +1725,9 @@ def _write_state(state_dir: Path, status: str, summary: dict[str, Any], now: dat
         "inbox_issue": summary["configured_inbox_issue"],
         "cycles_completed": summary["cycles_completed"],
         "last_request_id": summary.get("request_id"),
+        "operator_session_id": summary.get("operator_session_id"),
+        "started_at_utc": summary.get("started_at_utc"),
+        "valid_until_utc": summary.get("valid_until_utc"),
     }
     _write_json(state_dir / "state.json", payload)
 
@@ -1060,6 +1750,17 @@ def _write_heartbeat(
         "inbox_issue": summary["configured_inbox_issue"],
         "request_id": summary.get("request_id"),
         "target_issue": summary.get("target_issue"),
+        "operator_session_id": summary.get("operator_session_id"),
+        "process_identity": summary.get("process_identity"),
+        "started_at_utc": summary.get("started_at_utc"),
+        "valid_until_utc": summary.get("valid_until_utc"),
+        "configured_max_cycles": summary.get("configured_max_cycles"),
+        "configured_poll_interval_seconds": summary.get(
+            "configured_poll_interval_seconds"
+        ),
+        "configured_timeout_seconds": summary.get(
+            "configured_timeout_seconds"
+        ),
     }
     _write_json(state_dir / "heartbeat.json", payload)
 
@@ -1163,7 +1864,11 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     with temp.open("w", encoding="utf-8", newline="\n") as handle:
         json.dump(payload, handle, sort_keys=True)
         handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     temp.replace(path)
+    if json.loads(path.read_text(encoding="utf-8")) != payload:
+        raise OSError("json_readback_failed")
 
 
 def _copy_reconciliation_result(summary: dict[str, Any], result: Any) -> None:
@@ -1173,6 +1878,17 @@ def _copy_reconciliation_result(summary: dict[str, Any], result: Any) -> None:
         result.matched_evidence_ids
     )
     summary["durable_reconciliation_diagnostics"] = list(result.diagnostics)
+    terminal_result = getattr(result, "terminal_result", None)
+    summary["terminal_result"] = terminal_result
+    summary["terminal_settlement"] = (
+        "settled_success"
+        if terminal_result == "success"
+        else (
+            "settled_non_success"
+            if terminal_result in {"failure", "blocked"}
+            else None
+        )
+    )
 
 
 def _block(summary: dict[str, Any], reason: str) -> None:

@@ -83,7 +83,7 @@ def test_enable_is_deterministic_bomless_exact_and_idempotent(tmp_path):
     assert second_summary["changed"] is False
     assert second_summary["reason"] == "already_enabled"
     fixed_session = {
-        "max_cycles": 100,
+        "max_cycles": 960,
         "poll_interval_seconds": 30,
         "timeout_seconds": 600,
     }
@@ -98,7 +98,10 @@ def test_enable_is_deterministic_bomless_exact_and_idempotent(tmp_path):
     text = first_bytes.decode("utf-8")
     assert "LAWBRIDGE-B3C-STARTUP-MANAGED" in text
     assert f'-File "{ROOT}\\scripts\\start_bridge_operator_b3c.ps1"' in text
-    assert "-StartForeground -MaxCycles 100 -PollIntervalSeconds 30" in text
+    assert (
+        "-StartForeground -PublishStatus -MaxCycles 960 "
+        "-PollIntervalSeconds 30"
+    ) in text
     assert re.search(r"(?<!\d)-MaxCycles 1(?!\d)", text) is None
     assert "-TimeoutSeconds 600" in text
     assert '-StateDir "%LOCALAPPDATA%\\LocalAIWorkbench\\BridgeOperator"' in text

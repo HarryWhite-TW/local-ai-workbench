@@ -26,6 +26,17 @@ from local_runner_bridge.bridge_operator_b3 import (
     run_bridge_operator_b3_dry_run_loop,
 )
 from local_runner_bridge.bridge_operator_b2 import DispatcherInvocationResult
+from local_runner_bridge.durable_evidence_reconciliation import (
+    EvidenceReadResult,
+    ProviderStatus,
+)
+from local_runner_bridge.bridge_operator_lifecycle_state import (
+    DISPATCHED_NOT_LOCALLY_SETTLED,
+    PREPARED,
+    PROCESSED,
+    create_lock_payload,
+    write_exclusive_json,
+)
 
 NOW = datetime(2026, 6, 16, 8, 0, 0, tzinfo=timezone.utc)
 HEAD = "3aedc4925e9da241429a7905418b6a815fd9ee37"
@@ -41,7 +52,7 @@ def inbox_marker(**overrides):
         "target_dispatch_request_id": "dispatch-151",
         "branch": "feature/bridge-operator-b3a",
         "head": HEAD,
-        "expires": "20260617T080000Z",
+        "expires": "20260616T080500Z",
         "action": "maybe-status-check",
         "requested_by": "chatgpt",
     }
@@ -59,7 +70,7 @@ def dispatch_marker(**overrides):
         "repo": "HarryWhite-TW/local-ai-workbench",
         "branch": "feature/bridge-operator-b3a",
         "head": HEAD,
-        "expires": "20260617T080000Z",
+        "expires": "20260616T080500Z",
         "requested_by": "chatgpt",
         "request_id": "dispatch-151",
     }
@@ -165,6 +176,7 @@ def run_b3b(tmp_path, client=None, readiness=None, dispatcher_invoker=None, **kw
             )
         return result
 
+    configured_timeout = kwargs.pop("timeout_seconds", 30)
     return run_bridge_operator_b3_dry_run_loop(
         repo_root=ROOT_PATH,
         state_dir=tmp_path,
@@ -174,7 +186,7 @@ def run_b3b(tmp_path, client=None, readiness=None, dispatcher_invoker=None, **kw
         sleeper=lambda seconds: None,
         mode=B3B_MODE,
         dispatcher_invoker=invoker,
-        timeout_seconds=30,
+        timeout_seconds=configured_timeout,
         **kwargs,
     )
 
@@ -214,6 +226,7 @@ def run_b3c(tmp_path, client=None, readiness=None, dispatcher_invoker=None, **kw
             )
         return result
 
+    configured_timeout = kwargs.pop("timeout_seconds", 30)
     return run_bridge_operator_b3_dry_run_loop(
         repo_root=ROOT_PATH,
         state_dir=tmp_path,
@@ -223,9 +236,40 @@ def run_b3c(tmp_path, client=None, readiness=None, dispatcher_invoker=None, **kw
         sleeper=lambda seconds: None,
         mode=B3C_MODE,
         dispatcher_invoker=invoker,
-        timeout_seconds=30,
+        timeout_seconds=configured_timeout,
         **kwargs,
     )
+
+
+SESSION_A = "a" * 32
+SESSION_B = "b" * 32
+
+
+def fake_process_identity(pid=4101, token="windows-filetime:41010000"):
+    return {
+        "platform": "windows",
+        "pid": pid,
+        "start_token": token,
+        "started_at_utc": "2026-06-16T07:59:00Z",
+    }
+
+
+def process_observation(process_status, descendant_status="none"):
+    return {
+        "process_status": process_status,
+        "descendant_status": descendant_status,
+        "observed_process_identity": None,
+        "descendant_pids": [] if descendant_status == "none" else [9001],
+        "reason": "none",
+    }
+
+
+def inject_at(target_stage):
+    def injector(stage):
+        if stage == target_stage:
+            raise RuntimeError(f"fault:{stage}")
+
+    return injector
 
 
 def assert_safety(summary):
@@ -349,9 +393,9 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
         "operator_direct_codex_invoked": False,
         "github_result_writeback_observed": True,
         "durable_reconciliation_performed": True,
-        "durable_reconciliation_decision": "NOT_FOUND",
-        "durable_reconciliation_reason": "ZERO_MATCHING_COMPLETIONS",
-        "durable_reconciliation_matched_evidence_ids": [],
+        "durable_reconciliation_decision": "COMPLETED",
+        "durable_reconciliation_reason": "EXACTLY_ONE_TRUSTED_MATCH",
+        "durable_reconciliation_matched_evidence_ids": ["20"],
         "durable_completion_reconciled": False,
         "current_failure_recorded": False,
         "current_failure_reason": None,
@@ -915,7 +959,7 @@ def test_b3b_reconciled_restart_uses_local_processed_state_before_provider_read(
     assert_high_risk_safety(second)
 
 
-def test_b3b_preexisting_blocked_durable_evidence_fails_before_dispatcher(tmp_path):
+def test_b3b_preexisting_terminal_failure_settles_without_dispatcher(tmp_path):
     calls = []
     client = FakeGitHub(
         target_comments=[
@@ -931,18 +975,26 @@ def test_b3b_preexisting_blocked_durable_evidence_fails_before_dispatcher(tmp_pa
     )
 
     assert summary["result"] == "blocked"
-    assert summary["blocked_reasons"] == ["durable_reconciliation_blocked"]
-    assert summary["durable_reconciliation_decision"] == "BLOCKED"
-    assert summary["durable_reconciliation_reason"] == "NON_SUCCESS_RESULT"
+    assert summary["blocked_reasons"] == ["durable_terminal_non_success"]
+    assert summary["durable_reconciliation_decision"] == "SETTLED_NON_SUCCESS"
+    assert summary["durable_reconciliation_reason"] == (
+        "EXACTLY_ONE_TRUSTED_NON_SUCCESS_MATCH"
+    )
     assert summary["durable_reconciliation_matched_evidence_ids"] == ["20"]
     assert summary["dispatcher_invoked"] is False
     assert summary["dispatcher_invocation_count"] == 0
     assert calls == []
-    assert not (tmp_path / "processed_requests.jsonl").exists()
+    processed = read_processed_request_records(tmp_path / "processed_requests.jsonl")
+    assert processed["b3a-151-20260616T080000Z"]["terminal_result"] == "failure"
+    assert processed["b3a-151-20260616T080000Z"]["terminal_settlement"] == (
+        "settled_non_success"
+    )
     failure = read_json(tmp_path / "last_failure.json")
-    assert failure["reason"] == "durable_reconciliation_blocked"
+    assert failure["reason"] == "durable_terminal_non_success"
     assert failure["dispatcher_reached"] is False
-    assert failure["durable_reconciliation_reason"] == "NON_SUCCESS_RESULT"
+    assert failure["durable_reconciliation_reason"] == (
+        "EXACTLY_ONE_TRUSTED_NON_SUCCESS_MATCH"
+    )
     assert_high_risk_safety(summary)
 
 
@@ -1054,25 +1106,35 @@ def test_b3b_blocks_run_reviewbundle_before_dispatcher(tmp_path):
     assert_high_risk_safety(summary)
 
 
-def test_b3c_blocks_maybe_status_check_before_dispatcher(tmp_path):
+def test_b3c_accepts_maybe_status_check_through_existing_dispatcher(tmp_path):
     calls = []
+    client = FakeGitHub(
+        target_comments=[
+            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+        ]
+    )
+
+    def invoker(**kwargs):
+        calls.append(kwargs)
+        client.target_comments.append(
+            CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW")
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
 
     summary = run_b3c(
         tmp_path,
-        FakeGitHub(
-            target_comments=[
-                CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
-                CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"),
-            ]
-        ),
-        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+        client,
+        dispatcher_invoker=invoker,
     )
 
-    assert summary["result"] == "blocked"
-    assert summary["blocked_reasons"] == ["maybe_status_check_not_enabled_in_b3c"]
-    assert summary["dispatcher_invoked"] is False
-    assert calls == []
-    assert not (tmp_path / "processed_requests.jsonl").exists()
+    assert summary["result"] == "success"
+    assert summary["blocked_reasons"] == []
+    assert summary["dispatcher_invoked"] is True
+    assert len(calls) == 1
+    assert summary["runner_invoked"] is False
+    assert summary["codex_invoked"] is False
+    assert summary["approval_consumed"] is False
+    assert summary["processed_request_written"] is True
     assert_high_risk_safety(summary)
 
 
@@ -1115,8 +1177,8 @@ def test_b3b_dispatcher_failures_do_not_write_processed_request(tmp_path):
         ("dispatcher_nonzero_exit", lambda **_: (_ for _ in ()).throw(RuntimeError("boom"))),
     ]
 
-    for reason, invoker in cases:
-        case_dir = tmp_path / reason
+    for index, (reason, invoker) in enumerate(cases):
+        case_dir = tmp_path / f"{index}-{reason}"
         summary = run_b3b(case_dir, dispatcher_invoker=invoker)
         assert summary["result"] == "blocked"
         assert summary["blocked_reasons"] == [reason]
@@ -1146,8 +1208,8 @@ def test_b3c_dispatcher_failures_do_not_write_processed_request(tmp_path):
         ("dispatcher_nonzero_exit", lambda **_: (_ for _ in ()).throw(RuntimeError("boom"))),
     ]
 
-    for reason, invoker in cases:
-        case_dir = tmp_path / reason
+    for index, (reason, invoker) in enumerate(cases):
+        case_dir = tmp_path / f"{index}-{reason}"
         summary = run_b3c(case_dir, dispatcher_invoker=invoker)
         assert summary["result"] == "blocked"
         assert summary["blocked_reasons"] == [reason]
@@ -1268,42 +1330,65 @@ def test_b3b_dirty_repo_and_wrong_head_fail_before_dispatcher(tmp_path):
     assert_high_risk_safety(wrong_head)
 
 
-def test_b3b_untrusted_or_failure_result_reaches_writeback_but_is_not_verified(tmp_path):
-    cases = (
-        (tmp_path / "untrusted", "untrusted_result_author", "other-user", "success"),
-        (tmp_path / "failure-result", "target_result_not_success", "HarryWhite-TW", "failure"),
+def test_b3b_untrusted_result_reaches_writeback_but_is_not_settled(tmp_path):
+    client = FakeGitHub(
+        target_comments=[
+            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+        ]
     )
-    for case_dir, reason, author, result_value in cases:
-        client = FakeGitHub(
-            target_comments=[
-                CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
-            ]
+    summary = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **_: client.target_comments.append(
+            CommentRecord(id=20, body=result_comment(), author="other-user")
         )
-        summary = run_b3b(
-            case_dir,
-            client,
-            dispatcher_invoker=lambda **_: client.target_comments.append(
-                CommentRecord(
-                    id=20,
-                    body=result_comment(result=result_value),
-                    author=author,
-                )
+        or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
+    )
+
+    assert summary["blocked_reasons"] == ["untrusted_result_author"]
+    assert summary["dispatcher_invocation_count"] == 1
+    assert summary["dispatcher_result_writeback_reached"] is True
+    assert summary["dispatcher_result_writeback_verified"] is False
+    assert summary["target_result_verified"] is False
+    failure = read_json(tmp_path / "last_failure.json")
+    assert failure["dispatcher_result_writeback_reached"] is True
+    assert failure["dispatcher_result_writeback_verified"] is False
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+    assert_high_risk_safety(summary)
+
+
+def test_b3b_terminal_failure_is_verified_and_settled_non_success(tmp_path):
+    client = FakeGitHub(
+        target_comments=[
+            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+        ]
+    )
+    summary = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **_: client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(result="failure"),
+                author="HarryWhite-TW",
             )
-            or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
         )
-        assert summary["blocked_reasons"] == [reason]
-        assert summary["dispatcher_invocation_count"] == 1
-        assert summary["dispatcher_result_writeback_reached"] is True
-        assert summary["dispatcher_result_writeback_verified"] is False
-        assert summary["target_result_verified"] is False
-        failure = read_json(case_dir / "last_failure.json")
-        assert failure["dispatcher_result_writeback_reached"] is True
-        assert failure["dispatcher_result_writeback_verified"] is False
-        log = read_log_events(case_dir / "operator.log")[-1]
-        assert log["dispatcher_result_writeback_reached"] is True
-        assert log["dispatcher_result_writeback_verified"] is False
-        assert not (case_dir / "processed_requests.jsonl").exists()
-        assert_high_risk_safety(summary)
+        or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
+    )
+
+    assert summary["blocked_reasons"] == ["target_result_not_success"]
+    assert summary["dispatcher_result_writeback_verified"] is True
+    assert summary["target_result_verified"] is True
+    assert summary["terminal_result"] == "failure"
+    assert summary["terminal_settlement"] == "settled_non_success"
+    assert summary["terminal_observed_at_utc"] == "2026-06-16T08:00:00Z"
+    processed = read_processed_request_records(tmp_path / "processed_requests.jsonl")
+    record = processed["b3a-151-20260616T080000Z"]
+    assert record["terminal_result"] == "failure"
+    assert record["terminal_settlement"] == "settled_non_success"
+    assert record["terminal_observed_at_utc"] == "2026-06-16T08:00:00Z"
+    assert not (tmp_path / "in_flight.json").exists()
+    assert_high_risk_safety(summary)
 
 
 def test_b3b_already_processed_request_does_not_rerun_dispatcher(tmp_path):
@@ -1381,7 +1466,9 @@ def test_b3c_lock_pause_and_stop_block_before_delegation(tmp_path):
     (stop_dir / "stop.flag").write_text("", encoding="utf-8")
     stopped = run_b3c(stop_dir, dispatcher_invoker=lambda **kwargs: calls.append(kwargs))
 
-    assert active_lock["blocked_reasons"] == ["active_lock_present"]
+    assert active_lock["blocked_reasons"] == [
+        "legacy_lock_manual_recovery_required"
+    ]
     assert active_lock["dispatcher_invoked"] is False
     assert paused["result"] == "success"
     assert paused["pause_observed"] is True
@@ -1538,6 +1625,13 @@ def test_max_cycles_and_poll_interval_are_bounded_and_testable(tmp_path):
     assert summary["sleep_call_count"] == 2
     assert sleeps == [1.25, 1.25]
     assert run(tmp_path / "bad1", max_cycles=0)["blocked_reasons"] == ["invalid_max_cycles"]
+    limit_dir = tmp_path / "limit"
+    limit_dir.mkdir()
+    (limit_dir / "stop.flag").write_text("", encoding="utf-8")
+    assert run(limit_dir, max_cycles=960)["stop_requested"] is True
+    assert run(tmp_path / "bad-max", max_cycles=961)["blocked_reasons"] == [
+        "invalid_max_cycles"
+    ]
     assert run(tmp_path / "bad2", poll_interval_seconds=-1)["blocked_reasons"] == [
         "invalid_poll_interval_seconds"
     ]
@@ -1567,10 +1661,15 @@ def test_active_or_stale_lock_blocks_without_removal(tmp_path):
     summary = run(tmp_path)
 
     assert summary["result"] == "blocked"
-    assert summary["blocked_reasons"] == ["active_lock_present"]
+    assert summary["blocked_reasons"] == [
+        "legacy_lock_manual_recovery_required"
+    ]
     assert lock.exists()
     assert "old" in lock.read_text(encoding="utf-8")
-    assert read_json(tmp_path / "last_failure.json")["reason"] == "active_lock_present"
+    assert (
+        read_json(tmp_path / "last_failure.json")["reason"]
+        == "legacy_lock_manual_recovery_required"
+    )
     assert_safety(summary)
 
 
@@ -1782,7 +1881,7 @@ def test_processed_history_rejects_duplicate_request_id_records(tmp_path):
         processed_record(completion_source="unknown"),
         processed_record(
             completion_source="durable_evidence_reconciliation",
-            dispatcher_invoked=True,
+            dispatcher_invoked="yes",
             result_verified=True,
             lifecycle_state="CONSUMED",
             reconciliation_decision="COMPLETED",
@@ -2102,3 +2201,410 @@ def test_logs_do_not_contain_secret_or_full_environment(tmp_path, monkeypatch):
     assert "PATH" not in log_text
     assert summary["result"] == "success"
     assert_safety(summary)
+
+
+def test_health_probe_expiry_and_dispatch_timeout_are_bounded(tmp_path):
+    calls = []
+    too_long = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(expires="20260616T080501Z"),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(expires="20260616T080501Z"),
+                author="HarryWhite-TW",
+            )
+        ],
+    )
+
+    blocked = run_b3b(
+        tmp_path / "expiry",
+        too_long,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+    bounded = run_b3b(
+        tmp_path / "timeout",
+        timeout_seconds=600,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs)
+        or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
+    )
+
+    assert blocked["blocked_reasons"] == [
+        "health_probe_expiry_exceeds_5_minutes"
+    ]
+    assert blocked["dispatcher_invoked"] is False
+    assert bounded["result"] == "success"
+    assert bounded["health_probe_request_remaining_seconds"] == 300
+    assert bounded["effective_dispatcher_timeout_seconds"] == 120
+    assert calls[-1]["timeout_seconds"] == 120
+    assert bounded["health_probe_to_real_task_seconds"] == 60
+    assert bounded["runner_invoked"] is False
+    assert bounded["codex_invoked"] is False
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected_stage", "expected_dispatches", "processed"),
+    [
+        ("before_durable_admit", None, 0, False),
+        ("after_prepared_before_dispatch", PREPARED, 0, False),
+        (
+            "after_dispatch_before_processed",
+            DISPATCHED_NOT_LOCALLY_SETTLED,
+            1,
+            False,
+        ),
+        ("after_processed_durable", PROCESSED, 1, True),
+    ],
+)
+def test_fault_injection_preserves_exact_ordering_stage(
+    tmp_path,
+    stage,
+    expected_stage,
+    expected_dispatches,
+    processed,
+):
+    calls = []
+    summary = run_b3b(
+        tmp_path,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs)
+        or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+        lifecycle_fault_injector=inject_at(stage),
+    )
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == [f"fault_injected_{stage}"]
+    assert len(calls) == expected_dispatches
+    in_flight_path = tmp_path / "in_flight.json"
+    if expected_stage is None:
+        assert not in_flight_path.exists()
+        assert not (tmp_path / "operator.lock").exists()
+    else:
+        assert read_json(in_flight_path)["stage"] == expected_stage
+        assert (tmp_path / "operator.lock").exists()
+    assert (tmp_path / "processed_requests.jsonl").exists() is processed
+
+
+def test_prepared_restart_is_uncertain_zero_redispatch_and_no_quarantine(tmp_path):
+    client = FakeGitHub()
+    first_calls = []
+    first = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: first_calls.append(kwargs),
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+        lifecycle_fault_injector=inject_at("after_prepared_before_dispatch"),
+    )
+    lock_path = tmp_path / "operator.lock"
+    before_lock = lock_path.read_bytes()
+    second_calls = []
+
+    second = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: second_calls.append(kwargs),
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=lambda _: process_observation("dead"),
+    )
+
+    assert first["in_flight_stage"] == PREPARED
+    assert first_calls == []
+    assert second["blocked_reasons"] == ["prepared_in_flight_uncertain"]
+    assert second["restart_reconciliation_performed"] is True
+    assert second["dispatcher_invoked"] is False
+    assert second_calls == []
+    assert read_json(tmp_path / "in_flight.json")["stage"] == PREPARED
+    assert lock_path.read_bytes() == before_lock
+    assert list(tmp_path.glob("operator.lock.quarantine.*.json")) == []
+
+
+@pytest.mark.parametrize("terminal_result", ["success", "failure", "blocked"])
+def test_dispatched_restart_settles_each_unique_terminal_without_redispatch(
+    tmp_path,
+    terminal_result,
+):
+    client = FakeGitHub()
+    first_calls = []
+
+    def first_invoker(**kwargs):
+        first_calls.append(kwargs)
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(result=terminal_result),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    first = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=first_invoker,
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+        lifecycle_fault_injector=inject_at("after_dispatch_before_processed"),
+    )
+    second_calls = []
+    second = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: second_calls.append(kwargs),
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=lambda _: process_observation("pid_reused"),
+    )
+
+    assert first["in_flight_stage"] == DISPATCHED_NOT_LOCALLY_SETTLED
+    assert len(first_calls) == 1
+    assert second["restart_reconciliation_performed"] is True
+    assert second["dispatcher_invoked"] is False
+    assert second_calls == []
+    assert not (tmp_path / "in_flight.json").exists()
+    assert len(list(tmp_path.glob("operator.lock.quarantine.*.json"))) == 1
+    record = read_processed_request_records(
+        tmp_path / "processed_requests.jsonl"
+    )["b3a-151-20260616T080000Z"]
+    assert record["terminal_result"] == terminal_result
+    expected_settlement = (
+        "settled_success"
+        if terminal_result == "success"
+        else "settled_non_success"
+    )
+    assert record["terminal_settlement"] == expected_settlement
+    if terminal_result == "success":
+        assert second["result"] == "success"
+    else:
+        assert second["blocked_reasons"] == [
+            "restart_reconciled_terminal_non_success"
+        ]
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_reason"),
+    [
+        ("zero", "ZERO_MATCHING_COMPLETIONS"),
+        ("multiple", "MULTIPLE_MATCHING_COMPLETIONS"),
+        ("untrusted", "UNTRUSTED_AUTHOR"),
+        ("provider_unavailable", "PROVIDER_UNAVAILABLE"),
+        ("malformed", "MALFORMED_EVIDENCE"),
+        ("identity_mismatch", "HEAD_MISMATCH"),
+    ],
+)
+def test_dispatched_restart_uncertain_evidence_never_redispatches(
+    tmp_path,
+    case,
+    expected_reason,
+):
+    client = FakeGitHub()
+
+    def first_invoker(**_):
+        if case == "multiple":
+            client.target_comments.extend(
+                [
+                    CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"),
+                    CommentRecord(id=21, body=result_comment(), author="HarryWhite-TW"),
+                ]
+            )
+        elif case == "untrusted":
+            client.target_comments.append(
+                CommentRecord(id=20, body=result_comment(), author="outsider")
+            )
+        elif case == "malformed":
+            client.target_comments.append(
+                CommentRecord(
+                    id=20,
+                    body="LAWBRUNNER-RESULT protocol=lawb.runner_result.v1\n{",
+                    author="HarryWhite-TW",
+                )
+            )
+        elif case == "identity_mismatch":
+            client.target_comments.append(
+                CommentRecord(
+                    id=20,
+                    body=result_comment(head="1" * 40),
+                    author="HarryWhite-TW",
+                )
+            )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=first_invoker,
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+        lifecycle_fault_injector=inject_at("after_dispatch_before_processed"),
+    )
+    lock_path = tmp_path / "operator.lock"
+    in_flight_path = tmp_path / "in_flight.json"
+    lock_before = lock_path.read_bytes()
+    in_flight_before = in_flight_path.read_bytes()
+    second_calls = []
+
+    class UnavailableProvider:
+        def read_result_comments(self, request):
+            return EvidenceReadResult(
+                status=ProviderStatus.UNAVAILABLE,
+                comments=(),
+                diagnostics=("test_provider_unavailable",),
+            )
+
+    second = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: second_calls.append(kwargs),
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=lambda _: process_observation("dead"),
+        durable_evidence_provider=(
+            UnavailableProvider() if case == "provider_unavailable" else None
+        ),
+    )
+
+    assert second["blocked_reasons"] == ["dispatched_in_flight_uncertain"]
+    assert second["durable_reconciliation_reason"] == expected_reason
+    assert second["dispatcher_invoked"] is False
+    assert second_calls == []
+    assert lock_path.read_bytes() == lock_before
+    assert in_flight_path.read_bytes() == in_flight_before
+    assert list(tmp_path.glob("operator.lock.quarantine.*.json")) == []
+
+
+def test_processed_restart_skips_provider_and_dispatcher_then_quarantines(tmp_path):
+    client = FakeGitHub()
+
+    def first_invoker(**_):
+        client.target_comments.append(
+            CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW")
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    first = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=first_invoker,
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+        lifecycle_fault_injector=inject_at("after_processed_durable"),
+    )
+
+    class ProviderMustNotRun:
+        calls = 0
+
+        def read_result_comments(self, request):
+            self.calls += 1
+            raise AssertionError("provider must not run for durable processed state")
+
+    provider = ProviderMustNotRun()
+    second_calls = []
+    second = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: second_calls.append(kwargs),
+        durable_evidence_provider=provider,
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=lambda _: process_observation("dead"),
+    )
+
+    assert first["in_flight_stage"] == PROCESSED
+    assert second["result"] == "success"
+    assert second["processed_request_already_seen"] is True
+    assert second["dispatcher_invoked"] is False
+    assert second_calls == []
+    assert provider.calls == 0
+    assert not (tmp_path / "in_flight.json").exists()
+    assert len(list(tmp_path.glob("operator.lock.quarantine.*.json"))) == 1
+
+
+def test_complete_live_lock_is_never_removed_or_quarantined(tmp_path):
+    tmp_path.mkdir(exist_ok=True)
+    lock_path = tmp_path / "operator.lock"
+    payload = create_lock_payload(
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+        created_at=NOW,
+        repository=DEFAULT_REPOSITORY,
+        inbox_issue=DEFAULT_INBOX_ISSUE,
+        mode=B3B_MODE,
+    )
+    write_exclusive_json(lock_path, payload)
+    before = lock_path.read_bytes()
+    calls = []
+
+    summary = run_b3b(
+        tmp_path,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=lambda _: process_observation("live"),
+    )
+
+    assert summary["blocked_reasons"] == ["active_lock_present"]
+    assert summary["lock_process_status"] == "live"
+    assert calls == []
+    assert lock_path.read_bytes() == before
+    assert list(tmp_path.glob("operator.lock.quarantine.*.json")) == []
+
+
+def test_pid_reuse_without_in_flight_quarantines_exact_lock_and_uses_new_lock(
+    tmp_path,
+):
+    tmp_path.mkdir(exist_ok=True)
+    lock_path = tmp_path / "operator.lock"
+    payload = create_lock_payload(
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+        created_at=NOW,
+        repository=DEFAULT_REPOSITORY,
+        inbox_issue=DEFAULT_INBOX_ISSUE,
+        mode="b3a-dry-run",
+    )
+    write_exclusive_json(lock_path, payload)
+    before = lock_path.read_bytes()
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=ROOT_PATH,
+        state_dir=tmp_path,
+        github_client=FakeGitHub(inbox_comments=[]),
+        local_checker=ready(tmp_path),
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=lambda _: process_observation("pid_reused"),
+    )
+
+    quarantined = list(tmp_path.glob("operator.lock.quarantine.*.json"))
+    assert summary["result"] == "success"
+    assert summary["lock_quarantined"] is True
+    assert not lock_path.exists()
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == before

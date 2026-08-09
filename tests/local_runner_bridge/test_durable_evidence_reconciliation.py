@@ -248,8 +248,8 @@ CASES = [
     ),
     pytest.param(
         read_result(comments=(make_comment("c1", result="failure"),)),
-        ReconciliationDecision.BLOCKED,
-        ReconciliationReason.NON_SUCCESS_RESULT,
+        ReconciliationDecision.SETTLED_NON_SUCCESS,
+        ReconciliationReason.EXACTLY_ONE_TRUSTED_NON_SUCCESS_MATCH,
         ("c1",),
         id="D1-018",
     ),
@@ -374,7 +374,7 @@ CASES = [
     pytest.param(
         read_result(comments=(make_comment("c1", result="failure"), make_comment("c2", result="blocked"))),
         ReconciliationDecision.BLOCKED,
-        ReconciliationReason.NON_SUCCESS_RESULT,
+        ReconciliationReason.CONFLICTING_EVIDENCE,
         ("c1", "c2"),
         id="D1-032",
     ),
@@ -599,6 +599,13 @@ CASES = [
         ("c1",),
         id="D1-053",
     ),
+    pytest.param(
+        read_result(comments=(make_comment("c1", result="blocked"),)),
+        ReconciliationDecision.SETTLED_NON_SUCCESS,
+        ReconciliationReason.EXACTLY_ONE_TRUSTED_NON_SUCCESS_MATCH,
+        ("c1",),
+        id="D1-054",
+    ),
 ]
 
 
@@ -621,6 +628,15 @@ def test_resolve_durable_completion_cases(
     assert result.reason == expected_reason
     assert result.matched_evidence_ids == expected_ids
     assert result.diagnostics == tuple(sorted(result.diagnostics))
+    if expected_decision == ReconciliationDecision.COMPLETED:
+        assert result.terminal_result == "success"
+        assert result.terminal_author == "HarryWhite-TW"
+    elif expected_decision == ReconciliationDecision.SETTLED_NON_SUCCESS:
+        assert result.terminal_result in {"failure", "blocked"}
+        assert result.terminal_author == "HarryWhite-TW"
+    else:
+        assert result.terminal_result is None
+        assert result.terminal_author is None
 
 
 def test_request_surface_mismatch_blocks_before_provider_read() -> None:

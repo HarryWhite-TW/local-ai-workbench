@@ -61,6 +61,7 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
                 kwargs["state_dir"],
                 kwargs["mode"],
                 kwargs["timeout_seconds"],
+                kwargs["operator_session_id"],
             )
         )
         return {
@@ -107,6 +108,8 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
             "b3b-maybe-status-check",
             "--timeout-seconds",
             "45",
+            "--operator-session-id",
+            "a" * 32,
         ]
     )
     output = capsys.readouterr().out
@@ -125,6 +128,7 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
             "C:/state",
             "b3b-maybe-status-check",
             45,
+            "a" * 32,
         ),
     ]
     assert "ghp_TEST_SECRET_DO_NOT_LEAK" not in output

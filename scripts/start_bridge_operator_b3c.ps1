@@ -24,7 +24,7 @@ param(
     )]
     [string]$Repository = "HarryWhite-TW/local-ai-workbench",
     [string]$TargetRepoRoot = "",
-    [ValidateRange(1, 100)]
+    [ValidateRange(1, 960)]
     [int]$MaxCycles = 1,
     [ValidateRange(0, 3600)]
     [double]$PollIntervalSeconds = 0,
@@ -1338,6 +1338,12 @@ function New-StatusPayload {
     $payload = [ordered]@{
         protocol = $StatusProtocol
         run_id = $RunId
+        operator_session_id = $RunId
+        started_at_utc = $statusPublicationStartedAtUtc
+        valid_until_utc = $statusPublicationValidUntilUtc
+        configured_max_cycles = $MaxCycles
+        configured_poll_interval_seconds = $PollIntervalSeconds
+        configured_timeout_seconds = $TimeoutSeconds
         observed_at_utc = [DateTime]::UtcNow.ToString(
             "yyyy-MM-ddTHH:mm:ssZ",
             [Globalization.CultureInfo]::InvariantCulture
@@ -1509,20 +1515,53 @@ function Inspect-OperatorState {
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)]
         [AllowEmptyCollection()]
-        [System.Collections.ArrayList]$Reasons
+        [System.Collections.ArrayList]$Reasons,
+        [Parameter(Mandatory = $true)][bool]$LifecycleRecoveryHandoff
     )
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         Add-BlockedReason -Reasons $Reasons -Reason "state_directory_unavailable"
         return
     }
-    if (Test-Path -LiteralPath (Join-Path $Path "operator.lock") -PathType Leaf) {
-        Add-BlockedReason -Reasons $Reasons -Reason "operator_lock_present"
+    $lockPath = Join-Path $Path "operator.lock"
+    $lockHandoffEligible = $false
+    if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
+        try {
+            $lockPayload = Get-JsonObject -JsonText (
+                [System.IO.File]::ReadAllText($lockPath)
+            )
+            $lockHandoffEligible = (
+                [string](Get-ObjectProperty -Object $lockPayload -Name "protocol") -eq
+                    "lawb.bridge_operator_b3_lock.v2" -and
+                (Get-ObjectProperty -Object $lockPayload -Name "schema_version") -eq 2 -and
+                -not [string]::IsNullOrWhiteSpace(
+                    [string](Get-ObjectProperty -Object $lockPayload `
+                        -Name "operator_session_id")
+                ) -and
+                $null -ne (Get-ObjectProperty -Object $lockPayload `
+                    -Name "process_identity")
+            )
+        }
+        catch {
+            $lockHandoffEligible = $false
+        }
+        if (-not $LifecycleRecoveryHandoff -or -not $lockHandoffEligible) {
+            Add-BlockedReason -Reasons $Reasons -Reason "operator_lock_present"
+        }
     }
     if (Test-Path -LiteralPath (Join-Path $Path "pause.flag") -PathType Leaf) {
         Add-BlockedReason -Reasons $Reasons -Reason "pause_flag_present"
     }
     if (Test-Path -LiteralPath (Join-Path $Path "stop.flag") -PathType Leaf) {
         Add-BlockedReason -Reasons $Reasons -Reason "stop_flag_present"
+    }
+    $inFlightPath = Join-Path $Path "in_flight.json"
+    if (Test-Path -LiteralPath $inFlightPath -PathType Leaf) {
+        if (-not (Test-JsonEvidenceFile -Path $inFlightPath)) {
+            Add-BlockedReason -Reasons $Reasons -Reason "state_evidence_invalid_or_unreadable"
+        }
+        elseif (-not $LifecycleRecoveryHandoff -or -not $lockHandoffEligible) {
+            Add-BlockedReason -Reasons $Reasons -Reason "unresolved_in_flight_present"
+        }
     }
     foreach ($name in @("state.json", "heartbeat.json", "last_failure.json")) {
         $candidate = Join-Path $Path $name
@@ -1542,6 +1581,13 @@ function Inspect-OperatorState {
             if (-not (Test-JsonEvidenceFile -Path $candidate -JsonLines)) {
                 Add-BlockedReason -Reasons $Reasons -Reason "state_evidence_invalid_or_unreadable"
             }
+        }
+    }
+    foreach ($candidate in @(Get-ChildItem -LiteralPath $Path `
+        -Filter "operator.lock.quarantine.*.json" -File `
+        -ErrorAction SilentlyContinue)) {
+        if (-not (Test-JsonEvidenceFile -Path $candidate.FullName)) {
+            Add-BlockedReason -Reasons $Reasons -Reason "state_evidence_invalid_or_unreadable"
         }
     }
 }
@@ -1570,6 +1616,21 @@ $statusCommentId = $null
 $statusPublicationResult = if ($PublishStatus) { "pending" } else { "not_requested" }
 $statusPublicationBlockedReason = ""
 $statusPublicationRunId = [guid]::NewGuid().ToString("N")
+$statusPublicationStartedAt = [DateTime]::UtcNow
+$statusPublicationStartedAtUtc = $statusPublicationStartedAt.ToString(
+    "yyyy-MM-ddTHH:mm:ssZ",
+    [Globalization.CultureInfo]::InvariantCulture
+)
+$statusValiditySeconds = [Math]::Max(
+    [double]$TimeoutSeconds,
+    [double]$MaxCycles * [double]$PollIntervalSeconds
+)
+$statusPublicationValidUntilUtc = $statusPublicationStartedAt.AddSeconds(
+    $statusValiditySeconds
+).ToString(
+    "yyyy-MM-ddTHH:mm:ssZ",
+    [Globalization.CultureInfo]::InvariantCulture
+)
 $statusCommentNeedsUpdate = $false
 $githubWritePerformedDirectly = $false
 
@@ -1614,7 +1675,8 @@ else {
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ResolvedStateDir)) {
-    Inspect-OperatorState -Path $ResolvedStateDir -Reasons $blockedReasons
+    Inspect-OperatorState -Path $ResolvedStateDir -Reasons $blockedReasons `
+        -LifecycleRecoveryHandoff ([bool]$StartForeground)
 }
 
 if (-not (Test-Path -LiteralPath $BootstrapScript -PathType Leaf)) {
@@ -1835,7 +1897,8 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
         "--poll-interval-seconds", [string]$PollIntervalSeconds,
         "--mode", "b3c-run-reviewbundle",
         "--state-dir", $ResolvedStateDir,
-        "--timeout-seconds", [string]$TimeoutSeconds
+        "--timeout-seconds", [string]$TimeoutSeconds,
+        "--operator-session-id", $statusPublicationRunId
     )
     if ([string]::Equals($Repository, $HagRepository, [System.StringComparison]::Ordinal)) {
         $operatorArguments += @("--target-repo-root", $ResolvedTargetRepoRoot)
