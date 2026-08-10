@@ -47,23 +47,33 @@ Workflow v1 is:
 
 `DONE — FINAL DURABLE TRUTH SYNCHRONIZED`
 
-The accepted bounded daily-UX verdict is:
+The current Operating V1 verdict is:
 
 ```text
-CHATGPT-FIRST CORE DAILY UX ACCEPTED
-— MANUAL FOREGROUND, BOUNDED, NO ROUTINE TASK/RESULT RELAY
+CHATGPT-FIRST OPERATING V1
+— ACCEPTED / PUBLISHED
 ```
 
-After one reviewed local setup and one visible foreground Bridge start, the user
-can work through ChatGPT without routinely relaying task packets, terminal
-output, raw diffs, tests, result JSON, ReviewBundle content, or Codex reports.
+LAWB PR #254 merged the accepted implementation at
+`0aec6941b3f48730944dbf04a7b451c6c6cbb154`. Current evidence proves a visible
+Windows login-triggered Startup entry, a bounded foreground B3-C session,
+ChatGPT-readable GitHub status and health, and restart/login operation without
+routine manual Bridge startup or recovery commands. Malformed, expired, or
+overlong request-local health probes fail closed before Dispatcher; that safe
+rejection does not terminate the polling session, and a later valid request can
+proceed in the same Startup-launched session without user recovery. Existing
+duplicate suppression and durable reconciliation protections remain bounded.
 
-This does not prove zero-touch startup, a permanent background service,
-unattended restart recovery, parallel isolation, automatic remote actions, or
-independent Workflow runtime cutover.
+The earlier manual-foreground daily-UX evidence remains valid as historical
+foundation, but it is no longer the current completion line. This acceptance
+does not prove a hidden Windows service, production-grade availability, fully
+autonomous software development, automatic permanent or high-risk GitHub
+operations, MCP, Independent HGW runtime, or removal of human approval
+boundaries. Permanent and high-risk authority remains explicitly approval-gated.
 
-The accepted capability matrix, evidence, and limitations are recorded in
-`docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md`.
+The earlier manual-foreground capability matrix, evidence, and limitations are
+recorded in `docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md` as
+historical foundation rather than the current Operating V1 completion record.
 
 ## Canonical Ecosystem Forward Plan
 
@@ -72,12 +82,15 @@ maintained in:
 
 [`WORKFLOW_HAG_ECOSYSTEM_ROADMAP_v2.0.md`](https://github.com/HarryWhite-TW/human-governed-workflow/blob/main/docs/WORKFLOW_HAG_ECOSYSTEM_ROADMAP_v2.0.md)
 
-The roadmap separates two completion lines:
+The roadmap separates two completion lines whose completion chronology did not
+follow the original forecast exactly:
 
 1. `ECO-CP1 — Human-Governed AI Core Demo Checkpoint`: the first stable,
-   demonstrable ecosystem stop point;
-2. `CHATGPT-FIRST OPERATING V1`: the later optional goal that removes routine
-   local startup, recovery-command, and evidence relay from normal bounded work.
+   demonstrable ecosystem stop point, whose durable closeout is not declared
+   complete by the Operating V1 evidence;
+2. `CHATGPT-FIRST OPERATING V1`: accepted and published through LAWB PR #254
+   under a subsequent explicitly approved path, removing routine local Bridge
+   startup, recovery-command, and evidence relay from normal bounded work.
 
 The first checkpoint no longer requires Independent HGW runtime. Local AI
 Workbench remains the runtime owner unless a later readiness review proves a
@@ -103,40 +116,37 @@ safe, valuable, single-owner migration path.
 
 - bounded human-approval product and reference target;
 - does not dispatch Codex or own Workflow runtime;
-- HAG-04 covers fake execution safety semantics;
-- HAG-05 is the local API and approval-surface completion node.
+- HAG-04 fake execution safety semantics are done and published;
+- HAG-05 minimal local API and approval surface is done and published, with a
+  fake-only loopback foreground approval surface.
 
 ## Current HAG Status
 
-HAG-01, HAG-02, HAG-03, exception-boundary stabilization, and RequestEvaluation
+HAG-01 through HAG-05, exception-boundary stabilization, and RequestEvaluation
 invariant recovery are published on HAG `main`.
 
-HAG-04 exists as a local, unstaged fake-execution and reconciliation candidate.
-Independent cross-review found two production blockers even though the existing
-candidate suites passed:
+- `HAG-04 DONE / PUBLISHED`;
+- `HAG-05 DONE / PUBLISHED`.
 
-1. replayed execution repository can diverge from the exact authoritative
-   Proposal repository;
-2. two coordinators created before first dispatch can each attempt the same
-   Proposal and each call an adapter.
-
-`HAG-04-SECOND-REPAIR-01` is approved, paused, and not started. The approval is
-limited to `execution.py`, `audit.py`, and `test_execution_contracts.py`. It does
-not authorize publication, HAG-05, credentials, real GitHub mutation, or broader
-runtime authority.
+The HAG-05 loopback foreground local approval surface remains fake-only. HAG
+has no real credential, LLM, GitHub mutation, worker, queue, service, deployment,
+or Workflow-runtime authority.
 
 ## Fixed Path to ECO-CP1
 
-1. `HAG-04-SECOND-REPAIR-01`;
-2. `HAG-04-INDEPENDENT-FINAL-REVIEW-02`;
-3. `HAG-04-PUBLICATION-01`;
-4. `HAG-05A-CURRENT-TRUTH-AND-CONTRACT-LOCK`;
-5. `HAG-05B-MINIMAL-LOCAL-SURFACE`;
-6. `HAG-05C-ACCEPTANCE-AND-PUBLICATION`;
-7. `WORKFLOW-DISPLAY-PILOT-CLOSEOUT-01`;
-8. `ECO-CP1-DURABLE-CLOSEOUT-01`.
+The original fixed path remains historical sequencing. Its HAG portion is now
+complete:
 
-HAG-05 must preserve the accepted product contract:
+1. `HAG-04-SECOND-REPAIR-01` — completed;
+2. `HAG-04-INDEPENDENT-FINAL-REVIEW-02` — completed;
+3. `HAG-04-PUBLICATION-01` — `HAG-04 DONE / PUBLISHED`;
+4. `HAG-05A-CURRENT-TRUTH-AND-CONTRACT-LOCK` — completed;
+5. `HAG-05B-MINIMAL-LOCAL-SURFACE` — completed;
+6. `HAG-05C-ACCEPTANCE-AND-PUBLICATION` — `HAG-05 DONE / PUBLISHED`;
+7. `WORKFLOW-DISPLAY-PILOT-CLOSEOUT-01` — not declared complete here;
+8. `ECO-CP1-DURABLE-CLOSEOUT-01` — not declared complete here.
+
+The published HAG-05 implementation preserves the accepted product contract:
 
 `HAG-05 — Minimal Local API and Approval Surface`
 
@@ -144,7 +154,7 @@ A CLI-only substitute would be a product-contract change. HAG-05 must not
 silently add a real LLM, credentials, real GitHub mutation, production
 authentication, n8n, background workers, a broad UI framework, or deployment.
 
-ECO-CP1 completes with:
+The ECO-CP1 target verdict, not asserted by this synchronization, remains:
 
 `ECO-CP1 ACCEPTED — STABLE STOP POINT`
 
@@ -166,22 +176,20 @@ remains open. Its remaining bounded outputs are:
 This is documentation and presentation work only. It does not add runtime,
 adapters, queueing, credentials, startup, service behavior, or cutover.
 
-## Post-ECO Optional Goal
+## Subsequent Operating V1 Completion
 
-Only after ECO-CP1 and a fresh user decision may the project evaluate
-`CHATGPT-FIRST OPERATING V1`.
+The original roadmap placed `CHATGPT-FIRST OPERATING V1` after ECO-CP1 as an
+optional goal. Under a later, explicitly approved evidence path, Operating V1
+was completed and published through LAWB PR #254 without treating the forecast
+chronology as having occurred exactly as written.
 
-The readiness review must choose the smallest route among:
+The accepted readiness route selected visible login-triggered Startup and
+preserved visible health/status, reversible disable, bounded restart recovery,
+duplicate suppression, and separate approval for permanent or high-risk
+operations. Independent HGW runtime was not required and remains inactive.
 
-- keep manual foreground operation;
-- add login-triggered startup;
-- add a narrow persistent launcher;
-- stop because of a host or platform limitation.
-
-Any approved implementation must preserve visible health/status, reversible
-disable, bounded restart recovery, duplicate suppression, and separate approval
-for permanent or high-risk operations. Independent HGW runtime is not assumed to
-be necessary.
+This completion does not by itself close the separate Display Pilot or ECO-CP1
+durable completion lines.
 
 ## Stop Lines
 
@@ -191,7 +199,8 @@ Before ECO-CP1, do not activate:
 - HAG-06, HAG-07, or HAG-08;
 - real LLM access, credentials, or real GitHub mutation;
 - queue, isolated worktree, shadow mode, or cutover;
-- n8n, background service, startup, tray, MCP, or deployment;
+- n8n, hidden background service, tray, MCP, deployment, or additional startup
+  authority beyond the accepted visible login-triggered path;
 - automatic commit, push, PR, merge, Issue close, or approval chaining.
 
 After ECO-CP1, pause by default and choose at most one separately approved next
@@ -228,6 +237,10 @@ Its historical status does not activate product or Workflow work.
 
 ## Change Log
 
+- 2026-08-10: Synchronized the accepted and published ChatGPT-First Operating
+  V1 truth from LAWB PR #254, updated HAG-04/HAG-05 to published, preserved LAWB
+  runtime ownership and approval boundaries, and left Display Pilot/ECO-CP1
+  durable completion as separate unproven questions.
 - 2026-08-02: Adopted Ecosystem Roadmap v2.0 candidate publication wording,
   separated ECO-CP1 from the later ChatGPT-First Operating V1 goal, updated HAG
   current truth through the paused HAG-04 second repair, preserved Local AI
