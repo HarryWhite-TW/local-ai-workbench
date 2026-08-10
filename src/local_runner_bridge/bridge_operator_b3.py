@@ -73,6 +73,13 @@ DEFAULT_READ_RETRY_COUNT = 2
 HEALTH_PROBE_REQUEST_EXPIRY_SECONDS = 300
 HEALTH_PROBE_RESULT_TIMEOUT_SECONDS = 120
 HEALTH_PROBE_TO_REAL_TASK_SECONDS = 60
+NONFATAL_REQUEST_REJECTION_REASONS = frozenset(
+    {
+        "health_probe_expiry_invalid",
+        "health_probe_expired",
+        "health_probe_expiry_exceeds_5_minutes",
+    }
+)
 SAFE_WAIT_B1_REASONS = frozenset({"missing_request", "no_current_request_after_consumption"})
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$")
 
@@ -320,6 +327,7 @@ def run_bridge_operator_b3_dry_run_loop(
             _write_heartbeat(state_root, "blocked", 0, summary, _now(now_utc))
             return _finalize_summary(summary)
 
+        session_rejected_requests: set[tuple[str, str]] = set()
         for cycle in range(1, max_cycles + 1):
             summary["cycles_started"] = cycle
             summary["current_delegation_outcome"] = None
@@ -368,46 +376,94 @@ def run_bridge_operator_b3_dry_run_loop(
                         summary["dry_run_duplicate_observation"] = not appended
                         _write_log(state_root, "observed", "eligible_request_dry_run_observed", summary)
                     else:
-                        reason = _delegate_b3_request(
-                            state_root=state_root,
-                            repo_root=target_root,
-                            control_repo_root=control_root,
-                            repository=repository,
-                            client=target_client,
-                            b1_summary=b1_summary,
-                            cycle=cycle,
-                            now=_now(now_utc),
-                            summary=summary,
-                            dispatcher_invoker=dispatcher_invoker,
-                            timeout_seconds=timeout_seconds,
-                            durable_evidence_provider=durable_evidence_provider,
-                            operator_session_id=session_id,
-                            process_identity=current_process_identity,
-                            lifecycle_fault_injector=lifecycle_fault_injector,
+                        request_key = (
+                            str(b1_summary.get("target_repository") or repository),
+                            str(b1_summary.get("request_id") or ""),
                         )
-                        if reason is not None:
-                            _record_failure(state_root, summary, reason, _now(now_utc))
-                            _write_log(state_root, "failed", reason, summary)
-                            break
-                        current_outcome = summary.get("current_delegation_outcome")
-                        if current_outcome == "durable_completion_reconciled":
-                            _write_log(
-                                state_root,
-                                "reconciled",
-                                "durable_completion_reconciled",
-                                summary,
+                        request_rejected_this_cycle = False
+                        if request_key in session_rejected_requests:
+                            summary["suppressed_request_rejection_cycle_count"] += 1
+                            summary["empty_or_blocked_cycles"] += 1
+                            summary["current_delegation_outcome"] = (
+                                "session_local_request_rejection_suppressed"
                             )
-                        elif current_outcome == "local_processed_request_already_seen":
-                            _write_log(
-                                state_root,
-                                "already_processed",
-                                "local_processed_request_already_seen",
-                                summary,
-                            )
-                        elif current_outcome == "verified_dispatcher_result":
-                            _write_log(state_root, "processed", "verified_dispatcher_result", summary)
+                            request_rejected_this_cycle = True
                         else:
-                            _write_log(state_root, "completed", "no_dispatcher_result_verified", summary)
+                            reason = _delegate_b3_request(
+                                state_root=state_root,
+                                repo_root=target_root,
+                                control_repo_root=control_root,
+                                repository=repository,
+                                client=target_client,
+                                b1_summary=b1_summary,
+                                cycle=cycle,
+                                now=_now(now_utc),
+                                summary=summary,
+                                dispatcher_invoker=dispatcher_invoker,
+                                timeout_seconds=timeout_seconds,
+                                durable_evidence_provider=durable_evidence_provider,
+                                operator_session_id=session_id,
+                                process_identity=current_process_identity,
+                                lifecycle_fault_injector=lifecycle_fault_injector,
+                            )
+                            if reason is not None:
+                                if reason in NONFATAL_REQUEST_REJECTION_REASONS:
+                                    session_rejected_requests.add(request_key)
+                                    summary["nonfatal_request_rejection_count"] += 1
+                                    summary["last_nonfatal_request_rejection_reason"] = reason
+                                    summary["last_nonfatal_request_rejection_request_id"] = (
+                                        request_key[1]
+                                    )
+                                    summary["empty_or_blocked_cycles"] += 1
+                                    summary["current_delegation_outcome"] = (
+                                        "request_rejected_nonfatal"
+                                    )
+                                    _write_log(
+                                        state_root,
+                                        "request_rejected",
+                                        reason,
+                                        summary,
+                                    )
+                                    request_rejected_this_cycle = True
+                                else:
+                                    _record_failure(
+                                        state_root,
+                                        summary,
+                                        reason,
+                                        _now(now_utc),
+                                    )
+                                    _write_log(state_root, "failed", reason, summary)
+                                    break
+                        if not request_rejected_this_cycle:
+                            current_outcome = summary.get("current_delegation_outcome")
+                            if current_outcome == "durable_completion_reconciled":
+                                _write_log(
+                                    state_root,
+                                    "reconciled",
+                                    "durable_completion_reconciled",
+                                    summary,
+                                )
+                            elif current_outcome == "local_processed_request_already_seen":
+                                _write_log(
+                                    state_root,
+                                    "already_processed",
+                                    "local_processed_request_already_seen",
+                                    summary,
+                                )
+                            elif current_outcome == "verified_dispatcher_result":
+                                _write_log(
+                                    state_root,
+                                    "processed",
+                                    "verified_dispatcher_result",
+                                    summary,
+                                )
+                            else:
+                                _write_log(
+                                    state_root,
+                                    "completed",
+                                    "no_dispatcher_result_verified",
+                                    summary,
+                                )
                 elif _is_github_read_failure(b1_summary):
                     _block(summary, "github_read_unavailable")
                     _record_failure(state_root, summary, "github_read_unavailable", _now(now_utc))
@@ -522,6 +578,10 @@ def _base_summary(
         "processed_request_written": False,
         "processed_request_already_seen": False,
         "current_delegation_outcome": None,
+        "nonfatal_request_rejection_count": 0,
+        "suppressed_request_rejection_cycle_count": 0,
+        "last_nonfatal_request_rejection_reason": None,
+        "last_nonfatal_request_rejection_request_id": None,
         "durable_reconciliation_performed": False,
         "durable_reconciliation_read_attempts": 0,
         "durable_reconciliation_decision": None,
@@ -1108,7 +1168,8 @@ def _delegate_b3_request(
         )
         summary["health_probe_request_remaining_seconds"] = remaining_seconds
         if expiry_error is not None:
-            _block(summary, expiry_error)
+            if expiry_error not in NONFATAL_REQUEST_REJECTION_REASONS:
+                _block(summary, expiry_error)
             return expiry_error
     readiness = b1_summary.get("local_readiness") or {}
     if readiness.get("clean") is not True:

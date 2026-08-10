@@ -2234,9 +2234,12 @@ def test_health_probe_expiry_and_dispatch_timeout_are_bounded(tmp_path):
         or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
     )
 
-    assert blocked["blocked_reasons"] == [
+    assert blocked["result"] == "success"
+    assert blocked["blocked_reasons"] == []
+    assert blocked["nonfatal_request_rejection_count"] == 1
+    assert blocked["last_nonfatal_request_rejection_reason"] == (
         "health_probe_expiry_exceeds_5_minutes"
-    ]
+    )
     assert blocked["dispatcher_invoked"] is False
     assert bounded["result"] == "success"
     assert bounded["health_probe_request_remaining_seconds"] == 300
@@ -2245,6 +2248,125 @@ def test_health_probe_expiry_and_dispatch_timeout_are_bounded(tmp_path):
     assert bounded["health_probe_to_real_task_seconds"] == 60
     assert bounded["runner_invoked"] is False
     assert bounded["codex_invoked"] is False
+
+
+def test_b3c_nonfatal_probe_rejection_is_suppressed_and_later_request_runs(
+    tmp_path,
+):
+    rejected_request_id = "probe-too-long"
+    valid_request_id = "probe-valid"
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    request_id=rejected_request_id,
+                    target_dispatch_request_id="dispatch-too-long",
+                    expires="20260616T080501Z",
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(
+                    request_id="dispatch-too-long",
+                    expires="20260616T080501Z",
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+    )
+    sleeps = []
+    calls = []
+
+    def sleeper(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            client.inbox_comments = [
+                CommentRecord(
+                    id=2,
+                    body=inbox_marker(
+                        request_id=valid_request_id,
+                        target_dispatch_request_id="dispatch-valid",
+                    ),
+                    author="HarryWhite-TW",
+                )
+            ]
+            client.target_comments = [
+                CommentRecord(
+                    id=11,
+                    body=dispatch_marker(request_id="dispatch-valid"),
+                    author="HarryWhite-TW",
+                )
+            ]
+
+    def invoker(**kwargs):
+        calls.append(kwargs)
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(request_id="dispatch-valid"),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=ROOT_PATH,
+        state_dir=tmp_path,
+        github_client=client,
+        local_checker=ready(tmp_path),
+        now_utc=NOW,
+        sleeper=sleeper,
+        max_cycles=3,
+        poll_interval_seconds=1,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+    )
+
+    assert summary["result"] == "success"
+    assert summary["cycles_completed"] == 3
+    assert summary["nonfatal_request_rejection_count"] == 1
+    assert summary["suppressed_request_rejection_cycle_count"] == 1
+    assert summary["last_nonfatal_request_rejection_reason"] == (
+        "health_probe_expiry_exceeds_5_minutes"
+    )
+    assert summary["last_nonfatal_request_rejection_request_id"] == (
+        rejected_request_id
+    )
+    assert summary["dispatcher_invocation_count"] == 1
+    assert summary["dispatcher_invoked"] is True
+    assert summary["runner_invoked"] is False
+    assert summary["codex_invoked"] is False
+    assert len(calls) == 1
+    assert sleeps == [1, 1]
+    assert not (tmp_path / "in_flight.json").exists()
+    assert not (tmp_path / "last_failure.json").exists()
+
+    processed = read_processed_request_records(
+        tmp_path / "processed_requests.jsonl",
+        repository=DEFAULT_REPOSITORY,
+    )
+    assert rejected_request_id not in processed
+    assert list(processed) == [valid_request_id]
+
+    rejection_logs = [
+        event
+        for event in read_log_events(tmp_path / "operator.log")
+        if event["event"] == "request_rejected"
+    ]
+    assert len(rejection_logs) == 1
+    assert rejection_logs[0]["request_id"] == rejected_request_id
+    assert rejection_logs[0]["reason"] == "health_probe_expiry_exceeds_5_minutes"
+
+    heartbeat = read_json(tmp_path / "heartbeat.json")
+    assert heartbeat["cycle"] == 3
+    assert heartbeat["operator_session_id"] == SESSION_A
 
 
 @pytest.mark.parametrize(
