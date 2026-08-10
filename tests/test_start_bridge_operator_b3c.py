@@ -268,13 +268,17 @@ def run_taskkill_success_verification_probe(tmp_path: Path) -> dict:
         trusted_taskkill,
         f"'{str(fake_taskkill).replace(chr(39), chr(39) * 2)}'",
     )
+    fake_taskkill_literal = str(fake_taskkill).replace("'", "''")
+    python_literal = sys.executable.replace("'", "''")
+    root_helper_argument = str(root_helper).replace('"', '\\"')
+    working_directory_literal = str(tmp_path).replace("'", "''")
     probe = tmp_path / "taskkill-success-verification-probe.ps1"
     probe.write_text(
         f"""
 $ProcessTreeTerminationTimeoutMilliseconds = 3000
 $CleanupCommandKillWaitMilliseconds = 1000
 Add-Type -Language CSharp -OutputType ConsoleApplication `
-    -OutputAssembly '{str(fake_taskkill).replace("'", "''")}' `
+    -OutputAssembly '{fake_taskkill_literal}' `
     -TypeDefinition @'
 using System;
 using System.IO;
@@ -293,9 +297,9 @@ public static class Program
 '@
 {source}
 $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-$startInfo.FileName = '{sys.executable.replace("'", "''")}'
-$startInfo.Arguments = '"{str(root_helper).replace('"', '\\"')}"'
-$startInfo.WorkingDirectory = '{str(tmp_path).replace("'", "''")}'
+$startInfo.FileName = '{python_literal}'
+$startInfo.Arguments = '"{root_helper_argument}"'
+$startInfo.WorkingDirectory = '{working_directory_literal}'
 $startInfo.UseShellExecute = $false
 $startInfo.CreateNoWindow = $true
 $startInfo.RedirectStandardOutput = $true
@@ -1011,6 +1015,68 @@ def test_active_lock_fails_closed_and_is_not_deleted(harness: LauncherHarness):
     assert payload["operator_invoked"] is False
 
 
+def test_complete_lifecycle_lock_and_in_flight_are_handed_to_foreground_only(
+    harness: LauncherHarness,
+):
+    session = "a" * 32
+    identity = {
+        "platform": "windows",
+        "pid": 4101,
+        "start_token": "windows-filetime:41010000",
+        "started_at_utc": "2026-08-05T03:59:00Z",
+    }
+    lock = {
+        "protocol": "lawb.bridge_operator_b3_lock.v2",
+        "schema_version": 2,
+        "operator_session_id": session,
+        "process_identity": identity,
+        "created_at_utc": "2026-08-05T04:00:00Z",
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "inbox_issue": 147,
+        "mode": "b3c-run-reviewbundle",
+        "descendant_recovery_policy": "require_no_live_descendants",
+    }
+    in_flight = {
+        "protocol": "lawb.bridge_operator_b3_in_flight.v1",
+        "schema_version": 1,
+        "request_id": "ov1-launcher-request",
+        "target_repository": "HarryWhite-TW/local-ai-workbench",
+        "target_issue": 151,
+        "dispatch_request_id": "ov1-launcher-dispatch",
+        "action": "maybe-status-check",
+        "branch": "ov1-test",
+        "expected_head": "1" * 40,
+        "operator_session_id": session,
+        "process_identity": identity,
+        "prepared_at_utc": "2026-08-05T04:00:00Z",
+        "updated_at_utc": "2026-08-05T04:00:00Z",
+        "stage": "PREPARED",
+        "dispatcher_invoked": False,
+        "terminal_evidence": None,
+    }
+    (harness.state / "operator.lock").write_text(
+        json.dumps(lock), encoding="utf-8"
+    )
+    (harness.state / "in_flight.json").write_text(
+        json.dumps(in_flight), encoding="utf-8"
+    )
+    harness.operator_json.write_text(
+        json.dumps({"result": "success"}), encoding="utf-8"
+    )
+
+    preflight_result, preflight = harness.run()
+    foreground_result, foreground = harness.run("-StartForeground")
+
+    assert preflight_result.returncode == 2
+    assert "operator_lock_present" in preflight["blocked_reasons"]
+    assert "unresolved_in_flight_present" in preflight["blocked_reasons"]
+    assert preflight["operator_invoked"] is False
+    assert foreground_result.returncode == 0
+    assert foreground["operator_invoked"] is True
+    assert (harness.state / "operator.lock").exists()
+    assert (harness.state / "in_flight.json").exists()
+
+
 @pytest.mark.parametrize(
     ("flag_name", "reason"),
     [("pause.flag", "pause_flag_present"), ("stop.flag", "stop_flag_present")],
@@ -1479,6 +1545,8 @@ def test_explicit_foreground_uses_existing_b3_cli_and_mode(harness: LauncherHarn
     assert "--max-cycles 3" in log
     assert "--poll-interval-seconds 1.5" in log
     assert "--timeout-seconds 42" in log
+    assert "--operator-session-id" in log
+    assert payload["status_publication_run_id"] in log
 
 
 def test_b3_cli_utf8_json_policy_preserves_ambiguous_unicode(
@@ -1729,6 +1797,10 @@ def test_ready_preflight_publish_status_creates_one_fixed_comment(
     control_head = git(harness.repo, "rev-parse", "HEAD").stdout.strip()
     result, payload = harness.run(
         "-PublishStatus",
+        "-MaxCycles",
+        "960",
+        "-PollIntervalSeconds",
+        "30",
         env=harness.env(
             GH_HOST="example.invalid",
             GH_REPO="attacker/redirected-repository",
@@ -1749,6 +1821,18 @@ def test_ready_preflight_publish_status_creates_one_fixed_comment(
         == "repos/HarryWhite-TW/local-ai-workbench/issues/147/comments"
     )
     assert remote["protocol"] == "lawb.bridge_status.v1"
+    assert remote["operator_session_id"] == remote["run_id"]
+    assert remote["run_id"] == payload["status_publication_run_id"]
+    started = datetime.strptime(
+        remote["started_at_utc"], "%Y-%m-%dT%H:%M:%SZ"
+    ).replace(tzinfo=timezone.utc)
+    valid_until = datetime.strptime(
+        remote["valid_until_utc"], "%Y-%m-%dT%H:%M:%SZ"
+    ).replace(tzinfo=timezone.utc)
+    assert (valid_until - started).total_seconds() == 28800
+    assert remote["configured_max_cycles"] == 960
+    assert remote["configured_poll_interval_seconds"] == 30
+    assert remote["configured_timeout_seconds"] == 600
     assert remote["stage"] == "preflight"
     assert remote["result"] == "ready"
     assert remote["repository"] == "HarryWhite-TW/local-ai-workbench"
@@ -2342,6 +2426,12 @@ def test_remote_payload_is_whitelisted_and_contains_no_local_or_credential_data(
     allowed = [
         "protocol",
         "run_id",
+        "operator_session_id",
+        "started_at_utc",
+        "valid_until_utc",
+        "configured_max_cycles",
+        "configured_poll_interval_seconds",
+        "configured_timeout_seconds",
         "observed_at_utc",
         "stage",
         "result",

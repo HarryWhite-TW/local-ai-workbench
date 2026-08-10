@@ -60,6 +60,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-dir")
     parser.add_argument("--mode", choices=[B3A_MODE, B3B_MODE, B3C_MODE], default=B3A_MODE)
     parser.add_argument("--timeout-seconds", type=int)
+    parser.add_argument("--operator-session-id")
     return parser
 
 
@@ -97,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         target_github_client=target_client,
         mode=args.mode,
         timeout_seconds=args.timeout_seconds,
+        operator_session_id=args.operator_session_id,
     )
     print(json.dumps(summary, sort_keys=True))
     return 0 if summary.get("result") == "success" else 1

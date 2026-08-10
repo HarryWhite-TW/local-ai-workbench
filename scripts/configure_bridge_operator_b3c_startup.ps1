@@ -22,7 +22,7 @@ $ErrorActionPreference = "Stop"
 $Protocol = "lawb.bridge_operator_b3c_startup.v1"
 $ManagedFileName = "LocalAIWorkbench-BridgeOperator-B3C.cmd"
 $OwnershipMarker = "LAWBRIDGE-B3C-STARTUP-MANAGED protocol=lawb.bridge_operator_b3c_startup.v1"
-$MaxCycles = 100
+$MaxCycles = 960
 $PollIntervalSeconds = 30
 $TimeoutSeconds = 600
 
@@ -73,7 +73,7 @@ function Get-ManagedBytes {
         "@echo off",
         "REM $OwnershipMarker",
         "REM managed-file-name=$ManagedFileName",
-        "start `"Local AI Workbench Bridge Operator`" $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcher -StartForeground -MaxCycles $MaxCycles -PollIntervalSeconds $PollIntervalSeconds -TimeoutSeconds $TimeoutSeconds -StateDir `"%LOCALAPPDATA%\LocalAIWorkbench\BridgeOperator`"",
+        "start `"Local AI Workbench Bridge Operator`" $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcher -StartForeground -PublishStatus -MaxCycles $MaxCycles -PollIntervalSeconds $PollIntervalSeconds -TimeoutSeconds $TimeoutSeconds -StateDir `"%LOCALAPPDATA%\LocalAIWorkbench\BridgeOperator`"",
         ""
     )
     return (New-Object System.Text.UTF8Encoding($false)).GetBytes(

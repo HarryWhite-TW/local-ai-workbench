@@ -12,11 +12,12 @@ Dispatcher, Runner, Codex, or GitHub result writeback.
 B3-B adds the first real Dispatcher delegation slice for exactly one eligible
 `maybe-status-check` request. It delegates through the existing Dispatcher
 `PollOnce` path, verifies one matching `LAWBRUNNER-RESULT`, and writes
-`processed_requests.jsonl` only after verified success.
+`processed_requests.jsonl` only after one unique trusted identity-matching
+terminal result.
 
 B3-C adds the explicit opt-in real Dispatcher delegation slice for exactly one
-eligible `run-reviewbundle` request. It uses the same existing Dispatcher
-`PollOnce` path and never invokes Runner or Codex directly.
+eligible `run-reviewbundle` or `maybe-status-check` request. It uses the same
+existing Dispatcher `PollOnce` path and never invokes Runner or Codex directly.
 
 B3 is development workflow tooling only. It is not Local
 Document-to-Knowledge Workbench product runtime.
@@ -32,16 +33,19 @@ Document-to-Knowledge Workbench product runtime.
   - `b3b-maybe-status-check`: foreground bounded loop with real Dispatcher
     delegation for `maybe-status-check` only
   - `b3c-run-reviewbundle`: foreground bounded loop with real Dispatcher
-    delegation for `run-reviewbundle` only
+    delegation for `run-reviewbundle` and the on-demand `maybe-status-check`
+    probe
 - Dispatcher invocation: forbidden in B3-A; allowed once per unprocessed
   eligible request in B3-B or B3-C
 - Runner invocation: forbidden
 - Codex direct invocation: forbidden
-- `maybe-status-check` in B3-C: forbidden unless separately configured as B3-B
+- `maybe-status-check` in B3-C: allowed through the same existing Dispatcher;
+  Runner and Codex remain uninvoked for this action
 - `run-reviewbundle` in B3-B: forbidden
 - Broad Issue scanning: forbidden
 - Latest/next Issue inference: forbidden
-- Startup, tray UI, service, and MCP behavior: forbidden
+- service, scheduler, tray UI, daemon, second poller, and MCP behavior:
+  forbidden
 
 Inbox `#147` is shared by the two exact supported target repositories. B1
 globally safety-validates every marker-like comment before B3 sees a selected
@@ -101,8 +105,8 @@ redirect it. The launcher uses only the authenticated, reviewed `gh` executable
 returned by bootstrap; it does not discover a replacement, repair
 authentication, or create an Issue.
 
-Each invocation has a new 32-character lowercase GUID `run_id`. A status
-comment begins with:
+Each invocation has a new 32-character lowercase GUID `run_id`, also used as
+the B3 `operator_session_id`. A status comment begins with:
 
 ```text
 LAWBRIDGE-STATUS protocol=lawb.bridge_status.v1
@@ -112,6 +116,12 @@ The marker is a machine-readable status surface, not discussion and not B1
 request authority. B1 continues to recognize only a standalone
 `BRIDGE-INBOX-REQUEST` marker; status JSON cannot supply repository, action,
 branch, HEAD, target Issue, or request authority.
+
+The existing `lawb.bridge_status.v1` schema is retained. Backward-compatible
+optional fields expose `operator_session_id`, `started_at_utc`,
+`valid_until_utc`, `configured_max_cycles`,
+`configured_poll_interval_seconds`, and `configured_timeout_seconds`. One
+startup status is bounded session metadata, not continuing liveness proof.
 
 For preflight-only use, the launcher creates at most one final `ready` or
 `blocked` comment and performs no update. For
@@ -158,6 +168,12 @@ The remote JSON is rebuilt from this whitelist only, in stable order:
 
 - `protocol`
 - `run_id`
+- `operator_session_id`
+- `started_at_utc`
+- `valid_until_utc`
+- `configured_max_cycles`
+- `configured_poll_interval_seconds`
+- `configured_timeout_seconds`
 - `observed_at_utc`
 - `stage`
 - `result`
@@ -198,6 +214,23 @@ launcher node does not prove a real live B3-C task, daily UX, live status
 publication, `B3C-OPS-02`, `HOME-B3C-02`, startup, tray, service, or MCP
 acceptance.
 
+### On-demand health readiness
+
+No periodic GitHub heartbeat is added. Before publishing a real task, ChatGPT
+must publish a new unique `maybe-status-check` request through the existing
+Inbox/Dispatcher route and treat the runtime as ready only when the result is
+unique, trusted, protocol-valid, and an exact repository, Issue, action,
+branch, HEAD, and request-ID match. The probe expiry may be at most 300 seconds
+from evaluation, Dispatcher/result observation is bounded to 120 seconds, and
+the verified probe may precede real-task publication by at most 60 seconds.
+The durable terminal evidence records the local bounded observation timestamp.
+
+Missing, multiple, conflicting, untrusted, malformed, unsupported, mismatched,
+or provider-unavailable evidence means stale/unavailable. ChatGPT must not
+publish the real task or infer health. The pre-dispatch negative reconciliation
+plus the same bounded invocation's post-dispatch observation prevents an old
+matching result from being mistaken for a fresh response.
+
 ## Advanced/Internal CLI Invocation
 
 Run from the repository root:
@@ -223,6 +256,7 @@ Optional arguments:
 --state-dir <PATH>
 --mode b3a-dry-run|b3b-maybe-status-check|b3c-run-reviewbundle
 --timeout-seconds <SECONDS>
+--operator-session-id <32-character-lowercase-hex-session>
 ```
 
 `--repo-root` remains the control repository root. The local target defaults
@@ -247,6 +281,7 @@ state.json
 dry_run_observations.jsonl
 processed_requests.jsonl
 operator.lock
+in_flight.json
 heartbeat.json
 operator.log
 last_failure.json
@@ -257,10 +292,14 @@ stop.flag
 B3-A may write `dry_run_observations.jsonl`. It must not mark a request as
 truly processed.
 
-B3-B and B3-C write `processed_requests.jsonl` only after Dispatcher exit `0`
-and one matching verified result. They never write processed-request state for
-Dispatcher failure, timeout, exception, missing result, untrusted result author,
-identity mismatch, dirty repo, wrong HEAD, pause, stop, or active lock.
+B3-B and B3-C write `processed_requests.jsonl` only after one unique trusted
+identity-matching terminal result. `success` is `settled_success`; `failure`
+and `blocked` are `settled_non_success`. All three suppress automatic rerun of
+the same request ID. They never write processed-request state for Dispatcher
+failure, timeout, exception, missing result, untrusted result author, malformed
+or unsupported result, multiple/conflicting result, identity mismatch,
+provider failure, dirty repo, wrong HEAD, pause, stop, or a non-recoverable
+lock.
 Already processed `request_id` values are skipped and do not rerun Dispatcher.
 New processed identities are keyed by target repository plus `request_id`.
 Historical records without repository identity are compatible only with the
@@ -270,18 +309,21 @@ There are two valid processed-record paths:
 
 1. Ordinary verified Dispatcher completion:
    - Dispatcher exits `0`;
-   - exactly one trusted matching success result exists;
+   - exactly one trusted matching `success`, `failure`, or `blocked` result
+     exists;
    - the processed record is written with Dispatcher provenance.
-2. Durable `COMPLETED` reconciliation:
-   - exactly one trusted matching completion exists;
+2. Durable terminal reconciliation:
+   - exactly one trusted identity-matching terminal completion exists;
    - local `CONSUMED` state is reconstructed before Dispatcher delegation;
-   - `dispatcher_invoked=false`;
+   - `dispatcher_invoked` records whether this is pre-dispatch discovery or
+     abnormal-restart recovery;
    - strict reconciliation provenance is recorded;
    - no new GitHub write occurs.
 
 Local processed state remains the first duplicate gate. `NOT_FOUND` is the only
 durable reconciliation decision that may proceed to ordinary delegation.
-`BLOCKED` and `ERROR` fail closed.
+`COMPLETED` and `SETTLED_NON_SUCCESS` settle without redispatch. `BLOCKED` and
+`ERROR` are uncertain and fail closed.
 
 `github_write_performed=false` means the Bridge Operator itself did not perform
 a direct GitHub write. B3-B records Dispatcher-mediated result publication with
@@ -295,8 +337,10 @@ dispatcher_result_writeback_verified
 Both fields remain false in B3-A. In B3-B, `dispatcher_result_writeback_reached`
 becomes true only when a matching `LAWBRUNNER-RESULT` is found on the target
 Issue after Dispatcher execution. `dispatcher_result_writeback_verified` becomes
-true only when that matching result is trusted and successful. Operator logs and
-`last_failure.json` include the same two fields for review.
+true only when that matching result is a trusted identity-matching terminal
+result. `target_result_verified` does not rewrite terminal `failure` or
+`blocked` as success. Operator logs and `last_failure.json` include the same
+fields for review.
 
 `current_delegation_outcome` is cycle-local audit evidence. It is reset before
 every loop cycle, then a current-cycle delegation path may set it to
@@ -335,7 +379,7 @@ B3-B blocks or skips before Dispatcher when:
 
 B3-C blocks or skips before Dispatcher when:
 
-- the request action is not exactly `run-reviewbundle`;
+- the request action is neither `run-reviewbundle` nor `maybe-status-check`;
 - the request was already written to `processed_requests.jsonl`;
 - B1 validation fails;
 - local readiness reports a dirty repo or wrong HEAD;
@@ -357,20 +401,28 @@ repo=HarryWhite-TW/local-ai-workbench
 branch=<expected_branch>
 head=<expected_head>
 request_id=<target_dispatch_request_id>
-result=success
+result=<success|failure|blocked>
 ```
 
-The result author must remain trusted by GitHub metadata. Missing, duplicate,
-untrusted, malformed, mismatched, or failure results fail closed and do not
-write processed-request state.
+The result author must remain trusted by GitHub metadata. A unique trusted
+matching `failure` or `blocked` result is terminal non-success and is durably
+settled without retry. Missing, duplicate, conflicting, untrusted, malformed,
+unsupported, mismatched, or provider-unavailable results remain uncertain and
+do not write processed-request state.
 
 ## Controls
 
 - `pause.flag`: when present, the foreground loop records paused heartbeat/log
   state and skips request processing for that cycle.
 - `stop.flag`: when present before a cycle, the foreground loop exits cleanly.
-- `operator.lock`: prevents concurrent instances. Existing locks always block;
-  stale locks are not silently removed.
+- `operator.lock`: protocol v2 records the operator session plus PID and exact
+  process-start identity. A matching live process always blocks, even with a
+  stale heartbeat. Legacy or invalid locks require exceptional manual
+  recovery.
+- `in_flight.json`: B3-owned protocol v1 evidence, durably written before
+  Dispatcher invocation with atomic replace, flush/fsync, and exact readback.
+  It records request identity, session/process identity, lifecycle stage,
+  `dispatcher_invoked`, and terminal evidence when settled.
 
 ## Failure Handling
 
@@ -385,11 +437,36 @@ true, while Runner and Codex direct invocation remain false.
 
 ## Recovery
 
-Review the JSON summary, `operator.log`, `heartbeat.json`, and
-`last_failure.json`. Do not delete `operator.lock` until the foreground process
-state and heartbeat have been inspected.
+Review the JSON summary, read-only diagnostics, `operator.log`,
+`heartbeat.json`, `last_failure.json`, `operator.lock`, and `in_flight.json`.
+Do not delete either lifecycle file based on heartbeat age alone.
 
-Manual `PollOnce` remains the recovery path, not the target daily workflow:
+The durable ordering states are:
+
+1. `NOT_ADMITTED`: no `in_flight.json`; a future run may process normally.
+2. `PREPARED`: durable admission exists but Dispatcher is not recorded as
+   invoked; restart is uncertain, preserves evidence, and never redispatches.
+3. `DISPATCHED_NOT_LOCALLY_SETTLED`: Dispatcher returned or otherwise may have
+   been invoked, but no durable processed record exists. Restart settles only
+   one trusted identity-matching terminal result; every other outcome remains
+   uncertain and is never retried.
+4. `PROCESSED`: the processed record is durable; restart skips the request and
+   clears only the exact matching in-flight evidence.
+
+Automatic dead-lock quarantine is allowed only for a complete protocol-v2
+lock when the PID is absent or its process-start identity proves PID reuse,
+the descendant snapshot is empty, and no unresolved in-flight remains. A
+settleable dispatched in-flight must first reconcile. The original lock is
+atomically renamed to `operator.lock.quarantine.<session>.<digest>.json` with
+exact bytes preserved; the new session then uses exclusive lock creation.
+Live, descendant-present, uncertain, invalid, legacy, PREPARED, and unresolved
+states remain blocked without deletion or redispatch. Truly ambiguous stopped
+state requires a separately ChatGPT-approved bounded local recovery; there is
+no second service or control plane.
+
+Manual `PollOnce` remains an exceptional, separately approved diagnostic or
+recovery command, not the target daily workflow. It must never retry an
+uncertain in-flight request or reuse its request ID:
 
 ```powershell
 .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
@@ -397,9 +474,20 @@ Manual `PollOnce` remains the recovery path, not the target daily workflow:
 
 ## Next Phase Boundary
 
-B3-C does not authorize startup behavior, tray UX, MCP, trusted-actor changes,
-action allowlist changes, or any commit/push/close/label/PR/merge behavior.
-Those changes require separate approval.
+The bounded visible login Startup adapter below is the only approved startup
+surface. B3-C does not authorize a service, scheduler, daemon, second poller,
+tray UX, MCP, trusted-actor changes, further action allowlist changes, or any
+commit/push/close/label/PR/merge behavior. Those changes require separate
+approval.
+
+## Read-only diagnostics
+
+`bridge_diagnostics` reports the in-flight file presence/validity/stage and
+session, lock metadata/process/descendant classification, quarantine evidence,
+status freshness, and any exceptional recovery reason. It never creates,
+deletes, quarantines, or rewrites lifecycle evidence and never calls
+Dispatcher, Runner, Codex, or GitHub. An expired status is evidence for
+attention, not proof that a matching live process is dead.
 
 ## Optional Visible Login Startup Adapter
 
@@ -430,15 +518,18 @@ canonical repository launcher with fixed values:
 
 ```text
 -StartForeground
--MaxCycles 100
+-PublishStatus
+-MaxCycles 960
 -PollIntervalSeconds 30
 -TimeoutSeconds 600
 -StateDir %LOCALAPPDATA%\LocalAIWorkbench\BridgeOperator
 ```
 
-This starts a bounded 100-cycle session. With 30 seconds between cycles, the
-nominal polling window is about 50 minutes (99 intervals, plus bounded cycle
-processing time), not a permanent background service or an infinite loop.
+This starts a bounded 960-cycle session. The configured lifecycle validity is
+eight hours (`960 * 30` seconds); it is not a permanent background service or
+an infinite loop. Startup publishes one session status using the existing
+status schema, while actual health before a real task still requires the
+on-demand probe above.
 The existing `pause.flag` and `stop.flag` mechanisms remain available:
 `pause.flag` pauses request processing for subsequent cycles, while
 `stop.flag` exits the foreground loop cleanly.

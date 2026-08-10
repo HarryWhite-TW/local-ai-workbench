@@ -1,12 +1,18 @@
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 import local_runner_bridge.bridge_diagnostics as diagnostics
+from local_runner_bridge.bridge_operator_lifecycle_state import (
+    DISPATCHED_NOT_LOCALLY_SETTLED,
+    create_lock_payload,
+    new_in_flight_payload,
+)
 
 HEAD = "5f698e500774a469c29ff036fc234d5c9aa03048"
 
@@ -55,6 +61,8 @@ def run(
     origin_head=HEAD,
     which=tool_which,
     command_runner=None,
+    now_utc=None,
+    process_probe=None,
 ):
     return diagnostics.run_bridge_diagnostics(
         repo_root=tmp_path / "repo",
@@ -62,6 +70,8 @@ def run(
         command_runner=command_runner
         or FakeCommands(dirty=dirty, origin_known=origin_known, origin_head=origin_head),
         which=which,
+        now_utc=now_utc,
+        process_probe=process_probe,
     )
 
 
@@ -146,7 +156,7 @@ def test_dirty_repo_returns_blocked(tmp_path):
     assert "working_tree_dirty" in summary["status_reasons"]
 
 
-def test_active_lock_returns_blocked(tmp_path):
+def test_legacy_lock_returns_exceptional_recovery_blocker(tmp_path):
     state_dir = tmp_path / "state"
     write_state_baseline(state_dir)
     (state_dir / "operator.lock").write_text('{"pid": 1}\n', encoding="utf-8")
@@ -154,8 +164,159 @@ def test_active_lock_returns_blocked(tmp_path):
     summary = run(tmp_path)
 
     assert summary["status"] == "BLOCKED"
-    assert "active_lock_present" in summary["status_reasons"]
+    assert "legacy_lock_manual_recovery_required" in summary["status_reasons"]
     assert summary["bridge_operator_state"]["lock_file_present"] is True
+
+
+def test_lifecycle_diagnostics_report_identity_in_flight_quarantine_and_freshness(
+    tmp_path,
+):
+    now = datetime(2026, 8, 5, 4, 0, 0, tzinfo=timezone.utc)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    process_identity = {
+        "platform": "windows",
+        "pid": 4101,
+        "start_token": "windows-filetime:41010000",
+        "started_at_utc": "2026-08-05T03:59:00Z",
+    }
+    session = "a" * 32
+    lock = create_lock_payload(
+        operator_session_id=session,
+        process_identity=process_identity,
+        created_at=now,
+        repository="HarryWhite-TW/local-ai-workbench",
+        inbox_issue=147,
+        mode="b3c-run-reviewbundle",
+    )
+    in_flight = new_in_flight_payload(
+        request_id="ov1-diagnostic-request",
+        target_repository="HarryWhite-TW/local-ai-workbench",
+        target_issue=151,
+        dispatch_request_id="ov1-diagnostic-dispatch",
+        action="maybe-status-check",
+        branch="ov1-test",
+        expected_head="1" * 40,
+        operator_session_id=session,
+        process_identity=process_identity,
+        prepared_at=now,
+    )
+    in_flight.update(
+        {
+            "stage": DISPATCHED_NOT_LOCALLY_SETTLED,
+            "dispatcher_invoked": True,
+        }
+    )
+    write_json(state_dir / "operator.lock", lock)
+    write_json(state_dir / "in_flight.json", in_flight)
+    write_json(
+        state_dir / "heartbeat.json",
+        {
+            "status": "polling",
+            "cycle": 1,
+            "request_id": "ov1-diagnostic-request",
+            "operator_session_id": session,
+            "updated_at_utc": "2026-08-05T03:59:30Z",
+            "valid_until_utc": "2026-08-05T12:00:00Z",
+        },
+    )
+    quarantine = state_dir / f"operator.lock.quarantine.{session}.evidence.json"
+    write_json(quarantine, lock)
+    before = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in state_dir.iterdir()
+    }
+
+    summary = run(
+        tmp_path,
+        now_utc=now,
+        process_probe=lambda _: {
+            "process_status": "pid_reused",
+            "descendant_status": "none",
+            "observed_process_identity": None,
+            "descendant_pids": [],
+            "reason": "none",
+        },
+    )
+    state = summary["bridge_operator_state"]
+
+    assert summary["status"] == "BLOCKED"
+    assert "unresolved_in_flight_present" in summary["status_reasons"]
+    assert state["lock"]["metadata_status"] == "complete"
+    assert state["lock"]["process_status"] == "pid_reused"
+    assert state["lock"]["quarantine_safe"] is True
+    assert state["in_flight"]["validity"] == "valid"
+    assert state["in_flight"]["lifecycle_stage"] == (
+        DISPATCHED_NOT_LOCALLY_SETTLED
+    )
+    assert state["in_flight"]["operator_session_id"] == session
+    assert state["quarantined_lock_evidence"] == {
+        "count": 1,
+        "filenames": [quarantine.name],
+    }
+    assert state["status_freshness"]["assessment"] == "fresh"
+    assert state["status_freshness"]["age_seconds"] == 30
+    assert state["exceptional_recovery_reason"] == (
+        "dispatched_in_flight_requires_reconciliation"
+    )
+    after = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in state_dir.iterdir()
+    }
+    assert after == before
+
+
+def test_complete_live_lock_and_expired_status_are_reported_without_recovery(
+    tmp_path,
+):
+    now = datetime(2026, 8, 5, 12, 0, 0, tzinfo=timezone.utc)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True)
+    identity = {
+        "platform": "windows",
+        "pid": 4101,
+        "start_token": "windows-filetime:41010000",
+        "started_at_utc": "2026-08-05T03:59:00Z",
+    }
+    lock = create_lock_payload(
+        operator_session_id="a" * 32,
+        process_identity=identity,
+        created_at=now,
+        repository="HarryWhite-TW/local-ai-workbench",
+        inbox_issue=147,
+        mode="b3c-run-reviewbundle",
+    )
+    write_json(state_dir / "operator.lock", lock)
+    write_json(
+        state_dir / "heartbeat.json",
+        {
+            "status": "polling",
+            "cycle": 1,
+            "updated_at_utc": "2026-08-05T03:59:30Z",
+            "valid_until_utc": "2026-08-05T11:59:59Z",
+        },
+    )
+    before = (state_dir / "operator.lock").read_bytes()
+
+    summary = run(
+        tmp_path,
+        now_utc=now,
+        process_probe=lambda _: {
+            "process_status": "live",
+            "descendant_status": "none",
+            "observed_process_identity": identity,
+            "descendant_pids": [],
+            "reason": "none",
+        },
+    )
+
+    assert summary["status"] == "BLOCKED"
+    assert "active_lock_present" in summary["status_reasons"]
+    assert summary["bridge_operator_state"]["status_freshness"][
+        "assessment"
+    ] == "expired"
+    assert (state_dir / "operator.lock").read_bytes() == before
+    assert summary["lock_removed"] is False
 
 
 def test_historical_last_failure_returns_attention_not_blocked(tmp_path):

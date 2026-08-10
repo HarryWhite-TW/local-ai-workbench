@@ -11,10 +11,13 @@ RESULT_MARKER = "LAWBRUNNER-RESULT"
 RESULT_PROTOCOL = "lawb.runner_result.v1"
 SUPPORTED_SURFACE = "issue_comment"
 SUCCESS_RESULT = "success"
+NON_SUCCESS_RESULTS = frozenset({"failure", "blocked"})
+TERMINAL_RESULTS = frozenset({SUCCESS_RESULT, *NON_SUCCESS_RESULTS})
 
 
 class ReconciliationDecision(str, Enum):
     COMPLETED = "COMPLETED"
+    SETTLED_NON_SUCCESS = "SETTLED_NON_SUCCESS"
     NOT_FOUND = "NOT_FOUND"
     BLOCKED = "BLOCKED"
     ERROR = "ERROR"
@@ -22,6 +25,9 @@ class ReconciliationDecision(str, Enum):
 
 class ReconciliationReason(str, Enum):
     EXACTLY_ONE_TRUSTED_MATCH = "EXACTLY_ONE_TRUSTED_MATCH"
+    EXACTLY_ONE_TRUSTED_NON_SUCCESS_MATCH = (
+        "EXACTLY_ONE_TRUSTED_NON_SUCCESS_MATCH"
+    )
     ZERO_MATCHING_COMPLETIONS = "ZERO_MATCHING_COMPLETIONS"
     PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
     PERMISSION_DENIED = "PERMISSION_DENIED"
@@ -39,6 +45,7 @@ class ReconciliationReason(str, Enum):
     MULTIPLE_MATCHING_COMPLETIONS = "MULTIPLE_MATCHING_COMPLETIONS"
     CONFLICTING_EVIDENCE = "CONFLICTING_EVIDENCE"
     NON_SUCCESS_RESULT = "NON_SUCCESS_RESULT"
+    UNSUPPORTED_TERMINAL_RESULT = "UNSUPPORTED_TERMINAL_RESULT"
 
 
 class ProviderStatus(str, Enum):
@@ -84,6 +91,8 @@ class ReconciliationResult:
     reason: ReconciliationReason
     matched_evidence_ids: tuple[str, ...]
     diagnostics: tuple[str, ...]
+    terminal_result: str | None = None
+    terminal_author: str | None = None
 
 
 class DurableEvidenceProvider(Protocol):
@@ -212,44 +221,55 @@ def resolve_durable_completion(
     if mismatch_result is not None:
         return mismatch_result
 
-    successes = [
+    unsupported_results = [
         candidate
         for candidate in same_request_candidates
-        if candidate.result_value == SUCCESS_RESULT
+        if candidate.result_value not in TERMINAL_RESULTS
     ]
-    non_successes = [
-        candidate
-        for candidate in same_request_candidates
-        if candidate.result_value != SUCCESS_RESULT
-    ]
+    if unsupported_results:
+        return _result(
+            ReconciliationDecision.BLOCKED,
+            ReconciliationReason.UNSUPPORTED_TERMINAL_RESULT,
+            matched_ids=_candidate_ids(unsupported_results),
+            diagnostics=tuple(diagnostics),
+        )
 
-    if successes and non_successes:
+    result_values = {
+        str(candidate.result_value) for candidate in same_request_candidates
+    }
+    if len(result_values) > 1:
         return _result(
             ReconciliationDecision.BLOCKED,
             ReconciliationReason.CONFLICTING_EVIDENCE,
             matched_ids=_candidate_ids(same_request_candidates),
             diagnostics=tuple(diagnostics),
         )
-    if len(successes) > 1:
+    if len(same_request_candidates) > 1:
         return _result(
             ReconciliationDecision.BLOCKED,
             ReconciliationReason.MULTIPLE_MATCHING_COMPLETIONS,
-            matched_ids=_candidate_ids(successes),
+            matched_ids=_candidate_ids(same_request_candidates),
             diagnostics=tuple(diagnostics),
         )
-    if non_successes:
+
+    terminal = same_request_candidates[0]
+    if terminal.result_value in NON_SUCCESS_RESULTS:
         return _result(
-            ReconciliationDecision.BLOCKED,
-            ReconciliationReason.NON_SUCCESS_RESULT,
-            matched_ids=_candidate_ids(non_successes),
+            ReconciliationDecision.SETTLED_NON_SUCCESS,
+            ReconciliationReason.EXACTLY_ONE_TRUSTED_NON_SUCCESS_MATCH,
+            matched_ids=(terminal.evidence_id,),
             diagnostics=tuple(diagnostics),
+            terminal_result=str(terminal.result_value),
+            terminal_author=terminal.author,
         )
 
     return _result(
         ReconciliationDecision.COMPLETED,
         ReconciliationReason.EXACTLY_ONE_TRUSTED_MATCH,
-        matched_ids=_candidate_ids(successes),
+        matched_ids=(terminal.evidence_id,),
         diagnostics=tuple(diagnostics),
+        terminal_result=SUCCESS_RESULT,
+        terminal_author=terminal.author,
     )
 
 
@@ -427,12 +447,16 @@ def _result(
     *,
     matched_ids: tuple[str, ...] = (),
     diagnostics: tuple[str, ...] = (),
+    terminal_result: str | None = None,
+    terminal_author: str | None = None,
 ) -> ReconciliationResult:
     return ReconciliationResult(
         decision=decision,
         reason=reason,
         matched_evidence_ids=tuple(sorted(matched_ids)),
         diagnostics=_sorted_strings(diagnostics),
+        terminal_result=terminal_result,
+        terminal_author=terminal_author,
     )
 
 
