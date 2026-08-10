@@ -10,6 +10,31 @@
 - scope: Near-zero-touch ChatGPT-to-Codex development workflow tooling
 - product boundary: Development workflow tooling only; not Local Document-to-Knowledge Workbench runtime
 
+## Current Status Reconciliation — Operating V1
+
+Phase B3's historical `no login startup yet` boundary remains correct: B3 did
+not grant login-startup authority, and its implementation/test package used
+fake-gh coverage rather than claiming live Startup acceptance. Phase B5 required
+separate explicit approval, and that later approval selected visible Windows
+login-triggered Startup for the accepted Operating V1 path. The mechanism
+remains logged-in-user-session, visible, bounded, disableable, and reversible;
+no hidden Windows service was accepted.
+
+Live lifecycle acceptance ran on exact candidate
+`4f154a6aec580c5aff7d39ed4d7f88ff7e44e92f`, not on its later merge commit.
+LAWB Issue #147 status comment `5241919507` anchors the running Startup session,
+and Issue #253 result comment `5241982406` anchors later valid-request success
+after the separately recorded overlong health-probe rejection. PR #254 then
+published the exact accepted candidate at
+`0aec6941b3f48730944dbf04a7b451c6c6cbb154`; post-publication identity and diff
+review found no candidate content drift.
+
+The nonfatal-continuation claim is limited to the request-local
+`health_probe_expiry_exceeds_5_minutes` rejection. It does not extend that
+behavior to arbitrary malformed, already-expired, or invalid-expiry requests.
+This later completion does not retroactively change B3 authority and grants no
+future Startup, service, tray, MCP, polling, write, or approval authority.
+
 ## Decision Lock
 
 The approved direction is:

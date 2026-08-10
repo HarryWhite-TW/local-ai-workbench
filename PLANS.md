@@ -54,15 +54,34 @@ CHATGPT-FIRST OPERATING V1
 — ACCEPTED / PUBLISHED
 ```
 
-LAWB PR #254 merged the accepted implementation at
-`0aec6941b3f48730944dbf04a7b451c6c6cbb154`. Current evidence proves a visible
-Windows login-triggered Startup entry, a bounded foreground B3-C session,
-ChatGPT-readable GitHub status and health, and restart/login operation without
-routine manual Bridge startup or recovery commands. Malformed, expired, or
-overlong request-local health probes fail closed before Dispatcher; that safe
-rejection does not terminate the polling session, and a later valid request can
-proceed in the same Startup-launched session without user recovery. Existing
-duplicate suppression and durable reconciliation protections remain bounded.
+The implementation/test package and live acceptance are distinct. The package
+used fake-gh test coverage and alone did not claim live Startup acceptance.
+Subsequent Windows-login evidence on exact candidate
+`4f154a6aec580c5aff7d39ed4d7f88ff7e44e92f` proves the visible, bounded B3-C
+path: LAWB Issue #147 status comment `5241919507` binds
+session `ec9567ea59ec4d1697e39328fe48b686`, branch
+`codex/ov1-live-lifecycle-acceptance`, that exact HEAD, `result=running`, 960
+cycles, 30-second polling, 600-second timeout, and no blocked reasons.
+
+The confirmed nonfatal-continuation case is specifically an otherwise valid
+health probe rejected with `health_probe_expiry_exceeds_5_minutes`. LAWB Issue
+#253 records the deliberate overlong marker `5241948888`, later valid dispatch
+`5241971961`, and matching successful `LAWBRUNNER-RESULT` `5241982406`. The
+overlong request fails closed before Dispatcher without terminating that live
+polling session, which remains available for the later valid request. The result
+binds the exact candidate branch/HEAD, `result=success`, clean Git state, no
+changed files, and no stage, commit, push, PR, merge, Issue-close, or other
+trusted-parent action. Arbitrary malformed markers, already-expired Inbox
+markers, invalid expiry syntax, and other pre-dispatch failures retain their
+fail-closed contracts; this current claim does not assert the same continuation
+behavior for them.
+
+The live lifecycle acceptance occurred on candidate `4f154a6...` before
+publication. PR #254 then published that exact accepted candidate at merge
+`0aec6941b3f48730944dbf04a7b451c6c6cbb154`; post-publication repository
+identity and diff review established no candidate content drift. The live test
+is not attributed to the merge commit. Existing duplicate suppression and
+durable reconciliation protections remain bounded.
 
 The earlier manual-foreground daily-UX evidence remains valid as historical
 foundation, but it is no longer the current completion line. This acceptance
