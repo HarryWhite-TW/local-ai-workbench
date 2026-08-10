@@ -576,6 +576,26 @@ Requirements:
 - startup can be disabled and recovered cleanly;
 - no hidden Windows service in v0.
 
+Current-status reconciliation:
+
+- Workflow v1 completion did not authorize Startup, and the Workflow v1
+  rebaseline correctly classified RV2-08 as historical `DEFER` at that
+  checkpoint.
+- A later, separately approved Operating V1 path implemented and live-accepted
+  visible Windows login-triggered Startup on exact candidate
+  `4f154a6aec580c5aff7d39ed4d7f88ff7e44e92f`.
+- LAWB Issue #147 status comment `5241919507` anchors the running bounded session;
+  Issue #253 overlong marker `5241948888`, later valid dispatch `5241971961`, and
+  matching result `5241982406` anchor the specifically accepted
+  `health_probe_expiry_exceeds_5_minutes` nonfatal-continuation path.
+- PR #254 published that exact accepted candidate at
+  `0aec6941b3f48730944dbf04a7b451c6c6cbb154`; the live lifecycle acceptance did
+  not run on the merge commit, and post-publication identity/diff review found
+  no candidate content drift.
+- This later approval does not rewrite the earlier Workflow v1 chronology or
+  activate another node. Tray, hidden service, MCP, and any new Startup or
+  authority remain separately gated.
+
 ### RV2-09 — Phase C MCP Feasibility And Integration
 
 Objective:
@@ -681,7 +701,12 @@ The final residual review / final `DONE` re-adjudication passed and is durably a
 - `RV2-04`: historical `MODIFY + NARROW` into `RV2-04N — Minimal Runtime Contract Closure`, now `DONE` through accepted implementation commit `4e6e3e8becbd99b2da0b8ffd089136995168d649` and PR #200 merge commit `aa633ec00de90249ed2c611d84165038d6ff732e`. Historical RV2-04 candidates do not silently become mandatory future scope.
 - `RV2-05`: `DEFER`. The thin `lawb` CLI remains a possible future concept, not a mandatory Workflow v1 requirement, and is not activated.
 - `RV2-06`: `PARTIALLY ABSORBED`. Accepted OPT and WF-REENTRY outcomes partly address thin task packets, conditional current-state manifests, conditional evidence collection, model/execution-surface routing, conditional systematic debugging, and evidence-based token/control discipline. This does not claim every RV2-06 candidate feature is implemented; RV2-06 is not a mandatory standalone Workflow v1 node.
-- `RV2-07`, `RV2-08`, and `RV2-09`: `DEFER`. Visible tray/operator UX, Windows login startup, and MCP / ChatGPT App connector work are not mandatory Workflow v1 completion requirements. They remain future candidates requiring separate evidence, exact engineering nodes, and explicit approval.
+- `RV2-07`, `RV2-08`, and `RV2-09`: historical `DEFER` at the Workflow v1
+  checkpoint. Visible tray/operator UX, Windows login startup, and MCP / ChatGPT
+  App connector work were not mandatory Workflow v1 completion requirements.
+  RV2-08's later separately approved Operating V1 completion is reconciled in
+  its section above; RV2-07, RV2-09, and any new authority remain separately
+  gated.
 - Issue `#188`: `CONDITIONAL / PARTIALLY ABSORBED`. It retains value as a deferred planning anchor for possible repository-native project execution-gate work, while OPT-series and WF-REENTRY decisions address parts of its original problem. Fresh read-only verification for this rebaseline found `implementation_started=false`. It is inactive, is not mandatory for Workflow v1, and requires a separate bounded node and approval before any implementation.
 - Native-vs-Bridge Reliability Benchmark: `CONDITIONAL`. It may be an evidence input, bounded sub-review, or future candidate review only when existing evidence cannot responsibly resolve a real routing decision. It is not automatically required for Workflow v1, is not activated by this rebaseline, and cannot bypass `RV2-P1` sequencing.
 
