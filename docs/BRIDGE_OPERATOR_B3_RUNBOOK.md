@@ -84,6 +84,44 @@ bindings are process-local only: it does not install tools, repair
 authentication, or persist a PATH change. Manual Dispatcher `PollOnce` remains
 recovery only, not the routine entrypoint.
 
+### Local LAWB execution-worktree routing
+
+The launcher and all control scripts remain rooted in the stable
+`local-ai-workbench` control checkout. By default, that checkout is also the
+LAWB execution target. To route routine Startup invocation to a separate local
+LAWB engineering worktree without changing the Startup adapter, an operator may
+manually create this optional file under the configured `StateDir`:
+
+```text
+repository_routing.json
+```
+
+Its exact schema is:
+
+```json
+{"protocol":"lawb.bridge_operator_local_routing.v1","repository":"HarryWhite-TW/local-ai-workbench","target_repo_root":"C:\\path\\to\\local-ai-workbench-engineering"}
+```
+
+The launcher only reads this file; it never creates, rewrites, repairs, or
+deletes it. The three properties are exact, the repository is fixed to LAWB,
+and `target_repo_root` must be a fully qualified, drive-qualified local Windows
+filesystem path such as `C:\...`. Drive-relative paths such as
+`C:engineering`, current-drive-root-relative paths such as `\engineering`, and
+UNC or device/network namespace paths are rejected. A local interactive launch
+may instead supply `-TargetRepoRoot` under the same path rules; configuring
+both sources is ambiguous and fails closed. Missing configuration preserves
+the control-checkout target.
+
+Before operator launch, a separately selected LAWB target must be the exact Git
+root, normalize to `HarryWhite-TW/local-ai-workbench` at `origin`, have a
+readable branch and full 40-character HEAD, and have both a clean worktree and
+empty staged area. Invalid JSON or encoding, unexpected properties, repository
+mismatch, relative/invalid paths, or failed Git validation block without
+changing the configuration. Remote Inbox, Issue, comment, dispatch marker,
+Task Packet, status, and child result text never select or override this local
+path. HAG continues to require its explicit local `-TargetRepoRoot` input and
+does not use the LAWB routing file.
+
 ### Optional ChatGPT-readable status publication
 
 Status publication is disabled by default. The ordinary preflight command and
@@ -155,13 +193,13 @@ operator and update is never retried or replaced.
 
 The status `repository`, `branch`, and `head` describe the validated execution
 target. The local-ai-workbench target uses the validated control checkout
-identity only after the control origin, clean worktree/index, branch, and
-40-character lowercase HEAD all pass exact validation. Failed control
+identity by default or the independently validated LAWB engineering-worktree
+identity when local routing selects a different target. Failed target
 validation publishes empty `branch` and `head` fields even when Git can still
 read untrusted values. Later unrelated blockers do not erase an already
-validated control identity. A valid HAG target uses the independently validated
-HAG checkout branch and HEAD, never the control checkout HEAD. If the HAG
-target is missing or invalid, its status still names the HAG repository but
+validated target identity. A valid HAG target likewise uses the independently
+validated HAG checkout branch and HEAD, never the control checkout HEAD. If the
+HAG target is missing or invalid, its status still names the HAG repository but
 publishes empty `branch` and `head` fields with the relevant blocker.
 
 The remote JSON is rebuilt from this whitelist only, in stable order:
@@ -259,9 +297,12 @@ Optional arguments:
 --operator-session-id <32-character-lowercase-hex-session>
 ```
 
-`--repo-root` remains the control repository root. The local target defaults
-to that path only for the local-ai-workbench compatibility case. HAG requires
-an explicit local `--target-repo-root`; remote request text cannot supply it.
+`--repo-root` remains the control repository root. The LAWB local target
+defaults to that path, while the canonical launcher passes
+`--target-repo-root` when local configuration or explicit local input selected
+a different validated LAWB worktree. HAG requires an explicit local
+`--target-repo-root`; remote request text cannot supply either repository's
+local path.
 
 The CLI always uses Inbox `#147`. Standard output is one parseable JSON
 summary. Invalid arguments return nonzero and print a blocked JSON summary.
