@@ -1248,6 +1248,88 @@ function Get-ObjectProperty {
     return $property.Value
 }
 
+function Test-FullyQualifiedLocalWindowsPath {
+    param([AllowNull()][object]$Path)
+
+    if ($Path -isnot [string] -or [string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+
+    return [System.Text.RegularExpressions.Regex]::IsMatch(
+        $Path,
+        "\A[A-Za-z]:[\\/]"
+    )
+}
+
+function Get-LocalLawbRoutingConfiguration {
+    param(
+        [Parameter(Mandatory = $true)][string]$StateDirectory,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [System.Collections.ArrayList]$Reasons
+    )
+
+    if ([string]::IsNullOrWhiteSpace($StateDirectory)) {
+        return [pscustomobject]@{ present = $false; target_root = "" }
+    }
+    $routingPath = Join-Path $StateDirectory "repository_routing.json"
+    if (-not (Test-Path -LiteralPath $routingPath)) {
+        return [pscustomobject]@{ present = $false; target_root = "" }
+    }
+    if (-not (Test-Path -LiteralPath $routingPath -PathType Leaf)) {
+        Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_configuration_invalid"
+        return [pscustomobject]@{ present = $true; target_root = "" }
+    }
+
+    try {
+        $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+        $routingText = $strictUtf8.GetString(
+            [System.IO.File]::ReadAllBytes($routingPath)
+        )
+        $routing = Get-JsonObject -JsonText $routingText
+        $propertyNames = @($routing.PSObject.Properties | ForEach-Object { $_.Name })
+        $expectedNames = @("protocol", "repository", "target_repo_root")
+        if ($propertyNames.Count -ne $expectedNames.Count -or
+            @($propertyNames | Where-Object { $_ -cnotin $expectedNames }).Count -gt 0) {
+            throw "unexpected_routing_properties"
+        }
+        $protocol = Get-ObjectProperty -Object $routing -Name "protocol"
+        $repositoryName = Get-ObjectProperty -Object $routing -Name "repository"
+        $configuredRoot = Get-ObjectProperty -Object $routing -Name "target_repo_root"
+        if ($protocol -isnot [string] -or
+            -not [string]::Equals(
+                $protocol,
+                "lawb.bridge_operator_local_routing.v1",
+                [System.StringComparison]::Ordinal
+            )) {
+            throw "routing_protocol_invalid"
+        }
+        if ($repositoryName -isnot [string] -or
+            -not [string]::Equals(
+                $repositoryName,
+                $ControlRepository,
+                [System.StringComparison]::Ordinal
+            )) {
+            Add-BlockedReason -Reasons $Reasons `
+                -Reason "lawb_routing_repository_mismatch"
+            return [pscustomobject]@{ present = $true; target_root = "" }
+        }
+        if (-not (Test-FullyQualifiedLocalWindowsPath -Path $configuredRoot)) {
+            Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_target_root_invalid"
+            return [pscustomobject]@{ present = $true; target_root = "" }
+        }
+        $resolvedRoot = [System.IO.Path]::GetFullPath($configuredRoot).TrimEnd("\")
+        return [pscustomobject]@{ present = $true; target_root = $resolvedRoot }
+    }
+    catch [System.Text.DecoderFallbackException] {
+        Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_configuration_invalid"
+    }
+    catch {
+        Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_configuration_invalid"
+    }
+    return [pscustomobject]@{ present = $true; target_root = "" }
+}
+
 function Test-TrueProperty {
     param(
         [AllowNull()][object]$Object,
@@ -1777,10 +1859,58 @@ if (-not ($Repository -in $SupportedRepositories)) {
 
 $ResolvedTargetRepoRoot = ""
 if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]::Ordinal)) {
-    $ResolvedTargetRepoRoot = $ControlRepoRoot
-    if ($controlRepositoryValidated) {
-        $statusBranch = $branch
-        $statusHead = $head
+    $lawbRouting = Get-LocalLawbRoutingConfiguration `
+        -StateDirectory $ResolvedStateDir `
+        -Reasons $blockedReasons
+    if (-not [string]::IsNullOrWhiteSpace($TargetRepoRoot) -and $lawbRouting.present) {
+        Add-BlockedReason -Reasons $blockedReasons -Reason "lawb_target_repo_root_ambiguous"
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
+        if (-not (Test-FullyQualifiedLocalWindowsPath -Path $TargetRepoRoot)) {
+            Add-BlockedReason -Reasons $blockedReasons -Reason "target_repo_root_invalid"
+        }
+        else {
+            try {
+                $ResolvedTargetRepoRoot = [System.IO.Path]::GetFullPath(
+                    $TargetRepoRoot
+                ).TrimEnd("\")
+            }
+            catch {
+                Add-BlockedReason -Reasons $blockedReasons -Reason "target_repo_root_invalid"
+            }
+        }
+    }
+    elseif ($lawbRouting.present) {
+        $ResolvedTargetRepoRoot = $lawbRouting.target_root
+    }
+    else {
+        $ResolvedTargetRepoRoot = $ControlRepoRoot
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedTargetRepoRoot) -and
+        [string]::Equals(
+            $ResolvedTargetRepoRoot,
+            $ControlRepoRoot,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+        if ($controlRepositoryValidated) {
+            $statusBranch = $branch
+            $statusHead = $head
+        }
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($ResolvedTargetRepoRoot) -and
+        -not [string]::IsNullOrWhiteSpace($gitPath)) {
+        $targetReasonCountBefore = $blockedReasons.Count
+        $targetRepoEvidence = Test-ExactRepository `
+            -GitPath $gitPath `
+            -RepositoryRoot $ResolvedTargetRepoRoot `
+            -ExpectedRepository $Repository `
+            -ReasonPrefix "target_repository" `
+            -Reasons $blockedReasons
+        if ($blockedReasons.Count -eq $targetReasonCountBefore) {
+            $statusBranch = $targetRepoEvidence.branch
+            $statusHead = $targetRepoEvidence.head
+        }
     }
 }
 elseif ([string]::Equals($Repository, $HagRepository, [System.StringComparison]::Ordinal)) {
@@ -1900,7 +2030,11 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
         "--timeout-seconds", [string]$TimeoutSeconds,
         "--operator-session-id", $statusPublicationRunId
     )
-    if ([string]::Equals($Repository, $HagRepository, [System.StringComparison]::Ordinal)) {
+    if (-not [string]::Equals(
+        $ResolvedTargetRepoRoot,
+        $ControlRepoRoot,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
         $operatorArguments += @("--target-repo-root", $ResolvedTargetRepoRoot)
     }
 

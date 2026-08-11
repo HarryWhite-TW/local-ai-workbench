@@ -118,6 +118,22 @@ control repository. The existing `run-reviewbundle` path may target exactly
 one additional repository, `HarryWhite-TW/human-approval-automation-gateway`.
 This is a single-target exception, not generic multi-repository support.
 
+For a `HarryWhite-TW/local-ai-workbench` request, the execution target defaults
+to the control checkout but may be a separate local LAWB engineering worktree.
+The B3-C launcher may obtain that path only from explicit local launcher input
+or an optional, exact-schema, LAWB-only routing file under its existing local
+`StateDir`. It must never create or mutate that routing file. Remote Inbox,
+Issue, comment, dispatch marker, Task Packet, status, and result text cannot
+select or override a local filesystem path. Both local input forms accept only
+fully qualified, drive-qualified Windows paths such as `C:\...`; drive-relative,
+current-drive-root-relative, UNC, and device/network namespace paths fail
+closed. A malformed, unsafe, mismatched, or ambiguous local routing input fails
+closed. A separate LAWB target must pass the same exact Git-root,
+normalized-origin, readable-branch, full-HEAD, clean-tree, and empty-index
+validation before operator launch; status branch and HEAD bind to that
+validated execution target. Dispatcher and Runner scripts continue to load
+from the stable control checkout.
+
 For the HAG target, the target Issue and comments, dispatch marker, Task
 Packet, result publication and verification, durable reconciliation, Git
 worktree inspection, and Codex `-C` all bind to HAG. The local HAG worktree
@@ -265,6 +281,7 @@ operator.log
 last_failure.json
 pause.flag
 stop.flag
+repository_routing.json  # optional read-only LAWB launcher configuration
 ```
 
 Runtime state must not dirty the Git repository.

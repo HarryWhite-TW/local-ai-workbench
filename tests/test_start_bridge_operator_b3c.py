@@ -18,6 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER_SOURCE = REPO_ROOT / "scripts" / "start_bridge_operator_b3c.ps1"
 EXPECTED_ORIGIN = "https://github.com/HarryWhite-TW/local-ai-workbench.git"
 HAG_ORIGIN = "https://github.com/HarryWhite-TW/human-approval-automation-gateway.git"
+ROUTING_PROTOCOL = "lawb.bridge_operator_local_routing.v1"
+ROUTING_FILE = "repository_routing.json"
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from local_runner_bridge.bridge_operator_b1 import (  # noqa: E402
@@ -868,6 +870,254 @@ def test_default_invocation_is_preflight_only_and_ready(harness: LauncherHarness
     assert payload["target_repo_root"] == str(harness.repo)
     assert payload["bootstrap_status"] == "READY"
     assert not harness.operator_log.exists()
+    assert not (harness.state / ROUTING_FILE).exists()
+
+
+def test_lawb_local_routing_config_selects_validated_target_and_reaches_cli(
+    tmp_path: Path,
+):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "LAWB engineering target"
+    init_git_repo(target, EXPECTED_ORIGIN)
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "target fixture")
+    git(target, "branch", "-m", "engineering-target")
+    target_branch = git(target, "branch", "--show-current").stdout.strip()
+    target_head = git(target, "rev-parse", "HEAD").stdout.strip()
+    routing_path = fixture.state / ROUTING_FILE
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "target_repo_root": str(target),
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    original_routing_bytes = routing_path.read_bytes()
+    fixture.operator_json.write_text(json.dumps({"result": "success"}), encoding="utf-8")
+
+    result, payload = fixture.run("-StartForeground", "-PublishStatus")
+    log = fixture.operator_log.read_text(encoding="utf-8", errors="replace")
+    calls = read_gh_calls(fixture)
+    create_remote = status_payload(calls[0])
+    update_remote = status_payload(calls[1])
+
+    assert result.returncode == 0
+    assert payload["result"] == "completed"
+    assert payload["repo_root"] == str(fixture.repo)
+    assert payload["target_repo_root"] == str(target.resolve())
+    assert f'--target-repo-root "{target}"' in log
+    assert create_remote["branch"] == target_branch
+    assert create_remote["head"] == target_head
+    assert update_remote["branch"] == target_branch
+    assert update_remote["head"] == target_head
+    assert str(target) not in "\n".join(call["request_body"] for call in calls)
+    assert routing_path.read_bytes() == original_routing_bytes
+
+
+def test_lawb_explicit_local_target_input_is_supported(tmp_path: Path):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "explicit LAWB target"
+    init_git_repo(target, EXPECTED_ORIGIN)
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "target fixture")
+
+    result, payload = fixture.run("-TargetRepoRoot", str(target))
+
+    assert result.returncode == 0
+    assert payload["result"] == "ready"
+    assert payload["target_repo_root"] == str(target.resolve())
+
+
+@pytest.mark.parametrize(
+    "target_root",
+    [
+        r"C:engineering",
+        r"\engineering",
+        r"\\server\share\engineering",
+    ],
+)
+def test_lawb_explicit_target_requires_fully_qualified_local_windows_path(
+    harness: LauncherHarness,
+    target_root: str,
+):
+    result, payload = harness.run("-TargetRepoRoot", target_root)
+
+    assert result.returncode == 2
+    assert payload["blocked_reasons"] == ["target_repo_root_invalid"]
+    assert payload["operator_invoked"] is False
+
+
+def test_lawb_config_and_explicit_target_input_fail_as_ambiguous(
+    harness: LauncherHarness,
+):
+    routing_path = harness.state / ROUTING_FILE
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "target_repo_root": str(harness.repo),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = harness.run(
+        "-StartForeground",
+        "-TargetRepoRoot",
+        str(harness.repo),
+    )
+
+    assert result.returncode == 2
+    assert "lawb_target_repo_root_ambiguous" in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+    assert not harness.operator_log.exists()
+
+
+@pytest.mark.parametrize(
+    ("case_name", "routing_bytes", "expected_reason"),
+    [
+        ("malformed", b"{not-json", "lawb_routing_configuration_invalid"),
+        (
+            "wrong_repository",
+            json.dumps(
+                {
+                    "protocol": ROUTING_PROTOCOL,
+                    "repository": "HarryWhite-TW/human-approval-automation-gateway",
+                    "target_repo_root": r"C:\\engineering",
+                }
+            ).encode(),
+            "lawb_routing_repository_mismatch",
+        ),
+        (
+            "relative_path",
+            json.dumps(
+                {
+                    "protocol": ROUTING_PROTOCOL,
+                    "repository": "HarryWhite-TW/local-ai-workbench",
+                    "target_repo_root": "relative/engineering",
+                }
+            ).encode(),
+            "lawb_routing_target_root_invalid",
+        ),
+        (
+            "drive_relative_path",
+            json.dumps(
+                {
+                    "protocol": ROUTING_PROTOCOL,
+                    "repository": "HarryWhite-TW/local-ai-workbench",
+                    "target_repo_root": r"C:engineering",
+                }
+            ).encode(),
+            "lawb_routing_target_root_invalid",
+        ),
+        (
+            "current_drive_root_relative_path",
+            json.dumps(
+                {
+                    "protocol": ROUTING_PROTOCOL,
+                    "repository": "HarryWhite-TW/local-ai-workbench",
+                    "target_repo_root": r"\engineering",
+                }
+            ).encode(),
+            "lawb_routing_target_root_invalid",
+        ),
+        (
+            "network_path",
+            json.dumps(
+                {
+                    "protocol": ROUTING_PROTOCOL,
+                    "repository": "HarryWhite-TW/local-ai-workbench",
+                    "target_repo_root": r"\\server\share\engineering",
+                }
+            ).encode(),
+            "lawb_routing_target_root_invalid",
+        ),
+        (
+            "extra_authority",
+            json.dumps(
+                {
+                    "protocol": ROUTING_PROTOCOL,
+                    "repository": "HarryWhite-TW/local-ai-workbench",
+                    "target_repo_root": r"C:\\engineering",
+                    "remote_override": True,
+                }
+            ).encode(),
+            "lawb_routing_configuration_invalid",
+        ),
+    ],
+)
+def test_lawb_malformed_unsafe_or_mismatched_routing_config_fails_closed(
+    tmp_path: Path,
+    case_name: str,
+    routing_bytes: bytes,
+    expected_reason: str,
+):
+    fixture = LauncherHarness(tmp_path, name=f"control {case_name}").create()
+    routing_path = fixture.state / ROUTING_FILE
+    routing_path.write_bytes(routing_bytes)
+
+    result, payload = fixture.run("-StartForeground")
+
+    assert result.returncode == 2
+    assert expected_reason in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+    assert routing_path.read_bytes() == routing_bytes
+
+
+@pytest.mark.parametrize(
+    ("case_name", "expected_reason"),
+    [
+        ("wrong_origin", "target_repository_origin_mismatch"),
+        ("dirty", "target_repository_worktree_dirty"),
+        ("staged", "target_repository_staged_changes_present"),
+        ("non_root", "target_repository_git_root_mismatch"),
+    ],
+)
+def test_lawb_routed_target_requires_exact_origin_clean_worktree_and_index(
+    tmp_path: Path,
+    case_name: str,
+    expected_reason: str,
+):
+    fixture = LauncherHarness(tmp_path, name=f"control {case_name}").create()
+    target = tmp_path / f"LAWB target {case_name}"
+    origin = "https://github.com/example/wrong.git" if case_name == "wrong_origin" else EXPECTED_ORIGIN
+    init_git_repo(target, origin)
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "target fixture")
+    configured_target = target
+    if case_name == "dirty":
+        (target / "dirty.txt").write_text("dirty", encoding="utf-8")
+    elif case_name == "staged":
+        (target / "staged.txt").write_text("staged", encoding="utf-8")
+        git(target, "add", "staged.txt")
+    elif case_name == "non_root":
+        configured_target = target / "nested"
+        configured_target.mkdir()
+    (fixture.state / ROUTING_FILE).write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "target_repo_root": str(configured_target),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = fixture.run("-StartForeground")
+
+    assert result.returncode == 2
+    assert expected_reason in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
 
 
 def test_default_preflight_outputs_exactly_one_json_object(harness: LauncherHarness):
@@ -1706,6 +1956,29 @@ def test_valid_hag_preflight_is_ready_without_operator_invocation(tmp_path: Path
     assert not fixture.operator_log.exists()
 
 
+def test_hag_routing_ignores_lawb_only_configuration(tmp_path: Path):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "clean HAG with LAWB config present"
+    init_git_repo(target, HAG_ORIGIN)
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "target fixture")
+    routing_path = fixture.state / ROUTING_FILE
+    routing_path.write_bytes(b"{not-a-LAWB-config")
+
+    result, payload = fixture.run(
+        "-Repository",
+        "HarryWhite-TW/human-approval-automation-gateway",
+        "-TargetRepoRoot",
+        str(target),
+    )
+
+    assert result.returncode == 0
+    assert payload["result"] == "ready"
+    assert payload["target_repo_root"] == str(target.resolve())
+    assert routing_path.read_bytes() == b"{not-a-LAWB-config"
+
+
 def test_fake_operator_success_is_retained_losslessly(harness: LauncherHarness):
     child = {
         "protocol": "lawb.bridge_operator_b3_dry_run_loop_summary.v1",
@@ -2475,6 +2748,9 @@ def test_remote_payload_is_whitelisted_and_contains_no_local_or_credential_data(
     for sentinel in STATUS_SENTINELS:
         assert sentinel not in all_request_bodies
     assert payload["operator_summary"] == child
+    assert payload["target_repo_root"] == str(harness.repo)
+    operator_log = harness.operator_log.read_text(encoding="utf-8", errors="replace")
+    assert "--target-repo-root" not in operator_log
 
 
 def _b1_request_marker() -> str:

@@ -303,6 +303,56 @@ def test_cli_propagates_separate_hag_target_root(monkeypatch, capsys):
     ]
 
 
+def test_cli_propagates_separate_lawb_target_root(monkeypatch, capsys):
+    calls = []
+
+    class FakeClient:
+        def __init__(self, repo, token=None):
+            calls.append(("client", repo))
+
+    def fake_run(**kwargs):
+        calls.append(
+            (
+                "run",
+                str(kwargs["control_repo_root"]),
+                str(kwargs["repo_root"]),
+                kwargs["repository"],
+                kwargs["github_client"] is kwargs["target_github_client"],
+            )
+        )
+        return {"result": "success"}
+
+    monkeypatch.setattr(cli, "GitHubApiClient", FakeClient)
+    monkeypatch.setattr(cli, "run_bridge_operator_b3_dry_run_loop", fake_run)
+    result = cli.main(
+        [
+            "--repo-root",
+            "C:/control",
+            "--target-repo-root",
+            "C:/engineering",
+            "--repo",
+            "HarryWhite-TW/local-ai-workbench",
+            "--max-cycles",
+            "1",
+            "--poll-interval-seconds",
+            "0",
+        ]
+    )
+    capsys.readouterr()
+
+    assert result == 0
+    assert calls == [
+        ("client", "HarryWhite-TW/local-ai-workbench"),
+        (
+            "run",
+            "C:\\control",
+            "C:\\engineering",
+            "HarryWhite-TW/local-ai-workbench",
+            True,
+        ),
+    ]
+
+
 def test_cli_help_preserves_argparse_behavior(capsys):
     with pytest.raises(SystemExit) as error:
         cli.main(["--help"])
