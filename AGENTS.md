@@ -36,6 +36,33 @@ integrity incident task must also read and follow
 - The bounded ChatGPT-to-Codex bridge approved by `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md` and `docs/BRIDGE_OPERATOR_V0_SPEC.md` is not prohibited by the autonomous multi-agent chaining rule, but any implementation still requires a separately approved task and must not expand Bridge authority.
 - Do not add new features, milestones, authority, side effects, or scope that the user did not request.
 
+## Human-Readable Execution Card Mode
+
+- `請開始` requests a concise, human-readable Execution Card; it does not
+  approve execution. `批准` approves the currently presented card and activates
+  that bounded task only when it explicitly refers to the card.
+- Before execution, ChatGPT presents the outcome, expected result, rough flow,
+  main risks, included and excluded authority, success criteria, stop
+  conditions, and expected user intervention in plain language. The card is the
+  Approval Surface, not a technical dossier; omit low-level SHA, diff, test,
+  parser, and helper details unless they materially affect risk or acceptance.
+- One explicit card approval covers discovery, implementation, proportional
+  verification, evidence collection, and one bounded focused repair while the
+  approved outcome, scope, authority, and risk do not materially change. Renew
+  approval only for a material change to outcome, scope, authority, security,
+  external side effects, or irreversible risk, not for routine engineering
+  details within the approved task.
+- ChatGPT translates the card into engineering and Codex instructions and
+  independently reviews the returned candidate and evidence. The normal
+  ChatGPT-first path does not require the user to relay Codex prompts or results.
+- Manual relay is fallback only. If the normal route fails, name the fallback
+  and surface the failure as a Workflow finding rather than presenting manual
+  relay as successful validation of the target experience.
+- Publication and other high-risk remote actions remain outside the bounded
+  approval unless the card explicitly includes them and the applicable separate
+  high-risk approval requirement is satisfied. The card does not weaken any
+  safety or authority boundary or permit approval chaining.
+
 ## Architecture Principles
 
 - Prefer the simplest maintainable design that works on localhost.
