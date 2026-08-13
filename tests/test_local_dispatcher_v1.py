@@ -99,6 +99,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $IssueNumber = 83
             $IssueNumbers = @()
             $PostResultComment = $false
+            $ExpectedDispatchRequestId = ""
             $ReviewedCodexPath = ""
             $script:Branch = "master"
             $script:Head = "{HEAD}"
@@ -261,6 +262,7 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
             $IssueNumber = 83
             $IssueNumbers = @()
             $PostResultComment = $false
+            $ExpectedDispatchRequestId = ""
             $ReviewedCodexPath = ""
             $script:ForbiddenCalls = @()
             function git {{ $script:ForbiddenCalls += "git" }}
@@ -547,6 +549,148 @@ def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
     assert summary["observations"]["final_head_matches_initial"] is True
     assert summary["trusted_parent_actions"]["push_invoked"] is False
     assert summary["child_action_non_claim"] == "transient_or_external_child_actions_not_guaranteed_absent"
+
+
+def test_explicit_request_id_allows_health_and_real_markers_to_overlap(tmp_path):
+    result = run_case(
+        tmp_path,
+        """
+        $ExpectedDispatchRequestId = "req-real-83"
+        $script:Markers = @(
+            (New-TestMarker (New-DispatchLine -Action "maybe-status-check" -RequestId "req-health-83") -Id "health-comment"),
+            (New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-real-83") -Id "real-comment")
+        )
+        """,
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "RUNNER_CALLS=1" in result.stdout
+    summary = extract_summary(result.stdout)
+    assert summary["request_id"] == "req-real-83"
+    assert summary["action"] == "run-reviewbundle"
+
+
+def test_explicit_request_id_rejects_duplicate_or_conflicting_same_identity(tmp_path):
+    result = run_case(
+        tmp_path,
+        """
+        $ExpectedDispatchRequestId = "req-real-83"
+        $script:Markers = @(
+            (New-TestMarker (New-DispatchLine -Action "maybe-status-check" -RequestId "req-real-83") -Id "first-comment"),
+            (New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-real-83") -Id "second-comment")
+        )
+        """,
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Duplicate or conflicting CHATGPT-DISPATCH markers" in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
+
+
+def test_dispatcher_failure_exit_code_distinguishes_pre_runner_from_uncertain(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        """
+        $script:ExplicitDispatchFailureExitEnabled = $true
+        $script:RunnerMayHaveStarted = $false
+        Write-Host "PRE_RUNNER_EXIT=$(Get-DispatcherFailureExitCode)"
+        $script:RunnerMayHaveStarted = $true
+        Write-Host "UNCERTAIN_EXIT=$(Get-DispatcherFailureExitCode)"
+        """,
+    )
+
+    assert_success(result)
+    assert "PRE_RUNNER_EXIT=20" in result.stdout
+    assert "UNCERTAIN_EXIT=21" in result.stdout
+
+
+def test_dispatcher_entrypoint_returns_structured_pre_runner_rejection_code(tmp_path):
+    result = run_dispatcher_script(
+        tmp_path,
+        """
+        $ExpectedDispatchRequestId = "req-real-83"
+        $script:Markers = @(
+            (New-TestMarker (New-DispatchLine -RequestId "req-real-83") -Id "first-comment"),
+            (New-TestMarker (New-DispatchLine -RequestId "req-real-83") -Id "second-comment")
+        )
+        try {
+            Invoke-PollOnce
+        } catch {
+            Exit-DispatcherFailure -ErrorRecord $_
+        }
+        """,
+    )
+
+    assert result.returncode == 20
+    assert "Duplicate or conflicting CHATGPT-DISPATCH markers" in (
+        result.stdout + result.stderr
+    )
+
+
+def test_dispatcher_entrypoint_preserves_uncertainty_after_runner_start(tmp_path):
+    result = run_dispatcher_script(
+        tmp_path,
+        """
+        $ExpectedDispatchRequestId = "req-real-83"
+        $PostResultComment = $true
+        $script:Markers = @((New-TestMarker (New-DispatchLine -Action "run-reviewbundle" -RequestId "req-real-83")))
+        function Publish-RunnerResultComment {
+            throw "mock post failed after runner"
+        }
+        try {
+            Invoke-PollOnce
+        } catch {
+            Exit-DispatcherFailure -ErrorRecord $_
+        }
+        """,
+    )
+
+    assert result.returncode == 21
+    assert "mock post failed after runner" in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_message"),
+    [
+        (["-PollOnce"], "PollOnce requires -IssueNumber"),
+        (
+            ["-DryRunBoundedPoll", "-Repo", "example/unsupported"],
+            "unsupported_target_repository",
+        ),
+        (
+            ["-BoundedPoll", "-Repo", "example/unsupported"],
+            "unsupported_target_repository",
+        ),
+        (
+            ["-ToolResolutionPreflight", "-RequiredAction", "unsupported"],
+            "ToolResolutionPreflight requires -RequiredAction",
+        ),
+    ],
+    ids=["manual-pollonce", "dry-run", "bounded-poll", "tool-preflight"],
+)
+def test_dispatcher_entrypoint_preserves_legacy_mode_failure_exit_code(
+    arguments, expected_message
+):
+    result = _run_powershell(
+        [
+            _powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(DISPATCHER),
+            *arguments,
+        ]
+    )
+
+    assert result.returncode == 1
+    assert _process_output_contains(
+        result,
+        expected_message,
+        allow_single_hard_wrap=True,
+    )
 
 
 def test_dispatcher_reports_changed_head_as_bounded_observation_failure(tmp_path):

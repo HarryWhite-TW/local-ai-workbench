@@ -13,6 +13,7 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     DISPATCHED_NOT_LOCALLY_SETTLED,
     PREPARED,
     PROCESSED,
+    REJECTED_BEFORE_RUNNER,
     LifecycleEvidenceError,
     append_jsonl_durable,
     capture_current_process_identity,
@@ -65,6 +66,20 @@ def in_flight_payload() -> dict:
         process_identity=process_identity(),
         prepared_at=NOW,
     )
+
+
+def dispatcher_rejection_terminal(**overrides) -> dict:
+    terminal = {
+        "evidence_id": "local-dispatcher:ov1-request-001",
+        "author": "local-dispatcher-v1",
+        "result": "blocked",
+        "settlement": "settled_non_success",
+        "reconciliation_decision": "DISPATCHER_REJECTED_BEFORE_RUNNER",
+        "reconciliation_reason": "STRUCTURED_PRE_RUNNER_REJECTION",
+        "observed_at_utc": "2026-08-05T04:00:00Z",
+    }
+    terminal.update(overrides)
+    return terminal
 
 
 def observation(process_status: str, descendant_status: str) -> dict:
@@ -202,8 +217,16 @@ def test_in_flight_stage_shapes_are_strict_and_terminal_non_success_is_preserved
         terminal_evidence=terminal,
         updated_at=NOW,
     )
+    rejected = updated_in_flight_payload(
+        prepared,
+        stage=REJECTED_BEFORE_RUNNER,
+        dispatcher_invoked=True,
+        terminal_evidence=dispatcher_rejection_terminal(),
+        updated_at=NOW,
+    )
 
     assert dispatched["stage"] == DISPATCHED_NOT_LOCALLY_SETTLED
+    assert rejected["stage"] == REJECTED_BEFORE_RUNNER
     assert processed["terminal_evidence"]["result"] == "failure"
     with pytest.raises(LifecycleEvidenceError, match="in_flight_invalid"):
         updated_in_flight_payload(
@@ -211,6 +234,36 @@ def test_in_flight_stage_shapes_are_strict_and_terminal_non_success_is_preserved
             stage=PREPARED,
             dispatcher_invoked=True,
             terminal_evidence=None,
+            updated_at=NOW,
+        )
+
+
+@pytest.mark.parametrize(
+    "terminal_overrides",
+    [
+        {"result": "success", "settlement": "settled_success"},
+        {"reconciliation_decision": "SETTLED_NON_SUCCESS"},
+        {"reconciliation_reason": "EXACTLY_ONE_TRUSTED_NON_SUCCESS_MATCH"},
+        {"author": "HarryWhite-TW"},
+        {"evidence_id": "local-dispatcher:another-request"},
+    ],
+    ids=[
+        "success-settlement",
+        "incompatible-decision",
+        "incompatible-reason",
+        "incompatible-author",
+        "incompatible-request-identity",
+    ],
+)
+def test_rejected_before_runner_requires_exact_structured_terminal_contract(
+    terminal_overrides,
+):
+    with pytest.raises(LifecycleEvidenceError, match="in_flight_invalid"):
+        updated_in_flight_payload(
+            in_flight_payload(),
+            stage=REJECTED_BEFORE_RUNNER,
+            dispatcher_invoked=True,
+            terminal_evidence=dispatcher_rejection_terminal(**terminal_overrides),
             updated_at=NOW,
         )
 

@@ -160,7 +160,7 @@ The operator must not reimplement Dispatcher policy.
 For an accepted request it delegates to:
 
 ```powershell
-.\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
+.\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -ExpectedDispatchRequestId <ID> -PostResultComment
 ```
 
 The Dispatcher remains responsible for validating:
@@ -168,7 +168,9 @@ The Dispatcher remains responsible for validating:
 - repository identity;
 - explicit target Issue;
 - target Issue is `OPEN` immediately before delegation;
-- exactly one current dispatch marker;
+- exactly one marker for the explicit dispatch request identity supplied by the
+  Inbox request; duplicate or conflicting markers for that identity fail
+  closed, while unrelated request identities do not override the selection;
 - target `CHATGPT-DISPATCH` marker comment author is trusted;
 - protocol and action allowlist;
 - branch and HEAD binding;

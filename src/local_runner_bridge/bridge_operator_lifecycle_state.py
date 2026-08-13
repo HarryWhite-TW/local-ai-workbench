@@ -22,10 +22,15 @@ IN_FLIGHT_PROTOCOL = "lawb.bridge_operator_b3_in_flight.v1"
 IN_FLIGHT_SCHEMA_VERSION = 1
 PREPARED = "PREPARED"
 DISPATCHED_NOT_LOCALLY_SETTLED = "DISPATCHED_NOT_LOCALLY_SETTLED"
+REJECTED_BEFORE_RUNNER = "REJECTED_BEFORE_RUNNER"
 PROCESSED = "PROCESSED"
 IN_FLIGHT_STAGES = frozenset(
-    {PREPARED, DISPATCHED_NOT_LOCALLY_SETTLED, PROCESSED}
+    {PREPARED, DISPATCHED_NOT_LOCALLY_SETTLED, REJECTED_BEFORE_RUNNER, PROCESSED}
 )
+PRE_RUNNER_REJECTION_EVIDENCE_PREFIX = "local-dispatcher:"
+PRE_RUNNER_REJECTION_AUTHOR = "local-dispatcher-v1"
+PRE_RUNNER_REJECTION_DECISION = "DISPATCHER_REJECTED_BEFORE_RUNNER"
+PRE_RUNNER_REJECTION_REASON = "STRUCTURED_PRE_RUNNER_REJECTION"
 TERMINAL_RESULTS = frozenset({"success", "failure", "blocked"})
 SETTLEMENTS = frozenset({"settled_success", "settled_non_success"})
 QUARANTINE_PREFIX = "operator.lock.quarantine."
@@ -700,12 +705,22 @@ def validate_in_flight_payload(value: Any) -> dict[str, Any]:
         not value["dispatcher_invoked"] or terminal is not None
     ):
         raise LifecycleEvidenceError("in_flight_invalid")
-    if stage == PROCESSED and (
+    if stage in {REJECTED_BEFORE_RUNNER, PROCESSED} and (
         not value["dispatcher_invoked"] or terminal is None
     ):
         raise LifecycleEvidenceError("in_flight_invalid")
     if terminal is not None:
         validate_terminal_evidence(terminal)
+    if stage == REJECTED_BEFORE_RUNNER and (
+        terminal["evidence_id"]
+        != f"{PRE_RUNNER_REJECTION_EVIDENCE_PREFIX}{value['request_id']}"
+        or terminal["author"] != PRE_RUNNER_REJECTION_AUTHOR
+        or terminal["result"] != "blocked"
+        or terminal["settlement"] != "settled_non_success"
+        or terminal["reconciliation_decision"] != PRE_RUNNER_REJECTION_DECISION
+        or terminal["reconciliation_reason"] != PRE_RUNNER_REJECTION_REASON
+    ):
+        raise LifecycleEvidenceError("in_flight_invalid")
     return dict(value)
 
 

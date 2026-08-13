@@ -26,6 +26,10 @@ RUNNER_RESULT_MARKER = "LAWBRUNNER-RESULT"
 RUNNER_RESULT_PROTOCOL = "lawb.runner_result.v1"
 DEFAULT_INBOX_ISSUE = 147
 DEFAULT_TIMEOUT_SECONDS = 600
+DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE = 20
+DISPATCHER_RUNNER_REACH_UNCERTAIN_EXIT_CODE = 21
+DISPATCHER_REJECTED_BEFORE_RUNNER = "rejected_before_runner"
+DISPATCHER_RUNNER_MAY_HAVE_STARTED = "runner_may_have_started"
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,7 @@ class DispatcherInvocationResult:
     stdout: str = ""
     stderr: str = ""
     timed_out: bool = False
+    execution_reach: str | None = None
 
 
 def run_bridge_operator_b2_once(
@@ -154,6 +159,7 @@ def run_bridge_operator_b2_once(
         repo_root=control_root,
         target_repo_root=target_root,
         target_issue=int(summary["target_issue"]),
+        expected_dispatch_request_id=str(summary["target_dispatch_request_id"]),
         repository=repository,
         reviewed_codex_path=preflight_validation.get("codex_path_binding"),
     )
@@ -172,6 +178,7 @@ def run_bridge_operator_b2_once(
     summary["dispatcher_timed_out"] = bool(invocation.timed_out)
     summary["dispatcher_stdout"] = invocation.stdout
     summary["dispatcher_stderr"] = invocation.stderr
+    summary["dispatcher_execution_reach"] = invocation.execution_reach
 
     if invocation.timed_out:
         _failure(summary, "dispatcher_timeout")
@@ -225,6 +232,7 @@ def build_dispatcher_command(
     repo_root: str | Path,
     target_repo_root: str | Path | None = None,
     target_issue: int,
+    expected_dispatch_request_id: str | None = None,
     repository: str = DEFAULT_REPOSITORY,
     reviewed_codex_path: str | None = None,
 ) -> list[str]:
@@ -242,6 +250,8 @@ def build_dispatcher_command(
         repository,
         "-PostResultComment",
     ]
+    if expected_dispatch_request_id:
+        args.extend(["-ExpectedDispatchRequestId", expected_dispatch_request_id])
     if reviewed_codex_path:
         args.extend(["-ReviewedCodexPath", reviewed_codex_path])
     target_root = Path(target_repo_root).resolve() if target_repo_root is not None else Path(repo_root).resolve()
@@ -313,7 +323,16 @@ def default_dispatcher_invoker(
         stdout=completed.stdout,
         stderr=completed.stderr,
         timed_out=False,
+        execution_reach=_dispatcher_execution_reach(completed.returncode),
     )
+
+
+def _dispatcher_execution_reach(returncode: int) -> str | None:
+    if returncode == DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE:
+        return DISPATCHER_REJECTED_BEFORE_RUNNER
+    if returncode == DISPATCHER_RUNNER_REACH_UNCERTAIN_EXIT_CODE:
+        return DISPATCHER_RUNNER_MAY_HAVE_STARTED
+    return None
 
 
 def parse_lawbrunner_result_comment(comment: CommentRecord) -> dict[str, Any]:
@@ -605,6 +624,7 @@ def _base_summary(
         "dispatcher_invocation_count": 0,
         "dispatcher_exit_code": None,
         "dispatcher_timed_out": False,
+        "dispatcher_execution_reach": None,
         "target_result_verified": False,
         "target_result_comment_id": None,
         "target_result_author": None,

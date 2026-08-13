@@ -472,9 +472,11 @@ bounds, active lock, corrupted local state, missing `%LOCALAPPDATA%` without an
 explicit state directory, and bounded GitHub read failure.
 
 On failure, B3 writes `last_failure.json` when the state directory is usable.
-Logs state whether Dispatcher, Runner, Codex, or GitHub writeback was reached.
-For B3-A these remain false. For B3-B and B3-C, `dispatcher_reached` may be
-true, while Runner and Codex direct invocation remain false.
+Logs keep the request identity and state whether Dispatcher result writeback
+was reached. A structured Dispatcher-controlled outcome may additionally prove
+that rejection occurred before Runner; otherwise Runner/Codex reach remains
+unknown rather than being inferred from stderr. B3 never directly invokes
+Runner or Codex.
 
 ## Recovery
 
@@ -491,7 +493,11 @@ The durable ordering states are:
    been invoked, but no durable processed record exists. Restart settles only
    one trusted identity-matching terminal result; every other outcome remains
    uncertain and is never retried.
-4. `PROCESSED`: the processed record is durable; restart skips the request and
+4. `REJECTED_BEFORE_RUNNER`: Dispatcher returned the parent-controlled
+   pre-Runner rejection outcome. Restart completes only the local terminal
+   non-success settlement; it does not redispatch and does not claim a GitHub
+   result was written.
+5. `PROCESSED`: the processed record is durable; restart skips the request and
    clears only the exact matching in-flight evidence.
 
 Automatic dead-lock quarantine is allowed only for a complete protocol-v2
