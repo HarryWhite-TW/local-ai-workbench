@@ -23,6 +23,8 @@ from local_runner_bridge.bridge_operator_b1 import (
 from local_runner_bridge.bridge_operator_b2 import DEFAULT_INBOX_ISSUE
 from local_runner_bridge.bridge_operator_b2 import (
     DEFAULT_TIMEOUT_SECONDS,
+    DISPATCHER_FAILED_BEFORE_RUNNER,
+    DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE,
     DISPATCHER_REJECTED_BEFORE_RUNNER,
     DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
     DISPATCHER_RUNNER_MAY_HAVE_STARTED,
@@ -550,6 +552,7 @@ def _base_summary(
         "configured_max_cycles": None,
         "configured_poll_interval_seconds": None,
         "configured_timeout_seconds": None,
+        "effective_dispatcher_timeout_seconds": None,
         "operator_session_id": None,
         "process_identity": None,
         "started_at_utc": None,
@@ -613,6 +616,7 @@ def _base_summary(
         "last_b1_result": None,
         "last_b1_blocked_reasons": [],
         "dispatcher_exit_code": None,
+        "dispatcher_invocation_args": [],
         "dispatcher_timed_out": False,
         "dispatcher_missing": False,
         "dispatcher_stdout": "",
@@ -1477,6 +1481,32 @@ def _delegate_b3_request(
         _block(summary, "dispatcher_rejected_before_runner")
         return "dispatcher_rejected_before_runner"
 
+    confirmed_pre_runner_failure = (
+        not invocation.timed_out
+        and (
+            summary.get("dispatcher_missing")
+            or (
+                invocation.returncode == DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE
+                and invocation.execution_reach == DISPATCHER_FAILED_BEFORE_RUNNER
+            )
+        )
+    )
+    if confirmed_pre_runner_failure:
+        summary["runner_reached"] = False
+        summary["codex_reached"] = False
+        try:
+            remove_exact_json(in_flight_path, in_flight)
+        except (OSError, LifecycleEvidenceError):
+            _block(summary, "in_flight_pre_runner_failure_cleanup_failed")
+            return "in_flight_pre_runner_failure_cleanup_failed"
+        summary["in_flight_present"] = False
+        summary["in_flight_stage"] = None
+        if summary.get("dispatcher_missing"):
+            _block(summary, "dispatcher_missing")
+            return "dispatcher_missing"
+        _block(summary, "dispatcher_pre_runner_transient_failure")
+        return "dispatcher_pre_runner_transient_failure"
+
     if invocation.execution_reach == DISPATCHER_RUNNER_MAY_HAVE_STARTED:
         summary["runner_reached"] = None
         summary["codex_reached"] = None
@@ -1917,6 +1947,8 @@ def _reset_request_execution_visibility(summary: dict[str, Any]) -> None:
     summary.update(
         {
             "health_probe_request_remaining_seconds": None,
+            "processed_request_written": False,
+            "processed_request_already_seen": False,
             "current_delegation_outcome": None,
             "durable_reconciliation_performed": False,
             "durable_reconciliation_decision": None,
@@ -1927,6 +1959,8 @@ def _reset_request_execution_visibility(summary: dict[str, Any]) -> None:
             "terminal_result": None,
             "terminal_settlement": None,
             "terminal_observed_at_utc": None,
+            "effective_dispatcher_timeout_seconds": None,
+            "dispatcher_invocation_args": [],
             "dispatcher_exit_code": None,
             "dispatcher_timed_out": False,
             "dispatcher_missing": False,

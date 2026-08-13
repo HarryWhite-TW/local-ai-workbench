@@ -652,6 +652,44 @@ def test_default_invoker_uses_utf8_replacement_decoding(monkeypatch):
     assert calls[0][1]["timeout"] == 12
 
 
+@pytest.mark.parametrize(
+    ("returncode", "expected_reach"),
+    [
+        (
+            b2.DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
+            b2.DISPATCHER_REJECTED_BEFORE_RUNNER,
+        ),
+        (
+            b2.DISPATCHER_RUNNER_REACH_UNCERTAIN_EXIT_CODE,
+            b2.DISPATCHER_RUNNER_MAY_HAVE_STARTED,
+        ),
+        (
+            b2.DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE,
+            b2.DISPATCHER_FAILED_BEFORE_RUNNER,
+        ),
+        (1, None),
+    ],
+)
+def test_default_invoker_maps_only_typed_process_exits_to_execution_reach(
+    monkeypatch, returncode, expected_reach
+):
+    monkeypatch.setattr(
+        b2.subprocess,
+        "run",
+        lambda command, **kwargs: b2.subprocess.CompletedProcess(
+            command, returncode, stdout="", stderr=""
+        ),
+    )
+
+    result = b2.default_dispatcher_invoker(
+        args=["powershell.exe", "-File", "script.ps1"],
+        cwd=ROOT_PATH,
+        timeout_seconds=12,
+    )
+
+    assert result.execution_reach == expected_reach
+
+
 def test_default_invoker_removes_powershell_module_path_from_child_only(monkeypatch):
     calls = []
     monkeypatch.setenv("PSModulePath", "inherited-powershell-7-modules")

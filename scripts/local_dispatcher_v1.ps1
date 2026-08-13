@@ -52,6 +52,9 @@ $DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
 $ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
 $DispatcherRejectedBeforeRunnerExitCode = 20
 $DispatcherRunnerReachUncertainExitCode = 21
+$DispatcherFailedBeforeRunnerExitCode = 22
+$DispatcherFailureKindDataKey = "lawb.dispatcher.failure_kind"
+$DispatcherDeterministicAdmissionRejectionKind = "deterministic_admission_rejection"
 $script:RunnerMayHaveStarted = $false
 $script:ExplicitDispatchFailureExitEnabled = $false
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
@@ -98,6 +101,31 @@ function New-DispatcherTemporaryFile {
     return [pscustomobject]@{
         FullName = [System.IO.Path]::GetTempFileName()
     }
+}
+
+function Throw-DeterministicAdmissionRejection {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    $exception = [System.InvalidOperationException]::new($Message)
+    $exception.Data[$DispatcherFailureKindDataKey] = $DispatcherDeterministicAdmissionRejectionKind
+    throw $exception
+}
+
+function Test-DeterministicAdmissionRejection {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.ErrorRecord]$ErrorRecord
+    )
+
+    $failureKind = $ErrorRecord.Exception.Data[$DispatcherFailureKindDataKey]
+    return [string]::Equals(
+        [string]$failureKind,
+        $DispatcherDeterministicAdmissionRejectionKind,
+        [System.StringComparison]::Ordinal
+    )
 }
 
 function Invoke-ReadOnlyCommand {
@@ -715,16 +743,16 @@ function ConvertFrom-DispatchMarkerLine {
     )
 
     if (-not (Test-AsciiText -Text $MarkerLine)) {
-        throw "Dispatch marker contains non-ASCII text. Marker lines must be ASCII-safe."
+        Throw-DeterministicAdmissionRejection -Message "Dispatch marker contains non-ASCII text. Marker lines must be ASCII-safe."
     }
 
     $parts = $MarkerLine.Split(" ")
     if ($parts.Count -lt 2 -or -not [string]::Equals($parts[0], $DispatchMarkerPrefix, [System.StringComparison]::Ordinal)) {
-        throw "Malformed dispatch marker. Marker must start with exact token '$DispatchMarkerPrefix' followed by key=value fields."
+        Throw-DeterministicAdmissionRejection -Message "Malformed dispatch marker. Marker must start with exact token '$DispatchMarkerPrefix' followed by key=value fields."
     }
 
     if (@($parts | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
-        throw "Malformed dispatch marker. Use single spaces between marker fields and do not include empty fields."
+        Throw-DeterministicAdmissionRejection -Message "Malformed dispatch marker. Use single spaces between marker fields and do not include empty fields."
     }
 
     $seenFields = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
@@ -732,22 +760,22 @@ function ConvertFrom-DispatchMarkerLine {
 
     foreach ($part in @($parts | Select-Object -Skip 1)) {
         if ($part -notmatch "^([a-z_]+)=([^=\s]+)$") {
-            throw "Malformed dispatch marker field '$part'. Expected key=value with a lowercase known key and a non-empty value."
+            Throw-DeterministicAdmissionRejection -Message "Malformed dispatch marker field '$part'. Expected key=value with a lowercase known key and a non-empty value."
         }
 
         $fieldName = $Matches[1]
         $fieldValue = $Matches[2]
 
         if (-not (Test-ExactListValue -Values $DispatchKnownFields -Value $fieldName)) {
-            throw "Unknown dispatch marker field '$fieldName'."
+            Throw-DeterministicAdmissionRejection -Message "Unknown dispatch marker field '$fieldName'."
         }
 
         if (-not $seenFields.Add($fieldName)) {
-            throw "Duplicate dispatch marker field '$fieldName'."
+            Throw-DeterministicAdmissionRejection -Message "Duplicate dispatch marker field '$fieldName'."
         }
 
         if ([string]::IsNullOrWhiteSpace($fieldValue)) {
-            throw "Dispatch marker field '$fieldName' has an empty value."
+            Throw-DeterministicAdmissionRejection -Message "Dispatch marker field '$fieldName' has an empty value."
         }
 
         $fields[$fieldName] = $fieldValue
@@ -755,7 +783,7 @@ function ConvertFrom-DispatchMarkerLine {
 
     foreach ($requiredField in $DispatchRequiredFields) {
         if (-not $seenFields.Contains($requiredField)) {
-            throw "Missing required dispatch marker field '$requiredField'."
+            Throw-DeterministicAdmissionRejection -Message "Missing required dispatch marker field '$requiredField'."
         }
     }
 
@@ -769,7 +797,7 @@ function ConvertTo-DispatchExpiryUtc {
     )
 
     if ($Expires -notmatch "^\d{8}T\d{6}Z$") {
-        throw "Dispatch marker expires value '$Expires' is malformed. Expected YYYYMMDDTHHMMSSZ."
+        Throw-DeterministicAdmissionRejection -Message "Dispatch marker expires value '$Expires' is malformed. Expected YYYYMMDDTHHMMSSZ."
     }
 
     try {
@@ -777,7 +805,7 @@ function ConvertTo-DispatchExpiryUtc {
         return [System.DateTime]::ParseExact($Expires, "yyyyMMdd'T'HHmmss'Z'", [System.Globalization.CultureInfo]::InvariantCulture, $styles)
     }
     catch {
-        throw "Dispatch marker expires value '$Expires' is not a valid UTC timestamp: $($_.Exception.Message)"
+        Throw-DeterministicAdmissionRejection -Message "Dispatch marker expires value '$Expires' is not a valid UTC timestamp: $($_.Exception.Message)"
     }
 }
 
@@ -793,7 +821,7 @@ function Assert-DispatchFieldEquals {
 
     $actual = [string]$Fields[$Name]
     if (-not [string]::Equals($actual, $Expected, [System.StringComparison]::Ordinal)) {
-        throw "Dispatch marker field '$Name' mismatch. Expected '$Expected', found '$actual'."
+        Throw-DeterministicAdmissionRejection -Message "Dispatch marker field '$Name' mismatch. Expected '$Expected', found '$actual'."
     }
 }
 
@@ -839,20 +867,20 @@ function Assert-DispatchMarkerMatchesLocalState {
     Assert-DispatchFieldEquals -Fields $Fields -Name "head" -Expected $CurrentHead
 
     if ($ExpiresUtc -le $NowUtc) {
-        throw "Dispatch marker expired at $($ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")); current UTC time is $($NowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+        Throw-DeterministicAdmissionRejection -Message "Dispatch marker expired at $($ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")); current UTC time is $($NowUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
     }
 
     $action = [string]$Fields["action"]
     if (Test-ExactListValue -Values $ForbiddenDispatchActions -Value $action) {
-        throw "Forbidden dispatch action '$action'. CHATGPT-DISPATCH v1 cannot authorize commit, push, close, or approval-gated actions."
+        Throw-DeterministicAdmissionRejection -Message "Forbidden dispatch action '$action'. CHATGPT-DISPATCH v1 cannot authorize commit, push, close, or approval-gated actions."
     }
 
     if (Test-ExactListValue -Values $ReservedDispatchActions -Value $action) {
-        throw "Reserved dispatch action '$action' is not implemented in this PollOnce slice."
+        Throw-DeterministicAdmissionRejection -Message "Reserved dispatch action '$action' is not implemented in this PollOnce slice."
     }
 
     if (-not (Test-ExactListValue -Values $AllowedDispatchActions -Value $action)) {
-        throw "Unsupported dispatch action '$action'. Supported dispatch v1 actions in this slice: $($AllowedDispatchActions -join ', ')."
+        Throw-DeterministicAdmissionRejection -Message "Unsupported dispatch action '$action'. Supported dispatch v1 actions in this slice: $($AllowedDispatchActions -join ', ')."
     }
 }
 
@@ -908,7 +936,7 @@ function Get-IssueDispatchMarkerReadResult {
             $lineNumber += 1
             if ($line.StartsWith($DispatchMarkerPrefix, [System.StringComparison]::Ordinal)) {
                 if (-not [string]::Equals($trimmedBody, $line, [System.StringComparison]::Ordinal)) {
-                    throw "Malformed dispatch marker comment. CHATGPT-DISPATCH must be one standalone issue comment line."
+                    Throw-DeterministicAdmissionRejection -Message "Malformed dispatch marker comment. CHATGPT-DISPATCH must be one standalone issue comment line."
                 }
 
                 $markers += [pscustomobject]@{
@@ -1003,11 +1031,11 @@ function Get-ValidatedDispatchSelection {
     $markers = @($readResult.Markers)
 
     if (-not [string]::Equals([string]$readResult.IssueState, "OPEN", [System.StringComparison]::Ordinal)) {
-        throw "Target issue #$IssueNumber is not OPEN."
+        Throw-DeterministicAdmissionRejection -Message "Target issue #$IssueNumber is not OPEN."
     }
 
     if ($markers.Count -eq 0) {
-        throw "No current dispatch marker found for issue #$IssueNumber. No CHATGPT-DISPATCH marker comments were found."
+        Throw-DeterministicAdmissionRejection -Message "No current dispatch marker found for issue #$IssueNumber. No CHATGPT-DISPATCH marker comments were found."
     }
 
     $parsedMarkers = @()
@@ -1026,32 +1054,32 @@ function Get-ValidatedDispatchSelection {
             }
         )
         if ($matchingMarkers.Count -eq 0) {
-            throw "No CHATGPT-DISPATCH marker found for issue #$IssueNumber with request_id=$ExpectedRequestId."
+            Throw-DeterministicAdmissionRejection -Message "No CHATGPT-DISPATCH marker found for issue #$IssueNumber with request_id=$ExpectedRequestId."
         }
         if ($matchingMarkers.Count -gt 1) {
-            throw "Duplicate or conflicting CHATGPT-DISPATCH markers found for issue #$IssueNumber request_id=$ExpectedRequestId. Found $($matchingMarkers.Count); exactly one is required."
+            Throw-DeterministicAdmissionRejection -Message "Duplicate or conflicting CHATGPT-DISPATCH markers found for issue #$IssueNumber request_id=$ExpectedRequestId. Found $($matchingMarkers.Count); exactly one is required."
         }
         $selected = $matchingMarkers[0]
         if (-not $selected.IsCurrent) {
-            throw "Dispatch marker request_id=$ExpectedRequestId expired at $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+            Throw-DeterministicAdmissionRejection -Message "Dispatch marker request_id=$ExpectedRequestId expired at $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
         }
     }
     else {
         $currentMarkers = @($parsedMarkers | Where-Object { $_.IsCurrent })
         if ($currentMarkers.Count -eq 0) {
             $latestMarker = $parsedMarkers[$parsedMarkers.Count - 1]
-            throw "No current dispatch marker found for issue #$IssueNumber. Latest marker expired at $($latestMarker.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+            Throw-DeterministicAdmissionRejection -Message "No current dispatch marker found for issue #$IssueNumber. Latest marker expired at $($latestMarker.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
         }
 
         if ($currentMarkers.Count -gt 1) {
-            throw "Ambiguous dispatch markers found for issue #$IssueNumber. Found $($currentMarkers.Count) current CHATGPT-DISPATCH marker comments; exactly one is required."
+            Throw-DeterministicAdmissionRejection -Message "Ambiguous dispatch markers found for issue #$IssueNumber. Found $($currentMarkers.Count) current CHATGPT-DISPATCH marker comments; exactly one is required."
         }
 
         $selected = $currentMarkers[0]
     }
     $authorLogin = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
     if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value $authorLogin)) {
-        throw "Dispatch marker author '$authorLogin' is not trusted."
+        Throw-DeterministicAdmissionRejection -Message "Dispatch marker author '$authorLogin' is not trusted."
     }
 
     Assert-DispatchFieldEquals -Fields $selected.Fields -Name "requested_by" -Expected "chatgpt"
@@ -1099,7 +1127,7 @@ function Invoke-ReviewBundle {
 
     $status = Get-GitStatusShort
     if (-not [string]::IsNullOrWhiteSpace($status)) {
-        throw "run-reviewbundle requires a clean repo before dispatch. Current git status: $status"
+        Throw-DeterministicAdmissionRejection -Message "run-reviewbundle requires a clean repo before dispatch. Current git status: $status"
     }
 
     $runnerScript = Get-RunnerScriptPath
@@ -1651,11 +1679,11 @@ function Invoke-PollOnce {
     $script:ExplicitDispatchFailureExitEnabled = -not [string]::IsNullOrWhiteSpace($ExpectedDispatchRequestId)
 
     if ($IssueNumber -lt 1) {
-        throw "PollOnce requires -IssueNumber <N> and scans only that issue."
+        Throw-DeterministicAdmissionRejection -Message "PollOnce requires -IssueNumber <N> and scans only that issue."
     }
 
     if (-not (Test-ExactListValue -Values $SupportedTargetRepos -Value $Repo)) {
-        throw "unsupported_target_repository: $Repo"
+        Throw-DeterministicAdmissionRejection -Message "unsupported_target_repository: $Repo"
     }
 
     Assert-RepoRoot
@@ -1704,13 +1732,21 @@ function Get-ExplicitIssueScope {
 }
 
 function Get-DispatcherFailureExitCode {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.ErrorRecord]$ErrorRecord
+    )
+
     if (-not $script:ExplicitDispatchFailureExitEnabled) {
         return 1
     }
     if ($script:RunnerMayHaveStarted) {
         return $DispatcherRunnerReachUncertainExitCode
     }
-    return $DispatcherRejectedBeforeRunnerExitCode
+    if (Test-DeterministicAdmissionRejection -ErrorRecord $ErrorRecord) {
+        return $DispatcherRejectedBeforeRunnerExitCode
+    }
+    return $DispatcherFailedBeforeRunnerExitCode
 }
 
 function Exit-DispatcherFailure {
@@ -1719,7 +1755,7 @@ function Exit-DispatcherFailure {
         [System.Management.Automation.ErrorRecord]$ErrorRecord
     )
 
-    $exitCode = Get-DispatcherFailureExitCode
+    $exitCode = Get-DispatcherFailureExitCode -ErrorRecord $ErrorRecord
     try {
         [Console]::Error.WriteLine([string]$ErrorRecord.Exception.Message)
     }

@@ -212,7 +212,7 @@ Posting the result back to GitHub is explicit opt-in:
 
 When `-PostResultComment` is supplied, the dispatcher may post exactly one issue comment containing the `LAWBRUNNER-RESULT protocol=lawb.runner_result.v1` marker followed immediately by parseable JSON. It may post only after one valid dispatch marker is selected under the applicable manual or explicit-ID contract on the same explicit Issue, the selected action is allowed in dispatch v1, the allowed action completes, and the target result-comment Issue is the same explicit `-IssueNumber`.
 
-Failure states remain process-local: human-readable error text may be emitted to stderr, and the dispatcher must not post a GitHub result comment for zero valid dispatch markers, duplicate current valid markers, expired markers, malformed markers, wrong repo, wrong branch, wrong HEAD, unsupported action, commit action, push action, or close action. Bridge explicit-ID `PollOnce` uses typed failure exits 20/21; unrelated legacy modes retain their existing failure exit behavior.
+Failure states remain process-local: human-readable error text may be emitted to stderr, and the dispatcher must not post a GitHub result comment for zero valid dispatch markers, duplicate current valid markers, expired markers, malformed markers, wrong repo, wrong branch, wrong HEAD, unsupported action, commit action, push action, or close action. Bridge explicit-ID `PollOnce` uses typed failure exit 20 for deterministic admission rejection, 21 when Runner may have started, and 22 for a transient or environmental failure proven before Runner; unrelated legacy modes retain their existing failure exit behavior.
 
 Safety boundaries:
 
