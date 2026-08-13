@@ -190,8 +190,10 @@ complete:
 4. `HAG-05A-CURRENT-TRUTH-AND-CONTRACT-LOCK` — completed;
 5. `HAG-05B-MINIMAL-LOCAL-SURFACE` — completed;
 6. `HAG-05C-ACCEPTANCE-AND-PUBLICATION` — `HAG-05 DONE / PUBLISHED`;
-7. `WORKFLOW-DISPLAY-PILOT-CLOSEOUT-01` — `DONE / ACCEPTED / PUBLISHED /
-   DURABLY CLOSED` through LAWB PR #267 and completed Issue #264;
+7. `WORKFLOW-DISPLAY-PILOT-CLOSEOUT-01` — its documentation package was
+   published through LAWB PR #267, Issue #264 was subsequently completed, and
+   the later supervising ChatGPT source review and acceptance adjudication
+   established `DONE / ACCEPTED / PUBLISHED / DURABLY CLOSED`;
 8. `ECO-CP1-DURABLE-CLOSEOUT-01` — accepted and durably synchronized across
    canonical LAWB, HGW, and HAG.
 
@@ -207,13 +209,20 @@ The final durable verdict is:
 
 `ECO-CP1 ACCEPTED — STABLE STOP POINT`
 
+This final-state wording is effective only when the exact ECO-CP1 publication
+commits are present on canonical LAWB, HGW, and HAG and have been independently
+read back. On this review branch it is a proposed canonical record, not evidence
+that merge/readback has already occurred.
+
 Then stop. No later node activates automatically.
 
 ## Display Pilot Closeout
 
-The ChatGPT-first core daily UX is accepted and published. The Display Pilot is
-`DONE / ACCEPTED / PUBLISHED / DURABLY CLOSED` through LAWB PR #267 and Issue
-#264. It remains a documentation and presentation outcome separate from the
+The ChatGPT-first core daily UX is accepted and published. The Display Pilot
+documentation package was published through LAWB PR #267, Issue #264 was
+subsequently completed, and the later supervising ChatGPT source review and
+acceptance adjudication established `DONE / ACCEPTED / PUBLISHED / DURABLY
+CLOSED`. It remains a documentation and presentation outcome separate from the
 Operating V1 completion line and from final ECO-CP1 acceptance.
 
 Current capability matrix:
@@ -330,9 +339,10 @@ Its historical status does not activate product or Workflow work.
 
 ## Change Log
 
-- 2026-08-13: Recorded Display Pilot publication and durable Issue #264
-  closeout, completed canonical LAWB/HGW/HAG durable-truth synchronization, and
-  established `ECO-CP1 ACCEPTED — STABLE STOP POINT`. No next node was
+- 2026-08-13: Recorded Display Pilot package publication, the later supervising
+  ChatGPT closeout adjudication, and the final canonical LAWB/HGW/HAG
+  durable-truth record. That record becomes effective only after the exact
+  publication commits merge and are independently read back; no next node was
   activated.
 - 2026-08-13: Reconciled the Display Pilot documentation package with current
   routed-workspace, request-identity, transient-failure, lifecycle-recovery,

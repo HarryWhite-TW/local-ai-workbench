@@ -20,20 +20,26 @@ This checkpoint describes ecosystem-level strategy. It does not replace fresh Gi
 
 ## ECO-CP1 closeout position — 2026-08-13
 
-The Display Pilot is `DONE / ACCEPTED / PUBLISHED / DURABLY CLOSED` through
-LAWB PR #267 and completed Issue #264. Operating V1 remains accepted and
-published, LAWB remains the sole canonical daily Workflow runtime/reference
-host, HGW remains non-executing and not cut over, and HAG remains bounded,
-foreground-only, loopback-only, and fake-only.
+The Display Pilot documentation package was published through LAWB PR #267,
+Issue #264 was subsequently completed, and the later supervising ChatGPT source
+review and acceptance adjudication established `DONE / ACCEPTED / PUBLISHED /
+DURABLY CLOSED`. Operating V1 remains accepted and published, LAWB remains the
+sole canonical daily Workflow runtime/reference host, HGW remains non-executing
+and not cut over, and HAG remains bounded, foreground-only, loopback-only, and
+fake-only.
 
 The final cross-repository state is:
 
 `ECO-CP1 ACCEPTED — STABLE STOP POINT`
 
-Canonical LAWB, HGW, and HAG durable-truth publication and post-merge readback
-are complete. Fresh ChatGPT-direct repaired E2E remains `UNVERIFIED` with a
-platform-blocked qualifier, live execution visibility remains `PARTIAL`, and
-historical #264 Runner/Codex reach remains `UNVERIFIED`. The user-facing
+This final-state checkpoint becomes effective only when the exact ECO-CP1
+publication commits are present on canonical LAWB, HGW, and HAG and have been
+independently read back. On a noncanonical review branch it is a proposed
+canonical record and does not assert that merge/readback has already occurred.
+Under that canonical-state condition, durable-truth publication and post-merge
+readback are complete. Fresh ChatGPT-direct repaired E2E remains `UNVERIFIED`
+with a platform-blocked qualifier, live execution visibility remains `PARTIAL`,
+and historical #264 Runner/Codex reach remains `UNVERIFIED`. The user-facing
 ChatGPT-only execution transport is not claimed fully solved.
 
 ## Formal components and roles

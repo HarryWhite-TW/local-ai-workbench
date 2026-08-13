@@ -29,8 +29,9 @@ Current baseline:
   destination check, and Obsidian-ready Markdown export path is implemented;
 - Workflow v1 durable truth is synchronized;
 - ChatGPT-First Operating V1 is accepted and published through PR #254;
-- the Display Pilot is done, accepted, published, and durably closed through
-  PR #267 and completed Issue #264;
+- the Display Pilot documentation package was published through PR #267,
+  Issue #264 was subsequently completed, and the later supervising ChatGPT
+  source review and acceptance adjudication established the final closeout;
 - ECO-CP1 is accepted and durably synchronized across canonical LAWB, HGW, and
   HAG at the stable stop point;
 - Bridge Operator, Dispatcher, Runner, and Codex remain development-workflow
@@ -55,6 +56,11 @@ Current baseline:
   partial and primarily post-hoc beyond Bridge/preflight;
 - the user-facing ChatGPT-only execution transport is not claimed fully solved;
 - high-risk and permanent actions still require separate user approval.
+
+The final-state ECO-CP1 wording in this publication branch is a proposed
+canonical record. It becomes effective only when the exact publication commits
+are merged into all three canonical branches and independently read back; the
+review branch itself does not claim that merge/readback has already occurred.
 
 Canonical `master` is mutable and must be fresh-verified. The reviewed ECO-CP1
 publication base is
