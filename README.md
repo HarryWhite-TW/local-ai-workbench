@@ -29,6 +29,11 @@ Current baseline:
   destination check, and Obsidian-ready Markdown export path is implemented;
 - Workflow v1 durable truth is synchronized;
 - ChatGPT-First Operating V1 is accepted and published through PR #254;
+- the Display Pilot documentation package was published through PR #267,
+  Issue #264 was subsequently completed, and the later supervising ChatGPT
+  source review and acceptance adjudication established the final closeout;
+- ECO-CP1 is accepted and durably synchronized across canonical LAWB, HGW, and
+  HAG at the stable stop point;
 - Bridge Operator, Dispatcher, Runner, and Codex remain development-workflow
   tooling, not product runtime;
 - the fixed Bridge Inbox remains Issue `#147`;
@@ -47,12 +52,21 @@ Current baseline:
   current ChatGPT execution surface before GitHub mutation, so the repaired
   health-to-real overlap path does not yet have fresh ChatGPT-direct live E2E
   evidence;
+- live execution visibility across Bridge, Dispatcher, Runner, and Codex remains
+  partial and primarily post-hoc beyond Bridge/preflight;
+- the user-facing ChatGPT-only execution transport is not claimed fully solved;
 - high-risk and permanent actions still require separate user approval.
 
-Canonical `master` is mutable and must be fresh-verified. At this documentation
-closeout, the reviewed canonical baseline is
-`421979ee56b2ee6c97dac67feb0efb92154ed533`. Older SHAs in Issues and historical
-records remain evidence for those runs, not the current execution binding.
+The final-state ECO-CP1 wording in this publication branch is a proposed
+canonical record. It becomes effective only when the exact publication commits
+are merged into all three canonical branches and independently read back; the
+review branch itself does not claim that merge/readback has already occurred.
+
+Canonical `master` is mutable and must be fresh-verified. The reviewed ECO-CP1
+publication base is
+`a0c7f9adc96a719fefe4ef0b85bf6dd96dbc5b9c`. Older SHAs in Issues and
+historical records remain evidence for those runs, not the current execution
+binding.
 
 The public product mainline remains the Local Document-to-Knowledge Workbench. Bridge Operator is development workflow tooling and portfolio engineering evidence, not product runtime.
 
