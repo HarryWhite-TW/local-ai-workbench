@@ -1,329 +1,358 @@
-# Display Pilot Foreground Operator Candidate
+# Display Pilot Operating and Interview Guide
 
-## Candidate status
+## Purpose
 
-DP4-BR is a non-live foreground candidate. It binds one fixed selector,
-`HarryWhite-TW/human-governed-workflow#1`, to one explicit OPEN Issue in
-`HarryWhite-TW/human-approval-automation-gateway`. The target body must contain
-exactly one canonical LAWB Task Packet v1.1. Selector prose and rendered reports
-do not grant authority.
+This guide explains the current ChatGPT-first development workflow as a human
+operator, reviewer, or interviewer should see it. It covers what is directly
+observable, what is only established after durable evidence, where the workflow
+fails closed, and what the user still controls.
 
-This node did not start the Bridge, read or write a live GitHub task, invoke the
-real Runner or Codex, publish a result, or perform a supervised live chain.
+The Display Pilot is development-workflow tooling. The product remains the
+localhost, single-user **Local Document-to-Knowledge Workbench**. Bridge
+Operator, Dispatcher, Runner, Codex, GitHub task/result comments, and lifecycle
+state are not product runtime features.
 
-## Local state
+This guide does not grant authority to start a Bridge, publish a request, run
+Codex, mutate GitHub, or recover lifecycle state. Each live or write-capable
+package still needs its own explicit authority.
 
-Choose a state directory outside every Git worktree. The recommended Windows
-location is:
+## Current position
+
+The evidence position as of the current documentation closeout is:
+
+### Confirmed
+
+- ChatGPT-First Operating V1 is accepted and published.
+- The stable LAWB checkout can remain the clean control/reference runtime while
+  one separately validated LAWB engineering workspace is the execution target.
+- Requests bind the target repository, branch, and full 40-character HEAD. The
+  local execution route is independently bound by reviewed local-only routing
+  configuration; remote Inbox, Issue, comment, dispatch marker, Task Packet,
+  status, or result text cannot select or override it. A target branch does not
+  need to be named `master`.
+- Issue #263 records a successful routed `run-reviewbundle` dogfood chain.
+- PR #265 added explicit dispatch identity and request-local visibility.
+- PR #266 established typed Bridge `PollOnce` outcomes `20`, `21`, and `22`.
+- Duplicate/conflicting same-request identities, uncertain Runner reach, and
+  unresolved lifecycle evidence remain fail closed.
+- The reference host was realigned to canonical
+  `master@421979ee56b2ee6c97dac67feb0efb92154ed533`; its routed engineering tree
+  matched that canonical tree.
+- After exact Git trust correction, the production launcher recognized the
+  routed workspace, passed preflight, and started one bounded live operator.
+- That live window was later closed through canonical `stop.flag`; the operator,
+  launcher, and descendants exited, the lock was released, and processed state
+  did not change.
+
+### Unverified
+
+- The historical internal execution reach of stranded request
+  `display-pilot-closeout-264-20260812T134800Z-r1` remains unknown. Absence of a
+  durable result is not proof that Runner or Codex did or did not start.
+- There is no live stage-by-stage stream for Dispatcher, Runner, or Codex.
+  Most execution-stage conclusions are post-hoc.
+- The repaired health-to-real overlap path has not completed a fresh
+  ChatGPT-authored live E2E regression.
+
+### Platform-blocked
+
+After the local Bridge became live-ready, supervising ChatGPT attempted to
+publish a fresh HEALTH dispatch. The current ChatGPT execution surface blocked
+that GitHub write before mutation. Readback found no fresh HEALTH marker, Inbox
+request, or `LAWBRUNNER-RESULT`, and the live window was then closed cleanly.
+
+This is a limitation observed on that ChatGPT surface/session. It is not
+evidence that the local Bridge is broken, and it does not prove that every
+future ChatGPT plan or execution surface can never dispatch. Manual relay may
+be used as fallback or recovery, but it must not be presented as the target UX.
+
+## Operating model
 
 ```text
-%LOCALAPPDATA%\LocalAIWorkbench\DisplayPilot\
+User and ChatGPT
+-> explicit GitHub task and dispatch identity
+-> fixed Bridge Inbox #147
+-> visible bounded Bridge Operator
+-> issue-scoped Dispatcher
+-> bounded Runner
+-> Codex
+-> verification and LAWBRUNNER-RESULT evidence
+-> ChatGPT review
+-> user decision or separately approved permanent action
 ```
 
-`setup`, `verify`, `start`, and `recover` reject a state root equal to or below the LAWB
-control checkout, the supplied HAG checkout, or the pinned HGW checkout. Path
-containment is normalized and case-insensitive on Windows.
+The fixed control repository supplies the operator, Dispatcher, and Runner.
+For LAWB, a local-only route may select a separate validated engineering
+workspace. GitHub text cannot choose or override a local filesystem path.
 
-`setup` requires explicitly reviewed LAWB, HGW, and HAG roots so it can apply
-the complete StateRoot exclusion without scanning for repositories. It fails
-closed if any protected root is omitted, then idempotently creates only the
-state root and its `requests` directory:
+## Execution Progress View
+
+The labels below are intentionally strict:
+
+- **DIRECTLY OBSERVABLE NOW:** a human can inspect the current surface while
+  that stage exists.
+- **POST-HOC / DURABLE EVIDENCE ONLY:** the stage is concluded from validated
+  logs, lifecycle records, process evidence, or GitHub result evidence after
+  the relevant action.
+- **NOT CURRENTLY OBSERVABLE:** no trusted live stage signal is exposed.
+
+| Stage | Visibility | What the human can actually see | Intervention rule |
+| --- | --- | --- | --- |
+| Request prepared | **DIRECTLY OBSERVABLE NOW** | The proposed Task Packet, repository, Issue, branch, full HEAD, expiry, action, allowed files, and authority boundary in ChatGPT or the reviewed Issue body. | Correct scope or identity before publication. |
+| Request published | **DIRECTLY OBSERVABLE NOW** | The exact `CHATGPT-DISPATCH` marker and matching fixed-Inbox request on GitHub, including author metadata and request ID. | If publication is blocked or identity is wrong, do not substitute an ambiguous marker. |
+| Bridge / preflight | **DIRECTLY OBSERVABLE NOW** | Foreground console, launcher preflight result, `heartbeat.json`, `state.json`, `operator.lock`, and read-only diagnostics. | Stop on wrong route, dirty target, wrong HEAD, auth/tool failure, active lock, or lifecycle ambiguity. |
+| Dispatcher | **POST-HOC / DURABLE EVIDENCE ONLY** | Operator summary/log fields and typed exit outcome show whether Dispatcher was invoked and what boundary was proven. There is no trusted continuous Dispatcher progress stream. | Use typed outcome and structured evidence; never infer reach from stderr text. |
+| Runner | **POST-HOC / DURABLE EVIDENCE ONLY** | A trusted result or machine/process evidence may establish Runner outcome. Exit `21` means Runner may have started or absence cannot be proven. | Preserve uncertainty and do not redispatch automatically. |
+| Codex | **NOT CURRENTLY OBSERVABLE** while running; **POST-HOC / DURABLE EVIDENCE ONLY** when trusted result evidence exists | A final ReviewBundle/result may report Codex completion. Missing result evidence does not prove non-execution. | Treat unknown reach as unknown; do not invent live telemetry. |
+| Verification / result evidence | **DIRECTLY OBSERVABLE NOW** after publication; otherwise **POST-HOC / DURABLE EVIDENCE ONLY** locally | `LAWBRUNNER-RESULT`, ReviewBundle, canonical local evidence, final HEAD/index observations, and authority flags. | Compare request identity, repository, Issue, branch, HEAD, author, and result before accepting it. |
+| ChatGPT review | **DIRECTLY OBSERVABLE NOW** when the result is readable to ChatGPT | ChatGPT can classify success, failure, uncertainty, evidence gaps, and any next approval. | No result or pending review is not acceptance. |
+| User decision / completion | **DIRECTLY OBSERVABLE NOW** | The user explicitly approves direction or a separately gated high-risk action. Durable closeout is recorded only on authorized surfaces. | Never treat a prior approval as approval chaining. |
+
+### LIVE EXECUTION VISIBILITY GAP
+
+The workflow does not currently expose a trusted live progress feed for
+Dispatcher, Runner, or Codex. Foreground Bridge health is visible, but detailed
+execution reach is primarily reconstructed after the fact. Adding tray UI,
+streaming telemetry, MCP, or another transport would be new architecture and is
+not activated by this gap.
+
+## Real success evidence map
+
+### Current routed LAWB dogfood — Issue #263
+
+```text
+Issue #263 approved bounded routing probe
+-> CHATGPT-DISPATCH comment 5255403752
+-> fixed Bridge route selected the engineering workspace
+-> Runner ReviewBundle comment 5255460713
+-> LAWBRUNNER-RESULT comment 5255461063
+-> result=success, runner exit=0
+-> branch=codex/engineering-workspace-live
+-> HEAD=714482594944be8f28125c6b1f67eccb12b0d9bc
+-> final staged area clean and final HEAD unchanged
+-> no trusted-parent stage/commit/push/PR/merge/Issue-close action
+```
+
+This proves the bounded routed control-plane path for that historical request.
+The SHA and branch are evidence bindings for that run, not the current canonical
+master identity. It does not prove automatic publication authority,
+production-grade availability, or live stage-by-stage visibility.
+
+### Historical #264 HEALTH evidence
+
+Issue #264 HEALTH dispatch `display-pilot-health-264-20260812T134700Z-r1`
+produced `LAWBRUNNER-RESULT` comment `5267689759` with `result=success`, clean
+Git status, unchanged HEAD, and empty staged area on the then-current
+`714482...` binding. The later REAL request is a separate incident and must not
+borrow this HEALTH success.
+
+## Real fail-closed evidence map
+
+### Issue #264 stranded request and safe recovery
+
+```text
+REAL dispatch comment 5267707353
+-> fixed-Inbox request comment 5267709816
+-> Dispatcher nonzero / no trusted matching durable result
+-> no processed record for the request
+-> in-flight lifecycle evidence preserved
+-> later exact recovery review
+-> exact request and operator-session identity matched
+-> lock owner proven dead; descendants proven absent
+-> durable reconciliation=NOT_FOUND
+-> no conflicting lifecycle or completion evidence
+-> exact in_flight JSON removed through canonical removal
+-> stale protocol-v2 lock quarantined with original bytes/hash preserved
+-> host restartable, historical execution reach still unknown
+```
+
+The recovery did not reinterpret the old request as success or definite
+failure. It did not prove that Runner or Codex started, and it did not prove
+that they did not start. It removed only evidence that was safe to settle after
+the full identity and liveness proof.
+
+### Current typed Dispatcher boundary
+
+| Exit | Meaning | Lifecycle treatment |
+| --- | --- | --- |
+| `20` | Structured deterministic admission rejection proves Runner was not started. | Terminal non-success settlement; do not redispatch that accepted rejection. |
+| `21` | Runner may have started, or execution reach cannot be proven absent. | Preserve in-flight uncertainty and fail closed; never infer safety from stderr. |
+| `22` | Transient or environmental failure is proven before Runner. | Do not permanently consume the request; a later independent run may retry after the condition is corrected. No automatic Codex retry occurs inside the failed run. |
+
+Explicit dispatch identity prevents an unrelated current marker on the same
+Issue from automatically creating Issue-wide ambiguity. Multiple or
+conflicting markers for the same request still fail closed. When request
+identity changes, request-local execution and reconciliation visibility resets
+so request A cannot contaminate the displayed state for request B.
+
+## Reference-host setup and verification
+
+### 1. Separate control and execution roles
+
+- **Stable runtime:** clean control/reference checkout containing the reviewed
+  launcher, Bridge, Dispatcher, and Runner.
+- **Routed engineering workspace:** exact clean Git root where an approved LAWB
+  request may execute and create its bounded candidate.
+
+At the current evidence checkpoint, the stable runtime is
+`master@421979ee56b2ee6c97dac67feb0efb92154ed533`. The engineering workspace
+must be independently checked for origin, branch, full HEAD, clean worktree,
+and empty index before every launch.
+
+### 2. Verify exact Git trust
+
+The launcher incident `target_repository_not_git_repository` was traced to Git
+dubious-ownership protection on the routed workspace. It was a host
+trust/configuration incident, not a repository defect.
+
+On this reference host, current-user global `safe.directory` must contain the
+exact path:
+
+```text
+C:/Users/harry/Desktop/local-ai-workbench-engineering
+```
+
+Review with:
 
 ```powershell
-.\scripts\display_pilot.ps1 `
-  -Action setup `
-  -StateRoot "$env:LOCALAPPDATA\LocalAIWorkbench\DisplayPilot" `
-  -LawbRoot "C:\Users\admin\Desktop\local-ai-workbench" `
-  -HgwRoot "C:\Users\admin\Desktop\human-governed-workflow" `
-  -TargetRepoRoot "C:\path\to\human-approval-automation-gateway"
+git config --global --get-all safe.directory
 ```
 
-Runtime state is local and includes:
+If the exact path is missing, add only that reviewed path under a separately
+authorized host-configuration step. Never add `*`, a broad parent directory, or
+an unrelated checkout.
 
-- `operator.lock`: exclusive foreground-owner lock;
-- `heartbeat.json`: current bounded polling cycle;
-- `pause.flag` and `stop.flag`: checked before every selector read;
-- `in_flight.json`: written before Runner delegation and retained after an
-  uncertain interruption;
-- `requests\<request_id>\runner_process_evidence.json`: immutable,
-  parent-owned process facts written before Runner machine evidence is trusted;
-- `processed_requests.jsonl`: durable request-id replay protection;
-- `replay_tombstones\<request_id>.json`: permanent replay prohibition for an
-  exactly recovered uncertain request;
-- `requests\<request_id>\`: canonical and rendered request evidence.
+### 3. Verify local-only routing identity
 
-An unresolved `in_flight.json`, active lock, corrupt processed record, or invalid
-Task Surface fails closed. An already processed selector is stale/idle: it is
-not rerun, and the bounded foreground loop keeps polling for a new request. The
-operator does not silently retry an uncertain Runner execution.
+The Bridge state root is:
 
-## Read-only verification
+```text
+%LOCALAPPDATA%\LocalAIWorkbench\BridgeOperator\
+```
 
-`verify` does not create the state directory and does not invoke GitHub, Runner,
-or Codex. Supply reviewed absolute paths for every later start dependency:
+The optional routing file under that directory must use the exact schema:
+
+```json
+{"protocol":"lawb.bridge_operator_local_routing.v1","repository":"HarryWhite-TW/local-ai-workbench","target_repo_root":"C:\\Users\\harry\\Desktop\\local-ai-workbench-engineering"}
+```
+
+The launcher reads but does not create or modify this file. Remote Issue,
+comment, Task Packet, status, or result text cannot override the route. Do not
+configure both `repository_routing.json` and `-TargetRepoRoot`; ambiguity fails
+closed.
+
+### 4. Run normal preflight first
+
+From the stable runtime root:
 
 ```powershell
-.\scripts\display_pilot.ps1 `
-  -Action verify `
-  -StateRoot "$env:LOCALAPPDATA\LocalAIWorkbench\DisplayPilot" `
-  -LawbRoot "C:\Users\admin\Desktop\local-ai-workbench" `
-  -LawbBranch "dp4-b-foreground-operator" `
-  -LawbHead "2705db84b16fdeae9cdc4ebf6e1edb77303fa7d6" `
-  -HgwRoot "C:\Users\admin\Desktop\human-governed-workflow" `
-  -TargetRepoRoot "C:\path\to\human-approval-automation-gateway" `
-  -PythonPath "C:\Users\admin\Desktop\local-ai-workbench\.venv-course\Scripts\python.exe" `
-  -PowerShellPath "C:\Program Files\PowerShell\7\pwsh.exe" `
-  -GhPath "C:\Program Files\GitHub CLI\gh.exe" `
-  -CodexPath "C:\reviewed\codex.cmd" `
-  -RunnerPath "C:\Users\admin\Desktop\local-ai-workbench\scripts\local_runner_v1.ps1"
+.\scripts\start_bridge_operator_b3c.ps1
 ```
 
-Verification checks the LAWB and HAG Git roots, exact origins, clean HAG
-worktree and staged area, the supplied exact LAWB branch and full HEAD, the
-empty LAWB staged area, the pinned clean HGW checkout at
-`main@19ef3e0dfcc364b3d90557747db964f919fc6afc`, the canonical Runner path,
-and each explicitly reviewed executable path.
+The default invocation is preflight-only. It verifies reviewed bindings and
+lifecycle state without starting another polling loop. A live foreground start
+requires a separately approved package and explicit `-StartForeground`.
 
-The default LAWB expectation is a clean checkout. A separately reviewed dirty
-candidate can enumerate its exact expected tracked modifications by repeating
-`-LawbExpectedModifiedFile <repository-relative-path>`; untracked or staged
-paths still fail closed.
-
-## Future supervised foreground start
-
-The following is the candidate interface for a later separately reviewed live
-package. It was not executed in DP4-BR:
+### 5. Use read-only diagnostics
 
 ```powershell
-.\scripts\display_pilot.ps1 `
-  -Action start `
-  -StateRoot "$env:LOCALAPPDATA\LocalAIWorkbench\DisplayPilot" `
-  -LawbRoot "C:\Users\admin\Desktop\local-ai-workbench" `
-  -LawbBranch "dp4-b-foreground-operator" `
-  -LawbHead "2705db84b16fdeae9cdc4ebf6e1edb77303fa7d6" `
-  -HgwRoot "C:\Users\admin\Desktop\human-governed-workflow" `
-  -TargetRepoRoot "C:\path\to\human-approval-automation-gateway" `
-  -PythonPath "C:\Users\admin\Desktop\local-ai-workbench\.venv-course\Scripts\python.exe" `
-  -PowerShellPath "C:\Program Files\PowerShell\7\pwsh.exe" `
-  -GhPath "C:\Program Files\GitHub CLI\gh.exe" `
-  -CodexPath "C:\reviewed\codex.cmd" `
-  -RunnerPath "C:\Users\admin\Desktop\local-ai-workbench\scripts\local_runner_v1.ps1" `
-  -MaxCycles 100 `
-  -PollIntervalSeconds 5
+$env:PYTHONPATH='src'
+.\.venv-course\Scripts\python.exe `
+  -m local_runner_bridge.bridge_diagnostics `
+  --repo-root . `
+  --pretty
 ```
 
-The process remains visible and foreground-only. It polls at most the configured
-cycle count, sleeps between empty cycles, reads only the fixed selector and its
-explicit target Issue, and processes at most one request. A fixed selector Issue
-with no occurrence of the DP4-B selector label safely waits for the next cycle.
-If the label or an opening labelled fence is present but no single complete
-labelled selector can be parsed, the cycle fails closed. An already processed
-selector is ignored while polling for a new request. Multiple complete labelled
-selectors and malformed labelled selectors also fail closed.
+Diagnostics classify lock identity/liveness/descendants, in-flight state,
+heartbeat freshness, quarantine evidence, and exceptional recovery reasons.
+They do not delete or repair lifecycle state and do not invoke Dispatcher,
+Runner, Codex, or GitHub.
 
-Create `pause.flag` to stop at the next cycle with a reviewable blocked result.
-Create `stop.flag` for the same bounded stop behavior. If the process is killed,
-do not delete `in_flight.json` merely to resume: inspect the prior Runner and
-durable result state under a separately reviewed recovery procedure.
+## Safe operation and shutdown
 
-## Exact uncertain-incident recovery
+- Keep the bounded operator visible.
+- Confirm there is exactly one operator identity and one complete lock.
+- Treat an active matching lock as active even if heartbeat appears stale.
+- Use `pause.flag` to pause later cycles when the approved package calls for it.
+- Use canonical `stop.flag` for graceful shutdown. It is observed at the next
+  cycle boundary, allowing current bounded work to settle before exit.
+- After shutdown, verify the exact PID/start identity is dead, descendants are
+  absent, `operator.lock` and `in_flight.json` are settled as expected, and the
+  launcher chain has exited. Only then remove the exact control flag before a
+  later restart.
 
-`recover` is an explicit, offline, local-only action for one reviewed
-`delegating_runner` incident. Manual deletion of `in_flight.json` is forbidden:
-deleting it before durable replay prohibition creates a window in which the old
-request could be delegated again.
+Never abruptly kill an operator merely because the console looks quiet. Never
+delete `operator.lock` or `in_flight.json` to make preflight pass.
 
-The action requires four reviewed incident identity values plus three explicitly
-reviewed protected repository roots. It does not infer a latest request, scan
-for an incident, read GitHub, invoke Runner or Codex, render HGW output, run
-pytest, or mutate a repository:
+## Recovery guidance
 
-```powershell
-.\scripts\display_pilot.ps1 `
-  -Action recover `
-  -StateRoot "<reviewed-state-root-outside-git-worktrees>" `
-  -RequestId "<exact-old-request-id>" `
-  -TargetIssue <exact-target-issue> `
-  -InFlightSha256 "<exact-reviewed-sha256>" `
-  -LawbRoot "<reviewed-LAWB-checkout>" `
-  -HgwRoot "<reviewed-HGW-checkout>" `
-  -TargetRepoRoot "<reviewed-HAG-checkout>"
-```
+| Situation | Safe response |
+| --- | --- |
+| Launcher preflight blocks | Read the exact blocked reason. Recheck target root, normalized origin, branch/full HEAD, worktree/index, route schema, tool/auth binding, and exact Git trust. Do not rewrite source or broaden trust to bypass the gate. |
+| Active lock exists | Use diagnostics to compare protocol, session, PID, exact process-start identity, and descendants. A matching live owner blocks. Do not remove the lock from heartbeat age alone. |
+| `in_flight.json` is unresolved | Preserve it. Review its exact request/session/stage, processed-state exclusion, lock identity, durable result evidence, and reconciliation outcome. Uncertainty blocks redispatch. |
+| Durable result is missing | Classify execution reach as unknown unless structured parent-controlled evidence proves otherwise. Do not treat stderr, silence, or absence of a comment as proof that Runner did not start. |
+| Request identity is ambiguous | Stop. Compare Inbox request ID, target dispatch request ID, repository, Issue, branch, full HEAD, expiry, action, trusted author metadata, and matching result identity. Same-request duplicate/conflict remains fail closed. |
+| ChatGPT-side dispatch cannot be published | Record `platform-blocked`, verify no partial GitHub marker/Inbox/result mutation, and close or pause the live window safely. Manual relay is fallback only and does not validate the target ChatGPT-direct experience. |
+| Dead owner appears quarantine-safe | Use only the canonical recovery path after exact identity, dead/PID-reuse proof, no descendants, and compatible in-flight state are established. Preserve original lock bytes/hash. Do not manually rename or delete lifecycle files. |
 
-Recovery requires all three explicitly reviewed protected repository roots in
-addition to the four incident identity values. It rejects StateRoot equal to or
-beneath LAWB, HGW, HAG, or the control checkout. Before acquiring its lock or
-mutating any recovery path, it resolves the lock, in-flight, processed record,
-request, snapshot, incident, tombstone-store, tombstone, and owned pending paths.
-Every resolved path must remain within StateRoot and outside every protected
-root; symlink, junction, reparse-point, or equivalent escapes fail closed.
+Recovery authority is incident-specific. A prior recovery result does not grant
+permission to recover a new request or start another Bridge.
 
-Recovery then acquires the normal exclusive operator lock and verifies the
-exact in-flight bytes, request ID, target Issue, `delegating_runner` state,
-timestamp, R1 request-directory inventory, processed-record exclusion, and
-absence of conflicting recovery evidence. A valid
-`runner_process_evidence.json` is a recognized incident artifact: recovery
-validates its protocol and request identity, records it in the observed
-inventory, and preserves its exact bytes. Malformed, mismatched, conflicting,
-or unknown request artifacts fail closed. Process evidence alone never changes
-the incident outcome from `uncertain`. Recovery performs this fixed ordering:
+## Limitations and authority boundary
 
-1. atomically preserve the exact original bytes at
-   `requests\<request_id>\original_in_flight.json`;
-2. atomically write the versioned uncertain incident at
-   `requests\<request_id>\recovery_incident.json`;
-3. atomically write the permanent replay tombstone at
-   `replay_tombstones\<request_id>.json`;
-4. reread and exactly verify all three records;
-5. only then remove the active `in_flight.json`.
+- The latest ChatGPT-direct GitHub dispatch attempt was platform-blocked before
+  mutation; the repaired health-to-real overlap path therefore lacks fresh
+  ChatGPT-authored live E2E acceptance.
+- Manual relay and manual `PollOnce` remain fallback/recovery, not the strategic
+  target.
+- Execution-stage visibility is partly post-hoc; there is no trusted live
+  Dispatcher/Runner/Codex progress stream.
+- This is bounded localhost workflow tooling, not production-grade service
+  availability or fully autonomous software development.
+- No automatic stage, commit, push, PR creation, merge, Issue close, label edit,
+  deployment, credential change, approval consumption, or approval chaining is
+  authorized.
+- No hidden service, tray, MCP, Independent HGW runtime, new transport, or
+  Phase C work is activated by this closeout.
+- A success result proves only its exact request, repository, branch, HEAD,
+  action, evidence scope, and recorded authority flags.
 
-The outcome remains `uncertain`. Recovery does not claim success, definite
-failure, that Runner or Codex started, or that either definitely did not start.
-It does not add an entry to `processed_requests.jsonl`.
+## Historical candidate note
 
-An interrupted recovery may be rerun with the same four reviewed values only
-when no `operator.lock` remains. A controlled Python exception follows normal
-lock cleanup, after which exact pre-existing phases can be verified and reused
-without changing historical timestamps. A tombstone present while
-`in_flight.json` remains allows such a controlled rerun to complete the final
-release safely. If in-flight is absent, all three exact recovery records must
-already exist; otherwise the state remains fail closed. Conflicting or partially
-unrecognized evidence is never overwritten or repaired automatically.
+The former “Display Pilot Foreground Operator Candidate” documented a non-live
+DP4 path using a fixed HGW selector, HAG target, and separate Display Pilot
+state root. Its process-evidence and fail-closed design remains useful history,
+but its old branch/HEAD bindings and candidate launch commands are not current
+reference-host instructions. Git history preserves that design detail.
 
-Each recovery-owned canonical write first uses one deterministic `.pending`
-file. After the snapshot and incident are durable, recovery creates the bounded
-`replay_tombstones` directory and immediately re-resolves the directory,
-canonical tombstone, and pending tombstone paths. They must remain beneath
-StateRoot, outside every protected root, and the store must remain a directory
-before use. Exact pending records left by a controlled interruption can be
-verified and promoted on the next invocation. The durable incident timestamp is
-preserved, and the tombstone must use that exact timestamp. Arbitrary
-temporary-looking files, malformed or conflicting pending content, and
-conflicting canonical records remain fail closed. `in_flight.json` is not
-removed until the canonical snapshot, incident, and tombstone have all been
-reread and verified.
+## 5–10 minute interview or demo route
 
-A genuine process death may leave `operator.lock`. An existing lock always
-blocks recovery as `active_lock_present`: R1 does not inspect PID ownership,
-infer liveness, promote pending records, or remove, rename, overwrite, or
-reclaim the lock. Stale-lock inspection or removal requires a separately
-reviewed procedure and separate approval. Therefore R1 does not claim automatic
-hard-process-death recovery.
+1. **Product separation — 45 seconds.** Show the localhost document workbench
+   and state that Bridge tooling is development infrastructure, not the product.
+2. **Request and authority — 60 seconds.** Open one Task Packet and point out
+   repository, Issue, request ID, branch, full HEAD, allowed files, expiry, and
+   forbidden permanent actions.
+3. **Bridge and routing — 60 seconds.** Explain stable control checkout versus
+   routed engineering workspace, fixed Inbox #147, local-only route, and exact
+   Git-root/clean-index preflight.
+4. **Execution Progress View — 60 seconds.** Distinguish visible Bridge health
+   from post-hoc Dispatcher/Runner/Codex evidence. Name the live visibility gap.
+5. **Success evidence — 60 seconds.** Walk Issue #263 from dispatch comment
+   `5255403752` to result `5255461063`, emphasizing exact identity and unchanged
+   HEAD/index.
+6. **Fail-closed evidence — 90 seconds.** Walk Issue #264: old HEALTH success,
+   separate stranded REAL request, missing trusted result, preserved lifecycle,
+   exact dead-owner recovery, and still-unknown historical reach.
+7. **Typed outcomes — 45 seconds.** Explain `20` deterministic rejection, `21`
+   uncertainty, and `22` proven transient pre-Runner failure.
+8. **Platform limitation — 45 seconds.** State that the latest ChatGPT-side
+   write was blocked before GitHub mutation; this prevented fresh E2E validation
+   but did not show a local Bridge failure.
+9. **User control — 30 seconds.** Close with the rule that permanent/high-risk
+   actions and recovery remain separately approved; the workflow never chains
+   approvals automatically.
 
-The old request ID is permanently replay-prohibited and is treated as stale by
-`start`. Recovery does not authorize a new live request. A later supervised
-cycle requires a different request ID and separate approval.
-
-R1 supports only the exact `delegating_runner` shape and its bounded known
-request-directory artifacts, including an optional valid
-`runner_process_evidence.json`. It does not establish what historically
-happened inside Runner or Codex, and it does not recover other state shapes.
-Implementation tests use temporary StateRoots only; they do not authorize or
-perform recovery against the real StateRoot or authorize a new live request.
-
-## Evidence
-
-Runner is invoked only with `MachineEvidencePath`, `DisplayPilotRequestId`, and
-`SuppressReviewBundleComment`. The request-directory name, selector request ID,
-Runner argument, and machine-evidence request ID must be identical. The Runner
-writes UTF-8 JSON through a same-folder replacement and does not post its normal
-ReviewBundle comment on that path.
-
-The Operator separately owns
-`requests\<request_id>\runner_process_evidence.json`. The CLI captures Runner
-stdout and stderr as raw bytes without implicit decoding. After the process
-returns, times out, or fails to launch, the parent records exact process
-start/exit/timeout/exception facts, byte counts and SHA-256 values, and a
-deterministic preview bounded to 4,096 source bytes per stream. Invalid UTF-8 is
-decoded only for that bounded preview with replacement explicitly reported.
-The parent also records whether the expected machine-evidence file was
-observed, plus its size and hash when present.
-
-Process evidence uses protocol
-`lawb.display_pilot.runner_process_evidence.v1`, schema version 1, a
-same-directory temporary file, atomic replacement, and mandatory readback
-validation. Its canonical path is immutable. A pre-existing file, write or
-readback failure, launch failure, timeout, missing machine evidence, or rejected
-machine evidence retains `in_flight.json` and does not create processed,
-canonical, rendered, or retry output. Process evidence reports process facts
-only: it does not claim that Codex started or completed, pytest ran, repository
-mutation occurred, the HAG task succeeded, or external effects were absent.
-
-Parent verification begins only after process evidence is durable and Runner
-machine JSON is independently readable and valid. The machine evidence remains
-the authority for child/task claims, and its final HEAD, staged-state, and
-changed-file evidence must exactly match a fresh parent Git observation.
-The schema is complete and type-checked, including every required safety flag;
-missing flags are not filled from HGW defaults. Suppression evidence must say
-the comment was suppressed and no GitHub comment was posted. The selected Task
-Packet, runtime binding, and embedded runtime contract `allowed_files` must be
-the same canonical normalized exact set: order, slash direction, and accepted
-leading `./` spelling do not create false mismatches, while duplicates, unsafe
-paths, missing paths, and additional paths fail closed. Blocked Runner evidence
-must carry at least one explicit non-empty string reason; the Operator and HGW
-renderer do not invent a reason for incomplete evidence.
-
-The ordinary Runner path, when neither opt-in flag is present, posts the
-existing ReviewBundle directly and does not construct or parse Display Pilot
-machine evidence. If machine evidence is requested without suppression, the
-comment result is observed before the sole canonical evidence write so a
-successful post cannot leave a stale record claiming no GitHub write.
-
-Each completed request directory contains:
-
-- `runner_process_evidence.json`;
-- `runner_machine_evidence.json`;
-- `canonical_evidence.json`;
-- `result_surface.json`;
-- `reviewer_report.md`;
-- `plain_language_zh_TW.md`;
-- exactly one `result_comment_candidate.md`;
-- `operator_summary.json`.
-
-The Result Surface, reviewer report, and zh-TW report derive from the same
-canonical evidence. The local comment candidate is not published automatically.
-
-## Fail-closed and authority boundary
-
-Only one or two explicit commands equivalent to
-`python -m pytest <repository-relative arguments>` are accepted. Parent
-verification uses the reviewed absolute Python executable, `shell=False`, the
-explicit HAG root as `cwd`, bounded output, and a finite timeout. A nonzero result
-produces `status=blocked`.
-
-Only a small pytest option allowlist is accepted. `--pyargs`, arbitrary plugins,
-basetemp/config/root redirection, absolute selectors, traversal, shell syntax,
-`--collect-only`, and selectors outside `tests/` are rejected. Git HEAD, staged
-paths, complete short status, effective changed paths, and a worktree fingerprint
-are captured at the Runner-to-parent handoff and before/after runtime
-verification. A handoff mismatch skips pytest and blocks with both observations
-preserved. Any parent-test mutation also blocks and is included in canonical
-evidence.
-
-Runner invocation uses the reviewed PowerShell path, passes the reviewed
-GitHub CLI path into Runner as its actual binding, and has a 1,500-second parent
-timeout. A timeout is not retried, preserves any partial raw stdout/stderr in
-process evidence, and leaves `in_flight.json` for explicit uncertain-state
-review. Exit 0 without machine evidence blocks as
-`runner_machine_evidence_missing`; nonzero exit without it blocks as
-`runner_nonzero_exit_without_machine_evidence`; launch failure blocks as
-`runner_process_launch_failed`; timeout blocks as `runner_timeout`; and process
-evidence persistence failure blocks as
-`runner_process_evidence_write_failed`. The PowerShell wrapper uses the
-repository venv with an explicit process-local `src` import path; it does not
-install the package or change persistent `PATH` or `PYTHONPATH`.
-
-The candidate does not stage, commit, push, create or merge a PR, close an Issue,
-edit labels, broaden an Issue scan, infer a latest/next task, consume approval,
-run in the background, install startup behavior, change credentials, or grant
-authority from transport prose or rendered text.
-
-Known limitations:
-
-- no supervised live DP4 chain or actual GitHub result publication is proven;
-- no background, startup, service, tray, or automatic permanent action exists;
-- uncertain recovery is explicit, exact-bound, local-only, and fail-closed;
-- parallel multi-host safety and universal cross-platform behavior are not
-  claimed;
-- this candidate does not establish production cutover or complete Independent
-  Workflow v1.0.
+The honest demo ends with the evidence boundary. It does not start another
+Bridge, replay an old request, publish a marker, or perform a permanent action
+merely to make the presentation look live.

@@ -94,6 +94,34 @@ The earlier manual-foreground capability matrix, evidence, and limitations are
 recorded in `docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md` as
 historical foundation rather than the current Operating V1 completion record.
 
+The current routed execution model separates a stable control/reference
+checkout from a clean engineering workspace used as the execution and mutation
+target. The request binds the exact repository, branch, and full HEAD, while
+the local execution route is independently selected by reviewed local-only
+routing configuration. It does not require every target branch to be named
+`master`. Issue
+#263 records a successful routed LAWB dogfood chain. At this closeout the stable
+runtime is clean at
+`master@421979ee56b2ee6c97dac67feb0efb92154ed533`, while the separately routed
+engineering workspace has the same tree. Canonical and host identities remain
+mutable facts that must be fresh-verified before another live package.
+
+PR #265 corrected explicit dispatch identity so an unrelated current marker on
+the same Issue does not create Issue-wide ambiguity, while duplicate or
+conflicting markers for the same request still fail closed. PR #266 established
+the current typed Bridge `PollOnce` boundary:
+
+- exit `20`: deterministic structured admission rejection proven before
+  Runner;
+- exit `21`: Runner may have started, or reach cannot be proven absent;
+- exit `22`: transient or environmental failure proven before Runner.
+
+Request-local visibility is reset when request identity changes, preventing a
+prior request's execution or reconciliation fields from being presented as the
+current request. Exit `21` and unresolved lifecycle evidence remain fail closed;
+exit `22` permits a later independent run without automatically retrying Codex
+inside the failed run.
+
 ## Canonical Ecosystem Forward Plan
 
 The current cross-repository sequencing, completion lines, and stop lines are
@@ -162,7 +190,8 @@ complete:
 4. `HAG-05A-CURRENT-TRUTH-AND-CONTRACT-LOCK` — completed;
 5. `HAG-05B-MINIMAL-LOCAL-SURFACE` — completed;
 6. `HAG-05C-ACCEPTANCE-AND-PUBLICATION` — `HAG-05 DONE / PUBLISHED`;
-7. `WORKFLOW-DISPLAY-PILOT-CLOSEOUT-01` — not declared complete here;
+7. `WORKFLOW-DISPLAY-PILOT-CLOSEOUT-01` — current documentation closeout
+   package; final acceptance/publication is not declared here;
 8. `ECO-CP1-DURABLE-CLOSEOUT-01` — not declared complete here.
 
 The published HAG-05 implementation preserves the accepted product contract:
@@ -181,19 +210,54 @@ Then stop. No later node activates automatically.
 
 ## Display Pilot Closeout
 
-The ChatGPT-first core daily UX is accepted, but the full Display-Ready package
-remains open. Its remaining bounded outputs are:
+The ChatGPT-first core daily UX is accepted and published. The current Display
+Pilot closeout is a documentation and presentation package, separate from that
+Operating V1 completion line and from ECO-CP1 durable closeout.
 
-- reference-host setup and verification guide;
-- deterministic sample reviewer and plain-language reports from canonical
-  evidence;
-- success and fail-closed evidence map;
-- limitations and recovery guide;
-- concise interview/demo guide;
-- final public-claim consistency review.
+Current classification:
 
-This is documentation and presentation work only. It does not add runtime,
-adapters, queueing, credentials, startup, service behavior, or cutover.
+- **CONFIRMED:** product/runtime separation; visible bounded Operating V1;
+  routed engineering-workspace success in Issue #263; exact request identity;
+  request-local visibility reset; deterministic/transient/uncertain Dispatcher
+  outcomes; durable reconciliation and duplicate protection; clean Bridge
+  startup and canonical `stop.flag` shutdown after runtime realignment.
+- **UNVERIFIED:** the historical internal execution reach of stranded request
+  `display-pilot-closeout-264-20260812T134800Z-r1`; live stage-by-stage
+  telemetry; and a fresh repaired health-to-real overlap E2E initiated directly
+  by ChatGPT.
+- **PLATFORM-BLOCKED:** in the latest live-ready window, this ChatGPT execution
+  surface blocked the attempted GitHub dispatch write before mutation.
+  Readback found no fresh HEALTH marker, Inbox request, or
+  `LAWBRUNNER-RESULT`. The Bridge was then stopped cleanly with no processed
+  state change.
+
+The stranded #264 request was recovered only after exact request/session
+identity, dead lock owner, no descendants, no processed record, durable
+reconciliation `NOT_FOUND`, and absence of conflicting evidence were
+established. Canonical exact JSON removal cleared its `in_flight.json`; the
+stale protocol-v2 lock was quarantined with original bytes and hash preserved.
+This recovery makes the host restartable. It does not establish whether Runner
+or Codex historically did or did not execute.
+
+The production launcher initially classified the routed engineering workspace
+as `target_repository_not_git_repository`. The cause was current-user Git
+dubious-ownership protection, not a repository defect. Trust was narrowed to
+the exact engineering path in global `safe.directory`; no wildcard or parent
+directory trust was added. Normal Git recognition and launcher preflight then
+succeeded.
+
+The closeout package is carried only by `README.md`, this file, and
+`docs/DISPLAY_PILOT_FOREGROUND_OPERATOR_RUNBOOK.md`. It provides the reference
+host model, execution-progress visibility classification, real success and
+fail-closed evidence maps, recovery guidance, limitations, and a short
+interview/demo route. It does not add runtime, adapters, queueing, credentials,
+Startup authority, services, cutover, or a new transport.
+
+The platform limitation remains visible but does not automatically activate
+MCP, Phase C, Independent HGW runtime, or a transport redesign. Manual relay is
+fallback/recovery only, not the strategic target. Product mainline work may
+continue without converting this external limitation into indefinite workflow
+infrastructure work.
 
 ## Subsequent Operating V1 Completion
 
@@ -256,6 +320,10 @@ Its historical status does not activate product or Workflow work.
 
 ## Change Log
 
+- 2026-08-13: Reconciled the Display Pilot documentation package with current
+  routed-workspace, request-identity, transient-failure, lifecycle-recovery,
+  runtime-realignment, Git-trust, clean live-start/stop, and ChatGPT-side
+  platform-block evidence. Activated no runtime or transport work.
 - 2026-08-10: Synchronized the accepted and published ChatGPT-First Operating
   V1 truth from LAWB PR #254, updated HAG-04/HAG-05 to published, preserved LAWB
   runtime ownership and approval boundaries, and left Display Pilot/ECO-CP1
