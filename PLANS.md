@@ -190,9 +190,10 @@ complete:
 4. `HAG-05A-CURRENT-TRUTH-AND-CONTRACT-LOCK` — completed;
 5. `HAG-05B-MINIMAL-LOCAL-SURFACE` — completed;
 6. `HAG-05C-ACCEPTANCE-AND-PUBLICATION` — `HAG-05 DONE / PUBLISHED`;
-7. `WORKFLOW-DISPLAY-PILOT-CLOSEOUT-01` — current documentation closeout
-   package; final acceptance/publication is not declared here;
-8. `ECO-CP1-DURABLE-CLOSEOUT-01` — not declared complete here.
+7. `WORKFLOW-DISPLAY-PILOT-CLOSEOUT-01` — `DONE / ACCEPTED / PUBLISHED /
+   DURABLY CLOSED` through LAWB PR #267 and completed Issue #264;
+8. `ECO-CP1-DURABLE-CLOSEOUT-01` — accepted and durably synchronized across
+   canonical LAWB, HGW, and HAG.
 
 The published HAG-05 implementation preserves the accepted product contract:
 
@@ -202,7 +203,7 @@ A CLI-only substitute would be a product-contract change. HAG-05 must not
 silently add a real LLM, credentials, real GitHub mutation, production
 authentication, n8n, background workers, a broad UI framework, or deployment.
 
-The ECO-CP1 target verdict, not asserted by this synchronization, remains:
+The final durable verdict is:
 
 `ECO-CP1 ACCEPTED — STABLE STOP POINT`
 
@@ -210,9 +211,10 @@ Then stop. No later node activates automatically.
 
 ## Display Pilot Closeout
 
-The ChatGPT-first core daily UX is accepted and published. The current Display
-Pilot closeout is a documentation and presentation package, separate from that
-Operating V1 completion line and from ECO-CP1 durable closeout.
+The ChatGPT-first core daily UX is accepted and published. The Display Pilot is
+`DONE / ACCEPTED / PUBLISHED / DURABLY CLOSED` through LAWB PR #267 and Issue
+#264. It remains a documentation and presentation outcome separate from the
+Operating V1 completion line and from final ECO-CP1 acceptance.
 
 Current capability matrix:
 
@@ -254,7 +256,7 @@ the exact engineering path in global `safe.directory`; no wildcard or parent
 directory trust was added. Normal Git recognition and launcher preflight then
 succeeded.
 
-The closeout package is carried only by `README.md`, this file, and
+The published closeout package is carried only by `README.md`, this file, and
 `docs/DISPLAY_PILOT_FOREGROUND_OPERATOR_RUNBOOK.md`. It provides the reference
 host model, execution-progress visibility classification, real success and
 fail-closed evidence maps, recovery guidance, limitations, and a short
@@ -328,6 +330,10 @@ Its historical status does not activate product or Workflow work.
 
 ## Change Log
 
+- 2026-08-13: Recorded Display Pilot publication and durable Issue #264
+  closeout, completed canonical LAWB/HGW/HAG durable-truth synchronization, and
+  established `ECO-CP1 ACCEPTED — STABLE STOP POINT`. No next node was
+  activated.
 - 2026-08-13: Reconciled the Display Pilot documentation package with current
   routed-workspace, request-identity, transient-failure, lifecycle-recovery,
   runtime-realignment, Git-trust, clean live-start/stop, and ChatGPT-side

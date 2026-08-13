@@ -18,6 +18,24 @@ Its shared philosophy is:
 
 This checkpoint describes ecosystem-level strategy. It does not replace fresh Git, GitHub, environment, tool, or authentication verification, and it does not authorize implementation or remote mutation.
 
+## ECO-CP1 closeout position — 2026-08-13
+
+The Display Pilot is `DONE / ACCEPTED / PUBLISHED / DURABLY CLOSED` through
+LAWB PR #267 and completed Issue #264. Operating V1 remains accepted and
+published, LAWB remains the sole canonical daily Workflow runtime/reference
+host, HGW remains non-executing and not cut over, and HAG remains bounded,
+foreground-only, loopback-only, and fake-only.
+
+The final cross-repository state is:
+
+`ECO-CP1 ACCEPTED — STABLE STOP POINT`
+
+Canonical LAWB, HGW, and HAG durable-truth publication and post-merge readback
+are complete. Fresh ChatGPT-direct repaired E2E remains `UNVERIFIED` with a
+platform-blocked qualifier, live execution visibility remains `PARTIAL`, and
+historical #264 Runner/Codex reach remains `UNVERIFIED`. The user-facing
+ChatGPT-only execution transport is not claimed fully solved.
+
 ## Formal components and roles
 
 1. **Semi-Automated AI Engineering Workflow**
@@ -83,17 +101,20 @@ The separation design exists. Physical extraction, a new repository, migration, 
 
 This is a current checkpoint, not an immutable roadmap:
 
-1. Workflow Mainline first priority.
-2. Portfolio evidence packaging should consume verified checkpoints early.
-3. Reverb bounded checkpoint.
-4. Gateway/n8n specification or prototype when prioritized.
-5. Local AI Workbench bounded follow-up only; no broad expansion without value evidence.
+1. Preserve `ECO-CP1 ACCEPTED — STABLE STOP POINT` and stop by default.
+2. Activate no next product or Workflow node automatically. Any later Reverb,
+   Gateway/n8n, LAWB, portfolio, or Workflow work requires a separate strategy
+   decision and bounded approval.
 
-Fresh evidence may update this ordering through explicit strategy review.
+Fresh evidence may update this ordering only through explicit strategy review.
 
 ## Current non-activation boundaries
 
-This checkpoint does not activate Phase 5.4, RV2-04, repository separation, a new repository, Gateway/n8n implementation, or any other implementation node. No commit, push, PR, Issue mutation, dependency change, authentication change, or runtime operation is authorized by this record.
+This checkpoint does not activate Phase 5.4, RV2-04, repository separation, a
+new repository, Independent HGW runtime, HAG-06+, MCP, transport redesign,
+Gateway/n8n implementation, credentials, services, deployment, or any other
+implementation node. No commit, push, PR, Issue mutation, dependency change,
+authentication change, or runtime operation is authorized by this record.
 
 ## ECO-01 outcome
 
