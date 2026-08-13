@@ -214,30 +214,38 @@ The ChatGPT-first core daily UX is accepted and published. The current Display
 Pilot closeout is a documentation and presentation package, separate from that
 Operating V1 completion line and from ECO-CP1 durable closeout.
 
-Current classification:
+Current capability matrix:
 
-- **CONFIRMED:** product/runtime separation; visible bounded Operating V1;
-  routed engineering-workspace success in Issue #263; exact request identity;
-  request-local visibility reset; deterministic/transient/uncertain Dispatcher
-  outcomes; durable reconciliation and duplicate protection; clean Bridge
-  startup and canonical `stop.flag` shutdown after runtime realignment.
-- **UNVERIFIED:** the historical internal execution reach of stranded request
-  `display-pilot-closeout-264-20260812T134800Z-r1`; live stage-by-stage
-  telemetry; and a fresh repaired health-to-real overlap E2E initiated directly
-  by ChatGPT.
-- **PLATFORM-BLOCKED:** in the latest live-ready window, this ChatGPT execution
-  surface blocked the attempted GitHub dispatch write before mutation.
-  Readback found no fresh HEALTH marker, Inbox request, or
-  `LAWBRUNNER-RESULT`. The Bridge was then stopped cleanly with no processed
-  state change.
+| Capability | Classification | Evidence qualifier |
+| --- | --- | --- |
+| Product runtime vs development-workflow separation | **VERIFIED** | The Local Document-to-Knowledge Workbench remains the product; Bridge tooling remains development-workflow tooling. |
+| ChatGPT-First Operating V1 accepted and published | **VERIFIED** | The accepted and published Operating V1 completion line remains distinct from this Display Pilot closeout. |
+| Routed engineering-workspace execution demonstrated by Issue #263 | **VERIFIED** | Issue #263 records the successful routed `run-reviewbundle` dogfood chain. |
+| Explicit dispatch request identity behavior | **VERIFIED** | The Dispatcher selects and validates the explicit request identity. |
+| Request-local execution/reconciliation visibility reset | **VERIFIED** | A new request identity does not inherit the prior request's displayed execution or reconciliation state. |
+| Typed Dispatcher outcomes `20` / `21` / `22` | **VERIFIED** | The outcomes preserve deterministic rejection, uncertain reach, and transient pre-Runner failure semantics. |
+| Durable reconciliation and duplicate/fail-closed protection | **VERIFIED** | Conflicting or unresolved request evidence blocks redispatch and unsafe settlement. |
+| Reference-host launcher preflight plus bounded Bridge start and canonical `stop.flag` shutdown | **VERIFIED** | The realigned reference host passed preflight, started one bounded operator, and later shut down cleanly. |
+| Historical Runner/Codex execution reach for `display-pilot-closeout-264-20260812T134800Z-r1` | **UNVERIFIED** | Absence of a trusted terminal result does not prove that Runner or Codex did or did not execute. |
+| Live execution visibility across Bridge -> Dispatcher -> Runner -> Codex | **PARTIAL** | Bridge/preflight visibility exists, but Dispatcher/Runner/Codex execution progress is largely post-hoc and there is no trusted full live progress stream. |
+| Fresh repaired health-to-real overlap E2E initiated directly by ChatGPT | **UNVERIFIED** | The latest live-ready session was platform-blocked before GitHub mutation; no fresh HEALTH marker, Inbox request, or `LAWBRUNNER-RESULT` was created. |
+| Routine automatic recovery of `NOT_FOUND` dispatched execution uncertainty | **DEFERRED** | Current B3 intentionally preserves unresolved in-flight state and fails closed; this closeout claims no reusable automatic recovery capability. |
 
-The stranded #264 request was recovered only after exact request/session
-identity, dead lock owner, no descendants, no processed record, durable
-reconciliation `NOT_FOUND`, and absence of conflicting evidence were
-established. Canonical exact JSON removal cleared its `in_flight.json`; the
-stale protocol-v2 lock was quarantined with original bytes and hash preserved.
-This recovery makes the host restartable. It does not establish whether Runner
-or Codex historically did or did not execute.
+Normal B3 restart handling of a dispatched request whose durable reconciliation
+is `NOT_FOUND` remains `dispatched_in_flight_uncertain`: it preserves the
+unresolved in-flight evidence and does not redispatch. The stranded #264 request
+later received a separate, explicitly user-approved manual incident recovery
+after exact request/session identity, dead owner, no descendants, request
+expiry, processed exclusion, absence of durable terminal completion, and
+absence of conflicting evidence were adjudicated for that incident. That
+exceptional action removed the exact in-flight record and quarantined the dead
+protocol-v2 lock while preserving its original bytes and hash.
+
+The #264 action was not the normal automatic B3 restart path and does not
+establish a general implemented replay-safe `NOT_FOUND` recovery mechanism.
+Historical Runner/Codex execution reach remains **UNVERIFIED**. Later independent
+runtime-alignment and launcher evidence showed that the host could operate
+again, but that observation does not redefine the B3 recovery contract.
 
 The production launcher initially classified the routed engineering workspace
 as `target_repository_not_git_repository`. The cause was current-user Git

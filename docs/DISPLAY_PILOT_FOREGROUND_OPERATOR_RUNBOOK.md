@@ -20,41 +20,22 @@ package still needs its own explicit authority.
 
 The evidence position as of the current documentation closeout is:
 
-### Confirmed
+| Capability | Classification | Evidence qualifier |
+| --- | --- | --- |
+| Product runtime vs development-workflow separation | **VERIFIED** | The Local Document-to-Knowledge Workbench remains the product; Bridge tooling remains development-workflow tooling. |
+| ChatGPT-First Operating V1 accepted and published | **VERIFIED** | The accepted and published Operating V1 completion line remains distinct from this Display Pilot closeout. |
+| Routed engineering-workspace execution demonstrated by Issue #263 | **VERIFIED** | Issue #263 records the successful routed `run-reviewbundle` dogfood chain. |
+| Explicit dispatch request identity behavior | **VERIFIED** | PR #265 added explicit dispatch request selection and validation. |
+| Request-local execution/reconciliation visibility reset | **VERIFIED** | PR #265 prevents a new request identity from inheriting prior request visibility. |
+| Typed Dispatcher outcomes `20` / `21` / `22` | **VERIFIED** | PR #266 preserves deterministic rejection, uncertain reach, and transient pre-Runner failure semantics. |
+| Durable reconciliation and duplicate/fail-closed protection | **VERIFIED** | Conflicting or unresolved evidence blocks redispatch and unsafe settlement. |
+| Reference-host launcher preflight plus bounded Bridge start and canonical `stop.flag` shutdown | **VERIFIED** | After exact Git trust correction, the realigned host passed preflight, started one bounded operator, and later shut down cleanly. |
+| Historical Runner/Codex execution reach for `display-pilot-closeout-264-20260812T134800Z-r1` | **UNVERIFIED** | Absence of a trusted terminal result does not prove that Runner or Codex did or did not execute. |
+| Live execution visibility across Bridge -> Dispatcher -> Runner -> Codex | **PARTIAL** | Bridge/preflight visibility exists, but Dispatcher/Runner/Codex execution progress is largely post-hoc and there is no trusted full live progress stream. |
+| Fresh repaired health-to-real overlap E2E initiated directly by ChatGPT | **UNVERIFIED** | The latest live-ready session was platform-blocked before GitHub mutation; no fresh HEALTH marker, Inbox request, or `LAWBRUNNER-RESULT` was created. |
+| Routine automatic recovery of `NOT_FOUND` dispatched execution uncertainty | **DEFERRED** | Current B3 preserves unresolved in-flight state and fails closed; no reusable automatic recovery capability is claimed. |
 
-- ChatGPT-First Operating V1 is accepted and published.
-- The stable LAWB checkout can remain the clean control/reference runtime while
-  one separately validated LAWB engineering workspace is the execution target.
-- Requests bind the target repository, branch, and full 40-character HEAD. The
-  local execution route is independently bound by reviewed local-only routing
-  configuration; remote Inbox, Issue, comment, dispatch marker, Task Packet,
-  status, or result text cannot select or override it. A target branch does not
-  need to be named `master`.
-- Issue #263 records a successful routed `run-reviewbundle` dogfood chain.
-- PR #265 added explicit dispatch identity and request-local visibility.
-- PR #266 established typed Bridge `PollOnce` outcomes `20`, `21`, and `22`.
-- Duplicate/conflicting same-request identities, uncertain Runner reach, and
-  unresolved lifecycle evidence remain fail closed.
-- The reference host was realigned to canonical
-  `master@421979ee56b2ee6c97dac67feb0efb92154ed533`; its routed engineering tree
-  matched that canonical tree.
-- After exact Git trust correction, the production launcher recognized the
-  routed workspace, passed preflight, and started one bounded live operator.
-- That live window was later closed through canonical `stop.flag`; the operator,
-  launcher, and descendants exited, the lock was released, and processed state
-  did not change.
-
-### Unverified
-
-- The historical internal execution reach of stranded request
-  `display-pilot-closeout-264-20260812T134800Z-r1` remains unknown. Absence of a
-  durable result is not proof that Runner or Codex did or did not start.
-- There is no live stage-by-stage stream for Dispatcher, Runner, or Codex.
-  Most execution-stage conclusions are post-hoc.
-- The repaired health-to-real overlap path has not completed a fresh
-  ChatGPT-authored live E2E regression.
-
-### Platform-blocked
+### Platform blocker evidence
 
 After the local Bridge became live-ready, supervising ChatGPT attempted to
 publish a fresh HEALTH dispatch. The current ChatGPT execution surface blocked
@@ -148,28 +129,42 @@ borrow this HEALTH success.
 
 ## Real fail-closed evidence map
 
-### Issue #264 stranded request and safe recovery
+### Issue #264 stranded request and exceptional manual incident recovery
 
 ```text
+LAYER 1 — NORMAL B3 CONTRACT
 REAL dispatch comment 5267707353
 -> fixed-Inbox request comment 5267709816
--> Dispatcher nonzero / no trusted matching durable result
--> no processed record for the request
--> in-flight lifecycle evidence preserved
--> later exact recovery review
--> exact request and operator-session identity matched
--> lock owner proven dead; descendants proven absent
+-> no trusted matching durable terminal result
+-> processed-state exclusion
 -> durable reconciliation=NOT_FOUND
--> no conflicting lifecycle or completion evidence
--> exact in_flight JSON removed through canonical removal
+-> execution reach remains uncertain
+-> normal B3 restart result=dispatched_in_flight_uncertain
+-> operator.lock and in_flight.json preserved
+-> no redispatch
+-> no routine quarantine or deletion
+
+LAYER 2 — LATER EXCEPTIONAL MANUAL INCIDENT ACTION
+-> separate explicit user authority
+-> exact request and operator-session identity reviewed
+-> lock owner proven dead; descendants proven absent
+-> historical request expired
+-> no processed completion
+-> no durable terminal completion
+-> no conflicting evidence
+-> exceptional exact in_flight record removal
 -> stale protocol-v2 lock quarantined with original bytes/hash preserved
--> host restartable, historical execution reach still unknown
+-> not normal automatic B3 recovery
+-> not a general replay-safe NOT_FOUND mechanism
+-> historical Runner/Codex execution reach remains UNVERIFIED
 ```
 
-The recovery did not reinterpret the old request as success or definite
-failure. It did not prove that Runner or Codex started, and it did not prove
-that they did not start. It removed only evidence that was safe to settle after
-the full identity and liveness proof.
+The separately authorized incident action did not reinterpret the old request
+as success or definite failure. It did not prove that Runner or Codex started,
+and it did not prove that they did not start. Later independent runtime
+alignment and launcher evidence showed that the host could operate again, but
+that observation does not redefine the normal B3 fail-closed contract or create
+a reusable recovery rule.
 
 ### Current typed Dispatcher boundary
 
@@ -294,7 +289,7 @@ delete `operator.lock` or `in_flight.json` to make preflight pass.
 | Durable result is missing | Classify execution reach as unknown unless structured parent-controlled evidence proves otherwise. Do not treat stderr, silence, or absence of a comment as proof that Runner did not start. |
 | Request identity is ambiguous | Stop. Compare Inbox request ID, target dispatch request ID, repository, Issue, branch, full HEAD, expiry, action, trusted author metadata, and matching result identity. Same-request duplicate/conflict remains fail closed. |
 | ChatGPT-side dispatch cannot be published | Record `platform-blocked`, verify no partial GitHub marker/Inbox/result mutation, and close or pause the live window safely. Manual relay is fallback only and does not validate the target ChatGPT-direct experience. |
-| Dead owner appears quarantine-safe | Use only the canonical recovery path after exact identity, dead/PID-reuse proof, no descendants, and compatible in-flight state are established. Preserve original lock bytes/hash. Do not manually rename or delete lifecycle files. |
+| Dead owner coexists with unresolved dispatched in-flight evidence and `NOT_FOUND` reconciliation | Normal B3 behavior remains fail closed: preserve lifecycle evidence and do not redispatch. Do not delete or quarantine evidence merely because the owner is dead. Any exceptional manual incident recovery requires separate explicit authority and incident-specific adjudication; the prior #264 action creates no reusable rule. Do not manually rename or delete lifecycle files. |
 
 Recovery authority is incident-specific. A prior recovery result does not grant
 permission to recover a new request or start another Bridge.
