@@ -1,6 +1,6 @@
 # Local AI Workbench
 
-`local-ai-workbench` is the working repository for **Local AI Workbench**: a localhost, single-user document-to-knowledge workbench for scanning, searching, reviewing, summarizing, auditing, and exporting local document knowledge artifacts.
+`local-ai-workbench` is the working repository for the **Local Document-to-Knowledge Workbench**: a localhost, single-user workbench for scanning, searching, reviewing, summarizing, auditing, and exporting local document knowledge artifacts.
 
 The public showcase identity is a local-first document-to-knowledge workbench, not a SaaS product and not a background automation platform. The project is intentionally small, inspectable, and local-first so a reviewer can understand exactly where data is read, where artifacts are produced, where Markdown exports are written, and where human approval boundaries sit.
 
@@ -24,42 +24,35 @@ For the safest current engineering status, use `PLANS.md` and `docs/ENGINEERING_
 
 Current baseline:
 
-- `M1` through `M9` complete
-- `v1` complete
-- showcase UI workbench redesign complete
-- writeback safety/boundary chain complete enough as of #197
-- normal project work resumes at #198
-- product direction aligned as a Local Document-to-Knowledge Workbench at #204
-- Obsidian-ready Markdown Export MVP completed through #211
-- export destination intelligence completed through #216
-- current product roadmap recorded at #212 and refreshed after #216
-- ChatGPT-Codex bridge B0 through B3 implementation slices are integrated
-- permanent fixed Bridge Inbox: Issue `#147`
-- Roadmap v2 tracker: Issue `#168`
-- `RV2-00`, `RV2-01`, and `RV2-02` are `DONE`
-- `RV2-03` is the current active Roadmap v2 node in Phase B change-control
-- GitHub Issue #168 and Issue #175 were synchronized on 2026-07-02 and now record RV2-03 as `ACTIVE` -- Phase B change-control
-- GitHub Issue #168 and Issue #175 still record the pre-D1 gate and baseline; they have not yet been synchronized with PR #181 or D1 completion, and that update requires a separately approved GitHub truth-sync operation
-- canonical repository branch: `master`
-- current `master` HEAD is mutable current-state data and must be revalidated from Git at the beginning of each engineering task
-- current accepted repository baseline for this truth sync: `master@de37562670416950a999fae1b46a5efa78bca2a7`
-- PR #179 historical evidence: pre-merge master `853e341d6a32cdbad5fdb7f77b05353187beccf2`, feature head `649212b665264f80c95f940ec713f93dfb9ef0ca`, accepted merge commit `cd22eb73a1ea3f8ccd7efe146a49f567b78f7ea1`
-- PR #181 accepted the D1 standalone durable-evidence reconciliation resolver; feature head `74de2c0818ef6d957aa1498d2330dcfe68ced829` merged as `de37562670416950a999fae1b46a5efa78bca2a7`
-- D1 focused resolver verification reported `59 passed`; final related verification reported `158 passed`
-- D1 is complete as a standalone, read-only prerequisite component only; it does not add production Bridge Operator integration, a real GitHub provider adapter, B3 pre-delegation integration, local `CONSUMED` state reconstruction, reset-time runtime duplicate suppression, or Primary Operational Host live acceptance
-- next controlled gate: RV2-03 D2 Durable Reconciliation Provider And B3 Pre-Delegation Integration
-- D2 is a planned bounded local implementation gate, not yet approved, started, or assigned an implementation branch
-- this documentation truth-sync task does not authorize D2 implementation, live GitHub access, request or result publication, Dispatcher, Runner, Codex delegation, or Primary Operational Host execution
-- RV2-03 Phase A final acceptance passed on 2026-06-30
-- RV2-03 Phase B B0 has been accepted under the corrected oracle and requires no rerun; this does not constitute Phase B/B3 operational acceptance
-- Phase B operational acceptance remains separately gated and required on the user-designated Primary Operational Host before RV2-03 can be `DONE`; the current designated host is the course Windows computer, and the home Windows computer is a Secondary Compatibility Host
-- because the current Primary Operational Host is a restore-card environment, Phase B must prove that reset or loss of local operator state cannot silently rerun a completed request; unavailable, unreadable, malformed, ambiguous, conflicting, multiple, mismatched, or untrusted durable evidence must fail closed
-- optional compatibility evidence from the home Windows computer does not block RV2-03 completion
-- one supervised B4-D `run-reviewbundle` smoke succeeded on clean `master` at full HEAD `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`
-- the successful smoke used manifest SHA-256 `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080` and produced dispatch comment `4795080463`, Inbox comment `4795082149`, Runner review-bundle comment `4795131449`, and matching `LAWBRUNNER-RESULT` comment `4795131543`
-- exactly one B2/Dispatcher/Runner/Codex chain ran; it succeeded with Codex exit code `0`, no retry, no changed files, and a clean final worktree
-- this supervised smoke proves the bounded path, not daily B3 operational acceptance
-- high-risk operations continue to require separate approvals
+- the public product mainline is the Local Document-to-Knowledge Workbench;
+- its local scan, SQLite index, search, deterministic summary, audit, preview,
+  destination check, and Obsidian-ready Markdown export path is implemented;
+- Workflow v1 durable truth is synchronized;
+- ChatGPT-First Operating V1 is accepted and published through PR #254;
+- Bridge Operator, Dispatcher, Runner, and Codex remain development-workflow
+  tooling, not product runtime;
+- the fixed Bridge Inbox remains Issue `#147`;
+- a stable control/reference checkout can route one exact LAWB request to a
+  separate clean engineering workspace bound by repository, branch, and full
+  HEAD;
+- Issue #263 records a successful routed `run-reviewbundle` dogfood chain;
+- current Dispatcher semantics distinguish deterministic pre-Runner rejection,
+  uncertain Runner reach, and proven transient pre-Runner failure;
+- duplicate/conflicting same-request identities and uncertain lifecycle states
+  still fail closed;
+- the latest live-ready Bridge window started cleanly after host Git trust was
+  corrected, then stopped cleanly through `stop.flag` without processing a new
+  request;
+- the attempted fresh ChatGPT-authored HEALTH dispatch was blocked by the
+  current ChatGPT execution surface before GitHub mutation, so the repaired
+  health-to-real overlap path does not yet have fresh ChatGPT-direct live E2E
+  evidence;
+- high-risk and permanent actions still require separate user approval.
+
+Canonical `master` is mutable and must be fresh-verified. At this documentation
+closeout, the reviewed canonical baseline is
+`421979ee56b2ee6c97dac67feb0efb92154ed533`. Older SHAs in Issues and historical
+records remain evidence for those runs, not the current execution binding.
 
 The public product mainline remains the Local Document-to-Knowledge Workbench. Bridge Operator is development workflow tooling and portfolio engineering evidence, not product runtime.
 
@@ -117,7 +110,8 @@ This is different from a normal automation script because success at one step do
 
 Development workflow tooling is separate from the product runtime. It exists as portfolio engineering evidence for a bounded ChatGPT-to-Codex bridge and must not be confused with the Local Document-to-Knowledge Workbench app.
 
-The `src/local_runner_bridge/` modules are local-only workflow control utilities. They include:
+The `src/local_runner_bridge/` modules are local workflow control utilities.
+They include:
 
 - Result Surface builder and sample stdout CLI
 - Task Surface to Result Surface conversion for local text files
@@ -128,13 +122,20 @@ The `src/local_runner_bridge/` modules are local-only workflow control utilities
 - Readiness Gate validator
 - Writeback Implementation Boundary validator
 
-These utilities produce JSON evidence and validation summaries. The verified Lv4.5 bridge baseline also includes PowerShell runner/dispatcher tooling:
+These utilities produce JSON evidence and validation summaries. The current
+bounded workflow path also includes PowerShell operator/dispatcher/runner
+tooling:
 
-- ChatGPT writes an explicit GitHub dispatch request.
-- Dispatcher v1 validates one issue-scoped request.
+- ChatGPT prepares an explicit GitHub dispatch request when the active execution
+  surface permits the write.
+- Bridge Operator watches one fixed Inbox and selects one explicit request.
+- Dispatcher v1 validates the issue-scoped request and its explicit dispatch
+  identity.
 - Supported `PollOnce` actions are `maybe-status-check` and `run-reviewbundle`.
 - Runner v1 can invoke Codex through a bounded ReviewBundle flow.
 - `LAWBRUNNER-RESULT` can be posted to GitHub for ChatGPT review.
+- A stable control checkout may route LAWB execution to one separately validated
+  clean engineering workspace; remote request text cannot select a local path.
 - Windows npm `codex.cmd` compatibility is verified.
 - GitHub CLI resolution through PATH, Program Files, and portable fallback is verified.
 - Commit, push, issue close, label edit, PR creation, merge, and approval chaining remain separate user-approved actions.
@@ -145,13 +146,25 @@ Manual `PollOnce` is the verified Lv4.5 baseline and future recovery path:
 .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
 ```
 
-Manual `PollOnce` remains a recovery path, not the target daily experience. The existing Bridge Operator, Dispatcher, Runner, and Codex chain has completed one supervised B4-D smoke, but B3 daily operational acceptance remains unproven.
+Manual `PollOnce` remains a recovery path, not the target daily experience.
+Operating V1 has published visible login-triggered, bounded Bridge operation and
+restart-safe lifecycle handling. Issue #263 adds current routed-workspace
+success evidence. PR #265 added explicit dispatch identity and request-local
+visibility; PR #266 preserved transient retry safety with typed exits `20`,
+`21`, and `22`. These corrections retain exact branch/full-HEAD binding,
+duplicate suppression, durable reconciliation, and fail-closed uncertainty.
 
-RV2-03 Phase A has implemented and verified host-hardening evidence through A0 Windows host compatibility hardening, A1 Host Check Harness, A2 request lifecycle and `CONSUMED` handling, A3 read-only publication preflight, B2 tool-resolution preflight, fresh-reboot branch recovery, course-computer environment recovery, post-recovery readiness gate, and Recovery Script native-command/auth hardening. GitHub Issue #168 and Issue #175 were last synchronized on 2026-07-02 and still record the pre-D1 gate and baseline; they have not yet been synchronized with PR #181 or D1 completion, and their update requires a separately approved GitHub truth-sync operation. This docs-only task does not modify either Issue. RV2-03 Phase A final acceptance passed on 2026-06-30. PR #177 is merged: `1acfe502271f77b4872d39adf86b687c20fb2396` was the feature head merged through PR #177 into `master@66ad9f64d59718d096dc8a2752e88f8cc44f10d6`. PR #179 records `853e341d6a32cdbad5fdb7f77b05353187beccf2` as pre-merge master, `649212b665264f80c95f940ec713f93dfb9ef0ca` as feature head, and `cd22eb73a1ea3f8ccd7efe146a49f567b78f7ea1` as the accepted merge commit. Those SHAs remain historical evidence, not the current canonical baseline. The canonical repository branch is `master`; current `master` HEAD is mutable current-state data that must be revalidated from Git at the beginning of each engineering task. The current accepted repository baseline for this truth sync is `master@de37562670416950a999fae1b46a5efa78bca2a7`. PR #181 accepted D1 as a standalone durable-evidence reconciliation prerequisite: feature head `74de2c0818ef6d957aa1498d2330dcfe68ced829` merged as `de37562670416950a999fae1b46a5efa78bca2a7`, with reported focused resolver verification of `59 passed` and final related verification of `158 passed`. D1 is standalone and read-only. It does not add production Bridge Operator integration, a real GitHub provider adapter, B3 pre-delegation integration, local `CONSUMED` state reconstruction, reset-time runtime duplicate suppression, or Primary Operational Host live acceptance. RV2-03 remains in Phase B change-control, and Phase B B0 has been accepted under the corrected oracle and requires no rerun, but this does not constitute Phase B/B3 operational acceptance. RV2-03 is not `DONE`. No next runtime implementation branch is approved. The next controlled gate is RV2-03 D2 Durable Reconciliation Provider And B3 Pre-Delegation Integration. D2 remains a planned bounded local implementation gate that requires a separate implementation approval; it is expected to add a read-only provider adapter and connect D1 reconciliation before B3 Dispatcher invocation, with local tests using a fake GitHub client. D2 local implementation does not authorize live GitHub access, request or result publication, Dispatcher, Runner, Codex delegation, or Primary Operational Host execution. The current designated host is the course Windows computer; the home Windows computer is a Secondary Compatibility Host and does not block completion. Because the course host may lose local operator state after reset, cross-reset duplicate suppression or fail-closed reconciliation against trusted durable GitHub request/result evidence remains a critical unproven Phase B acceptance requirement. D2 decision mapping remains planned, not implemented: `COMPLETED` reconstructs or records local `CONSUMED` state and does not invoke Dispatcher; `NOT_FOUND` does not create `CONSUMED` state and may proceed only through existing ordinary delegation gates; `BLOCKED` does not invoke Dispatcher and records a reviewable fail-closed reason; `ERROR` does not invoke Dispatcher and records provider or evidence-read failure. Durable-evidence runtime implementation is not authorized by this docs-only task.
+The latest repaired overlap path is not yet freshly accepted through a
+ChatGPT-authored live dispatch. The local Bridge reached a healthy live-ready
+state, but the ChatGPT-side GitHub write was blocked before mutation. Manual
+relay remains fallback only; this limitation does not activate MCP, a new
+transport, another runtime, or broader authority.
 
 The experimental `feat/lawb-controlled-development-skill` branch is separate, unmerged, and not a mainline capability.
 
-Startup, tray UX, service behavior, MCP, automatic commit/push/close/merge, and approval chaining remain out of scope.
+Tray UX, hidden service behavior, MCP, automatic commit/push/close/merge, and
+approval chaining remain out of scope. The accepted Startup path is a visible,
+bounded logged-in-user-session mechanism, not a hidden Windows service.
 
 The bridge is approved to evolve into reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host. Physical extraction has not started; the current in-repository implementation remains the proven baseline until a separately approved migration implementation passes acceptance. See [`docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md`](docs/CHATGPT_CODEX_BRIDGE_REPOSITORY_SEPARATION_PLAN.md).
 
@@ -349,12 +362,18 @@ That makes the project useful as a public portfolio example of controlled AI-ass
 
 - The app is local and deterministic in the current baseline.
 - Obsidian-ready export means local Markdown output, not an Obsidian plugin or sync engine.
-- The bridge utilities are local-only evidence tools unless explicitly run with an authenticated read-only fetch path.
-- The project intentionally avoids background schedulers and long-running automation.
+- Local validators remain readback-only, while the separately governed Bridge,
+  Dispatcher, and Runner path can read and write its exact GitHub task/result
+  surfaces within an approved bounded run.
+- The product runtime has no background scheduler. The workflow operator is a
+  visible, bounded logged-in-user process rather than a hidden service.
 - Write-like actions remain preview-before-approve work.
 - The current #198 direction is normal project work, not more boundary layering.
 
-See [Project Demo Flow Overview (#198)](docs/PROJECT_DEMO_FLOW_OVERVIEW_198.md) for a concise reviewer-facing path through the app and bridge demos.
+See [Project Demo Flow Overview (#198)](docs/PROJECT_DEMO_FLOW_OVERVIEW_198.md)
+for the product walkthrough and
+[Display Pilot Operating and Interview Guide](docs/DISPLAY_PILOT_FOREGROUND_OPERATOR_RUNBOOK.md)
+for the workflow evidence, limitations, recovery rules, and interview route.
 
 ## Next Practical Work
 
@@ -368,6 +387,8 @@ Good next steps should prioritize visible project value:
 - improve CLI usage examples for local-only bridge utilities
 - tidy API test coverage around preview, approve, and audit events
 - write a developer onboarding guide
+- keep the Display Pilot evidence guide aligned with current routed-workspace
+  and platform-boundary truth
 
 Avoid adding more writeback boundary layers by default.
 
