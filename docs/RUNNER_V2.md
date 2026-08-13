@@ -115,13 +115,22 @@ Required safety behavior for any future consumer:
 - require local repo, branch, and current `HEAD` to match the marker
 - require the marker to be unexpired at validation and immediately before execution
 - fail closed on malformed markers, unknown fields, missing fields, duplicate fields, unsupported actions, repo mismatch, branch mismatch, issue mismatch, `HEAD` mismatch, expired markers, or read failures
-- fail closed if more than one current `CHATGPT-DISPATCH protocol=lawb.dispatch.v1` marker exists for the same issue
-- never choose between duplicate current markers, even if their fields are otherwise valid
+- when no explicit request identity is supplied, fail closed if more than one
+  current `CHATGPT-DISPATCH protocol=lawb.dispatch.v1` marker exists for the
+  same issue
+- when an explicit request identity is supplied, select only that exact
+  `request_id` and fail closed on duplicate or conflicting markers for that
+  identity; another request identity must not override the explicit selection
 - never reinterpret `CHATGPT-DISPATCH` as an approval marker
 - never chain from a dispatch marker into an approval-gated action
 - leave all approval-gated actions blocked until a separate valid `RUNNER-V2-APPROVE` marker or local user approval flow is supplied under that action's own rules
 
-Duplicate handling is intentionally strict. A current marker means a syntactically valid, unexpired `CHATGPT-DISPATCH protocol=lawb.dispatch.v1` line on the selected issue. If zero current markers exist, the dispatcher must do nothing. If exactly one current marker exists, it may continue validation. If two or more current markers exist, including markers with different `request_id` values, it must stop without running any action.
+Duplicate handling remains strict per selected identity. Manual recovery without
+an explicit request ID still requires exactly one current marker on the Issue.
+The Bridge path supplies `-ExpectedDispatchRequestId`; Dispatcher then requires
+exactly one marker with that ID and independently validates its author, expiry,
+Issue, repo, action, branch, full HEAD, and `requested_by`. Other current request
+IDs on the Issue do not invalidate that explicit selection.
 
 Expired markers are non-current for action selection, but malformed or duplicate current markers are stop conditions. A consumer should report the stop reason in human-readable output and, when it posts machine-readable output, use `LAWBRUNNER-RESULT protocol=lawb.runner_result.v1`.
 
@@ -176,7 +185,16 @@ Before delegating, the dispatcher requires the local repo to be clean. A dirty r
 
 `read-final-audit` remains reserved in this slice and fails closed. Commit, push, close, commit-approval, push-approval, and close-approval action names are explicitly forbidden as dispatch actions.
 
-PollOnce requires exactly one current standalone GitHub issue comment whose body is the `CHATGPT-DISPATCH` marker line. It fails closed when there are zero marker comments, duplicate current marker comments, malformed marker fields, expired markers, repo mismatch, issue mismatch, branch mismatch, HEAD mismatch, reserved actions, unsupported actions, or forbidden commit / push / close actions.
+Manual PollOnce without `-ExpectedDispatchRequestId` requires exactly one current
+standalone marker. Bridge Operator supplies the exact Inbox-bound request ID:
+
+```powershell
+.\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -ExpectedDispatchRequestId <ID> -PostResultComment
+```
+
+That form requires exactly one marker for `<ID>` and fails closed on duplicate
+or conflicting same-ID markers. Both forms retain author, expiry, repo, Issue,
+action, branch, full-HEAD, `requested_by`, and local-state validation.
 
 PollOnce emits a stdout result block after a successful allowed action:
 
@@ -192,9 +210,9 @@ Posting the result back to GitHub is explicit opt-in:
 .\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -PostResultComment
 ```
 
-When `-PostResultComment` is supplied, the dispatcher may post exactly one issue comment containing the `LAWBRUNNER-RESULT protocol=lawb.runner_result.v1` marker followed immediately by parseable JSON. It may post only after exactly one current valid dispatch marker is selected on the same explicit issue, the selected action is allowed in dispatch v1, the allowed action completes successfully, and the target result-comment issue is the same explicit `-IssueNumber`.
+When `-PostResultComment` is supplied, the dispatcher may post exactly one issue comment containing the `LAWBRUNNER-RESULT protocol=lawb.runner_result.v1` marker followed immediately by parseable JSON. It may post only after one valid dispatch marker is selected under the applicable manual or explicit-ID contract on the same explicit Issue, the selected action is allowed in dispatch v1, the allowed action completes, and the target result-comment Issue is the same explicit `-IssueNumber`.
 
-Failure states remain stdout-only. The dispatcher must not post a GitHub result comment for zero valid dispatch markers, duplicate current valid markers, expired markers, malformed markers, wrong repo, wrong branch, wrong HEAD, unsupported action, commit action, push action, or close action.
+Failure states remain process-local: human-readable error text may be emitted to stderr, and the dispatcher must not post a GitHub result comment for zero valid dispatch markers, duplicate current valid markers, expired markers, malformed markers, wrong repo, wrong branch, wrong HEAD, unsupported action, commit action, push action, or close action. Bridge explicit-ID `PollOnce` uses typed failure exits 20/21; unrelated legacy modes retain their existing failure exit behavior.
 
 Safety boundaries:
 

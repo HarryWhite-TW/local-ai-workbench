@@ -5,8 +5,9 @@ Runs one safe local CHATGPT-DISPATCH poll for an explicit GitHub issue.
 .DESCRIPTION
 local_dispatcher_v1.ps1 implements manual PollOnce only for
 CHATGPT-DISPATCH protocol=lawb.dispatch.v1. It reads only the explicitly
-selected issue, validates exactly one current standalone dispatch marker, and
-executes only supported bounded dispatcher actions in this slice.
+selected issue, validates either one explicitly identified dispatch marker or
+exactly one current standalone marker for manual recovery, and executes only
+supported bounded dispatcher actions in this slice.
 
 The dispatcher never treats CHATGPT-DISPATCH as approval for commit, push,
 issue close, labels, PRs, merges, force push, or approval chaining.
@@ -27,6 +28,7 @@ param(
     [switch]$PostResultComment,
     [int]$IssueNumber = 0,
     [int[]]$IssueNumbers = @(),
+    [string]$ExpectedDispatchRequestId = "",
     [string]$ReviewedCodexPath = "",
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
@@ -48,6 +50,10 @@ $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $DryRunProtocol = "lawb.dispatch_dry_run.v1"
 $DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
 $ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
+$DispatcherRejectedBeforeRunnerExitCode = 20
+$DispatcherRunnerReachUncertainExitCode = 21
+$script:RunnerMayHaveStarted = $false
+$script:ExplicitDispatchFailureExitEnabled = $false
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
 $targetRepoRootVariable = Get-Variable -Name TargetRepoRoot -ErrorAction SilentlyContinue
 if ($null -eq $targetRepoRootVariable -or [string]::IsNullOrWhiteSpace([string]$targetRepoRootVariable.Value)) {
@@ -88,6 +94,12 @@ $PollOnceSafetyBoundary = "PollOnce reads only the explicit issue and supports o
 $DryRunSafetyBoundary = "DryRunBoundedPoll reads only the explicit issue scope, validates marker selection, prints local decisions, and does not execute dispatch actions, post claim comments, post result comments, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 $BoundedPollSafetyBoundary = "BoundedPoll reads only the explicit issue scope, supports only maybe-status-check execution, executes at most one action per accepted dispatch, and does not run Codex, run runner v1, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 
+function New-DispatcherTemporaryFile {
+    return [pscustomobject]@{
+        FullName = [System.IO.Path]::GetTempFileName()
+    }
+}
+
 function Invoke-ReadOnlyCommand {
     param(
         [Parameter(Mandatory = $true)]
@@ -98,8 +110,8 @@ function Invoke-ReadOnlyCommand {
         [string]$Action
     )
 
-    $stdoutFile = New-TemporaryFile
-    $stderrFile = New-TemporaryFile
+    $stdoutFile = New-DispatcherTemporaryFile
+    $stderrFile = New-DispatcherTemporaryFile
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
@@ -138,8 +150,8 @@ function Invoke-WriteCommand {
         [string]$Action
     )
 
-    $stdoutFile = New-TemporaryFile
-    $stderrFile = New-TemporaryFile
+    $stdoutFile = New-DispatcherTemporaryFile
+    $stderrFile = New-DispatcherTemporaryFile
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
@@ -981,6 +993,7 @@ function Get-ValidatedDispatchSelection {
     param(
         [Parameter(Mandatory = $true)]
         [int]$IssueNumber,
+        [string]$ExpectedRequestId = "",
         [datetime]$NowUtc = [System.DateTime]::UtcNow
     )
 
@@ -1002,17 +1015,40 @@ function Get-ValidatedDispatchSelection {
         $parsedMarkers += ConvertTo-ParsedDispatchMarker -Marker $marker -NowUtc $NowUtc
     }
 
-    $currentMarkers = @($parsedMarkers | Where-Object { $_.IsCurrent })
-    if ($currentMarkers.Count -eq 0) {
-        $latestMarker = $parsedMarkers[$parsedMarkers.Count - 1]
-        throw "No current dispatch marker found for issue #$IssueNumber. Latest marker expired at $($latestMarker.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedRequestId)) {
+        $matchingMarkers = @(
+            $parsedMarkers | Where-Object {
+                [string]::Equals(
+                    [string]$_.Fields["request_id"],
+                    $ExpectedRequestId,
+                    [System.StringComparison]::Ordinal
+                )
+            }
+        )
+        if ($matchingMarkers.Count -eq 0) {
+            throw "No CHATGPT-DISPATCH marker found for issue #$IssueNumber with request_id=$ExpectedRequestId."
+        }
+        if ($matchingMarkers.Count -gt 1) {
+            throw "Duplicate or conflicting CHATGPT-DISPATCH markers found for issue #$IssueNumber request_id=$ExpectedRequestId. Found $($matchingMarkers.Count); exactly one is required."
+        }
+        $selected = $matchingMarkers[0]
+        if (-not $selected.IsCurrent) {
+            throw "Dispatch marker request_id=$ExpectedRequestId expired at $($selected.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+        }
     }
+    else {
+        $currentMarkers = @($parsedMarkers | Where-Object { $_.IsCurrent })
+        if ($currentMarkers.Count -eq 0) {
+            $latestMarker = $parsedMarkers[$parsedMarkers.Count - 1]
+            throw "No current dispatch marker found for issue #$IssueNumber. Latest marker expired at $($latestMarker.ExpiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+        }
 
-    if ($currentMarkers.Count -gt 1) {
-        throw "Ambiguous dispatch markers found for issue #$IssueNumber. Found $($currentMarkers.Count) current CHATGPT-DISPATCH marker comments; exactly one is required."
+        if ($currentMarkers.Count -gt 1) {
+            throw "Ambiguous dispatch markers found for issue #$IssueNumber. Found $($currentMarkers.Count) current CHATGPT-DISPATCH marker comments; exactly one is required."
+        }
+
+        $selected = $currentMarkers[0]
     }
-
-    $selected = $currentMarkers[0]
     $authorLogin = Get-CommentAuthorLogin -Comment $selected.Marker.Comment
     if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value $authorLogin)) {
         throw "Dispatch marker author '$authorLogin' is not trusted."
@@ -1070,6 +1106,7 @@ function Invoke-ReviewBundle {
     $codexPathBinding = Resolve-ReviewBundleCodexPathBinding
     $powerShellHost = Resolve-CurrentPowerShellHostPath
 
+    $script:RunnerMayHaveStarted = $true
     $runnerResult = Invoke-WriteCommand `
         -FilePath $powerShellHost `
         -Arguments (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding) + $(if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal) -or -not [string]::Equals((ConvertTo-NormalizedProviderPath -Path $TargetRepoRoot), (ConvertTo-NormalizedProviderPath -Path $RepoRoot), [System.StringComparison]::OrdinalIgnoreCase)) { @("-Repo", $Repo, "-RepoPath", $TargetRepoRoot) } else { @() })) `
@@ -1478,7 +1515,7 @@ function Publish-RunnerResultComment {
         [string]$Body
     )
 
-    $bodyFile = New-TemporaryFile
+    $bodyFile = New-DispatcherTemporaryFile
     try {
         $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
         [System.IO.File]::WriteAllText($bodyFile.FullName, $Body, $utf8NoBom)
@@ -1576,7 +1613,7 @@ function Invoke-AcceptedDispatchAction {
     }
 
     $validationOverrides = @{
-        dispatch_marker = (New-RunnerValidationResult -Status "passed" -Summary "Exactly one current CHATGPT-DISPATCH marker matched issue, repo, branch, HEAD, expiry, and allowed action.")
+        dispatch_marker = (New-RunnerValidationResult -Status "passed" -Summary "The selected CHATGPT-DISPATCH marker matched request identity, issue, repo, branch, HEAD, expiry, and allowed action.")
         git_status_clean = (New-RunnerValidationResult -Status $(if ($actionResult.StatusSummary -eq "clean") { "passed" } else { "warning" }) -Summary $gitStatusValidationSummary)
         final_head_matches_initial = (New-RunnerValidationResult -Status $(if ($finalHeadMatchesInitial) { "passed" } else { "failed" }) -Summary $(if ($finalHeadMatchesInitial) { "Final full HEAD matches the initial dispatcher observation." } else { "Final full HEAD differs from the initial dispatcher observation." }))
         final_index_clean = (New-RunnerValidationResult -Status $(if ($finalIndexClean) { "passed" } else { "failed" }) -Summary $(if ($finalIndexClean) { "The final staged area was observed clean." } else { "The final staged area contains changes." }))
@@ -1611,6 +1648,8 @@ function Invoke-AcceptedDispatchAction {
 }
 
 function Invoke-PollOnce {
+    $script:ExplicitDispatchFailureExitEnabled = -not [string]::IsNullOrWhiteSpace($ExpectedDispatchRequestId)
+
     if ($IssueNumber -lt 1) {
         throw "PollOnce requires -IssueNumber <N> and scans only that issue."
     }
@@ -1620,7 +1659,9 @@ function Invoke-PollOnce {
     }
 
     Assert-RepoRoot
-    $selection = Get-ValidatedDispatchSelection -IssueNumber $IssueNumber
+    $selection = Get-ValidatedDispatchSelection `
+        -IssueNumber $IssueNumber `
+        -ExpectedRequestId $ExpectedDispatchRequestId
     Invoke-AcceptedDispatchAction -Selection $selection -Issue $IssueNumber -ModeName "PollOnce" -SafetyBoundary $PollOnceSafetyBoundary
 }
 
@@ -1660,6 +1701,31 @@ function Get-ExplicitIssueScope {
     }
 
     return [int[]]$unique
+}
+
+function Get-DispatcherFailureExitCode {
+    if (-not $script:ExplicitDispatchFailureExitEnabled) {
+        return 1
+    }
+    if ($script:RunnerMayHaveStarted) {
+        return $DispatcherRunnerReachUncertainExitCode
+    }
+    return $DispatcherRejectedBeforeRunnerExitCode
+}
+
+function Exit-DispatcherFailure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.ErrorRecord]$ErrorRecord
+    )
+
+    $exitCode = Get-DispatcherFailureExitCode
+    try {
+        [Console]::Error.WriteLine([string]$ErrorRecord.Exception.Message)
+    }
+    finally {
+        exit $exitCode
+    }
 }
 
 function Get-DryRunIssueScope {
@@ -1827,6 +1893,10 @@ try {
         throw "-IssueNumbers is valid only with -DryRunBoundedPoll or -BoundedPoll."
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedDispatchRequestId) -and -not $PollOnce) {
+        throw "-ExpectedDispatchRequestId is valid only with -PollOnce."
+    }
+
     if ($ToolResolutionPreflight) {
         Invoke-ToolResolutionPreflight
     }
@@ -1841,6 +1911,5 @@ try {
     }
 }
 catch {
-    Write-Error $_.Exception.Message
-    exit 1
+    Exit-DispatcherFailure -ErrorRecord $_
 }

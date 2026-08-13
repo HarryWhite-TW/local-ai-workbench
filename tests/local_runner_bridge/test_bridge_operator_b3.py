@@ -25,7 +25,13 @@ from local_runner_bridge.bridge_operator_b3 import (
     read_processed_request_records,
     run_bridge_operator_b3_dry_run_loop,
 )
-from local_runner_bridge.bridge_operator_b2 import DispatcherInvocationResult
+from local_runner_bridge.bridge_operator_b2 import (
+    DISPATCHER_REJECTED_BEFORE_RUNNER,
+    DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
+    DISPATCHER_RUNNER_MAY_HAVE_STARTED,
+    DISPATCHER_RUNNER_REACH_UNCERTAIN_EXIT_CODE,
+    DispatcherInvocationResult,
+)
 from local_runner_bridge.durable_evidence_reconciliation import (
     EvidenceReadResult,
     ProviderStatus,
@@ -34,6 +40,7 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     DISPATCHED_NOT_LOCALLY_SETTLED,
     PREPARED,
     PROCESSED,
+    REJECTED_BEFORE_RUNNER,
     create_lock_payload,
     write_exclusive_json,
 )
@@ -389,6 +396,9 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
         "max_cycles": 1,
         "operator_dispatcher_invocation_performed": True,
         "dispatcher_invoked": True,
+        "dispatcher_execution_reach": None,
+        "runner_reached": None,
+        "codex_reached": None,
         "operator_direct_runner_invoked": False,
         "operator_direct_codex_invoked": False,
         "github_result_writeback_observed": True,
@@ -911,6 +921,86 @@ def test_b3_multi_cycle_safe_wait_log_does_not_reuse_prior_delegation_outcome(
     assert_high_risk_safety(summary)
 
 
+def test_b3c_later_request_does_not_inherit_prior_result_visibility(tmp_path):
+    client = FakeGitHub(
+        target_comments=[
+            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+        ]
+    )
+    calls = []
+
+    def sleeper(_seconds):
+        client.inbox_comments.append(
+            CommentRecord(
+                id=2,
+                body=inbox_marker(
+                    request_id="b3c-real-20260616T080001Z",
+                    target_dispatch_request_id="dispatch-real",
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        client.target_comments.append(
+            CommentRecord(
+                id=30,
+                body=dispatch_marker(
+                    request_id="dispatch-real",
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+
+    def invoker(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            client.target_comments.append(
+                CommentRecord(
+                    id=20,
+                    body=result_comment(),
+                    author="HarryWhite-TW",
+                )
+            )
+            return DispatcherInvocationResult(returncode=0)
+        return DispatcherInvocationResult(
+            returncode=DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
+            execution_reach=DISPATCHER_REJECTED_BEFORE_RUNNER,
+        )
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=ROOT_PATH,
+        state_dir=tmp_path,
+        github_client=client,
+        local_checker=ready(tmp_path),
+        now_utc=NOW,
+        sleeper=sleeper,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        max_cycles=2,
+    )
+
+    assert summary["request_id"] == "b3c-real-20260616T080001Z"
+    assert summary["target_dispatch_request_id"] == "dispatch-real"
+    assert summary["blocked_reasons"] == ["dispatcher_rejected_before_runner"]
+    assert summary["dispatcher_result_writeback_reached"] is False
+    assert summary["dispatcher_result_writeback_verified"] is False
+    assert summary["target_result_verified"] is False
+    assert summary["durable_completion_reconciled"] is False
+    assert summary["durable_reconciliation_decision"] == "NOT_FOUND"
+    assert summary["terminal_result"] == "blocked"
+    assert summary["runner_reached"] is False
+    assert summary["codex_reached"] is False
+    failure = read_json(tmp_path / "last_failure.json")
+    assert failure["request_id"] == "b3c-real-20260616T080001Z"
+    assert failure["dispatcher_result_writeback_reached"] is False
+    assert failure["dispatcher_result_writeback_verified"] is False
+    assert failure["durable_reconciliation_decision"] == "NOT_FOUND"
+    assert failure["runner_reached"] is False
+    assert failure["codex_reached"] is False
+
+
 def test_b3b_reconciled_restart_uses_local_processed_state_before_provider_read(tmp_path):
     client = FakeGitHub(
         target_comments=[
@@ -1221,6 +1311,65 @@ def test_b3c_dispatcher_failures_do_not_write_processed_request(tmp_path):
         assert failure["dispatcher_result_writeback_verified"] is False
         assert not (case_dir / "processed_requests.jsonl").exists()
         assert_high_risk_safety(summary)
+
+
+def test_b3c_structured_pre_runner_rejection_is_settled_without_redispatch(tmp_path):
+    calls = []
+
+    def invoker(**kwargs):
+        calls.append(kwargs)
+        return DispatcherInvocationResult(
+            returncode=DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
+            execution_reach=DISPATCHER_REJECTED_BEFORE_RUNNER,
+        )
+
+    first = run_b3c(tmp_path, dispatcher_invoker=invoker)
+    second_calls = []
+    second = run_b3c(
+        tmp_path,
+        dispatcher_invoker=lambda **kwargs: second_calls.append(kwargs),
+    )
+
+    assert first["blocked_reasons"] == ["dispatcher_rejected_before_runner"]
+    assert first["dispatcher_execution_reach"] == DISPATCHER_REJECTED_BEFORE_RUNNER
+    assert first["runner_reached"] is False
+    assert first["codex_reached"] is False
+    assert len(calls) == 1
+    assert "-ExpectedDispatchRequestId" in calls[0]["args"]
+    expected_index = calls[0]["args"].index("-ExpectedDispatchRequestId")
+    assert calls[0]["args"][expected_index + 1] == "dispatch-151"
+    assert not (tmp_path / "in_flight.json").exists()
+    record = read_processed_request_records(tmp_path / "processed_requests.jsonl")[
+        "b3a-151-20260616T080000Z"
+    ]
+    assert record["completion_source"] == "dispatcher_outcome"
+    assert record["dispatcher_execution_reach"] == DISPATCHER_REJECTED_BEFORE_RUNNER
+    assert record["result_verified"] is False
+    assert record["terminal_settlement"] == "settled_non_success"
+    assert second["dispatcher_invoked"] is False
+    assert second_calls == []
+
+
+def test_b3c_uncertain_dispatcher_reach_remains_fail_closed(tmp_path):
+    calls = []
+    summary = run_b3c(
+        tmp_path,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs)
+        or DispatcherInvocationResult(
+            returncode=DISPATCHER_RUNNER_REACH_UNCERTAIN_EXIT_CODE,
+            execution_reach=DISPATCHER_RUNNER_MAY_HAVE_STARTED,
+        ),
+    )
+
+    assert summary["blocked_reasons"] == ["dispatcher_nonzero_exit"]
+    assert summary["dispatcher_execution_reach"] == DISPATCHER_RUNNER_MAY_HAVE_STARTED
+    assert summary["runner_reached"] is None
+    assert summary["codex_reached"] is None
+    assert read_json(tmp_path / "in_flight.json")["stage"] == (
+        DISPATCHED_NOT_LOCALLY_SETTLED
+    )
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+    assert len(calls) == 1
 
 
 def test_b3b_dispatcher_success_without_verifiable_result_fails_closed(tmp_path):
@@ -2449,6 +2598,69 @@ def test_prepared_restart_is_uncertain_zero_redispatch_and_no_quarantine(tmp_pat
     assert read_json(tmp_path / "in_flight.json")["stage"] == PREPARED
     assert lock_path.read_bytes() == before_lock
     assert list(tmp_path.glob("operator.lock.quarantine.*.json")) == []
+
+
+def test_pre_runner_rejection_restart_settles_locally_without_redispatch(tmp_path):
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            )
+        ],
+    )
+    first_calls = []
+    first = run_b3c(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: first_calls.append(kwargs)
+        or DispatcherInvocationResult(
+            returncode=DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
+            execution_reach=DISPATCHER_REJECTED_BEFORE_RUNNER,
+        ),
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+        lifecycle_fault_injector=inject_at(
+            "after_pre_runner_rejection_before_processed"
+        ),
+    )
+    second_calls = []
+    second = run_b3c(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: second_calls.append(kwargs),
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=lambda _: process_observation("pid_reused"),
+    )
+
+    assert len(first_calls) == 1
+    assert first["in_flight_stage"] == REJECTED_BEFORE_RUNNER
+    assert second["blocked_reasons"] == [
+        "restart_reconciled_terminal_non_success"
+    ]
+    assert second["restart_reconciliation_performed"] is True
+    assert second["dispatcher_execution_reach"] == DISPATCHER_REJECTED_BEFORE_RUNNER
+    assert second["runner_reached"] is False
+    assert second["codex_reached"] is False
+    assert second_calls == []
+    assert not (tmp_path / "in_flight.json").exists()
+    record = read_processed_request_records(tmp_path / "processed_requests.jsonl")[
+        "b3a-151-20260616T080000Z"
+    ]
+    assert record["completion_source"] == "dispatcher_outcome"
+    assert record["terminal_settlement"] == "settled_non_success"
 
 
 @pytest.mark.parametrize("terminal_result", ["success", "failure", "blocked"])

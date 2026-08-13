@@ -200,6 +200,9 @@ def _inspect_bridge_state(
             "DISPATCHED_NOT_LOCALLY_SETTLED": (
                 "dispatched_in_flight_requires_reconciliation"
             ),
+            "REJECTED_BEFORE_RUNNER": (
+                "pre_runner_rejection_requires_local_settlement"
+            ),
             "PROCESSED": "processed_in_flight_requires_local_reconciliation",
         }.get(
             in_flight["lifecycle_stage"],

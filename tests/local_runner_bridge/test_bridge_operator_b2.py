@@ -265,6 +265,7 @@ def test_success_invokes_dispatcher_once_and_verifies_matching_result():
     assert calls[0]["args"] == build_dispatcher_command(
         repo_root=ROOT_PATH,
         target_issue=148,
+        expected_dispatch_request_id="dispatch-148",
         repository="HarryWhite-TW/local-ai-workbench",
     )
     assert summary["tool_resolution_preflight_codex_path_binding"] is None
@@ -311,6 +312,7 @@ def test_run_reviewbundle_preflight_propagates_action_before_dispatch():
     assert calls[0]["args"] == build_dispatcher_command(
         repo_root=ROOT_PATH,
         target_issue=148,
+        expected_dispatch_request_id="dispatch-148",
         repository="HarryWhite-TW/local-ai-workbench",
         reviewed_codex_path=r"C:\Tools\codex.cmd",
     )

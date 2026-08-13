@@ -23,6 +23,9 @@ from local_runner_bridge.bridge_operator_b1 import (
 from local_runner_bridge.bridge_operator_b2 import DEFAULT_INBOX_ISSUE
 from local_runner_bridge.bridge_operator_b2 import (
     DEFAULT_TIMEOUT_SECONDS,
+    DISPATCHER_REJECTED_BEFORE_RUNNER,
+    DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
+    DISPATCHER_RUNNER_MAY_HAVE_STARTED,
     DispatcherInvocationResult,
     build_dispatcher_command,
     default_dispatcher_invoker,
@@ -37,6 +40,7 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     DISPATCHED_NOT_LOCALLY_SETTLED,
     PREPARED,
     PROCESSED,
+    REJECTED_BEFORE_RUNNER,
     LifecycleEvidenceError,
     append_jsonl_durable,
     capture_current_process_identity,
@@ -61,6 +65,7 @@ STATE_PROTOCOL = "lawb.bridge_operator_b3_state.v1"
 OBSERVATION_PROTOCOL = "lawb.bridge_operator_b3_dry_run_observation.v1"
 PROCESSED_REQUEST_PROTOCOL = "lawb.bridge_operator_b3_processed_request.v1"
 FAILURE_PROTOCOL = "lawb.bridge_operator_b3_failure.v1"
+DISPATCHER_OUTCOME_COMPLETION_SOURCE = "dispatcher_outcome"
 B3A_MODE = "b3a-dry-run"
 B3B_MODE = "b3b-maybe-status-check"
 B3C_MODE = "b3c-run-reviewbundle"
@@ -612,8 +617,11 @@ def _base_summary(
         "dispatcher_missing": False,
         "dispatcher_stdout": "",
         "dispatcher_stderr": "",
+        "dispatcher_execution_reach": None,
         "dispatcher_result_writeback_reached": False,
         "dispatcher_result_writeback_verified": False,
+        "runner_reached": None,
+        "codex_reached": None,
         "target_result_verified": False,
         "target_result_comment_id": None,
         "target_result_author": None,
@@ -878,6 +886,18 @@ def _terminal_evidence(reconciliation: Any, now: datetime) -> dict[str, Any]:
     }
 
 
+def _dispatcher_rejection_terminal(request_id: str, now: datetime) -> dict[str, Any]:
+    return {
+        "evidence_id": f"local-dispatcher:{request_id}",
+        "author": "local-dispatcher-v1",
+        "result": "blocked",
+        "settlement": "settled_non_success",
+        "reconciliation_decision": "DISPATCHER_REJECTED_BEFORE_RUNNER",
+        "reconciliation_reason": "STRUCTURED_PRE_RUNNER_REJECTION",
+        "observed_at_utc": _format_time(now),
+    }
+
+
 def _health_probe_request_validity(
     expires: Any,
     now: datetime,
@@ -1024,9 +1044,70 @@ def _recover_existing_in_flight(
         summary["in_flight_stage"] = None
         summary["phase"] = "restart_processed"
         summary["current_delegation_outcome"] = "restart_local_processed_record"
+        if existing.get("completion_source") == DISPATCHER_OUTCOME_COMPLETION_SOURCE:
+            summary["dispatcher_invoked"] = True
+            summary["dispatcher_execution_reach"] = (
+                DISPATCHER_REJECTED_BEFORE_RUNNER
+            )
+            summary["runner_reached"] = False
+            summary["codex_reached"] = False
+            summary["terminal_result"] = existing.get("terminal_result")
+            summary["terminal_settlement"] = existing.get(
+                "terminal_settlement"
+            )
+            summary["terminal_observed_at_utc"] = existing.get(
+                "terminal_observed_at_utc"
+            )
         outcome["settled_non_success"] = (
             existing.get("terminal_settlement") == "settled_non_success"
         )
+        return outcome
+
+    if in_flight["stage"] == REJECTED_BEFORE_RUNNER:
+        terminal = in_flight["terminal_evidence"]
+        b1_identity = _b1_identity_from_in_flight(in_flight)
+        try:
+            _append_dispatcher_rejection_processed_request(
+                state_root,
+                b1_identity,
+                terminal,
+                cycle,
+                now,
+            )
+            processed_in_flight = updated_in_flight_payload(
+                in_flight,
+                stage=PROCESSED,
+                dispatcher_invoked=True,
+                terminal_evidence=terminal,
+                updated_at=now,
+            )
+            write_durable_json(
+                state_root / "in_flight.json",
+                processed_in_flight,
+                operator_session_id=in_flight["operator_session_id"],
+            )
+            remove_exact_json(
+                state_root / "in_flight.json",
+                processed_in_flight,
+            )
+        except (OSError, LifecycleEvidenceError):
+            outcome["reason"] = "restart_processed_transition_failed"
+            return outcome
+        summary["processed_request_written"] = True
+        summary["dispatcher_invoked"] = True
+        summary["dispatcher_execution_reach"] = DISPATCHER_REJECTED_BEFORE_RUNNER
+        summary["runner_reached"] = False
+        summary["codex_reached"] = False
+        summary["terminal_result"] = terminal["result"]
+        summary["terminal_settlement"] = terminal["settlement"]
+        summary["terminal_observed_at_utc"] = terminal["observed_at_utc"]
+        summary["in_flight_present"] = False
+        summary["in_flight_stage"] = None
+        summary["phase"] = "restart_processed"
+        summary["current_delegation_outcome"] = (
+            "restart_dispatcher_rejected_before_runner"
+        )
+        outcome["settled_non_success"] = True
         return outcome
 
     if in_flight["stage"] == PREPARED:
@@ -1296,6 +1377,7 @@ def _delegate_b3_request(
         repo_root=control_repo_root,
         target_repo_root=repo_root,
         target_issue=int(b1_summary["target_issue"]),
+        expected_dispatch_request_id=str(b1_summary["target_dispatch_request_id"]),
         repository=repository,
     )
     summary["dispatcher_invocation_args"] = args
@@ -1321,6 +1403,83 @@ def _delegate_b3_request(
     summary["dispatcher_timed_out"] = bool(invocation.timed_out)
     summary["dispatcher_stdout"] = invocation.stdout
     summary["dispatcher_stderr"] = invocation.stderr
+    summary["dispatcher_execution_reach"] = invocation.execution_reach
+
+    confirmed_pre_runner_rejection = (
+        not summary.get("dispatcher_missing")
+        and not invocation.timed_out
+        and invocation.returncode == DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE
+        and invocation.execution_reach == DISPATCHER_REJECTED_BEFORE_RUNNER
+    )
+    if confirmed_pre_runner_rejection:
+        summary["runner_reached"] = False
+        summary["codex_reached"] = False
+        terminal = _dispatcher_rejection_terminal(request_id, now)
+        rejected_in_flight = updated_in_flight_payload(
+            in_flight,
+            stage=REJECTED_BEFORE_RUNNER,
+            dispatcher_invoked=True,
+            terminal_evidence=terminal,
+            updated_at=now,
+        )
+        try:
+            write_durable_json(
+                in_flight_path,
+                rejected_in_flight,
+                operator_session_id=operator_session_id,
+            )
+        except (OSError, LifecycleEvidenceError):
+            _block(summary, "in_flight_rejection_transition_failed")
+            return "in_flight_rejection_transition_failed"
+        summary["in_flight_stage"] = REJECTED_BEFORE_RUNNER
+        fault_reason = _invoke_lifecycle_fault(
+            lifecycle_fault_injector,
+            "after_pre_runner_rejection_before_processed",
+            summary,
+        )
+        if fault_reason is not None:
+            return fault_reason
+        try:
+            _append_dispatcher_rejection_processed_request(
+                state_root,
+                b1_summary,
+                terminal,
+                cycle,
+                now,
+            )
+        except (OSError, LifecycleEvidenceError):
+            _block(summary, "processed_request_write_failed")
+            return "processed_request_write_failed"
+        summary["processed_request_written"] = True
+        processed_in_flight = updated_in_flight_payload(
+            rejected_in_flight,
+            stage=PROCESSED,
+            dispatcher_invoked=True,
+            terminal_evidence=terminal,
+            updated_at=now,
+        )
+        try:
+            write_durable_json(
+                in_flight_path,
+                processed_in_flight,
+                operator_session_id=operator_session_id,
+            )
+            remove_exact_json(in_flight_path, processed_in_flight)
+        except (OSError, LifecycleEvidenceError):
+            _block(summary, "in_flight_processed_transition_failed")
+            return "in_flight_processed_transition_failed"
+        summary["in_flight_present"] = False
+        summary["in_flight_stage"] = None
+        summary["terminal_result"] = terminal["result"]
+        summary["terminal_settlement"] = terminal["settlement"]
+        summary["terminal_observed_at_utc"] = terminal["observed_at_utc"]
+        summary["current_delegation_outcome"] = DISPATCHER_REJECTED_BEFORE_RUNNER
+        _block(summary, "dispatcher_rejected_before_runner")
+        return "dispatcher_rejected_before_runner"
+
+    if invocation.execution_reach == DISPATCHER_RUNNER_MAY_HAVE_STARTED:
+        summary["runner_reached"] = None
+        summary["codex_reached"] = None
 
     if not summary.get("dispatcher_missing"):
         in_flight = updated_in_flight_payload(
@@ -1470,6 +1629,40 @@ def _append_processed_request(
     append_jsonl_durable(path, payload)
 
 
+def _append_dispatcher_rejection_processed_request(
+    state_dir: Path,
+    b1_summary: dict[str, Any],
+    terminal: dict[str, Any],
+    cycle: int,
+    now: datetime,
+) -> None:
+    payload = {
+        "protocol": PROCESSED_REQUEST_PROTOCOL,
+        "processed_at_utc": _format_time(now),
+        "cycle": cycle,
+        "request_id": b1_summary.get("request_id"),
+        "target_repository": b1_summary.get(
+            "target_repository", b1_summary.get("repository")
+        ),
+        "target_issue": b1_summary.get("target_issue"),
+        "target_dispatch_request_id": b1_summary.get(
+            "target_dispatch_request_id"
+        ),
+        "requested_action": b1_summary.get("requested_action"),
+        "expected_branch": b1_summary.get("expected_branch"),
+        "expected_head": b1_summary.get("expected_head"),
+        "lifecycle_state": CONSUMED,
+        "completion_source": DISPATCHER_OUTCOME_COMPLETION_SOURCE,
+        "dispatcher_invoked": True,
+        "dispatcher_execution_reach": DISPATCHER_REJECTED_BEFORE_RUNNER,
+        "result_verified": False,
+        "terminal_result": terminal["result"],
+        "terminal_settlement": terminal["settlement"],
+        "terminal_observed_at_utc": terminal["observed_at_utc"],
+    }
+    append_jsonl_durable(state_dir / "processed_requests.jsonl", payload)
+
+
 def _append_reconciled_processed_request(
     state_dir: Path,
     b1_summary: dict[str, Any],
@@ -1590,13 +1783,23 @@ def _validate_processed_request_record(payload: Any) -> None:
     if "lifecycle_state" in payload and lifecycle_state != CONSUMED:
         raise ValueError("invalid_processed_request")
     completion_source = payload.get("completion_source")
-    if completion_source is not None and completion_source != "durable_evidence_reconciliation":
+    if completion_source not in {
+        None,
+        "durable_evidence_reconciliation",
+        DISPATCHER_OUTCOME_COMPLETION_SOURCE,
+    }:
         raise ValueError("invalid_processed_request")
     if completion_source == "durable_evidence_reconciliation":
         _validate_reconciled_processed_record(payload)
+    elif completion_source == DISPATCHER_OUTCOME_COMPLETION_SOURCE:
+        _validate_dispatcher_outcome_processed_record(payload)
     elif "dispatcher_invoked" in payload and payload.get("dispatcher_invoked") is not True:
         raise ValueError("invalid_processed_request")
-    if "result_verified" in payload and payload.get("result_verified") is not True:
+    if (
+        completion_source != DISPATCHER_OUTCOME_COMPLETION_SOURCE
+        and "result_verified" in payload
+        and payload.get("result_verified") is not True
+    ):
         raise ValueError("invalid_processed_request")
     terminal_result = payload.get("terminal_result")
     terminal_settlement = payload.get("terminal_settlement")
@@ -1668,6 +1871,19 @@ def _validate_reconciled_processed_record(payload: dict[str, Any]) -> None:
         raise ValueError("invalid_processed_request")
 
 
+def _validate_dispatcher_outcome_processed_record(payload: dict[str, Any]) -> None:
+    if (
+        payload.get("lifecycle_state") != CONSUMED
+        or payload.get("dispatcher_invoked") is not True
+        or payload.get("dispatcher_execution_reach")
+        != DISPATCHER_REJECTED_BEFORE_RUNNER
+        or payload.get("result_verified") is not False
+        or payload.get("terminal_result") != "blocked"
+        or payload.get("terminal_settlement") != "settled_non_success"
+    ):
+        raise ValueError("invalid_processed_request")
+
+
 def _processed_record_matches_b1_identity(
     record: dict[str, Any], b1_summary: dict[str, Any]
 ) -> bool:
@@ -1697,6 +1913,43 @@ def read_processed_request_records(
     return _read_processed_request_records(Path(path), repository=repository)
 
 
+def _reset_request_execution_visibility(summary: dict[str, Any]) -> None:
+    summary.update(
+        {
+            "health_probe_request_remaining_seconds": None,
+            "current_delegation_outcome": None,
+            "durable_reconciliation_performed": False,
+            "durable_reconciliation_decision": None,
+            "durable_reconciliation_reason": None,
+            "durable_reconciliation_matched_evidence_ids": [],
+            "durable_reconciliation_diagnostics": [],
+            "durable_completion_reconciled": False,
+            "terminal_result": None,
+            "terminal_settlement": None,
+            "terminal_observed_at_utc": None,
+            "dispatcher_exit_code": None,
+            "dispatcher_timed_out": False,
+            "dispatcher_missing": False,
+            "dispatcher_stdout": "",
+            "dispatcher_stderr": "",
+            "dispatcher_execution_reach": None,
+            "dispatcher_result_writeback_reached": False,
+            "dispatcher_result_writeback_verified": False,
+            "target_result_verified": False,
+            "target_result_comment_id": None,
+            "target_result_author": None,
+            "runner_reached": None,
+            "codex_reached": None,
+            "operator_direct_execution_performed": False,
+            "dispatcher_invoked": False,
+            "current_failure_recorded": False,
+            "current_failure_reason": None,
+            "last_failure_json_applies_to_current_run": False,
+            "current_run": {},
+        }
+    )
+
+
 def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> None:
     # Latest lifecycle fields describe the most recent B1 evaluation cycle.
     # A consumed-only waiting cycle must clear current-selection visibility.
@@ -1710,9 +1963,19 @@ def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> No
         "selected_request_state",
     ):
         summary[key] = b1_summary.get(key)
-    # Request identity fields describe the last CURRENT request selected during
-    # this B3 run. Later waiting cycles must not erase already-processed evidence.
+    # Waiting cycles retain the most recent request for status visibility, but a
+    # different CURRENT request must start with fresh execution/result fields.
     if b1_summary.get("selected_request_state") == "CURRENT":
+        previous_identity = (
+            summary.get("target_repository"),
+            summary.get("request_id"),
+        )
+        next_identity = (
+            b1_summary.get("target_repository", b1_summary.get("repository")),
+            b1_summary.get("request_id"),
+        )
+        if previous_identity != next_identity:
+            _reset_request_execution_visibility(summary)
         for key in (
             "request_id",
             "target_repository",
@@ -1735,6 +1998,9 @@ def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
             summary.get("operator_direct_execution_performed")
         ),
         "dispatcher_invoked": bool(summary.get("dispatcher_invoked")),
+        "dispatcher_execution_reach": summary.get("dispatcher_execution_reach"),
+        "runner_reached": summary.get("runner_reached"),
+        "codex_reached": summary.get("codex_reached"),
         "operator_direct_runner_invoked": bool(summary.get("runner_invoked")),
         "operator_direct_codex_invoked": bool(summary.get("codex_invoked")),
         "github_result_writeback_observed": bool(
@@ -1839,6 +2105,7 @@ def _record_failure(state_dir: Path, summary: dict[str, Any], reason: str, now: 
         "inbox_issue": summary["configured_inbox_issue"],
         "request_id": summary.get("request_id"),
         "dispatcher_reached": bool(summary.get("dispatcher_invoked")),
+        "dispatcher_execution_reach": summary.get("dispatcher_execution_reach"),
         "dispatcher_result_writeback_reached": bool(
             summary.get("dispatcher_result_writeback_reached")
         ),
@@ -1857,8 +2124,8 @@ def _record_failure(state_dir: Path, summary: dict[str, Any], reason: str, now: 
             summary.get("durable_reconciliation_diagnostics", [])
         ),
         "durable_completion_reconciled": bool(summary.get("durable_completion_reconciled")),
-        "runner_reached": False,
-        "codex_reached": False,
+        "runner_reached": summary.get("runner_reached"),
+        "codex_reached": summary.get("codex_reached"),
         "github_write_reached": bool(summary.get("github_write_performed")),
         "current_run": summary["current_run"],
         "current_failure_recorded": True,
@@ -1886,6 +2153,7 @@ def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]
         "expired_request_count": summary.get("expired_request_count"),
         "selected_request_state": summary.get("selected_request_state"),
         "dispatcher_invoked": bool(summary.get("dispatcher_invoked")),
+        "dispatcher_execution_reach": summary.get("dispatcher_execution_reach"),
         "dispatcher_result_writeback_reached": bool(
             summary.get("dispatcher_result_writeback_reached")
         ),
@@ -1907,6 +2175,8 @@ def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]
         "current_delegation_outcome": summary.get("current_delegation_outcome"),
         "runner_invoked": False,
         "codex_invoked": False,
+        "runner_reached": summary.get("runner_reached"),
+        "codex_reached": summary.get("codex_reached"),
         "github_write_performed": False,
         "current_run": summary["current_run"],
         "current_failure_recorded": bool(summary.get("current_failure_recorded")),
