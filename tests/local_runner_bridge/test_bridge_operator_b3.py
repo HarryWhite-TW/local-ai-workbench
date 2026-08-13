@@ -26,6 +26,8 @@ from local_runner_bridge.bridge_operator_b3 import (
     run_bridge_operator_b3_dry_run_loop,
 )
 from local_runner_bridge.bridge_operator_b2 import (
+    DISPATCHER_FAILED_BEFORE_RUNNER,
+    DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE,
     DISPATCHER_REJECTED_BEFORE_RUNNER,
     DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
     DISPATCHER_RUNNER_MAY_HAVE_STARTED,
@@ -964,8 +966,8 @@ def test_b3c_later_request_does_not_inherit_prior_result_visibility(tmp_path):
             )
             return DispatcherInvocationResult(returncode=0)
         return DispatcherInvocationResult(
-            returncode=DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
-            execution_reach=DISPATCHER_REJECTED_BEFORE_RUNNER,
+            returncode=DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE,
+            execution_reach=DISPATCHER_FAILED_BEFORE_RUNNER,
         )
 
     summary = run_bridge_operator_b3_dry_run_loop(
@@ -977,21 +979,33 @@ def test_b3c_later_request_does_not_inherit_prior_result_visibility(tmp_path):
         sleeper=sleeper,
         mode=B3C_MODE,
         dispatcher_invoker=invoker,
-        timeout_seconds=30,
+        timeout_seconds=180,
         max_cycles=2,
     )
 
     assert summary["request_id"] == "b3c-real-20260616T080001Z"
     assert summary["target_dispatch_request_id"] == "dispatch-real"
-    assert summary["blocked_reasons"] == ["dispatcher_rejected_before_runner"]
+    assert summary["blocked_reasons"] == ["dispatcher_pre_runner_transient_failure"]
+    assert summary["processed_request_written"] is False
+    assert summary["processed_request_already_seen"] is False
+    assert summary["effective_dispatcher_timeout_seconds"] == 180
+    assert "dispatch-real" in summary["dispatcher_invocation_args"]
     assert summary["dispatcher_result_writeback_reached"] is False
     assert summary["dispatcher_result_writeback_verified"] is False
     assert summary["target_result_verified"] is False
     assert summary["durable_completion_reconciled"] is False
     assert summary["durable_reconciliation_decision"] == "NOT_FOUND"
-    assert summary["terminal_result"] == "blocked"
+    assert summary["terminal_result"] is None
+    assert summary["terminal_settlement"] is None
+    assert summary["terminal_observed_at_utc"] is None
     assert summary["runner_reached"] is False
     assert summary["codex_reached"] is False
+    assert summary["current_run"]["current_failure_recorded"] is True
+    assert summary["current_run"]["current_failure_reason"] == (
+        "dispatcher_pre_runner_transient_failure"
+    )
+    assert calls[0]["timeout_seconds"] == 120
+    assert calls[1]["timeout_seconds"] == 180
     failure = read_json(tmp_path / "last_failure.json")
     assert failure["request_id"] == "b3c-real-20260616T080001Z"
     assert failure["dispatcher_result_writeback_reached"] is False
@@ -1348,6 +1362,37 @@ def test_b3c_structured_pre_runner_rejection_is_settled_without_redispatch(tmp_p
     assert record["terminal_settlement"] == "settled_non_success"
     assert second["dispatcher_invoked"] is False
     assert second_calls == []
+
+
+def test_b3c_transient_pre_runner_failure_allows_later_independent_retry(tmp_path):
+    first_calls = []
+    first = run_b3c(
+        tmp_path,
+        dispatcher_invoker=lambda **kwargs: first_calls.append(kwargs)
+        or DispatcherInvocationResult(
+            returncode=DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE,
+            execution_reach=DISPATCHER_FAILED_BEFORE_RUNNER,
+        ),
+    )
+    assert first["blocked_reasons"] == ["dispatcher_pre_runner_transient_failure"]
+    assert first["dispatcher_execution_reach"] == DISPATCHER_FAILED_BEFORE_RUNNER
+    assert first["runner_reached"] is False
+    assert first["codex_reached"] is False
+    assert first["processed_request_written"] is False
+    assert len(first_calls) == 1
+    assert not (tmp_path / "in_flight.json").exists()
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+
+    second_calls = []
+    second = run_b3c(
+        tmp_path,
+        dispatcher_invoker=lambda **kwargs: second_calls.append(kwargs)
+        or DispatcherInvocationResult(returncode=0),
+    )
+
+    assert second["result"] == "success"
+    assert second["processed_request_written"] is True
+    assert len(second_calls) == 1
 
 
 def test_b3c_uncertain_dispatcher_reach_remains_fail_closed(tmp_path):

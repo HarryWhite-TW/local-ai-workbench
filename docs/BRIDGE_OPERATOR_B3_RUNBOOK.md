@@ -493,10 +493,12 @@ The durable ordering states are:
    been invoked, but no durable processed record exists. Restart settles only
    one trusted identity-matching terminal result; every other outcome remains
    uncertain and is never retried.
-4. `REJECTED_BEFORE_RUNNER`: Dispatcher returned the parent-controlled
-   pre-Runner rejection outcome. Restart completes only the local terminal
-   non-success settlement; it does not redispatch and does not claim a GitHub
-   result was written.
+4. `REJECTED_BEFORE_RUNNER`: Dispatcher returned the parent-controlled,
+   deterministic pre-Runner admission-rejection outcome. Restart completes only
+   the local terminal non-success settlement; it does not redispatch and does
+   not claim a GitHub result was written. A typed transient or environmental
+   failure proven before Runner does not enter this terminal stage or create a
+   processed record, so a later independent operator run may retry it.
 5. `PROCESSED`: the processed record is durable; restart skips the request and
    clears only the exact matching in-flight evidence.
 

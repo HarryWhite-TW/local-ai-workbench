@@ -589,20 +589,34 @@ def test_explicit_request_id_rejects_duplicate_or_conflicting_same_identity(tmp_
     assert "RUNNER_CALLS=0" in result.stdout
 
 
-def test_dispatcher_failure_exit_code_distinguishes_pre_runner_from_uncertain(tmp_path):
+def test_dispatcher_failure_exit_code_distinguishes_deterministic_transient_and_uncertain(
+    tmp_path,
+):
     result = run_dispatcher_core_script(
         tmp_path,
         """
+        try {
+            Throw-DeterministicAdmissionRejection -Message "deterministic rejection"
+        } catch {
+            $deterministicError = $_
+        }
+        try {
+            throw "transient failure"
+        } catch {
+            $transientError = $_
+        }
         $script:ExplicitDispatchFailureExitEnabled = $true
         $script:RunnerMayHaveStarted = $false
-        Write-Host "PRE_RUNNER_EXIT=$(Get-DispatcherFailureExitCode)"
+        Write-Host "REJECTION_EXIT=$(Get-DispatcherFailureExitCode -ErrorRecord $deterministicError)"
+        Write-Host "TRANSIENT_EXIT=$(Get-DispatcherFailureExitCode -ErrorRecord $transientError)"
         $script:RunnerMayHaveStarted = $true
-        Write-Host "UNCERTAIN_EXIT=$(Get-DispatcherFailureExitCode)"
+        Write-Host "UNCERTAIN_EXIT=$(Get-DispatcherFailureExitCode -ErrorRecord $transientError)"
         """,
     )
 
     assert_success(result)
-    assert "PRE_RUNNER_EXIT=20" in result.stdout
+    assert "REJECTION_EXIT=20" in result.stdout
+    assert "TRANSIENT_EXIT=22" in result.stdout
     assert "UNCERTAIN_EXIT=21" in result.stdout
 
 
@@ -627,6 +641,26 @@ def test_dispatcher_entrypoint_returns_structured_pre_runner_rejection_code(tmp_
     assert "Duplicate or conflicting CHATGPT-DISPATCH markers" in (
         result.stdout + result.stderr
     )
+
+
+def test_dispatcher_entrypoint_returns_transient_pre_runner_failure_code(tmp_path):
+    result = run_dispatcher_script(
+        tmp_path,
+        """
+        $ExpectedDispatchRequestId = "req-real-83"
+        function Get-IssueDispatchMarkerReadResult {
+            throw "simulated transient GitHub read failure"
+        }
+        try {
+            Invoke-PollOnce
+        } catch {
+            Exit-DispatcherFailure -ErrorRecord $_
+        }
+        """,
+    )
+
+    assert result.returncode == 22
+    assert "simulated transient GitHub read failure" in result.stdout + result.stderr
 
 
 def test_dispatcher_entrypoint_preserves_uncertainty_after_runner_start(tmp_path):
