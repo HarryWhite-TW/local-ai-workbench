@@ -2040,6 +2040,10 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
 
     $previousPath = $env:PATH
     $previousPythonPath = $env:PYTHONPATH
+    $workflowNotificationSettingWasPresent = Test-Path `
+        -LiteralPath "Env:\LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED"
+    $previousWorkflowNotificationSetting = `
+        $env:LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED
     try {
         $runtimeDirectories = @(
             (Split-Path -Parent $reviewedPythonPath),
@@ -2055,6 +2059,7 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
         else {
             $srcPath + ";" + $previousPythonPath
         }
+        $env:LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED = "1"
 
         $operatorResult = Invoke-CapturedNative `
             -CommandPath $reviewedPythonPath `
@@ -2089,6 +2094,15 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
     finally {
         $env:PATH = $previousPath
         $env:PYTHONPATH = $previousPythonPath
+        if ($workflowNotificationSettingWasPresent) {
+            $env:LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED = `
+                $previousWorkflowNotificationSetting
+        }
+        else {
+            Remove-Item `
+                -LiteralPath "Env:\LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED" `
+                -ErrorAction SilentlyContinue
+        }
     }
 }
 
