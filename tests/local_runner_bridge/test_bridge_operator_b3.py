@@ -46,6 +46,10 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     create_lock_payload,
     write_exclusive_json,
 )
+from local_runner_bridge.workflow_result_notifications import (
+    SUBMITTED,
+    NotificationSubmission,
+)
 
 NOW = datetime(2026, 6, 16, 8, 0, 0, tzinfo=timezone.utc)
 HEAD = "3aedc4925e9da241429a7905418b6a815fd9ee37"
@@ -1364,6 +1368,29 @@ def test_b3c_structured_pre_runner_rejection_is_settled_without_redispatch(tmp_p
     assert second_calls == []
 
 
+def test_b3c_notifies_immediately_after_structured_pre_runner_rejection(tmp_path):
+    notifications = []
+
+    summary = run_b3c(
+        tmp_path,
+        dispatcher_invoker=lambda **_: DispatcherInvocationResult(
+            returncode=DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE,
+            execution_reach=DISPATCHER_REJECTED_BEFORE_RUNNER,
+        ),
+        workflow_notifications_enabled=True,
+        notification_submitter=lambda title, message: notifications.append(
+            (title, message)
+        )
+        or NotificationSubmission(SUBMITTED, "fake_api_returned", True),
+    )
+
+    assert summary["blocked_reasons"] == ["dispatcher_rejected_before_runner"]
+    assert summary["workflow_notification_submitted_count"] == 1
+    assert len(notifications) == 1
+    assert "no Runner or Codex success is claimed" in notifications[0][1]
+    assert "awaiting ChatGPT review" in notifications[0][1]
+
+
 def test_b3c_transient_pre_runner_failure_allows_later_independent_retry(tmp_path):
     first_calls = []
     first = run_b3c(
@@ -1583,6 +1610,28 @@ def test_b3b_terminal_failure_is_verified_and_settled_non_success(tmp_path):
     assert record["terminal_observed_at_utc"] == "2026-06-16T08:00:00Z"
     assert not (tmp_path / "in_flight.json").exists()
     assert_high_risk_safety(summary)
+
+
+def test_b3c_notifies_once_after_durable_verified_success(tmp_path):
+    notifications = []
+
+    summary = run_b3c(
+        tmp_path,
+        workflow_notifications_enabled=True,
+        notification_submitter=lambda title, message: notifications.append(
+            (title, message)
+        )
+        or NotificationSubmission(SUBMITTED, "fake_api_returned", True),
+    )
+
+    assert summary["result"] == "success"
+    assert summary["target_result_verified"] is True
+    assert summary["workflow_notification_activation_created"] is True
+    assert summary["workflow_notification_submitted_count"] == 1
+    assert summary["workflow_notification_ambiguous_count"] == 0
+    assert len(notifications) == 1
+    assert "completed successfully" in notifications[0][1]
+    assert "awaiting ChatGPT review" in notifications[0][1]
 
 
 def test_b3b_already_processed_request_does_not_rerun_dispatcher(tmp_path):

@@ -515,6 +515,7 @@ if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo INVOCATION
 if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo ARGS=%*
 if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo PATH=%PATH%
 if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo PYTHONPATH=%PYTHONPATH%
+if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED=%LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED%
 if not "%B3C_TEST_OPERATOR_STDERR%"=="" 1>&2 echo %B3C_TEST_OPERATOR_STDERR%
 if not "%B3C_TEST_OPERATOR_JSON%"=="" type "%B3C_TEST_OPERATOR_JSON%"
 if "%B3C_TEST_OPERATOR_EXIT%"=="" exit /b 0
@@ -1530,6 +1531,7 @@ def test_foreground_child_receives_process_local_path_and_pythonpath(
     assert str(harness.gh.parent) in log
     assert str(harness.codex.parent) in log
     assert str(harness.repo / "src") in log
+    assert "LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED=1" in log
     assert os.environ["PATH"] == parent_path
     assert payload["path_binding_scope"] == "process_only"
     assert payload["path_persisted"] is False

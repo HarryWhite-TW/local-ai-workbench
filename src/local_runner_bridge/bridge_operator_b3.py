@@ -60,6 +60,10 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     write_durable_json,
     write_exclusive_json,
 )
+from local_runner_bridge.workflow_result_notifications import (
+    NotificationSubmission,
+    process_new_workflow_result_notifications,
+)
 
 SUMMARY_PROTOCOL = "lawb.bridge_operator_b3_dry_run_loop_summary.v1"
 HEARTBEAT_PROTOCOL = "lawb.bridge_operator_b3_heartbeat.v1"
@@ -114,6 +118,8 @@ def run_bridge_operator_b3_dry_run_loop(
     process_identity: dict[str, Any] | None = None,
     process_probe: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     lifecycle_fault_injector: Callable[[str], None] | None = None,
+    workflow_notifications_enabled: bool | None = None,
+    notification_submitter: Callable[[str, str], NotificationSubmission] | None = None,
 ) -> dict[str, Any]:
     """Run a visible bounded loop, dry-run by default."""
     control_root = Path(control_repo_root if control_repo_root is not None else repo_root).resolve()
@@ -127,6 +133,12 @@ def run_bridge_operator_b3_dry_run_loop(
         else DEFAULT_TIMEOUT_SECONDS
     )
     summary["configured_timeout_seconds"] = configured_timeout
+    notifications_enabled = (
+        workflow_notifications_enabled
+        if workflow_notifications_enabled is not None
+        else os.environ.get("LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED") == "1"
+    )
+    summary["workflow_notifications_enabled"] = notifications_enabled
     started_at = _now(now_utc)
     session_id = operator_session_id or uuid4().hex
     try:
@@ -247,6 +259,14 @@ def run_bridge_operator_b3_dry_run_loop(
                 _record_failure(state_root, summary, reason, _now(now_utc))
                 _write_log(state_root, "blocked", reason, summary)
                 return _finalize_summary(summary)
+            _process_workflow_notifications(
+                state_root=state_root,
+                operator_session_id=session_id,
+                summary=summary,
+                enabled=notifications_enabled,
+                submitter=notification_submitter,
+                now_utc=now_utc,
+            )
             recovery = _recover_existing_in_flight(
                 state_root=state_root,
                 in_flight=existing_in_flight,
@@ -256,6 +276,14 @@ def run_bridge_operator_b3_dry_run_loop(
                 cycle=0,
                 now=_now(now_utc),
                 summary=summary,
+            )
+            _process_workflow_notifications(
+                state_root=state_root,
+                operator_session_id=session_id,
+                summary=summary,
+                enabled=notifications_enabled,
+                submitter=notification_submitter,
+                now_utc=now_utc,
             )
             if recovery["reason"] is not None:
                 reason = str(recovery["reason"])
@@ -318,6 +346,14 @@ def run_bridge_operator_b3_dry_run_loop(
         return _finalize_summary(summary)
 
     try:
+        _process_workflow_notifications(
+            state_root=state_root,
+            operator_session_id=session_id,
+            summary=summary,
+            enabled=notifications_enabled,
+            submitter=notification_submitter,
+            now_utc=now_utc,
+        )
         summary["lock_acquired"] = True
         summary["loop_started"] = True
         summary["result"] = "success"
@@ -412,6 +448,14 @@ def run_bridge_operator_b3_dry_run_loop(
                                 operator_session_id=session_id,
                                 process_identity=current_process_identity,
                                 lifecycle_fault_injector=lifecycle_fault_injector,
+                            )
+                            _process_workflow_notifications(
+                                state_root=state_root,
+                                operator_session_id=session_id,
+                                summary=summary,
+                                enabled=notifications_enabled,
+                                submitter=notification_submitter,
+                                now_utc=now_utc,
                             )
                             if reason is not None:
                                 if reason in NONFATAL_REQUEST_REJECTION_REASONS:
@@ -529,6 +573,53 @@ def run_bridge_operator_b3_dry_run_loop(
                 _block(summary, "lock_release_failed")
 
 
+def _process_workflow_notifications(
+    *,
+    state_root: Path,
+    operator_session_id: str,
+    summary: dict[str, Any],
+    enabled: bool,
+    submitter: Callable[[str, str], NotificationSubmission] | None,
+    now_utc: Callable[[], datetime] | datetime | None,
+) -> None:
+    if not enabled:
+        return
+    summary["workflow_notification_scan_count"] += 1
+    try:
+        notification_result = process_new_workflow_result_notifications(
+            state_dir=state_root,
+            operator_session_id=operator_session_id,
+            submitter=submitter,
+            now_utc=now_utc,
+        )
+    except Exception as error:
+        summary["workflow_notification_ambiguous_count"] += 1
+        summary["workflow_notification_last_status"] = (
+            f"notification_processor_error:{type(error).__name__}"
+        )
+        return
+    summary["workflow_notification_activation_created"] = bool(
+        summary["workflow_notification_activation_created"]
+        or notification_result.get("activation_created")
+    )
+    summary["workflow_notification_records_considered"] += int(
+        notification_result.get("records_considered", 0)
+    )
+    summary["workflow_notification_submitted_count"] += int(
+        notification_result.get("submitted_count", 0)
+    )
+    summary["workflow_notification_ambiguous_count"] += int(
+        notification_result.get("ambiguous_count", 0)
+    )
+    summary["workflow_notification_last_status"] = notification_result.get(
+        "status", "unknown"
+    )
+    if notification_result.get("last_notification_id") is not None:
+        summary["workflow_notification_last_id"] = notification_result[
+            "last_notification_id"
+        ]
+
+
 def _base_summary(
     repository: str,
     inbox_issue: int,
@@ -629,6 +720,14 @@ def _base_summary(
         "target_result_verified": False,
         "target_result_comment_id": None,
         "target_result_author": None,
+        "workflow_notifications_enabled": False,
+        "workflow_notification_scan_count": 0,
+        "workflow_notification_activation_created": False,
+        "workflow_notification_records_considered": 0,
+        "workflow_notification_submitted_count": 0,
+        "workflow_notification_ambiguous_count": 0,
+        "workflow_notification_last_status": "disabled",
+        "workflow_notification_last_id": None,
         "operator_direct_execution_performed": False,
         "current_failure_recorded": False,
         "current_failure_reason": None,
