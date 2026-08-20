@@ -398,6 +398,11 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
     assert summary["current_run"] == {
         "request_id": "b3a-151-20260616T080000Z",
         "issue_number": 151,
+        "lifecycle": {
+            "stage": "TERMINAL_RESULT_READY",
+            "certainty": "verified",
+            "basis": "trusted_terminal_result",
+        },
         "mode": "b3b-maybe-status-check",
         "max_cycles": 1,
         "operator_dispatcher_invocation_performed": True,
@@ -925,6 +930,40 @@ def test_b3_multi_cycle_safe_wait_log_does_not_reuse_prior_delegation_outcome(
     ]
     assert not (tmp_path / "last_failure.json").exists()
     assert_high_risk_safety(summary)
+
+
+def test_current_run_lifecycle_visibility_is_request_local_and_keeps_uncertainty_explicit():
+    accepted = bridge_operator_b3._current_run_visibility(
+        {
+            "request_id": "current-request",
+            "target_issue": 151,
+            "selected_request_state": "CURRENT",
+        }
+    )
+    uncertain = bridge_operator_b3._current_run_visibility(
+        {
+            "request_id": "current-request",
+            "target_issue": 151,
+            "selected_request_state": "CURRENT",
+            "dispatcher_invoked": True,
+            "dispatcher_execution_reach": DISPATCHER_RUNNER_MAY_HAVE_STARTED,
+        }
+    )
+    reset = bridge_operator_b3._current_run_visibility({})
+
+    assert accepted["request_id"] == "current-request"
+    assert accepted["lifecycle"]["stage"] == "REQUEST_ACCEPTED"
+    assert uncertain["lifecycle"] == {
+        "stage": "RUNNER_OR_CODEX_REACH_UNCERTAIN",
+        "certainty": "unknown",
+        "basis": "dispatcher_runner_reach_uncertain",
+    }
+    assert reset["request_id"] is None
+    assert reset["lifecycle"] == {
+        "stage": "UNKNOWN",
+        "certainty": "unknown",
+        "basis": "no_current_request_evidence",
+    }
 
 
 def test_b3c_later_request_does_not_inherit_prior_result_visibility(tmp_path):

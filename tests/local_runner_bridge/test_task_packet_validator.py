@@ -220,6 +220,52 @@ def test_v1_1_valid_packet_returns_normalized_runtime_contract():
     }
 
 
+def test_v1_1_execution_route_is_normalized_without_expanding_authority():
+    packet = VALID_PACKET_V1_1 + (
+        "execution_route:\n"
+        "  model: gpt-5.6-terra\n"
+        "  reasoning_effort: high\n"
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "success"
+    assert summary["runtime_contract"]["execution_route"] == {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "high",
+    }
+    assert summary["runtime_contract"]["allowed_files"] == [
+        "src/local_runner_bridge/task_packet_validator.py"
+    ]
+    assert summary["runtime_contract"]["scope_expansion_allowed"] is False
+
+
+def test_v1_1_execution_route_rejects_unsafe_or_unknown_values():
+    invalid_model = VALID_PACKET_V1_1 + (
+        "execution_route:\n"
+        "  model: gpt-5.6-terra --dangerously-bypass-approvals-and-sandbox\n"
+        "  reasoning_effort: high\n"
+    )
+    invalid_effort = VALID_PACKET_V1_1 + (
+        "execution_route:\n"
+        "  model: gpt-5.6-terra\n"
+        "  reasoning_effort: unsupported\n"
+    )
+    unknown_field = VALID_PACKET_V1_1 + (
+        "execution_route:\n"
+        "  model: gpt-5.6-terra\n"
+        "  reasoning_effort: high\n"
+        "  fallback_model: gpt-5.5\n"
+    )
+
+    assert "invalid_execution_route_model" in validate_task_packet(invalid_model)["errors"]
+    assert (
+        "invalid_execution_route_reasoning_effort"
+        in validate_task_packet(invalid_effort)["errors"]
+    )
+    assert "execution_route_unknown_fields" in validate_task_packet(unknown_field)["errors"]
+
+
 def test_v1_valid_packet_does_not_claim_runtime_contract_binding():
     summary = validate_task_packet(VALID_PACKET)
 

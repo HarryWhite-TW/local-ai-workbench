@@ -2198,10 +2198,63 @@ def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> No
             summary[key] = b1_summary.get(key)
 
 
+def _request_lifecycle_visibility(summary: dict[str, Any]) -> dict[str, str]:
+    """Derive only request-local stages that existing evidence can establish."""
+    if summary.get("target_result_verified"):
+        return {
+            "stage": "TERMINAL_RESULT_READY",
+            "certainty": "verified",
+            "basis": "trusted_terminal_result",
+        }
+    if summary.get("current_failure_recorded"):
+        return {
+            "stage": "BLOCKED_OR_FAILED",
+            "certainty": "verified",
+            "basis": "current_failure_record",
+        }
+    reach = summary.get("dispatcher_execution_reach")
+    if reach == DISPATCHER_REJECTED_BEFORE_RUNNER:
+        return {
+            "stage": "BLOCKED_OR_FAILED",
+            "certainty": "verified",
+            "basis": "dispatcher_rejected_before_runner",
+        }
+    if reach == DISPATCHER_FAILED_BEFORE_RUNNER:
+        return {
+            "stage": "BLOCKED_OR_FAILED",
+            "certainty": "verified",
+            "basis": "dispatcher_failed_before_runner",
+        }
+    if reach == DISPATCHER_RUNNER_MAY_HAVE_STARTED:
+        return {
+            "stage": "RUNNER_OR_CODEX_REACH_UNCERTAIN",
+            "certainty": "unknown",
+            "basis": "dispatcher_runner_reach_uncertain",
+        }
+    if summary.get("dispatcher_invoked"):
+        return {
+            "stage": "DISPATCHER_REACHED",
+            "certainty": "verified",
+            "basis": "operator_dispatcher_invocation",
+        }
+    if summary.get("selected_request_state") == "CURRENT" and summary.get("request_id"):
+        return {
+            "stage": "REQUEST_ACCEPTED",
+            "certainty": "verified",
+            "basis": "current_request_identity",
+        }
+    return {
+        "stage": "UNKNOWN",
+        "certainty": "unknown",
+        "basis": "no_current_request_evidence",
+    }
+
+
 def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "request_id": summary.get("request_id"),
         "issue_number": summary.get("target_issue"),
+        "lifecycle": _request_lifecycle_visibility(summary),
         "mode": summary.get("mode"),
         "max_cycles": summary.get("configured_max_cycles"),
         "operator_dispatcher_invocation_performed": bool(

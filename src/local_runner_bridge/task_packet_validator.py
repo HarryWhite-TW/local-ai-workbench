@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 SLICE_NAME = "read_only_task_surface_resolver_and_packet_validator"
 SUMMARY_PROTOCOL = "lawb.local_runner.task_surface_validation_summary.v1"
@@ -39,6 +40,11 @@ V1_1_REQUIRED_TOP_LEVEL_FIELDS = (
     "verification_commands",
     "scope_expansion_allowed",
 )
+
+V1_1_OPTIONAL_TOP_LEVEL_FIELDS = ("execution_route",)
+EXECUTION_ROUTE_FIELDS = {"model", "reasoning_effort"}
+EXECUTION_ROUTE_MODEL_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$")
+EXECUTION_ROUTE_REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max", "ultra"}
 
 REQUIRED_NESTED_FIELDS = (
     ("approval", "required"),
@@ -204,10 +210,29 @@ def _validate_v1_1_discipline(parsed: dict, summary: dict) -> None:
     if scope_expansion_allowed is not False:
         summary["errors"].append("scope_expansion_allowed_must_be_false")
 
+    execution_route = parsed.get("execution_route")
+    if execution_route is None:
+        return
+    if not isinstance(execution_route, dict):
+        summary["errors"].append("invalid_execution_route")
+        return
+    missing_route_fields = EXECUTION_ROUTE_FIELDS - set(execution_route)
+    unknown_route_fields = set(execution_route) - EXECUTION_ROUTE_FIELDS
+    if missing_route_fields:
+        summary["errors"].append("execution_route_fields_missing")
+    if unknown_route_fields:
+        summary["errors"].append("execution_route_unknown_fields")
+    model = execution_route.get("model")
+    if not isinstance(model, str) or not EXECUTION_ROUTE_MODEL_PATTERN.fullmatch(model):
+        summary["errors"].append("invalid_execution_route_model")
+    reasoning_effort = execution_route.get("reasoning_effort")
+    if reasoning_effort not in EXECUTION_ROUTE_REASONING_EFFORTS:
+        summary["errors"].append("invalid_execution_route_reasoning_effort")
+
 
 def _normalized_runtime_contract(parsed: dict) -> dict:
     """Return the bounded v1.1 fields that may constrain Runner execution."""
-    return {
+    result = {
         "protocol": parsed["protocol"],
         "packet_id": parsed["packet_id"],
         "logical_issue": parsed["logical_issue"],
@@ -222,6 +247,9 @@ def _normalized_runtime_contract(parsed: dict) -> dict:
         "verification_commands": list(parsed["verification_commands"]),
         "scope_expansion_allowed": parsed["scope_expansion_allowed"],
     }
+    if "execution_route" in parsed:
+        result["execution_route"] = dict(parsed["execution_route"])
+    return result
 
 
 def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict:
@@ -244,6 +272,8 @@ def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict
         ".".join(path) for path in REQUIRED_NESTED_FIELDS if not _has_nested(parsed, path)
     )
     known_top_level_fields = set(required_top_level_fields)
+    if protocol == TASK_PACKET_PROTOCOL_V1_1:
+        known_top_level_fields.update(V1_1_OPTIONAL_TOP_LEVEL_FIELDS)
     unknown_fields = [field for field in parsed if field not in known_top_level_fields]
     list_fields = V1_1_LIST_FIELDS if protocol == TASK_PACKET_PROTOCOL_V1_1 else LIST_FIELDS
     non_empty_list_fields = (
