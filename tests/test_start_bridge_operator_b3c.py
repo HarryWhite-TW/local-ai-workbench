@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import ctypes
+import hashlib
 import json
 import os
 import shutil
@@ -235,7 +236,7 @@ $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes(
 
 
 def run_taskkill_success_verification_probe(tmp_path: Path) -> dict:
-    fake_taskkill = tmp_path / "fake-taskkill.exe"
+    fake_taskkill = tmp_path / "fake-taskkill.cmd"
     taskkill_marker = tmp_path / "fake-taskkill-invoked.txt"
     child_pid_path = tmp_path / "fake-taskkill-child.pid"
     child_helper = tmp_path / "fake-taskkill-child.py"
@@ -258,6 +259,12 @@ def run_taskkill_success_verification_probe(tmp_path: Path) -> dict:
         "time.sleep(60)\n",
         encoding="utf-8",
     )
+    fake_taskkill.write_text(
+        "@echo off\r\n"
+        '>"%B3C_TEST_TASKKILL_MARKER%" echo %*\r\n'
+        "exit /b 0\r\n",
+        encoding="ascii",
+    )
     source = launcher_function_source(
         "Stop-NativeProcessTree",
         "Invoke-CapturedNative",
@@ -268,9 +275,20 @@ def run_taskkill_success_verification_probe(tmp_path: Path) -> dict:
     assert source.count(trusted_taskkill) == 1
     source = source.replace(
         trusted_taskkill,
-        f"'{str(fake_taskkill).replace(chr(39), chr(39) * 2)}'",
+        'Join-Path ([System.Environment]::SystemDirectory) "cmd.exe"',
     )
-    fake_taskkill_literal = str(fake_taskkill).replace("'", "''")
+    taskkill_arguments = '''$startInfo.Arguments = (
+                "/PID " + [string]$TargetProcessId + " /T /F"
+            )'''
+    assert source.count(taskkill_arguments) == 1
+    cmd_arguments = (
+        f'/d /s /c ""{str(fake_taskkill).replace(chr(34), chr(34) * 2)}" '
+        "/PID simulated /T /F\""
+    )
+    source = source.replace(
+        taskkill_arguments,
+        f"$startInfo.Arguments = '{cmd_arguments.replace(chr(39), chr(39) * 2)}'",
+    )
     python_literal = sys.executable.replace("'", "''")
     root_helper_argument = str(root_helper).replace('"', '\\"')
     working_directory_literal = str(tmp_path).replace("'", "''")
@@ -279,24 +297,6 @@ def run_taskkill_success_verification_probe(tmp_path: Path) -> dict:
         f"""
 $ProcessTreeTerminationTimeoutMilliseconds = 3000
 $CleanupCommandKillWaitMilliseconds = 1000
-Add-Type -Language CSharp -OutputType ConsoleApplication `
-    -OutputAssembly '{fake_taskkill_literal}' `
-    -TypeDefinition @'
-using System;
-using System.IO;
-
-public static class Program
-{{
-    public static int Main(string[] arguments)
-    {{
-        File.WriteAllText(
-            Environment.GetEnvironmentVariable("B3C_TEST_TASKKILL_MARKER"),
-            String.Join(" ", arguments)
-        );
-        return 0;
-    }}
-}}
-'@
 {source}
 $startInfo = New-Object System.Diagnostics.ProcessStartInfo
 $startInfo.FileName = '{python_literal}'
@@ -453,6 +453,140 @@ def init_git_repo(root: Path, origin: str = EXPECTED_ORIGIN) -> None:
     git(root, "remote", "add", "origin", origin)
 
 
+def trusted_continuation_comment(
+    target: Path,
+    *,
+    issue: int,
+    parent_id: int,
+    allowed_files: list[str],
+    changed_files: list[str],
+    author: str = "HarryWhite-TW",
+    remaining_budget: int = 1,
+) -> tuple[dict, str]:
+    entries = []
+    manifest_lines = []
+    for relative in sorted(allowed_files):
+        data = (target / relative).read_bytes()
+        sha256 = hashlib.sha256(data).hexdigest()
+        entries.append(
+            {
+                "path": relative,
+                "state": "regular_file",
+                "sha256": sha256,
+                "length": len(data),
+            }
+        )
+        manifest_lines.append(f"{relative}|regular_file|{sha256}|{len(data)}")
+    manifest_payload = "\n".join(manifest_lines)
+    manifest_fingerprint = hashlib.sha256(manifest_payload.encode("utf-8")).hexdigest()
+    branch = git(target, "branch", "--show-current").stdout.strip()
+    head = git(target, "rev-parse", "HEAD").stdout.strip().lower()
+    runtime_contract = {
+        "repository": "HarryWhite-TW/local-ai-workbench",
+        "logical_issue": issue,
+        "branch": branch,
+        "expected_head": head,
+        "allowed_files": sorted(allowed_files),
+    }
+    runner = {
+        "schema": "lawb.runner_result.v1",
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "issue": issue,
+        "selected_issue": issue,
+        "action": "run-reviewbundle",
+        "result": "success",
+        "branch": branch,
+        "head": head,
+        "candidate_acceptance": "eligible",
+        "approval_token_semantics": "candidate_review_snapshot_not_human_approval",
+        "same_node_continuation": {
+            "protocol": "lawb.same_node_exact_candidate_continuation.v1",
+            "remaining_budget": remaining_budget,
+            "is_human_approval": False,
+        },
+        "runtime_contract_binding": {
+            "status": "passed",
+            "contract_present": True,
+            "runtime_contract": runtime_contract,
+        },
+        "candidate_evidence_manifest": {
+            "status": "verified",
+            "evidence_profile": "local_git_candidate_observation.v1",
+            "entries": entries,
+            "payload": manifest_payload,
+            "fingerprint": manifest_fingerprint,
+        },
+        "changed_files": sorted(changed_files),
+        "execution_assurance": {
+            "candidate_manifest_fingerprint": manifest_fingerprint,
+        },
+    }
+    return (
+        {
+            "id": parent_id,
+            "user": {"login": author},
+            "issue_url": (
+                "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/"
+                f"issues/{issue}"
+            ),
+            "body": (
+                "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1\n"
+                + json.dumps(runner, separators=(",", ":"))
+            ),
+        },
+        manifest_fingerprint,
+    )
+
+
+def prepare_dirty_continuation_target(
+    tmp_path: Path,
+    *,
+    author: str = "HarryWhite-TW",
+    remaining_budget: int = 1,
+) -> tuple[LauncherHarness, Path, Path, str, list[str]]:
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "exact dirty continuation target"
+    init_git_repo(target, EXPECTED_ORIGIN)
+    (target / "candidate.txt").write_text("candidate v1\n", encoding="utf-8")
+    (target / "contract.txt").write_text("contract\n", encoding="utf-8")
+    git(target, "add", "candidate.txt", "contract.txt")
+    git(target, "commit", "-m", "target fixture")
+    git(target, "branch", "-m", "continuation-target")
+    (target / "candidate.txt").write_text("candidate v2\n", encoding="utf-8")
+    parent, fingerprint = trusted_continuation_comment(
+        target,
+        issue=276,
+        parent_id=5313180922,
+        allowed_files=["candidate.txt", "contract.txt"],
+        changed_files=["candidate.txt"],
+        author=author,
+        remaining_budget=remaining_budget,
+    )
+    parent_path = tmp_path / "trusted-parent-comment.json"
+    parent_path.write_text(json.dumps(parent, separators=(",", ":")), encoding="utf-8")
+    (fixture.state / ROUTING_FILE).write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "target_repo_root": str(target),
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    fixture.operator_json.write_text(json.dumps({"result": "success"}), encoding="utf-8")
+    args = [
+        "-ContinuationIssueNumber",
+        "276",
+        "-ExpectedState",
+        "same_node_exact_candidate_continuation_v1:parent_comment_id=5313180922",
+        "-ExpectedCandidateManifestFingerprint",
+        fingerprint,
+    ]
+    return fixture, target, parent_path, fingerprint, args
+
+
 def write_fake_bootstrap(path: Path) -> None:
     path.write_text(
         r"""
@@ -516,6 +650,7 @@ if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo ARGS=%*
 if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo PATH=%PATH%
 if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo PYTHONPATH=%PYTHONPATH%
 if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED=%LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED%
+if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo LAWB_SAME_NODE_CONTINUATION_BINDING=%LAWB_SAME_NODE_CONTINUATION_BINDING%
 if not "%B3C_TEST_OPERATOR_STDERR%"=="" 1>&2 echo %B3C_TEST_OPERATOR_STDERR%
 if not "%B3C_TEST_OPERATOR_JSON%"=="" type "%B3C_TEST_OPERATOR_JSON%"
 if "%B3C_TEST_OPERATOR_EXIT%"=="" exit /b 0
@@ -558,6 +693,15 @@ with log_path.open("a", encoding="utf-8", newline="\n") as stream:
     stream.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 mode = os.environ.get("B3C_TEST_GH_MODE", "success")
+if method == "GET":
+    if mode == "continuation_read_failure":
+        raise SystemExit(7)
+    source = os.environ.get("B3C_TEST_CONTINUATION_COMMENT_JSON")
+    if not source:
+        sys.stdout.write("{}")
+    else:
+        sys.stdout.write(Path(source).read_text(encoding="utf-8"))
+    raise SystemExit(0)
 is_create = method == "POST"
 if (is_create and mode == "create_failure") or (
     not is_create and mode == "update_failure"
@@ -1118,6 +1262,116 @@ def test_lawb_routed_target_requires_exact_origin_clean_worktree_and_index(
 
     assert result.returncode == 2
     assert expected_reason in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+
+
+def test_dirty_continuation_keeps_default_preflight_blocked(tmp_path: Path):
+    fixture, _, parent_path, _, args = prepare_dirty_continuation_target(tmp_path)
+
+    result, payload = fixture.run(
+        *args,
+        env=fixture.env(B3C_TEST_CONTINUATION_COMMENT_JSON=str(parent_path)),
+    )
+
+    assert result.returncode == 2
+    assert "same_node_continuation_foreground_required" in payload["blocked_reasons"]
+    assert "target_repository_worktree_dirty" in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+
+
+def test_exact_dirty_continuation_admits_only_fixed_b3c_handoff(tmp_path: Path):
+    fixture, target, parent_path, fingerprint, args = prepare_dirty_continuation_target(
+        tmp_path
+    )
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        *args,
+        env=fixture.env(B3C_TEST_CONTINUATION_COMMENT_JSON=str(parent_path)),
+    )
+    log = fixture.operator_log.read_text(encoding="utf-8", errors="replace")
+
+    assert result.returncode == 0, result.stderr
+    assert payload["result"] == "completed"
+    assert payload["operator_invoked"] is True
+    assert payload["target_repo_root"] == str(target.resolve())
+    admission = payload["same_node_candidate_continuation"]
+    assert admission["admitted"] is True
+    assert admission["candidate_manifest_fingerprint"] == fingerprint
+    assert admission["remaining_budget_before"] == 1
+    assert admission["is_human_approval"] is False
+    assert "--mode b3c-run-reviewbundle" in log
+    assert "allow-dirty" not in log.lower()
+    binding_line = next(
+        line
+        for line in log.splitlines()
+        if line.startswith("LAWB_SAME_NODE_CONTINUATION_BINDING=")
+    )
+    binding = json.loads(binding_line.split("=", 1)[1])
+    assert binding["parent_comment_id"] == "5313180922"
+    assert binding["candidate_manifest_fingerprint"] == fingerprint
+    assert binding["is_human_approval"] is False
+    assert payload["dispatcher_invoked_directly"] is False
+    assert payload["runner_invoked_directly"] is False
+    assert payload["codex_invoked_directly"] is False
+
+
+@pytest.mark.parametrize(
+    ("case_name", "expected_reason"),
+    [
+        ("untrusted", "same_node_continuation_parent_untrusted"),
+        ("budget", "same_node_continuation_parent_budget_or_authority_invalid"),
+        ("byte_drift", "same_node_continuation_candidate_manifest_mismatch"),
+        ("extra_path", "same_node_continuation_worktree_status_unsupported"),
+        ("staged", "target_repository_staged_changes_present"),
+        ("head_drift", "same_node_continuation_parent_identity_mismatch"),
+    ],
+)
+def test_dirty_continuation_drift_fails_before_operator(
+    tmp_path: Path, case_name: str, expected_reason: str
+):
+    fixture, target, parent_path, _, args = prepare_dirty_continuation_target(
+        tmp_path,
+        author="other-user" if case_name == "untrusted" else "HarryWhite-TW",
+        remaining_budget=0 if case_name == "budget" else 1,
+    )
+    if case_name == "byte_drift":
+        (target / "candidate.txt").write_text("candidate v3\n", encoding="utf-8")
+    elif case_name == "extra_path":
+        (target / "extra.txt").write_text("extra\n", encoding="utf-8")
+    elif case_name == "staged":
+        git(target, "add", "candidate.txt")
+    elif case_name == "head_drift":
+        git(target, "commit", "--allow-empty", "-m", "head drift")
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        *args,
+        env=fixture.env(B3C_TEST_CONTINUATION_COMMENT_JSON=str(parent_path)),
+    )
+
+    assert result.returncode == 2
+    assert expected_reason in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+    assert payload["dispatcher_invoked_directly"] is False
+    assert payload["runner_invoked_directly"] is False
+    assert payload["codex_invoked_directly"] is False
+
+
+def test_partial_continuation_binding_does_not_relax_dirty_gate(tmp_path: Path):
+    fixture, _, _, _, _ = prepare_dirty_continuation_target(tmp_path)
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        "-ContinuationIssueNumber",
+        "276",
+    )
+
+    assert result.returncode == 2
+    assert "same_node_continuation_binding_incomplete" in payload["blocked_reasons"]
+    assert "target_repository_worktree_dirty" in payload["blocked_reasons"]
     assert payload["operator_invoked"] is False
 
 

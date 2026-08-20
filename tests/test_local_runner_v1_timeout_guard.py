@@ -2509,6 +2509,80 @@ def test_candidate_token_binds_scope_manifest_evidence_and_rejects_drift_or_upgr
     assert payload["upgrade_rejected"] is True
 
 
+def test_same_node_continuation_revalidates_exact_parent_candidate_and_budget(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / "seed.txt").write_text("candidate one\n", encoding="utf-8")
+    binding = json.dumps(_binding("passed", allowed_files=["seed.txt"]))
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $script:Repo = "HarryWhite-TW/local-ai-workbench"
+        $script:IssueNumber = 204
+        $binding = '{binding}' | ConvertFrom-Json
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $state = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $manifest
+        $parent = [ordered]@{{
+            candidate_acceptance = "eligible"
+            approval_token_semantics = "candidate_review_snapshot_not_human_approval"
+            action = "run-reviewbundle"
+            repo = $script:Repo
+            issue = 204
+            same_node_continuation = [ordered]@{{ protocol = $SameNodeContinuationProtocol; remaining_budget = 1; is_human_approval = $false }}
+            runtime_contract_binding = [ordered]@{{ runtime_contract = $binding.runtime_contract }}
+            candidate_evidence_manifest = $manifest
+            diff_fingerprint = $state.DiffFingerprint
+            files_fingerprint = $state.FilesFingerprint
+        }} | ConvertTo-Json -Depth 16 -Compress
+        $comments = @([pscustomobject]@{{ id = "5311"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parent" }})
+        $accepted = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $missing = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments @() -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $untrustedComments = @([pscustomobject]@{{ id = "5311"; author = [pscustomobject]@{{ login = "other-user" }}; body = "$RunnerResultMarker`n$parent" }})
+        $untrusted = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $untrustedComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $staged = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $false
+        $budgetParentObject = $parent | ConvertFrom-Json
+        $budgetParentObject.same_node_continuation.remaining_budget = 0
+        $budgetParent = $budgetParentObject | ConvertTo-Json -Depth 16 -Compress
+        $budgetComments = @([pscustomobject]@{{ id = "5311"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$budgetParent" }})
+        $budget = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $budgetComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $child = [ordered]@{{
+            repo = $script:Repo
+            issue = 204
+            action = "run-reviewbundle"
+            same_node_continuation = [ordered]@{{ protocol = $SameNodeContinuationProtocol; parent_comment_id = "5311"; remaining_budget = 0; is_human_approval = $false }}
+        }} | ConvertTo-Json -Depth 8 -Compress
+        $replayComments = @($comments[0], [pscustomobject]@{{ id = "5312"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$child" }})
+        $replay = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $replayComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $headBinding = ($binding | ConvertTo-Json -Depth 16 -Compress) | ConvertFrom-Json
+        $headBinding.runtime_contract | Add-Member -NotePropertyName expected_head -NotePropertyValue ("b" * 40)
+        $headDrift = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $headBinding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        Set-Content -LiteralPath {str(repo / 'seed.txt')!r} -Value "candidate two" -Encoding UTF8
+        $drift = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $binding -CandidateManifest (Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")) -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        [System.IO.File]::WriteAllText({str(repo / 'seed.txt')!r}, "candidate one`n", [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText({str(repo / 'extra.txt')!r}, "extra`n", [System.Text.UTF8Encoding]::new($false))
+        $extraPath = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $binding -CandidateManifest (Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")) -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        [ordered]@{{ accepted = $accepted; missing = $missing; untrusted = $untrusted; staged = $staged; budget = $budget; replay = $replay; head_drift = $headDrift; drift = $drift; extra_path = $extraPath }} | ConvertTo-Json -Depth 16 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["accepted"]["admitted"] is True
+    assert payload["accepted"]["is_human_approval"] is False
+    assert "trusted_parent_comment_missing_or_ambiguous" in payload["missing"]["reasons"]
+    assert "trusted_parent_author_untrusted" in payload["untrusted"]["reasons"]
+    assert "staged_changes_detected" in payload["staged"]["reasons"]
+    assert "trusted_parent_continuation_identity_invalid" in payload["budget"]["reasons"]
+    assert "trusted_parent_continuation_budget_exhausted" in payload["replay"]["reasons"]
+    assert "trusted_parent_runtime_contract_mismatch" in payload["head_drift"]["reasons"]
+    assert payload["drift"]["admitted"] is False
+    assert "candidate_manifest_fingerprint_mismatch" in payload["drift"]["reasons"]
+    assert payload["extra_path"]["admitted"] is False
+    assert "candidate_fingerprint_mismatch" in payload["extra_path"]["reasons"]
+
+
 def test_successful_child_commit_with_clean_worktree_fails_closed(tmp_path):
     repo = tmp_path / "repo"
     head_before = init_git_repo(repo)

@@ -77,6 +77,10 @@ B3B_MODE = "b3b-maybe-status-check"
 B3C_MODE = "b3c-run-reviewbundle"
 B3B_ALLOWED_ACTION = "maybe-status-check"
 B3C_ALLOWED_ACTION = "run-reviewbundle"
+SAME_NODE_LAUNCHER_BINDING_ENV = "LAWB_SAME_NODE_CONTINUATION_BINDING"
+SAME_NODE_LAUNCHER_BINDING_PROTOCOL = (
+    "lawb.same_node_exact_candidate_continuation_launcher_binding.v1"
+)
 
 DEFAULT_MAX_CYCLES_LIMIT = 960
 DEFAULT_MAX_POLL_INTERVAL_SECONDS = 3600.0
@@ -1316,6 +1320,56 @@ def _append_observation_if_new(
     return True
 
 
+def _validate_same_node_launcher_binding(
+    *, repository: str, b1_summary: dict[str, Any], continuation: dict[str, Any]
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Require the launcher's exact dirty-candidate handoff; never grant admission."""
+    raw = os.environ.get(SAME_NODE_LAUNCHER_BINDING_ENV)
+    if not raw:
+        return None, "same_node_continuation_launcher_binding_missing"
+    try:
+        binding = json.loads(raw)
+    except (TypeError, ValueError):
+        return None, "same_node_continuation_launcher_binding_invalid"
+    expected_keys = {
+        "protocol",
+        "repository",
+        "issue",
+        "parent_comment_id",
+        "branch",
+        "head",
+        "candidate_manifest_fingerprint",
+        "remaining_budget_before",
+        "is_human_approval",
+    }
+    if not isinstance(binding, dict) or set(binding) != expected_keys:
+        return None, "same_node_continuation_launcher_binding_invalid"
+    issue = binding.get("issue")
+    budget = binding.get("remaining_budget_before")
+    fingerprint = binding.get("candidate_manifest_fingerprint")
+    if (
+        binding.get("protocol") != SAME_NODE_LAUNCHER_BINDING_PROTOCOL
+        or type(issue) is not int
+        or issue <= 0
+        or type(budget) is not int
+        or budget != 1
+        or binding.get("is_human_approval") is not False
+        or not isinstance(fingerprint, str)
+        or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+    ):
+        return None, "same_node_continuation_launcher_binding_invalid"
+    expected = {
+        "repository": repository,
+        "issue": b1_summary.get("target_issue"),
+        "parent_comment_id": continuation.get("parent_comment_id"),
+        "branch": b1_summary.get("expected_branch"),
+        "head": str(b1_summary.get("expected_head") or "").lower(),
+    }
+    if any(binding.get(key) != value for key, value in expected.items()):
+        return None, "same_node_continuation_launcher_binding_mismatch"
+    return binding, None
+
+
 def _delegate_b3_request(
     *,
     state_root: Path,
@@ -1356,9 +1410,32 @@ def _delegate_b3_request(
                 _block(summary, expiry_error)
             return expiry_error
     readiness = b1_summary.get("local_readiness") or {}
-    if readiness.get("clean") is not True:
+    continuation = b1_summary.get("same_node_candidate_continuation") or {}
+    continuation_admitted = continuation.get("admitted") is True
+    if readiness.get("clean") is not True and not continuation_admitted:
         _block(summary, "dirty_repository")
         return "dirty_repository"
+    if readiness.get("staged_clean") is not True:
+        _block(summary, "staged_files_present")
+        return "staged_files_present"
+    if readiness.get("clean") is not True:
+        binding, binding_error = _validate_same_node_launcher_binding(
+            repository=repository,
+            b1_summary=b1_summary,
+            continuation=continuation,
+        )
+        if binding_error is not None:
+            _block(summary, binding_error)
+            return binding_error
+        summary["same_node_candidate_continuation"] = {
+            **continuation,
+            "launcher_binding": "matched",
+            "candidate_manifest_fingerprint": binding[
+                "candidate_manifest_fingerprint"
+            ],
+            "remaining_budget_before": binding["remaining_budget_before"],
+            "is_human_approval": False,
+        }
 
     processed_path = state_root / "processed_requests.jsonl"
     request_id = str(b1_summary.get("request_id") or "")

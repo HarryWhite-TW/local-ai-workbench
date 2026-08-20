@@ -897,6 +897,34 @@ def test_run_reviewbundle_fails_closed_when_repo_is_dirty_before_runner(tmp_path
     assert "RUNNER_CALLS=0" in result.stdout
 
 
+def test_run_reviewbundle_dirty_continuation_passes_only_named_trusted_parent_to_runner(tmp_path):
+    result = run_dispatcher_script(
+        tmp_path,
+        """
+        $script:GitStatus = " M scripts/local_runner_v1.ps1"
+        $parent = New-TestComment -Id "parent-1" -Body "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1`n{}"
+        $parentResult = [pscustomobject]@{ Comment = $parent }
+        $fields = @{
+            expected_state = "same_node_exact_candidate_continuation_v1:parent_comment_id=parent-1"
+        }
+        $selection = [pscustomobject]@{
+            Selected = [pscustomobject]@{ Fields = $fields }
+            ReadResult = [pscustomobject]@{ RunnerResults = @($parentResult) }
+        }
+        $result = Invoke-ReviewBundle -Selection $selection -Issue 83
+        if ($result.Result -ne "success") { throw "continuation runner invocation failed" }
+        if ([array]::IndexOf($script:RunnerArguments, "-TrustedCandidateContinuationCommentId") -lt 0) {
+            throw "continuation id was not passed to Runner"
+        }
+        if ($result.StatusSummary -ne "same_node_exact_candidate_continuation") { throw "wrong continuation status" }
+        "ok"
+        """,
+    )
+
+    assert_success(result)
+    assert "ok" in result.stdout
+
+
 def test_valid_maybe_status_check_with_post_result_comment_posts_exactly_one_parseable_result(tmp_path):
     result = run_case(
         tmp_path,

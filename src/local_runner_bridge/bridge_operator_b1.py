@@ -22,6 +22,8 @@ DEFAULT_REPOSITORY = "HarryWhite-TW/local-ai-workbench"
 HAG_REPOSITORY = "HarryWhite-TW/human-approval-automation-gateway"
 SUPPORTED_TARGET_REPOSITORIES = (DEFAULT_REPOSITORY, HAG_REPOSITORY)
 TRUSTED_ACTORS = ("HarryWhite-TW",)
+SAME_NODE_CONTINUATION_PREFIX = "same_node_exact_candidate_continuation_v1:parent_comment_id="
+RUNNER_RESULT_MARKER = "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1"
 ALLOWED_ACTIONS = ("maybe-status-check", "run-reviewbundle")
 UTC_BASIC_FORMAT = "%Y%m%dT%H%M%SZ"
 CURRENT = "CURRENT"
@@ -221,18 +223,33 @@ def run_bridge_operator_b1_dry_run(
     if summary["blocked_reasons"]:
         return summary
 
+    continuation_admitted = _validate_same_node_continuation_parent(
+        target_comments,
+        {"expected_state": summary.get("target_expected_state")},
+        summary,
+    )
+    if summary["blocked_reasons"]:
+        return summary
+
     readiness = checker(repo_root)
     summary["local_readiness"] = {
         "repo_root": readiness.repo_root,
         "branch": readiness.branch,
         "head": readiness.head,
         "clean": readiness.clean,
+        "staged_clean": readiness.staged_clean,
         "gh_available": readiness.gh_available,
         "gh_authenticated": readiness.gh_authenticated,
         "gh_read_available": readiness.gh_read_available,
         "errors": list(readiness.errors),
     }
-    _validate_local_readiness(readiness, fields, repo_root, summary)
+    _validate_local_readiness(
+        readiness,
+        fields,
+        repo_root,
+        summary,
+        continuation_admitted=continuation_admitted,
+    )
     if summary["blocked_reasons"]:
         return summary
 
@@ -658,6 +675,8 @@ def _validate_target_dispatch_identity(
     fields = matches[0]["fields"]
     summary["target_dispatch_comment_id"] = marker["comment_id"]
     summary["target_dispatch_author"] = marker["author"]
+    if fields.get("expected_state") is not None:
+        summary["target_expected_state"] = fields["expected_state"]
     if marker["author"] not in TRUSTED_ACTORS:
         _block(summary, "untrusted_target_dispatch_author")
     checks = (
@@ -685,6 +704,8 @@ def _validate_local_readiness(
     fields: Mapping[str, Any],
     expected_repo_root: str | Path,
     summary: dict[str, Any],
+    *,
+    continuation_admitted: bool = False,
 ) -> None:
     expected_root = str(Path(expected_repo_root).resolve())
     if readiness.repo_root != expected_root:
@@ -697,7 +718,11 @@ def _validate_local_readiness(
         _block(summary, "wrong_branch")
     if readiness.head != fields["head"]:
         _block(summary, "wrong_head")
-    if fields["action"] == "run-reviewbundle" and readiness.clean is not True:
+    if (
+        fields["action"] == "run-reviewbundle"
+        and readiness.clean is not True
+        and not continuation_admitted
+    ):
         _block(summary, "dirty_repository")
     if fields["action"] == "run-reviewbundle" and readiness.staged_clean is not True:
         _block(summary, "staged_files_present")
@@ -709,6 +734,37 @@ def _validate_local_readiness(
         summary.setdefault("local_readiness_errors", [])
         if error not in summary["local_readiness_errors"]:
             summary["local_readiness_errors"].append(error)
+
+
+def _validate_same_node_continuation_parent(
+    comments: Iterable[CommentRecord], fields: Mapping[str, Any], summary: dict[str, Any]
+) -> bool:
+    """Admit only a named trusted parent; Runner revalidates exact candidate bytes."""
+    expected_state = fields.get("expected_state")
+    if not isinstance(expected_state, str) or not expected_state.startswith(
+        SAME_NODE_CONTINUATION_PREFIX
+    ):
+        return False
+    parent_id = expected_state.removeprefix(SAME_NODE_CONTINUATION_PREFIX)
+    if not re.fullmatch(r"[1-9][0-9]{0,18}", parent_id):
+        _block(summary, "invalid_same_node_continuation_identity")
+        return False
+    matches = [comment for comment in comments if str(comment.id) == parent_id]
+    if len(matches) != 1:
+        _block(summary, "same_node_continuation_parent_missing_or_ambiguous")
+        return False
+    parent = matches[0]
+    if parent.author not in TRUSTED_ACTORS or RUNNER_RESULT_MARKER not in parent.body:
+        _block(summary, "same_node_continuation_parent_untrusted")
+        return False
+    summary["same_node_candidate_continuation"] = {
+        "protocol": "lawb.same_node_exact_candidate_continuation.v1",
+        "parent_comment_id": parent_id,
+        "admitted": True,
+        "is_human_approval": False,
+        "runner_revalidation_required": True,
+    }
+    return True
 
 
 def _normalize_now(now_utc: datetime | None) -> datetime:
