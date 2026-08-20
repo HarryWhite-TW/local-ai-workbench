@@ -1837,6 +1837,112 @@ def test_dirty_repo_or_local_readiness_failure_blocks(tmp_path):
     assert_b1_failure_blocks(tmp_path / "missing-gh", missing_gh, "missing_github_cli")
 
 
+def test_dirty_same_node_continuation_requires_matching_launcher_binding_before_dispatch(
+    tmp_path, monkeypatch
+):
+    parent_id = "5311"
+    expected_state = (
+        "same_node_exact_candidate_continuation_v1:parent_comment_id=" + parent_id
+    )
+
+    def make_client():
+        return FakeGitHub(
+            inbox_comments=[
+                CommentRecord(
+                    id=1,
+                    body=inbox_marker(action="run-reviewbundle"),
+                    author="HarryWhite-TW",
+                )
+            ],
+            target_comments=[
+                CommentRecord(
+                    id=10,
+                    body=dispatch_marker(
+                        action="run-reviewbundle", expected_state=expected_state
+                    ),
+                    author="HarryWhite-TW",
+                ),
+                CommentRecord(
+                    id=int(parent_id),
+                    body=result_comment(
+                        action="run-reviewbundle", request_id="trusted-parent-dispatch"
+                    ),
+                    author="HarryWhite-TW",
+                ),
+            ],
+        )
+
+    def binding(**overrides):
+        value = {
+            "protocol": "lawb.same_node_exact_candidate_continuation_launcher_binding.v1",
+            "repository": DEFAULT_REPOSITORY,
+            "issue": 151,
+            "parent_comment_id": parent_id,
+            "branch": "feature/bridge-operator-b3a",
+            "head": HEAD,
+            "candidate_manifest_fingerprint": "a" * 64,
+            "remaining_budget_before": 1,
+            "is_human_approval": False,
+        }
+        value.update(overrides)
+        return json.dumps(value, separators=(",", ":"))
+
+    missing_calls = []
+    monkeypatch.delenv("LAWB_SAME_NODE_CONTINUATION_BINDING", raising=False)
+    missing = run_b3c(
+        tmp_path / "missing",
+        client=make_client(),
+        readiness=ready(tmp_path / "missing", clean=False, staged_clean=True),
+        dispatcher_invoker=lambda **kwargs: missing_calls.append(kwargs),
+    )
+    assert "same_node_continuation_launcher_binding_missing" in missing["blocked_reasons"]
+    assert missing_calls == []
+    assert_safety(missing)
+
+    mismatch_calls = []
+    monkeypatch.setenv(
+        "LAWB_SAME_NODE_CONTINUATION_BINDING", binding(head="b" * 40)
+    )
+    mismatch = run_b3c(
+        tmp_path / "mismatch",
+        client=make_client(),
+        readiness=ready(tmp_path / "mismatch", clean=False, staged_clean=True),
+        dispatcher_invoker=lambda **kwargs: mismatch_calls.append(kwargs),
+    )
+    assert "same_node_continuation_launcher_binding_mismatch" in mismatch["blocked_reasons"]
+    assert mismatch_calls == []
+    assert_safety(mismatch)
+
+    client = make_client()
+    admitted_calls = []
+
+    def admitted_invoker(**kwargs):
+        admitted_calls.append(kwargs)
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setenv("LAWB_SAME_NODE_CONTINUATION_BINDING", binding())
+    admitted = run_b3c(
+        tmp_path / "admitted",
+        client=client,
+        readiness=ready(tmp_path / "admitted", clean=False, staged_clean=True),
+        dispatcher_invoker=admitted_invoker,
+    )
+    assert admitted["result"] == "success"
+    assert admitted["dispatcher_invocation_count"] == 1
+    assert len(admitted_calls) == 1
+    evidence = admitted["same_node_candidate_continuation"]
+    assert evidence["launcher_binding"] == "matched"
+    assert evidence["is_human_approval"] is False
+    assert evidence["remaining_budget_before"] == 1
+
+
 def test_rejects_inbox_override_and_does_not_read_github(tmp_path):
     client = FakeGitHub()
 

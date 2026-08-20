@@ -30,7 +30,10 @@ param(
     [double]$PollIntervalSeconds = 0,
     [ValidateRange(1, 86400)]
     [int]$TimeoutSeconds = 600,
-    [string]$StateDir = ""
+    [string]$StateDir = "",
+    [long]$ContinuationIssueNumber = 0,
+    [string]$ExpectedState = "",
+    [string]$ExpectedCandidateManifestFingerprint = ""
 )
 
 Set-StrictMode -Version Latest
@@ -45,6 +48,11 @@ $StatusMarker = "LAWBRIDGE-STATUS"
 $StatusHostname = "github.com"
 $StatusCreateEndpoint = "repos/HarryWhite-TW/local-ai-workbench/issues/147/comments"
 $StatusUpdateEndpointPrefix = "repos/HarryWhite-TW/local-ai-workbench/issues/comments"
+$SameNodeContinuationExpectedStatePrefix = "same_node_exact_candidate_continuation_v1:parent_comment_id="
+$SameNodeContinuationProtocol = "lawb.same_node_exact_candidate_continuation.v1"
+$RunnerResultMarker = "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1"
+$CandidateEvidenceProfile = "local_git_candidate_observation.v1"
+$TrustedContinuationAuthors = @("HarryWhite-TW")
 $ProcessTreeTerminationTimeoutMilliseconds = 3000
 $CleanupCommandKillWaitMilliseconds = 1000
 $PostTerminationWaitTimeoutMilliseconds = 2000
@@ -1120,23 +1128,24 @@ function Test-ExactRepository {
         [string]$ReasonPrefix,
         [Parameter(Mandatory = $true)]
         [AllowEmptyCollection()]
-        [System.Collections.ArrayList]$Reasons
+        [System.Collections.ArrayList]$Reasons,
+        [switch]$DeferWorktreeDirty
     )
 
     if (-not (Test-Path -LiteralPath $RepositoryRoot -PathType Container)) {
         Add-BlockedReason -Reasons $Reasons -Reason "${ReasonPrefix}_root_unavailable"
-        return [pscustomobject]@{ branch = ""; head = "" }
+        return [pscustomobject]@{ branch = ""; head = ""; status = ""; staged_paths = @() }
     }
 
     $rootResult = Invoke-GitRead -GitPath $GitPath -RepositoryRoot $RepositoryRoot `
         -GitArguments @("rev-parse", "--show-toplevel")
     if (-not (Test-NativeCaptureDecoded -Result $rootResult `
         -Reason "${ReasonPrefix}_git_root_output_undecodable" -Reasons $Reasons)) {
-        return [pscustomobject]@{ branch = ""; head = "" }
+        return [pscustomobject]@{ branch = ""; head = ""; status = ""; staged_paths = @() }
     }
     if ($rootResult.exit_code -ne 0) {
         Add-BlockedReason -Reasons $Reasons -Reason "${ReasonPrefix}_not_git_repository"
-        return [pscustomobject]@{ branch = ""; head = "" }
+        return [pscustomobject]@{ branch = ""; head = ""; status = ""; staged_paths = @() }
     }
     $observedRoot = $rootResult.stdout.Trim()
     try {
@@ -1145,7 +1154,7 @@ function Test-ExactRepository {
     }
     catch {
         Add-BlockedReason -Reasons $Reasons -Reason "${ReasonPrefix}_git_root_invalid"
-        return [pscustomobject]@{ branch = ""; head = "" }
+        return [pscustomobject]@{ branch = ""; head = ""; status = ""; staged_paths = @() }
     }
     if (-not [string]::Equals(
         $normalizedObserved,
@@ -1202,7 +1211,9 @@ function Test-ExactRepository {
     if ($statusDecoded -and $statusResult.exit_code -ne 0) {
         Add-BlockedReason -Reasons $Reasons -Reason "${ReasonPrefix}_status_unreadable"
     }
-    elseif ($statusDecoded -and -not [string]::IsNullOrWhiteSpace($statusResult.stdout)) {
+    elseif ($statusDecoded -and
+        -not [string]::IsNullOrWhiteSpace($statusResult.stdout) -and
+        -not $DeferWorktreeDirty) {
         Add-BlockedReason -Reasons $Reasons -Reason "${ReasonPrefix}_worktree_dirty"
     }
 
@@ -1217,7 +1228,23 @@ function Test-ExactRepository {
         Add-BlockedReason -Reasons $Reasons -Reason "${ReasonPrefix}_staged_changes_present"
     }
 
-    return [pscustomobject]@{ branch = $branch; head = $head }
+    $stagedPaths = @()
+    if ($stagedDecoded -and $stagedResult.exit_code -eq 0 -and
+        -not [string]::IsNullOrWhiteSpace($stagedResult.stdout)) {
+        $stagedPaths = @($stagedResult.stdout -split "`r?`n" | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        })
+    }
+
+    return [pscustomobject]@{
+        branch = $branch
+        head = $head
+        status = if ($statusDecoded -and $statusResult.exit_code -eq 0) {
+            [string]$statusResult.stdout
+        }
+        else { "" }
+        staged_paths = $stagedPaths
+    }
 }
 
 function Get-JsonObject {
@@ -1246,6 +1273,302 @@ function Get-ObjectProperty {
         return $null
     }
     return $property.Value
+}
+
+function ConvertFrom-FirstJsonObjectAfterMarker {
+    param(
+        [Parameter(Mandatory = $true)][string]$Body,
+        [Parameter(Mandatory = $true)][string]$Marker
+    )
+
+    $markerIndex = $Body.IndexOf($Marker, [System.StringComparison]::Ordinal)
+    if ($markerIndex -lt 0) { throw "runner_result_marker_missing" }
+    $start = $Body.IndexOf("{", $markerIndex + $Marker.Length)
+    if ($start -lt 0) { throw "runner_result_json_missing" }
+    $depth = 0
+    $inString = $false
+    $escaped = $false
+    for ($index = $start; $index -lt $Body.Length; $index++) {
+        $character = $Body[$index]
+        if ($inString) {
+            if ($escaped) { $escaped = $false }
+            elseif ($character -eq "\") { $escaped = $true }
+            elseif ($character -eq '"') { $inString = $false }
+            continue
+        }
+        if ($character -eq '"') { $inString = $true; continue }
+        if ($character -eq "{") { $depth += 1; continue }
+        if ($character -eq "}") {
+            $depth -= 1
+            if ($depth -eq 0) {
+                return $Body.Substring($start, $index - $start + 1) |
+                    ConvertFrom-Json -ErrorAction Stop
+            }
+        }
+    }
+    throw "runner_result_json_unterminated"
+}
+
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return -join @($sha256.ComputeHash($Bytes) | ForEach-Object {
+            $_.ToString("x2")
+        })
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-SameNodeContinuationParentCommentId {
+    param([Parameter(Mandatory = $true)][string]$ExpectedStateValue)
+    if (-not $ExpectedStateValue.StartsWith(
+        $SameNodeContinuationExpectedStatePrefix,
+        [System.StringComparison]::Ordinal
+    )) {
+        throw "same_node_continuation_expected_state_invalid"
+    }
+    $parentId = $ExpectedStateValue.Substring(
+        $SameNodeContinuationExpectedStatePrefix.Length
+    )
+    if ($parentId -notmatch '^[1-9][0-9]{0,18}$') {
+        throw "same_node_continuation_parent_comment_id_invalid"
+    }
+    return $parentId
+}
+
+function Get-SameNodeContinuationComment {
+    param(
+        [Parameter(Mandatory = $true)][string]$GhPath,
+        [Parameter(Mandatory = $true)][string]$ParentCommentId,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][int]$ProcessTimeoutSeconds
+    )
+    $endpoint = "repos/$ControlRepository/issues/comments/$ParentCommentId"
+    $readResult = Invoke-CapturedNative `
+        -CommandPath $GhPath `
+        -Arguments @(
+            "api",
+            "--hostname", $StatusHostname,
+            "--method", "GET",
+            $endpoint
+        ) `
+        -WorkingDirectory $WorkingDirectory `
+        -EncodingPolicy "utf-8" `
+        -ProcessTimeoutSeconds $ProcessTimeoutSeconds
+    if (-not $readResult.process_started -or
+        $readResult.exit_code -ne 0 -or
+        $readResult.timed_out -or
+        $readResult.stream_drain_timed_out -or
+        -not [string]::IsNullOrWhiteSpace([string]$readResult.contract_error) -or
+        -not [string]::IsNullOrWhiteSpace([string]$readResult.invocation_error) -or
+        -not [string]::IsNullOrWhiteSpace([string]$readResult.cleanup_error) -or
+        -not [string]::IsNullOrWhiteSpace([string]$readResult.decode_error)) {
+        throw "same_node_continuation_parent_read_failed"
+    }
+    try {
+        return Get-JsonObject -JsonText $readResult.stdout
+    }
+    catch {
+        throw "same_node_continuation_parent_response_invalid"
+    }
+}
+
+function Get-ExactDirtyPathsFromStatus {
+    param([Parameter(Mandatory = $true)][string]$Status)
+    $paths = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in @($Status -split "`r?`n" | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    })) {
+        if ($line -notmatch '^ M ([A-Za-z0-9._/-]+)$') {
+            throw "same_node_continuation_worktree_status_unsupported"
+        }
+        $path = [string]$Matches[1]
+        if ($path.StartsWith("/", [System.StringComparison]::Ordinal) -or
+            $path.Contains("\") -or $path.Contains("//") -or
+            @($path.Split("/") | Where-Object { $_ -in @("", ".", "..") }).Count -gt 0) {
+            throw "same_node_continuation_candidate_path_invalid"
+        }
+        $paths.Add($path)
+    }
+    return @($paths.ToArray() | Sort-Object -Unique)
+}
+
+function Test-SameNodeExactCandidateContinuation {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][object]$RepositoryEvidence,
+        [Parameter(Mandatory = $true)][string]$GhPath,
+        [Parameter(Mandatory = $true)][long]$IssueNumber,
+        [Parameter(Mandatory = $true)][string]$ExpectedStateValue,
+        [Parameter(Mandatory = $true)][string]$ExpectedManifestFingerprint,
+        [Parameter(Mandatory = $true)][int]$ProcessTimeoutSeconds
+    )
+
+    $reasons = [System.Collections.Generic.List[string]]::new()
+    $parentCommentId = ""
+    $observedFingerprint = ""
+    $remainingBudget = $null
+    try {
+        if ($IssueNumber -le 0) { throw "same_node_continuation_issue_invalid" }
+        if ($ExpectedManifestFingerprint -cnotmatch '^[0-9a-f]{64}$') {
+            throw "same_node_continuation_manifest_fingerprint_invalid"
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$RepositoryEvidence.status)) {
+            throw "same_node_continuation_requires_dirty_candidate"
+        }
+        if (@($RepositoryEvidence.staged_paths).Count -ne 0) {
+            throw "same_node_continuation_staged_changes_present"
+        }
+        $dirtyPaths = @(Get-ExactDirtyPathsFromStatus `
+            -Status ([string]$RepositoryEvidence.status))
+        $parentCommentId = Get-SameNodeContinuationParentCommentId `
+            -ExpectedStateValue $ExpectedStateValue
+        $comment = Get-SameNodeContinuationComment `
+            -GhPath $GhPath `
+            -ParentCommentId $parentCommentId `
+            -WorkingDirectory $RepositoryRoot `
+            -ProcessTimeoutSeconds $ProcessTimeoutSeconds
+        $commentId = Get-ObjectProperty -Object $comment -Name "id"
+        $commentUser = Get-ObjectProperty -Object $comment -Name "user"
+        $commentAuthor = [string](Get-ObjectProperty -Object $commentUser -Name "login")
+        $expectedIssueUrl = "https://api.github.com/repos/$ControlRepository/issues/$IssueNumber"
+        if ([string]$commentId -cne $parentCommentId) {
+            throw "same_node_continuation_parent_id_mismatch"
+        }
+        if ($commentAuthor -notin $TrustedContinuationAuthors) {
+            throw "same_node_continuation_parent_untrusted"
+        }
+        if (-not [string]::Equals(
+            [string](Get-ObjectProperty -Object $comment -Name "issue_url"),
+            $expectedIssueUrl,
+            [System.StringComparison]::Ordinal
+        )) {
+            throw "same_node_continuation_parent_issue_url_mismatch"
+        }
+        $parent = ConvertFrom-FirstJsonObjectAfterMarker `
+            -Body ([string](Get-ObjectProperty -Object $comment -Name "body")) `
+            -Marker $RunnerResultMarker
+        if ([string](Get-ObjectProperty -Object $parent -Name "schema") -cne "lawb.runner_result.v1" -or
+            [string](Get-ObjectProperty -Object $parent -Name "repo") -cne $ControlRepository -or
+            [long](Get-ObjectProperty -Object $parent -Name "issue") -ne $IssueNumber -or
+            [long](Get-ObjectProperty -Object $parent -Name "selected_issue") -ne $IssueNumber -or
+            [string](Get-ObjectProperty -Object $parent -Name "action") -cne "run-reviewbundle" -or
+            [string](Get-ObjectProperty -Object $parent -Name "result") -cne "success" -or
+            [string](Get-ObjectProperty -Object $parent -Name "branch") -cne [string]$RepositoryEvidence.branch -or
+            [string](Get-ObjectProperty -Object $parent -Name "head") -cne [string]$RepositoryEvidence.head) {
+            throw "same_node_continuation_parent_identity_mismatch"
+        }
+        if ([string](Get-ObjectProperty -Object $parent -Name "candidate_acceptance") -cne "eligible" -or
+            [string](Get-ObjectProperty -Object $parent -Name "approval_token_semantics") -cne "candidate_review_snapshot_not_human_approval") {
+            throw "same_node_continuation_parent_acceptance_invalid"
+        }
+
+        $continuation = Get-ObjectProperty -Object $parent -Name "same_node_continuation"
+        $remainingValue = Get-ObjectProperty -Object $continuation -Name "remaining_budget"
+        if ([string](Get-ObjectProperty -Object $continuation -Name "protocol") -cne $SameNodeContinuationProtocol -or
+            -not ($remainingValue -is [int] -or $remainingValue -is [long]) -or
+            [long]$remainingValue -ne 1 -or
+            (Get-ObjectProperty -Object $continuation -Name "is_human_approval") -ne $false) {
+            throw "same_node_continuation_parent_budget_or_authority_invalid"
+        }
+        $remainingBudget = [long]$remainingValue
+
+        $binding = Get-ObjectProperty -Object $parent -Name "runtime_contract_binding"
+        $contract = Get-ObjectProperty -Object $binding -Name "runtime_contract"
+        if ([string](Get-ObjectProperty -Object $binding -Name "status") -cne "passed" -or
+            (Get-ObjectProperty -Object $binding -Name "contract_present") -ne $true -or
+            [string](Get-ObjectProperty -Object $contract -Name "repository") -cne $ControlRepository -or
+            [long](Get-ObjectProperty -Object $contract -Name "logical_issue") -ne $IssueNumber -or
+            [string](Get-ObjectProperty -Object $contract -Name "branch") -cne [string]$RepositoryEvidence.branch -or
+            [string](Get-ObjectProperty -Object $contract -Name "expected_head") -cne [string]$RepositoryEvidence.head) {
+            throw "same_node_continuation_runtime_contract_mismatch"
+        }
+
+        $manifest = Get-ObjectProperty -Object $parent -Name "candidate_evidence_manifest"
+        $entries = @(Get-ObjectProperty -Object $manifest -Name "entries")
+        $allowedFiles = @(Get-ObjectProperty -Object $contract -Name "allowed_files")
+        if ([string](Get-ObjectProperty -Object $manifest -Name "status") -cne "verified" -or
+            [string](Get-ObjectProperty -Object $manifest -Name "evidence_profile") -cne $CandidateEvidenceProfile -or
+            $entries.Count -eq 0 -or $entries.Count -ne $allowedFiles.Count) {
+            throw "same_node_continuation_parent_manifest_invalid"
+        }
+        $manifestLines = [System.Collections.Generic.List[string]]::new()
+        $manifestPaths = [System.Collections.Generic.List[string]]::new()
+        foreach ($entry in $entries) {
+            $path = [string](Get-ObjectProperty -Object $entry -Name "path")
+            $state = [string](Get-ObjectProperty -Object $entry -Name "state")
+            $expectedSha = [string](Get-ObjectProperty -Object $entry -Name "sha256")
+            $expectedLength = Get-ObjectProperty -Object $entry -Name "length"
+            if ($path -notmatch '^[A-Za-z0-9._/-]+$' -or
+                $path.StartsWith("/", [System.StringComparison]::Ordinal) -or
+                $path.Contains("\") -or $path.Contains("//") -or
+                @($path.Split("/") | Where-Object { $_ -in @("", ".", "..") }).Count -gt 0 -or
+                $state -cne "regular_file" -or
+                $expectedSha -cnotmatch '^[0-9a-f]{64}$' -or
+                -not ($expectedLength -is [int] -or $expectedLength -is [long]) -or
+                [long]$expectedLength -lt 0 -or $manifestPaths.Contains($path)) {
+                throw "same_node_continuation_parent_manifest_invalid"
+            }
+            $manifestPaths.Add($path)
+            $filePath = Join-Path $RepositoryRoot ($path -replace '/', '\')
+            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+                throw "same_node_continuation_candidate_manifest_mismatch"
+            }
+            $bytes = [System.IO.File]::ReadAllBytes($filePath)
+            $actualSha = Get-Sha256Hex -Bytes $bytes
+            if ($actualSha -cne $expectedSha -or $bytes.Length -ne [long]$expectedLength) {
+                throw "same_node_continuation_candidate_manifest_mismatch"
+            }
+            $manifestLines.Add("$path|regular_file|$actualSha|$($bytes.Length)")
+        }
+        $sortedManifestPaths = @($manifestPaths.ToArray() | Sort-Object -Unique)
+        $sortedAllowedFiles = @($allowedFiles | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+        if ((@($sortedManifestPaths) -join "`n") -cne (@($sortedAllowedFiles) -join "`n") -or
+            (@($manifestPaths.ToArray()) -join "`n") -cne (@($sortedManifestPaths) -join "`n")) {
+            throw "same_node_continuation_parent_manifest_scope_mismatch"
+        }
+        $changedFiles = @(
+            Get-ObjectProperty -Object $parent -Name "changed_files" |
+                ForEach-Object { [string]$_ } | Sort-Object -Unique
+        )
+        if ((@($dirtyPaths) -join "`n") -cne (@($changedFiles) -join "`n")) {
+            throw "same_node_continuation_dirty_path_mismatch"
+        }
+        $payload = [string]::Join("`n", $manifestLines.ToArray())
+        $observedFingerprint = Get-Sha256Hex `
+            -Bytes ([System.Text.Encoding]::UTF8.GetBytes($payload))
+        if ([string](Get-ObjectProperty -Object $manifest -Name "payload") -cne $payload -or
+            [string](Get-ObjectProperty -Object $manifest -Name "fingerprint") -cne $observedFingerprint -or
+            $ExpectedManifestFingerprint -cne $observedFingerprint) {
+            throw "same_node_continuation_candidate_manifest_mismatch"
+        }
+        $assurance = Get-ObjectProperty -Object $parent -Name "execution_assurance"
+        if ([string](Get-ObjectProperty -Object $assurance -Name "candidate_manifest_fingerprint") -cne $observedFingerprint) {
+            throw "same_node_continuation_execution_assurance_mismatch"
+        }
+    }
+    catch {
+        $reason = [string]$_.Exception.Message
+        if ([string]::IsNullOrWhiteSpace($reason) -or $reason -notmatch '^[a-z0-9_]+$') {
+            $reason = "same_node_continuation_admission_failed"
+        }
+        $reasons.Add($reason)
+    }
+
+    return [pscustomobject]@{
+        protocol = $SameNodeContinuationProtocol
+        requested = $true
+        admitted = ($reasons.Count -eq 0)
+        issue = $IssueNumber
+        parent_comment_id = $parentCommentId
+        candidate_manifest_fingerprint = $observedFingerprint
+        remaining_budget_before = $remainingBudget
+        is_human_approval = $false
+        reasons = @($reasons.ToArray())
+    }
 }
 
 function Test-FullyQualifiedLocalWindowsPath {
@@ -1715,6 +2038,36 @@ $statusPublicationValidUntilUtc = $statusPublicationStartedAt.AddSeconds(
 )
 $statusCommentNeedsUpdate = $false
 $githubWritePerformedDirectly = $false
+$continuationBindingFieldCount = 0
+if ($ContinuationIssueNumber -gt 0) { $continuationBindingFieldCount += 1 }
+if (-not [string]::IsNullOrWhiteSpace($ExpectedState)) {
+    $continuationBindingFieldCount += 1
+}
+if (-not [string]::IsNullOrWhiteSpace($ExpectedCandidateManifestFingerprint)) {
+    $continuationBindingFieldCount += 1
+}
+$continuationBindingRequested = $continuationBindingFieldCount -gt 0
+$continuationBindingComplete = $continuationBindingFieldCount -eq 3
+$continuationAdmissionAttemptEnabled = $continuationBindingComplete -and [bool]$StartForeground
+$sameNodeContinuationAdmission = [pscustomobject]@{
+    protocol = $SameNodeContinuationProtocol
+    requested = $continuationBindingRequested
+    admitted = $false
+    issue = $ContinuationIssueNumber
+    parent_comment_id = ""
+    candidate_manifest_fingerprint = ""
+    remaining_budget_before = $null
+    is_human_approval = $false
+    reasons = @()
+}
+if ($continuationBindingRequested -and -not $continuationBindingComplete) {
+    Add-BlockedReason -Reasons $blockedReasons `
+        -Reason "same_node_continuation_binding_incomplete"
+}
+elseif ($continuationBindingComplete -and -not $StartForeground) {
+    Add-BlockedReason -Reasons $blockedReasons `
+        -Reason "same_node_continuation_foreground_required"
+}
 
 if ([string]::IsNullOrWhiteSpace($StateDir)) {
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
@@ -1893,6 +2246,10 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
             $ControlRepoRoot,
             [System.StringComparison]::OrdinalIgnoreCase
         )) {
+        if ($continuationBindingRequested) {
+            Add-BlockedReason -Reasons $blockedReasons `
+                -Reason "same_node_continuation_distinct_routed_target_required"
+        }
         if ($controlRepositoryValidated) {
             $statusBranch = $branch
             $statusHead = $head
@@ -1906,14 +2263,49 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
             -RepositoryRoot $ResolvedTargetRepoRoot `
             -ExpectedRepository $Repository `
             -ReasonPrefix "target_repository" `
-            -Reasons $blockedReasons
-        if ($blockedReasons.Count -eq $targetReasonCountBefore) {
+            -Reasons $blockedReasons `
+            -DeferWorktreeDirty:$continuationAdmissionAttemptEnabled
+        if ($continuationAdmissionAttemptEnabled -and
+            $blockedReasons.Count -eq $targetReasonCountBefore) {
+            if ([string]::IsNullOrWhiteSpace($reviewedGhPath)) {
+                Add-BlockedReason -Reasons $blockedReasons `
+                    -Reason "same_node_continuation_reviewed_gh_unavailable"
+            }
+            else {
+                $sameNodeContinuationAdmission = `
+                    Test-SameNodeExactCandidateContinuation `
+                        -RepositoryRoot $ResolvedTargetRepoRoot `
+                        -RepositoryEvidence $targetRepoEvidence `
+                        -GhPath $reviewedGhPath `
+                        -IssueNumber $ContinuationIssueNumber `
+                        -ExpectedStateValue $ExpectedState `
+                        -ExpectedManifestFingerprint `
+                            $ExpectedCandidateManifestFingerprint `
+                        -ProcessTimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
+                if (-not $sameNodeContinuationAdmission.admitted) {
+                    Add-BlockedReason -Reasons $blockedReasons `
+                        -Reason "target_repository_worktree_dirty"
+                    foreach ($admissionReason in @(
+                        $sameNodeContinuationAdmission.reasons
+                    )) {
+                        Add-BlockedReason -Reasons $blockedReasons `
+                            -Reason ([string]$admissionReason)
+                    }
+                }
+            }
+        }
+        if ($blockedReasons.Count -eq $targetReasonCountBefore -or
+            $sameNodeContinuationAdmission.admitted) {
             $statusBranch = $targetRepoEvidence.branch
             $statusHead = $targetRepoEvidence.head
         }
     }
 }
 elseif ([string]::Equals($Repository, $HagRepository, [System.StringComparison]::Ordinal)) {
+    if ($continuationBindingRequested) {
+        Add-BlockedReason -Reasons $blockedReasons `
+            -Reason "same_node_continuation_repository_unsupported"
+    }
     if ([string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
         Add-BlockedReason -Reasons $blockedReasons -Reason "target_repo_root_required"
     }
@@ -2044,6 +2436,10 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
         -LiteralPath "Env:\LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED"
     $previousWorkflowNotificationSetting = `
         $env:LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED
+    $continuationBindingSettingWasPresent = Test-Path `
+        -LiteralPath "Env:\LAWB_SAME_NODE_CONTINUATION_BINDING"
+    $previousContinuationBindingSetting = `
+        $env:LAWB_SAME_NODE_CONTINUATION_BINDING
     try {
         $runtimeDirectories = @(
             (Split-Path -Parent $reviewedPythonPath),
@@ -2060,6 +2456,19 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
             $srcPath + ";" + $previousPythonPath
         }
         $env:LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED = "1"
+        if ($sameNodeContinuationAdmission.admitted) {
+            $env:LAWB_SAME_NODE_CONTINUATION_BINDING = ([ordered]@{
+                protocol = "lawb.same_node_exact_candidate_continuation_launcher_binding.v1"
+                repository = $Repository
+                issue = [long]$sameNodeContinuationAdmission.issue
+                parent_comment_id = [string]$sameNodeContinuationAdmission.parent_comment_id
+                branch = $statusBranch
+                head = $statusHead
+                candidate_manifest_fingerprint = [string]$sameNodeContinuationAdmission.candidate_manifest_fingerprint
+                remaining_budget_before = [long]$sameNodeContinuationAdmission.remaining_budget_before
+                is_human_approval = $false
+            } | ConvertTo-Json -Compress)
+        }
 
         $operatorResult = Invoke-CapturedNative `
             -CommandPath $reviewedPythonPath `
@@ -2101,6 +2510,15 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
         else {
             Remove-Item `
                 -LiteralPath "Env:\LAWB_WORKFLOW_RESULT_NOTIFICATIONS_ENABLED" `
+                -ErrorAction SilentlyContinue
+        }
+        if ($continuationBindingSettingWasPresent) {
+            $env:LAWB_SAME_NODE_CONTINUATION_BINDING = `
+                $previousContinuationBindingSetting
+        }
+        else {
+            Remove-Item `
+                -LiteralPath "Env:\LAWB_SAME_NODE_CONTINUATION_BINDING" `
                 -ErrorAction SilentlyContinue
         }
     }
@@ -2216,6 +2634,7 @@ $summary = [ordered]@{
     operator_exit_code = $operatorExitCode
     operator_stderr_summary = $operatorStderrSummary
     operator_summary = $operatorSummary
+    same_node_candidate_continuation = $sameNodeContinuationAdmission
     status_publication_requested = [bool]$PublishStatus
     status_publication_attempted = $statusPublicationAttempted
     status_comment_create_attempted = $statusCommentCreateAttempted

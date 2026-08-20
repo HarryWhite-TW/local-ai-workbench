@@ -116,6 +116,18 @@ def ready(**overrides):
     return LocalReadiness(**values)
 
 
+def trusted_continuation_parent(comment_id="5311"):
+    return CommentRecord(
+        id=comment_id,
+        author="HarryWhite-TW",
+        body=(
+            "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1\n"
+            '{"candidate_acceptance":"eligible","approval_token_semantics":'
+            '"candidate_review_snapshot_not_human_approval"}'
+        ),
+    )
+
+
 def run(client, readiness=None, **kwargs):
     return run_bridge_operator_b1_dry_run(
         inbox_issue=999,
@@ -156,6 +168,53 @@ def assert_no_side_effects(summary):
     assert summary["pr_created"] is False
     assert summary["merge_performed"] is False
     assert summary["approval_consumed"] is False
+
+
+def test_dirty_same_node_continuation_requires_named_trusted_parent_and_keeps_staging_blocked():
+    continuation = "same_node_exact_candidate_continuation_v1:parent_comment_id=5311"
+    client = FakeGitHub(
+        target_comments=[
+            CommentRecord(
+                id=10,
+                author="HarryWhite-TW",
+                body=dispatch_marker(expected_state=continuation),
+            ),
+            trusted_continuation_parent(),
+        ]
+    )
+
+    admitted = run(client, ready(clean=False, staged_clean=True))
+    assert admitted["result"] == "success"
+    assert admitted["same_node_candidate_continuation"]["admitted"] is True
+    assert admitted["same_node_candidate_continuation"]["is_human_approval"] is False
+
+    missing = run(
+        FakeGitHub(target_comments=[CommentRecord(id=10, author="HarryWhite-TW", body=dispatch_marker(expected_state=continuation))]),
+        ready(clean=False, staged_clean=True),
+    )
+    assert missing["blocked_reasons"] == ["same_node_continuation_parent_missing_or_ambiguous"]
+
+    untrusted = run(
+        FakeGitHub(
+            target_comments=[
+                CommentRecord(
+                    id=10,
+                    author="HarryWhite-TW",
+                    body=dispatch_marker(expected_state=continuation),
+                ),
+                trusted_continuation_parent().__class__(
+                    id=5311,
+                    author="other-user",
+                    body=trusted_continuation_parent().body,
+                ),
+            ]
+        ),
+        ready(clean=False, staged_clean=True),
+    )
+    assert untrusted["blocked_reasons"] == ["same_node_continuation_parent_untrusted"]
+
+    staged = run(client, ready(clean=False, staged_clean=False))
+    assert staged["blocked_reasons"] == ["staged_files_present"]
 
 
 def test_parse_valid_marker():

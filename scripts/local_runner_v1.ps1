@@ -28,7 +28,8 @@ param(
     [string]$ReviewedGhPath = "",
     [string]$MachineEvidencePath = "",
     [string]$DisplayPilotRequestId = "",
-    [switch]$SuppressReviewBundleComment
+    [switch]$SuppressReviewBundleComment,
+    [string]$TrustedCandidateContinuationCommentId = ""
 )
 
 Set-StrictMode -Version Latest
@@ -76,6 +77,8 @@ $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
 $CandidateEvidenceProfile = "local_git_candidate_observation.v1"
+$SameNodeContinuationProtocol = "lawb.same_node_exact_candidate_continuation.v1"
+$TrustedRunnerResultAuthors = @("HarryWhite-TW")
 $LocalIsolationProvider = "codex_cli_workspace_write"
 $script:CommitApprovedLocalCommitCreated = "unknown"
 $script:CommitApprovedCommitSha = ""
@@ -760,6 +763,161 @@ function Get-ReviewBundleGitObservation {
         UntrackedFiles = @(Get-GitUntrackedFilesWithoutExcludes)
         IndexVisibilityFiles = @(Get-GitIndexVisibilityFiles)
         GitVisibilityMetadataFingerprint = Get-GitVisibilityMetadataFingerprint
+    }
+}
+
+function ConvertFrom-FirstJsonObjectAfterMarker {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Body,
+        [Parameter(Mandatory = $true)]
+        [string]$Marker
+    )
+
+    $markerIndex = $Body.IndexOf($Marker, [System.StringComparison]::Ordinal)
+    if ($markerIndex -lt 0) { throw "runner_result_marker_missing" }
+    $start = $Body.IndexOf("{", $markerIndex + $Marker.Length)
+    if ($start -lt 0) { throw "runner_result_json_missing" }
+
+    $depth = 0
+    $inString = $false
+    $escaped = $false
+    for ($index = $start; $index -lt $Body.Length; $index++) {
+        $character = $Body[$index]
+        if ($inString) {
+            if ($escaped) { $escaped = $false }
+            elseif ($character -eq "\") { $escaped = $true }
+            elseif ($character -eq '"') { $inString = $false }
+            continue
+        }
+        if ($character -eq '"') { $inString = $true; continue }
+        if ($character -eq "{") { $depth += 1; continue }
+        if ($character -eq "}") {
+            $depth -= 1
+            if ($depth -eq 0) {
+                return $Body.Substring($start, $index - $start + 1) | ConvertFrom-Json
+            }
+        }
+    }
+    throw "runner_result_json_unterminated"
+}
+
+function Get-SameNodeExactCandidateContinuationAdmission {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ParentCommentId,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$IssueComments,
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeContractBinding,
+        [Parameter(Mandatory = $true)]
+        [object]$CandidateManifest,
+        [Parameter(Mandatory = $true)]
+        [string]$CurrentStatus,
+        [Parameter(Mandatory = $true)]
+        [bool]$NoStage
+    )
+
+    $reasons = [System.Collections.Generic.List[string]]::new()
+    if ($ParentCommentId -notmatch '^[1-9][0-9]{0,18}$') { $reasons.Add("invalid_continuation_parent_comment_id") }
+    if ([string]::IsNullOrWhiteSpace($CurrentStatus)) { $reasons.Add("continuation_requires_dirty_candidate") }
+    if (-not $NoStage) { $reasons.Add("staged_changes_detected") }
+    if ([string]$RuntimeContractBinding.status -ne "passed" -or -not [bool]$RuntimeContractBinding.contract_present) {
+        $reasons.Add("runtime_contract_pre_execution_not_passed")
+    }
+    if ([string]$CandidateManifest.status -ne "verified") { $reasons.Add("candidate_manifest_unverified") }
+
+    $matching = @($IssueComments | Where-Object {
+        [string]::Equals([string]$_.id, $ParentCommentId, [System.StringComparison]::Ordinal)
+    })
+    if ($matching.Count -ne 1) { $reasons.Add("trusted_parent_comment_missing_or_ambiguous") }
+
+    $parent = $null
+    if ($matching.Count -eq 1) {
+        $comment = $matching[0]
+        $author = ""
+        if ($null -ne $comment.author) { $author = [string]$comment.author.login }
+        if ($author -notin $TrustedRunnerResultAuthors) { $reasons.Add("trusted_parent_author_untrusted") }
+        try { $parent = ConvertFrom-FirstJsonObjectAfterMarker -Body ([string]$comment.body) -Marker $RunnerResultMarker }
+        catch { $reasons.Add([string]$_.Exception.Message) }
+    }
+
+    if ($null -ne $parent) {
+        if ([string]$parent.candidate_acceptance -ne "eligible") { $reasons.Add("trusted_parent_candidate_ineligible") }
+        if ([string]$parent.approval_token_semantics -ne "candidate_review_snapshot_not_human_approval") { $reasons.Add("trusted_parent_approval_semantics_invalid") }
+        if ([string]$parent.action -ne "run-reviewbundle") { $reasons.Add("trusted_parent_action_invalid") }
+        if ([string]$parent.repo -ne $Repo -or [string]$parent.issue -ne [string]$IssueNumber) { $reasons.Add("trusted_parent_repository_or_issue_mismatch") }
+        $parentContinuation = $parent.same_node_continuation
+        if ($null -eq $parentContinuation -or
+            [string]$parentContinuation.protocol -ne $SameNodeContinuationProtocol -or
+            [int]$parentContinuation.remaining_budget -ne 1 -or
+            [bool]$parentContinuation.is_human_approval) {
+            $reasons.Add("trusted_parent_continuation_identity_invalid")
+        }
+        $parentContract = $parent.runtime_contract_binding.runtime_contract
+        if ($null -eq $parentContract -or
+            ((($parentContract | ConvertTo-Json -Depth 16 -Compress)) -cne (($RuntimeContractBinding.runtime_contract | ConvertTo-Json -Depth 16 -Compress)))) {
+            $reasons.Add("trusted_parent_runtime_contract_mismatch")
+        }
+        if ($null -eq $parent.candidate_evidence_manifest -or
+            [string]$parent.candidate_evidence_manifest.fingerprint -cne [string]$CandidateManifest.fingerprint) {
+            $reasons.Add("candidate_manifest_fingerprint_mismatch")
+        }
+        try {
+            $state = Get-ApprovalState -IssueNumberForState $IssueNumber -RequireChanges -AllowedFiles @($RuntimeContractBinding.allowed_files) -CandidateManifest $CandidateManifest
+            if ([string]$parent.diff_fingerprint -cne [string]$state.DiffFingerprint -or
+                [string]$parent.files_fingerprint -cne [string]$state.FilesFingerprint) {
+                $reasons.Add("candidate_fingerprint_mismatch")
+            }
+        }
+        catch { $reasons.Add("candidate_fingerprint_unavailable") }
+
+        foreach ($candidateComment in @($IssueComments)) {
+            if ([string]::Equals(
+                [string]$candidateComment.id,
+                $ParentCommentId,
+                [System.StringComparison]::Ordinal
+            )) { continue }
+            $candidateAuthor = ""
+            if ($null -ne $candidateComment.author) {
+                $candidateAuthor = [string]$candidateComment.author.login
+            }
+            if ($candidateAuthor -notin $TrustedRunnerResultAuthors -or
+                ([string]$candidateComment.body).IndexOf(
+                    $RunnerResultMarker,
+                    [System.StringComparison]::Ordinal
+                ) -lt 0) { continue }
+            try {
+                $child = ConvertFrom-FirstJsonObjectAfterMarker `
+                    -Body ([string]$candidateComment.body) `
+                    -Marker $RunnerResultMarker
+                $childContinuation = $child.same_node_continuation
+                if ([string]$child.repo -eq $Repo -and
+                    [string]$child.issue -eq [string]$IssueNumber -and
+                    [string]$child.action -eq "run-reviewbundle" -and
+                    $null -ne $childContinuation -and
+                    [string]$childContinuation.protocol -eq $SameNodeContinuationProtocol -and
+                    [string]$childContinuation.parent_comment_id -eq $ParentCommentId -and
+                    [int]$childContinuation.remaining_budget -eq 0 -and
+                    -not [bool]$childContinuation.is_human_approval) {
+                    $reasons.Add("trusted_parent_continuation_budget_exhausted")
+                }
+            }
+            catch { }
+        }
+    }
+
+    return [pscustomobject]@{
+        admitted = ($reasons.Count -eq 0)
+        protocol = $SameNodeContinuationProtocol
+        parent_comment_id = $ParentCommentId
+        remaining_budget_before = if ($null -eq $parent -or $null -eq $parent.same_node_continuation) {
+            $null
+        }
+        else { [int]$parent.same_node_continuation.remaining_budget }
+        is_human_approval = $false
+        reasons = @($reasons | Select-Object -Unique)
     }
 }
 
@@ -2203,7 +2361,9 @@ function New-RunnerResultSummaryJson {
         [AllowNull()]
         [object]$ExecutionAssurance = $null,
         [AllowNull()]
-        [object]$CandidateEvidenceManifest = $null
+        [object]$CandidateEvidenceManifest = $null,
+        [AllowNull()]
+        [object]$SameNodeContinuation = $null
     )
 
     if ($null -eq $RuntimeContractBinding) {
@@ -2254,6 +2414,7 @@ function New-RunnerResultSummaryJson {
         candidate_acceptance = if ($candidateSnapshotEligible) { "eligible" } else { "ineligible" }
         approval_token_generated = $candidateSnapshotEligible
         approval_token_semantics = "candidate_review_snapshot_not_human_approval"
+        same_node_continuation = $SameNodeContinuation
         validations = [ordered]@{
             git_status_clean = (New-RunnerValidationResult -Status $(if ($finalClean) { "passed" } else { "warning" }) -Summary $(if ($finalClean) { "Final git status is clean." } else { "Final git status reports local changes for review." }))
             codex = (New-RunnerValidationResult -Status $codexStatus -Summary "Codex exit code: $CodexExitCode")
@@ -2791,7 +2952,9 @@ function New-ReviewBundleComment {
         [object]$ExecutionAssurance = $null,
         [AllowNull()]
         [object]$CandidateEvidenceManifest = $null,
-        [bool]$CandidatePathsReviewable = $true
+        [bool]$CandidatePathsReviewable = $true,
+        [AllowNull()]
+        [object]$SameNodeContinuation = $null
     )
 
     if ($null -eq $RuntimeContractBinding) {
@@ -2841,7 +3004,8 @@ function New-ReviewBundleComment {
         -ApprovalTokenGenerated (-not [string]::IsNullOrWhiteSpace($ApprovalToken)) `
         -RuntimeContractBinding $RuntimeContractBinding `
         -ExecutionAssurance $ExecutionAssurance `
-        -CandidateEvidenceManifest $CandidateEvidenceManifest
+        -CandidateEvidenceManifest $CandidateEvidenceManifest `
+        -SameNodeContinuation $SameNodeContinuation
 
     $finalIndexCleanText = if ($FinalIndexClean) { "yes" } else { "no" }
     $finalHeadMatchesText = if ($FinalHeadMatchesInitial) { "yes" } else { "no" }
@@ -3649,10 +3813,17 @@ $branch = Format-Block -Text (Get-GitOutput -GitArgs @("branch", "--show-current
 $headBefore = Get-GitOutput -GitArgs @("rev-parse", "HEAD") -Action "git rev-parse HEAD"
 $initialStatus = Get-GitStatusShort
 $initialNoStage = -not (Test-GitStatusHasStagedChanges -Status $initialStatus)
+$repoCleanBefore = if ([string]::IsNullOrWhiteSpace($initialStatus)) { "yes" } else { "no" }
+$initialStatusForEvidence = if ([string]::IsNullOrWhiteSpace($initialStatus)) {
+    "(clean)"
+}
+else { $initialStatus }
+$initialModifiedFiles = Get-ModifiedFilesFromStatus -Status $initialStatus
+$initialChangedFiles = @(Convert-FileTextToArray -Text $initialModifiedFiles)
+$initialDiffStat = Get-GitOutput -GitArgs @("diff", "--stat") -Action "git diff --stat"
+$initialCachedDiffStat = Get-GitOutput -GitArgs @("diff", "--cached", "--stat") -Action "git diff --cached --stat"
 
-if (-not [string]::IsNullOrWhiteSpace($initialStatus)) {
-    $diffStat = Get-GitOutput -GitArgs @("diff", "--stat") -Action "git diff --stat"
-    $cachedDiffStat = Get-GitOutput -GitArgs @("diff", "--cached", "--stat") -Action "git diff --cached --stat"
+if (-not [string]::IsNullOrWhiteSpace($initialStatus) -and [string]::IsNullOrWhiteSpace($TrustedCandidateContinuationCommentId)) {
     $stderrSummary = Get-StderrSummary -Text "" -ExitCode "not-run"
     $comment = New-ReviewBundleComment `
         -IssueNumberText ([string]$IssueNumber) `
@@ -3665,13 +3836,13 @@ if (-not [string]::IsNullOrWhiteSpace($initialStatus)) {
         -DiffFingerprint "" `
         -FilesFingerprint "" `
         -ApprovalToken "" `
-        -ModifiedFiles (Get-ModifiedFilesFromStatus -Status $initialStatus) `
-        -DiffStat $diffStat `
-        -CachedDiffStat $cachedDiffStat `
+        -ModifiedFiles $initialModifiedFiles `
+        -DiffStat $initialDiffStat `
+        -CachedDiffStat $initialCachedDiffStat `
         -CommandsSummary "Codex was not run because the repo was dirty before start." `
         -CodexFinalReport "Codex was not run. Clean or commit/stash existing changes before using local-runner-v1." `
         -StderrSummary $stderrSummary `
-        -FinalStatus $initialStatus `
+        -FinalStatus $initialStatusForEvidence `
         -FinalIndexClean $initialNoStage `
         -FinalHeadMatchesInitial $true
 
@@ -3691,8 +3862,8 @@ if (-not [string]::IsNullOrWhiteSpace($initialStatus)) {
                 -CodexStatus "not_run" `
                 -CodexTimedOut $false `
                 -RuntimeContractBinding $machineBinding `
-                -ChangedFiles @(Convert-FileTextToArray -Text (Get-ModifiedFilesFromStatus -Status $initialStatus)) `
-                -FinalStatus $initialStatus `
+                -ChangedFiles $initialChangedFiles `
+                -FinalStatus $initialStatusForEvidence `
                 -StagedAreaClean $initialNoStage `
                 -ExecutionAssurance $machineAssurance
         }
@@ -3704,13 +3875,15 @@ if (-not [string]::IsNullOrWhiteSpace($initialStatus)) {
 }
 
 $issueJsonResult = Invoke-Captured {
-    & $Gh issue view $IssueNumber --repo $Repo --json title,body,url,number
+    & $Gh issue view $IssueNumber --repo $Repo --json title,body,url,number,comments
 }
 Require-Success -Result $issueJsonResult -Action "gh issue view"
 
 $issue = $issueJsonResult.Stdout | ConvertFrom-Json
 $issueTitle = [string]$issue.title
 $issueBody = [string]$issue.body
+$issueComments = @()
+if ($null -ne $issue.comments) { $issueComments = @($issue.comments) }
 
 if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) {
     $stderrSummary = Get-StderrSummary -Text "" -ExitCode "not-run"
@@ -3720,19 +3893,19 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
         -HeadBefore $headBefore `
         -HeadAfter $headBefore `
         -CodexExitCode "not run; issue missing write-capable marker" `
-        -RepoCleanBefore "yes" `
+        -RepoCleanBefore $repoCleanBefore `
         -ReviewId "" `
         -DiffFingerprint "" `
         -FilesFingerprint "" `
         -ApprovalToken "" `
-        -ModifiedFiles "(none)" `
-        -DiffStat "" `
-        -CachedDiffStat "" `
+        -ModifiedFiles $initialModifiedFiles `
+        -DiffStat $initialDiffStat `
+        -CachedDiffStat $initialCachedDiffStat `
         -CommandsSummary "Codex was not run because the issue did not explicitly identify itself as write-capable or review-bundle capable." `
         -CodexFinalReport "Codex was not run. Add an explicit write-capable or review-bundle marker to the issue before using local-runner-v1." `
         -StderrSummary $stderrSummary `
-        -FinalStatus "(clean)" `
-        -FinalIndexClean $true `
+        -FinalStatus $initialStatusForEvidence `
+        -FinalIndexClean $initialNoStage `
         -FinalHeadMatchesInitial $true
 
     $postResult = Complete-ReviewBundleOutcome `
@@ -3751,9 +3924,9 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
                 -CodexStatus "not_run" `
                 -CodexTimedOut $false `
                 -RuntimeContractBinding $machineBinding `
-                -ChangedFiles @() `
-                -FinalStatus "(clean)" `
-                -StagedAreaClean $true `
+                -ChangedFiles $initialChangedFiles `
+                -FinalStatus $initialStatusForEvidence `
+                -StagedAreaClean $initialNoStage `
                 -ExecutionAssurance $machineAssurance
         }
     if ($postResult.ExitCode -ne 0) {
@@ -3798,19 +3971,19 @@ if ([string]::Equals([string]$runtimeContractBinding.status, "contract_violation
         -HeadBefore $headBefore `
         -HeadAfter $headBefore `
         -CodexExitCode "not run; runtime contract violation" `
-        -RepoCleanBefore "yes" `
+        -RepoCleanBefore $repoCleanBefore `
         -ReviewId "" `
         -DiffFingerprint "" `
         -FilesFingerprint "" `
         -ApprovalToken "" `
-        -ModifiedFiles "(none)" `
-        -DiffStat "" `
-        -CachedDiffStat "" `
+        -ModifiedFiles $initialModifiedFiles `
+        -DiffStat $initialDiffStat `
+        -CachedDiffStat $initialCachedDiffStat `
         -CommandsSummary "Codex was not run because Task Packet v1.1 runtime contract binding failed: $violationReasons" `
         -CodexFinalReport "Codex was not run. Runtime contract identity evidence failed closed before invocation." `
         -StderrSummary $stderrSummary `
-        -FinalStatus "(clean)" `
-        -FinalIndexClean $true `
+        -FinalStatus $initialStatusForEvidence `
+        -FinalIndexClean $initialNoStage `
         -FinalHeadMatchesInitial $true `
         -RuntimeContractBinding $runtimeContractBinding
     $postResult = Complete-ReviewBundleOutcome `
@@ -3828,9 +4001,9 @@ if ([string]::Equals([string]$runtimeContractBinding.status, "contract_violation
                 -CodexStatus "not_run" `
                 -CodexTimedOut $false `
                 -RuntimeContractBinding $runtimeContractBinding `
-                -ChangedFiles @() `
-                -FinalStatus "(clean)" `
-                -StagedAreaClean $true `
+                -ChangedFiles $initialChangedFiles `
+                -FinalStatus $initialStatusForEvidence `
+                -StagedAreaClean $initialNoStage `
                 -ExecutionAssurance $machineAssurance
         }
     if ($postResult.ExitCode -ne 0) {
@@ -3840,6 +4013,21 @@ if ([string]::Equals([string]$runtimeContractBinding.status, "contract_violation
     exit 2
 }
 Assert-RuntimeContractAllowsCodex -RuntimeContractBinding $runtimeContractBinding
+
+$continuationAdmission = $null
+if (-not [string]::IsNullOrWhiteSpace($initialStatus)) {
+    $preContinuationManifest = Get-BoundedCandidateManifest -AllowedFiles @($runtimeContractBinding.allowed_files)
+    $continuationAdmission = Get-SameNodeExactCandidateContinuationAdmission `
+        -ParentCommentId $TrustedCandidateContinuationCommentId `
+        -IssueComments $issueComments `
+        -RuntimeContractBinding $runtimeContractBinding `
+        -CandidateManifest $preContinuationManifest `
+        -CurrentStatus $initialStatus `
+        -NoStage $initialNoStage
+    if (-not [bool]$continuationAdmission.admitted) {
+        throw "Same-node exact candidate continuation rejected: $(@($continuationAdmission.reasons) -join ',')"
+    }
+}
 
 if ([string]::IsNullOrWhiteSpace($ReviewedCodexPath)) {
     throw "ReviewedCodexPath is required for ReviewBundle execution; refusing to re-resolve codex from PATH."
@@ -3992,13 +4180,33 @@ if (-not [string]::IsNullOrWhiteSpace($finalStatus) -and
     }
 }
 
+$sameNodeContinuation = if ($null -ne $continuationAdmission) {
+    [ordered]@{
+        protocol = $SameNodeContinuationProtocol
+        parent_comment_id = $continuationAdmission.parent_comment_id
+        remaining_budget = 0
+        is_human_approval = $false
+        trusted_parent_evidence = "github_review_bundle_comment"
+    }
+}
+elseif (-not [string]::IsNullOrWhiteSpace($approvalToken)) {
+    [ordered]@{
+        protocol = $SameNodeContinuationProtocol
+        parent_comment_id = $null
+        remaining_budget = 1
+        is_human_approval = $false
+        trusted_parent_evidence = "github_review_bundle_comment"
+    }
+}
+else { $null }
+
 $comment = New-ReviewBundleComment `
     -IssueNumberText ([string]$IssueNumber) `
     -Branch $branch `
     -HeadBefore $headBefore `
     -HeadAfter $headAfter `
     -CodexExitCode ([string]$codexResult.ExitCode) `
-    -RepoCleanBefore "yes" `
+    -RepoCleanBefore $repoCleanBefore `
     -ReviewId $reviewId `
     -DiffFingerprint $diffFingerprint `
     -FilesFingerprint $filesFingerprint `
@@ -4016,7 +4224,8 @@ $comment = New-ReviewBundleComment `
     -RuntimeContractBinding $runtimeContractBinding `
     -ExecutionAssurance $executionAssurance `
     -CandidateEvidenceManifest $postExecutionManifest `
-    -CandidatePathsReviewable $candidatePathsReviewable
+    -CandidatePathsReviewable $candidatePathsReviewable `
+    -SameNodeContinuation $sameNodeContinuation
 
 $commentResult = Complete-ReviewBundleOutcome `
     -Comment $comment `

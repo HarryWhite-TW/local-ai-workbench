@@ -50,6 +50,7 @@ $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $DryRunProtocol = "lawb.dispatch_dry_run.v1"
 $DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
 $ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
+$SameNodeContinuationExpectedStatePrefix = "same_node_exact_candidate_continuation_v1:parent_comment_id="
 $DispatcherRejectedBeforeRunnerExitCode = 20
 $DispatcherRunnerReachUncertainExitCode = 21
 $DispatcherFailedBeforeRunnerExitCode = 22
@@ -303,6 +304,35 @@ function Get-CommentBodyText {
     )
 
     return Get-ObjectPropertyText -Object $Comment -PropertyName "body"
+}
+
+function Get-SameNodeContinuationParentCommentId {
+    param([Parameter(Mandatory = $true)][hashtable]$Fields)
+    if (-not $Fields.ContainsKey("expected_state")) { return "" }
+    $value = [string]$Fields["expected_state"]
+    if (-not $value.StartsWith($SameNodeContinuationExpectedStatePrefix, [System.StringComparison]::Ordinal)) { return "" }
+    $commentId = $value.Substring($SameNodeContinuationExpectedStatePrefix.Length)
+    if ($commentId -notmatch '^[A-Za-z0-9_-]+$') {
+        Throw-DeterministicAdmissionRejection -Message "same-node continuation expected_state has an invalid parent comment id."
+    }
+    return $commentId
+}
+
+function Assert-SameNodeContinuationParentPresent {
+    param(
+        [Parameter(Mandatory = $true)][object]$ReadResult,
+        [Parameter(Mandatory = $true)][string]$ParentCommentId
+    )
+    $matching = @($ReadResult.RunnerResults | Where-Object {
+        [string]::Equals([string]$_.Comment.id, $ParentCommentId, [System.StringComparison]::Ordinal)
+    })
+    if ($matching.Count -ne 1) {
+        Throw-DeterministicAdmissionRejection -Message "Same-node continuation requires exactly one trusted parent review-bundle comment id=$ParentCommentId."
+    }
+    $author = Get-CommentAuthorLogin -Comment $matching[0].Comment
+    if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value $author)) {
+        Throw-DeterministicAdmissionRejection -Message "Same-node continuation parent comment author '$author' is not trusted."
+    }
 }
 
 function Get-GitOutput {
@@ -1126,8 +1156,13 @@ function Invoke-ReviewBundle {
     )
 
     $status = Get-GitStatusShort
+    $continuationParentCommentId = ""
     if (-not [string]::IsNullOrWhiteSpace($status)) {
-        Throw-DeterministicAdmissionRejection -Message "run-reviewbundle requires a clean repo before dispatch. Current git status: $status"
+        $continuationParentCommentId = Get-SameNodeContinuationParentCommentId -Fields $Selection.Selected.Fields
+        if ([string]::IsNullOrWhiteSpace($continuationParentCommentId)) {
+            Throw-DeterministicAdmissionRejection -Message "run-reviewbundle requires a clean repo before dispatch. Current git status: $status"
+        }
+        Assert-SameNodeContinuationParentPresent -ReadResult $Selection.ReadResult -ParentCommentId $continuationParentCommentId
     }
 
     $runnerScript = Get-RunnerScriptPath
@@ -1137,7 +1172,7 @@ function Invoke-ReviewBundle {
     $script:RunnerMayHaveStarted = $true
     $runnerResult = Invoke-WriteCommand `
         -FilePath $powerShellHost `
-        -Arguments (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding) + $(if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal) -or -not [string]::Equals((ConvertTo-NormalizedProviderPath -Path $TargetRepoRoot), (ConvertTo-NormalizedProviderPath -Path $RepoRoot), [System.StringComparison]::OrdinalIgnoreCase)) { @("-Repo", $Repo, "-RepoPath", $TargetRepoRoot) } else { @() })) `
+        -Arguments (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding) + $(if (-not [string]::IsNullOrWhiteSpace($continuationParentCommentId)) { @("-TrustedCandidateContinuationCommentId", $continuationParentCommentId) } else { @() }) + $(if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal) -or -not [string]::Equals((ConvertTo-NormalizedProviderPath -Path $TargetRepoRoot), (ConvertTo-NormalizedProviderPath -Path $RepoRoot), [System.StringComparison]::OrdinalIgnoreCase)) { @("-Repo", $Repo, "-RepoPath", $TargetRepoRoot) } else { @() })) `
         -Action "local_runner_v1.ps1 ReviewBundle"
 
     $result = if ($runnerResult.ExitCode -eq 0) { "success" } else { "failure" }
@@ -1146,7 +1181,7 @@ function Invoke-ReviewBundle {
         Action = "run-reviewbundle"
         Result = $result
         Status = $status
-        StatusSummary = "clean"
+        StatusSummary = if ([string]::IsNullOrWhiteSpace($status)) { "clean" } else { "same_node_exact_candidate_continuation" }
         RunnerExitCode = $runnerResult.ExitCode
         Stdout = $runnerResult.Stdout
         Stderr = $runnerResult.Stderr
