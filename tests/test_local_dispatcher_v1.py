@@ -640,6 +640,7 @@ def test_explicit_request_id_allows_health_and_real_markers_to_overlap(tmp_path)
 
     assert_success(result)
     assert "CASE_RESULT=success" in result.stdout
+    assert "RUNNER_CALLS=1" in result.stdout
     summary = extract_summary(result.stdout)
     assert summary["request_id"] == "req-real-83"
     assert summary["action"] == "run-reviewbundle"
