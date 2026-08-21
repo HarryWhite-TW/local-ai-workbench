@@ -96,7 +96,13 @@ NONFATAL_REQUEST_REJECTION_REASONS = frozenset(
         "health_probe_expiry_exceeds_5_minutes",
     }
 )
-SAFE_WAIT_B1_REASONS = frozenset({"missing_request", "no_current_request_after_consumption"})
+SAFE_WAIT_B1_REASONS = frozenset(
+    {
+        "missing_request",
+        "missing_current_request",
+        "no_current_request_after_consumption",
+    }
+)
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$")
 
 

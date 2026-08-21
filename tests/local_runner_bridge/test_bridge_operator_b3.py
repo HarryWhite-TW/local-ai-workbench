@@ -1796,16 +1796,46 @@ def test_untrusted_request_author_blocks(tmp_path):
     assert_b1_failure_blocks(tmp_path, summary, "untrusted_inbox_author")
 
 
-def test_expired_request_blocks(tmp_path):
-    comment = CommentRecord(
-        id=1,
-        body=inbox_marker(expires="20260615T080000Z"),
-        author="HarryWhite-TW",
+def test_b3c_expired_history_without_current_request_waits_across_cycles(tmp_path):
+    comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(action="run-reviewbundle", expires="20260615T080000Z"),
+            author="HarryWhite-TW",
+        ),
+        CommentRecord(
+            id=2,
+            body=inbox_marker(
+                action="run-reviewbundle",
+                request_id="b3c-expired-history-002",
+                target_dispatch_request_id="b3c-expired-history-002",
+                expires="20260615T080100Z",
+            ),
+            author="HarryWhite-TW",
+        ),
+    ]
+    calls = []
+
+    summary = run_b3c(
+        tmp_path,
+        FakeGitHub(inbox_comments=comments),
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+        max_cycles=2,
     )
 
-    summary = run(tmp_path, FakeGitHub(inbox_comments=[comment]))
-
-    assert_b1_failure_blocks(tmp_path, summary, "missing_current_request")
+    assert summary["result"] == "success"
+    assert summary["cycles_completed"] == 2
+    assert summary["last_b1_blocked_reasons"] == ["missing_current_request"]
+    assert summary["empty_or_blocked_cycles"] == 2
+    assert summary["current_request_count"] == 0
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert summary["current_failure_recorded"] is False
+    assert calls == []
+    assert not (tmp_path / "in_flight.json").exists()
+    assert not (tmp_path / "last_failure.json").exists()
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+    assert_high_risk_safety(summary)
 
 
 def test_wrong_branch_or_wrong_head_blocks(tmp_path):
