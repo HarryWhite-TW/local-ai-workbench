@@ -46,7 +46,10 @@ $SupportedTargetRepos = @($ExpectedDispatchRepo, $HagDispatchRepo)
 $DispatchMarkerPrefix = "CHATGPT-DISPATCH"
 $DispatchProtocol = "lawb.dispatch.v1"
 $ControlRelayProtocol = "lawb.bridge_relay_dispatch.v1"
+$ControlRelayMarkerPrefix = "BRIDGE-INBOX-REQUEST"
+$ControlRelayRequestProtocol = "lawb.bridge_inbox_request.v1"
 $NormalControlRelayIssue = 279
+$ControlRelayRepository = "HarryWhite-TW/local-ai-workbench"
 $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $DryRunProtocol = "lawb.dispatch_dry_run.v1"
@@ -920,7 +923,8 @@ function Get-IssueDispatchMarkerReadResult {
     param(
         [Parameter(Mandatory = $true)]
         [int]$IssueNumber,
-        [switch]$IncludeDispatchMarkers = $true
+        [switch]$IncludeDispatchMarkers = $true,
+        [string]$Repository = $Repo
     )
 
     $ghPath = Resolve-GhPath
@@ -930,7 +934,7 @@ function Get-IssueDispatchMarkerReadResult {
         "view",
         "$IssueNumber",
         "--repo",
-        $Repo,
+        $Repository,
         "--json",
         "number,title,state,comments"
     )
@@ -996,6 +1000,7 @@ function Get-IssueDispatchMarkerReadResult {
         IssueNumber = $IssueNumber
         Title = $issueTitle
         IssueState = $issueState
+        Comments = @($comments)
         Markers = @($markers)
         RunnerResults = @($runnerResults)
     }
@@ -1181,6 +1186,124 @@ function ConvertFrom-RelayRequestBase64 {
     return $payload
 }
 
+function ConvertFrom-ControlRelayMarkerLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$MarkerLine
+    )
+
+    if (-not (Test-AsciiText -Text $MarkerLine)) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay marker contains non-ASCII text."
+    }
+
+    $parts = $MarkerLine.Split(" ")
+    if ($parts.Count -lt 2 -or -not [string]::Equals($parts[0], $ControlRelayMarkerPrefix, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Malformed control relay marker."
+    }
+    if (@($parts | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+        Throw-DeterministicAdmissionRejection -Message "Malformed control relay marker spacing."
+    }
+
+    $requiredFields = @(
+        "protocol", "request_id", "repo", "target_issue", "target_dispatch_request_id",
+        "branch", "head", "expires", "action", "requested_by"
+    )
+    $knownFields = @($requiredFields + "expected_state")
+    $seenFields = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    $fields = @{}
+    foreach ($part in @($parts | Select-Object -Skip 1)) {
+        if ($part -notmatch "^([a-z_]+)=(\S+)$") {
+            Throw-DeterministicAdmissionRejection -Message "Malformed control relay marker field '$part'."
+        }
+        $fieldName = $Matches[1]
+        $fieldValue = $Matches[2]
+        if (-not (Test-ExactListValue -Values $knownFields -Value $fieldName)) {
+            Throw-DeterministicAdmissionRejection -Message "Unknown control relay marker field '$fieldName'."
+        }
+        if (-not $seenFields.Add($fieldName)) {
+            Throw-DeterministicAdmissionRejection -Message "Duplicate control relay marker field '$fieldName'."
+        }
+        $fields[$fieldName] = $fieldValue
+    }
+    foreach ($requiredField in $requiredFields) {
+        if (-not $seenFields.Contains($requiredField)) {
+            Throw-DeterministicAdmissionRejection -Message "Missing required control relay marker field '$requiredField'."
+        }
+    }
+    return $fields
+}
+
+function Assert-FreshControlRelayMatchesHandoff {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Relay,
+        [Parameter(Mandatory = $true)]
+        [datetime]$NowUtc
+    )
+
+    $controlRead = Get-IssueDispatchMarkerReadResult `
+        -IssueNumber $NormalControlRelayIssue `
+        -IncludeDispatchMarkers:$false `
+        -Repository $ControlRelayRepository
+    if (-not [string]::Equals([string]$controlRead.IssueState, "OPEN", [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay #$NormalControlRelayIssue is not OPEN."
+    }
+
+    $matchingComments = @($controlRead.Comments | Where-Object {
+        [string]::Equals(
+            (Get-ObjectPropertyText -Object $_ -PropertyName "id"),
+            [string]$Relay.relay_comment_id,
+            [System.StringComparison]::Ordinal
+        )
+    })
+    if ($matchingComments.Count -ne 1) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay comment id=$($Relay.relay_comment_id) was not found exactly once on #$NormalControlRelayIssue."
+    }
+
+    $freshComment = $matchingComments[0]
+    $freshAuthor = Get-CommentAuthorLogin -Comment $freshComment
+    if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value $freshAuthor)) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay author '$freshAuthor' is not trusted."
+    }
+    if (-not [string]::Equals($freshAuthor, [string]$Relay.relay_author, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay author does not match the B1 handoff."
+    }
+
+    $body = Get-CommentBodyText -Comment $freshComment
+    if ([string]::IsNullOrWhiteSpace($body) -or -not [string]::Equals($body, $body.Trim(), [System.StringComparison]::Ordinal) -or $body -match "[\r\n]") {
+        Throw-DeterministicAdmissionRejection -Message "Control relay marker must be one standalone comment line."
+    }
+    $freshFields = ConvertFrom-ControlRelayMarkerLine -MarkerLine $body
+    if (-not [string]::Equals([string]$freshFields["protocol"], $ControlRelayRequestProtocol, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay request protocol is not supported."
+    }
+
+    foreach ($fieldName in @("request_id", "target_dispatch_request_id", "target_issue", "repo", "branch", "head", "expires", "action", "requested_by")) {
+        if (-not [string]::Equals([string]$freshFields[$fieldName], [string]$Relay.$fieldName, [System.StringComparison]::Ordinal)) {
+            Throw-DeterministicAdmissionRejection -Message "Fresh control relay field '$fieldName' does not match the B1 handoff."
+        }
+    }
+    $handoffExpectedState = Get-ObjectPropertyText -Object $Relay -PropertyName "expected_state"
+    $freshExpectedState = [string]$freshFields["expected_state"]
+    if (-not [string]::Equals($freshExpectedState, $handoffExpectedState, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay field 'expected_state' does not match the B1 handoff."
+    }
+    if (-not [string]::Equals([string]$freshFields["target_dispatch_request_id"], [string]$freshFields["request_id"], [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay identity mismatch. target_dispatch_request_id must equal request_id."
+    }
+
+    $expiresUtc = ConvertTo-DispatchExpiryUtc -Expires ([string]$freshFields["expires"])
+    if ($expiresUtc -le $NowUtc) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay expired at $($expiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+    }
+
+    return [pscustomobject]@{
+        Comment = $freshComment
+        Fields = $freshFields
+        ExpiresUtc = $expiresUtc
+    }
+}
+
 function Get-ValidatedRelaySelection {
     param(
         [Parameter(Mandatory = $true)]
@@ -1235,7 +1358,8 @@ function Get-ValidatedRelaySelection {
     if (-not [string]::IsNullOrWhiteSpace($expectedState)) {
         $fields["expected_state"] = $expectedState
     }
-    $expiresUtc = ConvertTo-DispatchExpiryUtc -Expires ([string]$fields["expires"])
+    $freshRelay = Assert-FreshControlRelayMatchesHandoff -Relay $relay -NowUtc $NowUtc
+    $expiresUtc = $freshRelay.ExpiresUtc
 
     Assert-DispatchFieldEquals -Fields $fields -Name "requested_by" -Expected "chatgpt"
     Assert-DispatchMarkerMatchesLocalState `
@@ -1251,12 +1375,8 @@ function Get-ValidatedRelaySelection {
         Throw-DeterministicAdmissionRejection -Message "Target issue #$IssueNumber is not OPEN."
     }
 
-    $relayComment = [pscustomobject]@{
-        id = [string]$relay.relay_comment_id
-        author = [pscustomobject]@{ login = [string]$relay.relay_author }
-    }
     $selected = [pscustomobject]@{
-        Marker = [pscustomobject]@{ Line = "BRIDGE-INBOX-REQUEST"; Comment = $relayComment }
+        Marker = [pscustomobject]@{ Line = "BRIDGE-INBOX-REQUEST"; Comment = $freshRelay.Comment }
         Fields = $fields
         ExpiresUtc = $expiresUtc
         IsCurrent = $true

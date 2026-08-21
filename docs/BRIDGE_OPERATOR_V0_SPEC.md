@@ -105,7 +105,7 @@ ChatGPT
 -> fixed GitHub control relay #279
 -> local Bridge Operator
 -> explicit target Issue
--> local_dispatcher_v1.ps1 PollOnce with B1-validated relay contract
+-> local_dispatcher_v1.ps1 PollOnce with fresh #279 relay revalidation
 -> local_runner_v1.ps1 ReviewBundle when allowed
 -> Codex
 -> LAWBRUNNER-RESULT on the target Issue
@@ -153,7 +153,9 @@ A normal relay request must reference exactly one explicit target Issue. Its
 `target_dispatch_request_id` must exactly equal its `request_id`; that one
 trusted relay marker is the normal execution binding. B1 rechecks the relay
 author, protocol, repository, branch, full HEAD, action, expiry, requester,
-and target Issue before constructing a private local Dispatcher handoff. The
+and target Issue before constructing a private local Dispatcher handoff.
+Dispatcher independently re-reads that exact `#279` comment and its GitHub
+author metadata before it executes the action. The
 target Issue retains the Task Packet and result; it does not need a separate
 `CHATGPT-DISPATCH` marker for normal operation.
 
@@ -176,7 +178,7 @@ The Dispatcher remains responsible for validating:
 - target Issue is `OPEN` immediately before delegation;
 - the exact local relay contract from B1, including the single request identity,
   trusted relay author, target Issue, repository, branch, HEAD, expiry, and
-  allowed action;
+  allowed action by freshly re-reading the fixed control repository relay;
 - protocol and action allowlist;
 - branch and HEAD binding;
 - expiry;
@@ -448,8 +450,8 @@ Reasons:
 ### Phase B2 — One-Shot Delegation
 
 - process one request and stop;
-- recheck target Issue is open and the B1-validated relay binding remains exact
-  immediately before delegation;
+- recheck target Issue is open; Dispatcher independently fresh-rechecks the
+  exact control-relay comment before action execution;
 - invoke existing Dispatcher PollOnce;
 - prove `maybe-status-check` first;
 - then prove `run-reviewbundle`;

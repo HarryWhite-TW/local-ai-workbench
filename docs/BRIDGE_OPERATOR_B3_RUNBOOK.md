@@ -60,8 +60,9 @@ Runner authority.
 For the normal path, one standalone trusted `BRIDGE-INBOX-REQUEST` on `#279`
 binds the target Issue, repository, branch, full HEAD, action, expiry, and
 `request_id`. Its `target_dispatch_request_id` must equal that same
-`request_id`. B1 passes this validated identity as a private local relay
-contract to Dispatcher; normal operation does not require a target-Issue
+`request_id`. B1 passes this identity as a private local relay contract;
+Dispatcher then freshly re-reads the exact `#279` GitHub comment, author
+metadata, fields, and expiry before action execution. Normal operation does not require a target-Issue
 `CHATGPT-DISPATCH` comment. The target Issue retains the Task Packet and
 `LAWBRUNNER-RESULT`. Issue `#147` and direct `CHATGPT-DISPATCH` PollOnce remain
 legacy/manual recovery compatibility, not the default B3 route.
