@@ -90,8 +90,8 @@ class FakeGitHub:
         self.issues_read.append(issue_number)
         if self.fail_target and issue_number == 137:
             raise RuntimeError("missing")
-        if issue_number == 999:
-            return IssueRecord(number=999, state="open", body=self.inbox_body)
+        if issue_number in b1.SUPPORTED_CONTROL_RELAY_ISSUES:
+            return IssueRecord(number=issue_number, state="open", body=self.inbox_body)
         return IssueRecord(number=issue_number, state=self.target_state, body="")
 
     def list_issue_comments(self, issue_number):
@@ -130,7 +130,7 @@ def trusted_continuation_parent(comment_id="5311"):
 
 def run(client, readiness=None, **kwargs):
     return run_bridge_operator_b1_dry_run(
-        inbox_issue=999,
+        inbox_issue=b1.LEGACY_CONTROL_INBOX_ISSUE,
         repo_root=ROOT_PATH,
         github_client=client,
         local_checker=lambda root: readiness or ready(),
@@ -234,10 +234,70 @@ def test_positive_dry_run_reads_fixed_inbox_and_explicit_target_only():
     assert summary["dry_run_result"] == "ready_without_delegation"
     assert summary["request_id"] == "b1-137-20260615T010000Z"
     assert summary["target_issue"] == 137
-    assert client.issues_read == [999, 137]
-    assert client.comments_read == [999, 137]
+    assert client.issues_read == [b1.LEGACY_CONTROL_INBOX_ISSUE, 137]
+    assert client.comments_read == [b1.LEGACY_CONTROL_INBOX_ISSUE, 137]
     assert summary["target_dispatch_comment_id"] == 10
     assert summary["validations"]["local_readiness"] == "passed"
+    assert_no_side_effects(summary)
+
+
+def test_normal_control_relay_uses_one_279_marker_without_target_dispatch_marker():
+    request_id = "b1-279-direct-20260615T010000Z"
+    client = FakeGitHub(
+        comments=[
+            CommentRecord(
+                id=2791,
+                author="HarryWhite-TW",
+                body=marker(
+                    request_id=request_id,
+                    target_dispatch_request_id=request_id,
+                ),
+            )
+        ],
+        target_comments=[],
+    )
+
+    summary = run_bridge_operator_b1_dry_run(
+        inbox_issue=b1.NORMAL_CONTROL_RELAY_ISSUE,
+        repo_root=ROOT_PATH,
+        github_client=client,
+        local_checker=lambda root: ready(),
+        now_utc=NOW,
+    )
+
+    assert summary["result"] == "success"
+    assert summary["control_relay_mode"] == "single_relay"
+    assert summary["target_dispatch_authority"] == "control_relay"
+    assert summary["target_dispatch_request_id"] == request_id
+    assert client.issues_read == [b1.NORMAL_CONTROL_RELAY_ISSUE, 137]
+    assert client.comments_read == [b1.NORMAL_CONTROL_RELAY_ISSUE]
+    assert "target_dispatch_comment_id" not in summary
+    assert_no_side_effects(summary)
+
+
+def test_normal_control_relay_rejects_mismatched_request_identity():
+    client = FakeGitHub(
+        comments=[
+            CommentRecord(
+                id=2791,
+                author="HarryWhite-TW",
+                body=marker(target_dispatch_request_id="different-request"),
+            )
+        ],
+        target_comments=[],
+    )
+
+    summary = run_bridge_operator_b1_dry_run(
+        inbox_issue=b1.NORMAL_CONTROL_RELAY_ISSUE,
+        repo_root=ROOT_PATH,
+        github_client=client,
+        local_checker=lambda root: ready(),
+        now_utc=NOW,
+    )
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["relay_request_identity_mismatch"]
+    assert summary["target_issue_read_performed"] is False
     assert_no_side_effects(summary)
 
 

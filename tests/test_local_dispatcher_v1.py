@@ -1,4 +1,5 @@
 import json
+import base64
 import re
 import shutil
 import subprocess
@@ -100,6 +101,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $IssueNumbers = @()
             $PostResultComment = $false
             $ExpectedDispatchRequestId = ""
+            $RelayRequestBase64 = ""
             $ReviewedCodexPath = ""
             $script:Branch = "master"
             $script:Head = "{HEAD}"
@@ -263,6 +265,7 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
             $IssueNumbers = @()
             $PostResultComment = $false
             $ExpectedDispatchRequestId = ""
+            $RelayRequestBase64 = ""
             $ReviewedCodexPath = ""
             $script:ForbiddenCalls = @()
             function git {{ $script:ForbiddenCalls += "git" }}
@@ -569,6 +572,66 @@ def test_explicit_request_id_allows_health_and_real_markers_to_overlap(tmp_path)
     summary = extract_summary(result.stdout)
     assert summary["request_id"] == "req-real-83"
     assert summary["action"] == "run-reviewbundle"
+
+
+def test_single_control_relay_runs_without_target_chatgpt_dispatch_marker(tmp_path):
+    relay = {
+        "protocol": "lawb.bridge_relay_dispatch.v1",
+        "relay_issue": 279,
+        "relay_comment_id": "2791",
+        "relay_author": "HarryWhite-TW",
+        "request_id": "relay-83-request",
+        "target_dispatch_request_id": "relay-83-request",
+        "target_issue": 83,
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "branch": "master",
+        "head": HEAD,
+        "expires": "20990101T000000Z",
+        "action": "maybe-status-check",
+        "requested_by": "chatgpt",
+    }
+    encoded = base64.b64encode(json.dumps(relay, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+    result = run_case(
+        tmp_path,
+        f'''
+        $RelayRequestBase64 = "{encoded}"
+        $script:Markers = @()
+        ''',
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "Control relay comment id: 2791" in result.stdout
+    summary = extract_summary(result.stdout)
+    assert summary["request_id"] == "relay-83-request"
+    assert "B1-validated #279 control relay" in summary["validations"]["dispatch_marker"]["summary"]
+
+
+def test_single_control_relay_rejects_tampered_request_identity(tmp_path):
+    relay = {
+        "protocol": "lawb.bridge_relay_dispatch.v1",
+        "relay_issue": 279,
+        "relay_comment_id": "2791",
+        "relay_author": "HarryWhite-TW",
+        "request_id": "relay-83-request",
+        "target_dispatch_request_id": "other-request",
+        "target_issue": 83,
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "branch": "master",
+        "head": HEAD,
+        "expires": "20990101T000000Z",
+        "action": "maybe-status-check",
+        "requested_by": "chatgpt",
+    }
+    encoded = base64.b64encode(json.dumps(relay, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+    result = run_case(tmp_path, f'$RelayRequestBase64 = "{encoded}"')
+
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Relay request identity mismatch" in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
 
 
 def test_explicit_request_id_rejects_duplicate_or_conflicting_same_identity(tmp_path):

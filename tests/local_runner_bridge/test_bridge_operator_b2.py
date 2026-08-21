@@ -1,6 +1,8 @@
 import os
 import shutil
 import sys
+import base64
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,7 +32,7 @@ def inbox_marker(**overrides):
         "request_id": "b2-148-20260615T010000Z",
         "repo": "HarryWhite-TW/local-ai-workbench",
         "target_issue": "148",
-        "target_dispatch_request_id": "dispatch-148",
+        "target_dispatch_request_id": "b2-148-20260615T010000Z",
         "branch": "feature/bridge-operator-b2",
         "head": HEAD,
         "expires": "20260616T010000Z",
@@ -53,7 +55,7 @@ def dispatch_marker(**overrides):
         "head": HEAD,
         "expires": "20260616T010000Z",
         "requested_by": "chatgpt",
-        "request_id": "dispatch-148",
+        "request_id": "b2-148-20260615T010000Z",
     }
     fields.update(overrides)
     return "CHATGPT-DISPATCH " + " ".join(
@@ -70,7 +72,7 @@ def result_comment(**overrides):
         "result": "success",
         "branch": "feature/bridge-operator-b2",
         "head": HEAD,
-        "request_id": "dispatch-148",
+        "request_id": "b2-148-20260615T010000Z",
     }
     payload.update(overrides)
     import json
@@ -157,15 +159,12 @@ class FakeGitHub:
         self.target_comments_before = (
             target_comments_before
             if target_comments_before is not None
-            else [CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW")]
+            else []
         )
         self.target_comments_after = (
             target_comments_after
             if target_comments_after is not None
-            else [
-                CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
-                CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"),
-            ]
+            else [CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW")]
         )
         self.target_state = target_state
         self.target_comment_reads = 0
@@ -173,15 +172,15 @@ class FakeGitHub:
 
     def get_issue(self, issue_number):
         self.issues_read.append(issue_number)
-        if issue_number == 147:
-            return IssueRecord(number=147, state="open", body="")
+        if issue_number == b2.DEFAULT_INBOX_ISSUE:
+            return IssueRecord(number=b2.DEFAULT_INBOX_ISSUE, state="open", body="")
         return IssueRecord(number=issue_number, state=self.target_state, body="")
 
     def list_issue_comments(self, issue_number):
-        if issue_number == 147:
+        if issue_number == b2.DEFAULT_INBOX_ISSUE:
             return self.inbox_comments
         self.target_comment_reads += 1
-        if self.target_comment_reads <= 2:
+        if self.target_comment_reads <= 1:
             return self.target_comments_before
         return self.target_comments_after
 
@@ -246,9 +245,9 @@ def test_success_invokes_dispatcher_once_and_verifies_matching_result():
     summary = run(FakeGitHub(), invoker, preflight_invoker=preflight_invoker)
 
     assert summary["result"] == "success"
-    assert summary["configured_inbox_issue"] == 147
+    assert summary["configured_inbox_issue"] == b2.DEFAULT_INBOX_ISSUE
     assert summary["target_issue"] == 148
-    assert summary["target_dispatch_request_id"] == "dispatch-148"
+    assert summary["target_dispatch_request_id"] == "b2-148-20260615T010000Z"
     assert summary["tool_resolution_preflight_invoked"] is True
     assert summary["tool_resolution_preflight_invocation_count"] == 1
     assert summary["tool_resolution_preflight_result"] == "success"
@@ -262,12 +261,24 @@ def test_success_invokes_dispatcher_once_and_verifies_matching_result():
         required_action="maybe-status-check",
         repository="HarryWhite-TW/local-ai-workbench",
     )
-    assert calls[0]["args"] == build_dispatcher_command(
-        repo_root=ROOT_PATH,
-        target_issue=148,
-        expected_dispatch_request_id="dispatch-148",
-        repository="HarryWhite-TW/local-ai-workbench",
-    )
+    assert "-ExpectedDispatchRequestId" not in calls[0]["args"]
+    relay_index = calls[0]["args"].index("-RelayRequestBase64")
+    relay = json.loads(base64.b64decode(calls[0]["args"][relay_index + 1]).decode("utf-8"))
+    assert relay == {
+        "protocol": "lawb.bridge_relay_dispatch.v1",
+        "relay_issue": b2.DEFAULT_INBOX_ISSUE,
+        "relay_comment_id": "1",
+        "relay_author": "HarryWhite-TW",
+        "request_id": "b2-148-20260615T010000Z",
+        "target_dispatch_request_id": "b2-148-20260615T010000Z",
+        "target_issue": 148,
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "branch": "feature/bridge-operator-b2",
+        "head": HEAD,
+        "expires": "20260616T010000Z",
+        "action": "maybe-status-check",
+        "requested_by": "chatgpt",
+    }
     assert summary["tool_resolution_preflight_codex_path_binding"] is None
     assert summary["dispatcher_codex_path_binding_propagated"] is False
     assert "-BoundedPoll" not in calls[0]["args"]
@@ -309,13 +320,11 @@ def test_run_reviewbundle_preflight_propagates_action_before_dispatch():
         required_action="run-reviewbundle",
         repository="HarryWhite-TW/local-ai-workbench",
     )
-    assert calls[0]["args"] == build_dispatcher_command(
-        repo_root=ROOT_PATH,
-        target_issue=148,
-        expected_dispatch_request_id="dispatch-148",
-        repository="HarryWhite-TW/local-ai-workbench",
-        reviewed_codex_path=r"C:\Tools\codex.cmd",
-    )
+    relay_index = calls[0]["args"].index("-RelayRequestBase64")
+    relay = json.loads(base64.b64decode(calls[0]["args"][relay_index + 1]).decode("utf-8"))
+    assert relay["request_id"] == "b2-148-20260615T010000Z"
+    assert relay["target_dispatch_request_id"] == relay["request_id"]
+    assert calls[0]["args"][-2:] == ["-ReviewedCodexPath", r"C:\Tools\codex.cmd"]
     assert summary["tool_resolution_preflight_codex_path_binding"] == r"C:\Tools\codex.cmd"
     assert summary["dispatcher_codex_path_binding_propagated"] is True
 
@@ -496,7 +505,7 @@ def test_preflight_contract_failures_do_not_invoke_dispatcher(invocation, expect
 
 
 def test_fixed_inbox_and_repository_are_not_overridable():
-    assert run(FakeGitHub(), inbox_issue=999)["blocked_reasons"] == ["unsupported_inbox_issue"]
+    assert run(FakeGitHub(), inbox_issue=999)["blocked_reasons"] == ["unsupported_control_relay_issue"]
     assert run(FakeGitHub(), repository="other/repo")["blocked_reasons"] == [
         "unsupported_target_repository"
     ]

@@ -86,7 +86,7 @@ def test_cli_routes_fixed_inbox_to_b2_without_printing_credentials(monkeypatch, 
     assert result == 0
     assert calls == [
         ("client", "HarryWhite-TW/local-ai-workbench", "ghp_TEST_SECRET_DO_NOT_LEAK"),
-        ("run", 147, "HarryWhite-TW/local-ai-workbench", "C:\\repo"),
+            ("run", 279, "HarryWhite-TW/local-ai-workbench", "C:\\repo"),
     ]
     assert "ghp_TEST_SECRET_DO_NOT_LEAK" not in output
     assert summary["result"] == "success"

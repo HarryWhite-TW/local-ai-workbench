@@ -102,18 +102,18 @@ Core flow:
 
 ```text
 ChatGPT
--> fixed GitHub Bridge Inbox
+-> fixed GitHub control relay #279
 -> local Bridge Operator
 -> explicit target Issue
--> local_dispatcher_v1.ps1 PollOnce
+-> local_dispatcher_v1.ps1 PollOnce with B1-validated relay contract
 -> local_runner_v1.ps1 ReviewBundle when allowed
 -> Codex
 -> LAWBRUNNER-RESULT on the target Issue
 -> ChatGPT review
 ```
 
-The control plane remains fixed in `HarryWhite-TW/local-ai-workbench`: Inbox
-`#147`, Bridge Operator, Dispatcher, and Runner are all loaded from that
+The control plane remains fixed in `HarryWhite-TW/local-ai-workbench`: normal
+control relay `#279`, Bridge Operator, Dispatcher, and Runner are all loaded from that
 control repository. The existing `run-reviewbundle` path may target exactly
 one additional repository, `HarryWhite-TW/human-approval-automation-gateway`.
 This is a single-target exception, not generic multi-repository support.
@@ -143,13 +143,19 @@ local filesystem path. The target must be an exact Git root whose normalized
 `origin`, branch, full HEAD, clean worktree, and empty staged area match the
 request before delegation.
 
-### Fixed Bridge Inbox
+### Fixed Control Relay
 
 The default control surface is one dedicated GitHub Issue in this repository.
 
 The exact Issue number may be assigned during implementation, but the operator must be configured with one fixed inbox identity and must not broadly scan open issues.
 
-A Bridge Inbox request must reference exactly one explicit target Issue and one explicit dispatch request. The target Issue remains the authority for its current `CHATGPT-DISPATCH` marker and execution binding.
+A normal relay request must reference exactly one explicit target Issue. Its
+`target_dispatch_request_id` must exactly equal its `request_id`; that one
+trusted relay marker is the normal execution binding. B1 rechecks the relay
+author, protocol, repository, branch, full HEAD, action, expiry, requester,
+and target Issue before constructing a private local Dispatcher handoff. The
+target Issue retains the Task Packet and result; it does not need a separate
+`CHATGPT-DISPATCH` marker for normal operation.
 
 The inbox is a wake-up/control surface, not an approval surface.
 
@@ -160,7 +166,7 @@ The operator must not reimplement Dispatcher policy.
 For an accepted request it delegates to:
 
 ```powershell
-.\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -ExpectedDispatchRequestId <ID> -PostResultComment
+.\scripts\local_dispatcher_v1.ps1 -PollOnce -IssueNumber <N> -RelayRequestBase64 <B1-validated-local-contract> -PostResultComment
 ```
 
 The Dispatcher remains responsible for validating:
@@ -168,10 +174,9 @@ The Dispatcher remains responsible for validating:
 - repository identity;
 - explicit target Issue;
 - target Issue is `OPEN` immediately before delegation;
-- exactly one marker for the explicit dispatch request identity supplied by the
-  Inbox request; duplicate or conflicting markers for that identity fail
-  closed, while unrelated request identities do not override the selection;
-- target `CHATGPT-DISPATCH` marker comment author is trusted;
+- the exact local relay contract from B1, including the single request identity,
+  trusted relay author, target Issue, repository, branch, HEAD, expiry, and
+  allowed action;
 - protocol and action allowlist;
 - branch and HEAD binding;
 - expiry;
@@ -184,7 +189,7 @@ The Dispatcher remains responsible for validating:
 
 Bridge Operator v0 may automatically:
 
-- poll one fixed Bridge Inbox;
+- poll one fixed control relay;
 - read one explicit request at a time;
 - validate request shape before delegation;
 - resolve one explicit target Issue;
@@ -217,7 +222,7 @@ Bridge Operator v0 must never automatically:
 ### Fixed Scope
 
 - fixed control repository: `HarryWhite-TW/local-ai-workbench`;
-- fixed Bridge Inbox: control repository Issue `#147`;
+- fixed normal control relay: control repository Issue `#279`;
 - supported target repositories: exactly `HarryWhite-TW/local-ai-workbench`
   and `HarryWhite-TW/human-approval-automation-gateway`;
 - one explicit target Issue per request;
@@ -245,10 +250,8 @@ The operator must recheck expiry and local state immediately before delegation.
 Bridge Operator v0 and the existing Dispatcher path must treat GitHub author
 metadata as the identity source of truth.
 
-- the fixed Bridge Inbox request author must be in the configured trusted
+- the fixed control relay request author must be in the configured trusted
   GitHub actor allowlist;
-- the target `CHATGPT-DISPATCH` marker comment author must be in the same
-  trusted GitHub actor allowlist;
 - the initial default trusted actor is `HarryWhite-TW`;
 - the dispatch marker field `requested_by` must equal `chatgpt`;
 - the target Issue must be `OPEN` immediately before delegation;
@@ -325,9 +328,7 @@ The operator must fail closed for:
 - untrusted Bridge Inbox request author;
 - missing target Issue;
 - closed target Issue;
-- missing or duplicate target dispatch marker;
-- untrusted target dispatch marker author;
-- target dispatch marker `requested_by` mismatch;
+- relay request identity mismatch;
 - wrong repository, branch, or HEAD;
 - missing target root, non-root Git path, or wrong target `origin`;
 - staged target files;
@@ -436,9 +437,9 @@ Reasons:
 
 ### Phase B1 — Inbox Read-Only Dry Run
 
-- read one fixed Bridge Inbox;
+- read one fixed control relay;
 - parse one explicit request;
-- validate fixed Bridge Inbox request author against the trusted actor allowlist;
+- validate fixed control relay request author against the trusted actor allowlist;
 - resolve one target Issue;
 - validate request and local readiness;
 - emit local dry-run evidence;
@@ -447,7 +448,7 @@ Reasons:
 ### Phase B2 — One-Shot Delegation
 
 - process one request and stop;
-- recheck target Issue is open, trusted marker author, and `requested_by=chatgpt`
+- recheck target Issue is open and the B1-validated relay binding remains exact
   immediately before delegation;
 - invoke existing Dispatcher PollOnce;
 - prove `maybe-status-check` first;
@@ -488,8 +489,7 @@ Phase B is considered operational only when all of the following are proven:
 - user can remain in ChatGPT for normal task creation and result review;
 - operator detects one fixed-inbox request without manual PollOnce;
 - one explicit target Issue is processed;
-- Bridge Inbox and target dispatch marker authors are trusted by GitHub comment
-  metadata;
+- control relay author is trusted by GitHub comment metadata;
 - closed target Issues fail closed before delegation;
 - `requested_by` mismatch fails closed before delegation;
 - duplicate `request_id` does not rerun;
@@ -536,7 +536,7 @@ This specification may be changed only through explicit user approval.
 The following changes always require a separate decision:
 
 - enabling automatic polling;
-- choosing or changing the fixed Bridge Inbox;
+- choosing or changing the fixed control relay;
 - enabling `run-reviewbundle` in the operator;
 - enabling a bounded loop;
 - enabling login startup;

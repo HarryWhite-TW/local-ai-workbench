@@ -25,7 +25,7 @@ Document-to-Knowledge Workbench product runtime.
 ## Fixed Boundary
 
 - Control repository: `HarryWhite-TW/local-ai-workbench`
-- Permanent Bridge Inbox: control repository Issue `#147`
+- Normal control relay: control repository Issue `#279`
 - Target repository: `HarryWhite-TW/local-ai-workbench` or exactly
   `HarryWhite-TW/human-approval-automation-gateway`
 - Modes:
@@ -47,15 +47,24 @@ Document-to-Knowledge Workbench product runtime.
 - service, scheduler, tray UI, daemon, second poller, and MCP behavior:
   forbidden
 
-Inbox `#147` is shared by the two exact supported target repositories. B1
+Control relay `#279` is shared by the two exact supported target repositories. B1
 globally safety-validates every marker-like comment before B3 sees a selected
 request. Lifecycle counts, processed-record matching, current ambiguity, and
 selection are then scoped to B3's configured target repository. Valid history
 for the other supported repository is ignored for selection rather than
 treated as authority; malformed, untrusted, unsupported-repository,
-unsupported-action, and requester-mismatched markers still fail closed. This
+unsupported-action, requester-mismatched, and relay-identity-mismatched markers still fail closed. This
 does not expand repository, trusted-actor, action, fixed-Inbox, Dispatcher, or
 Runner authority.
+
+For the normal path, one standalone trusted `BRIDGE-INBOX-REQUEST` on `#279`
+binds the target Issue, repository, branch, full HEAD, action, expiry, and
+`request_id`. Its `target_dispatch_request_id` must equal that same
+`request_id`. B1 passes this validated identity as a private local relay
+contract to Dispatcher; normal operation does not require a target-Issue
+`CHATGPT-DISPATCH` comment. The target Issue retains the Task Packet and
+`LAWBRUNNER-RESULT`. Issue `#147` and direct `CHATGPT-DISPATCH` PollOnce remain
+legacy/manual recovery compatibility, not the default B3 route.
 
 ## Canonical Repository Launcher
 
@@ -66,7 +75,7 @@ Run the canonical launcher from the repository root for routine local use:
 ```
 
 This default invocation is preflight-only. It verifies the repository, reviewed
-runtime bindings, and existing operator state without reading Inbox `#147` or
+runtime bindings, and existing operator state without reading control relay `#279` or
 invoking B3. It does not create another Bridge or polling loop.
 
 One bounded foreground B3-C run requires an explicit switch:
@@ -134,7 +143,7 @@ Status publication is disabled by default. The ordinary preflight command and
 ```
 
 The destination is hard-coded to
-`HarryWhite-TW/local-ai-workbench` Issue `#147`. It cannot be redirected by a
+`HarryWhite-TW/local-ai-workbench` Issue `#279`. It cannot be redirected by a
 launcher argument, target repository, or remote request. Even when B3-C targets
 HAG, the status destination remains the control repository Inbox. Every status
 API call also fixes `--hostname github.com`; `GH_HOST`, `GH_REPO`, launcher
@@ -304,7 +313,7 @@ a different validated LAWB worktree. HAG requires an explicit local
 `--target-repo-root`; remote request text cannot supply either repository's
 local path.
 
-The CLI always uses Inbox `#147`. Standard output is one parseable JSON
+The CLI always uses control relay `#279`. Standard output is one parseable JSON
 summary. Invalid arguments return nonzero and print a blocked JSON summary.
 
 ## Runtime State
@@ -467,7 +476,7 @@ do not write processed-request state.
 
 ## Failure Handling
 
-B3 fails closed for unsupported repository, non-`#147` Inbox, invalid loop
+B3 fails closed for unsupported repository, non-`#279` control relay, invalid loop
 bounds, active lock, corrupted local state, missing `%LOCALAPPDATA%` without an
 explicit state directory, and bounded GitHub read failure.
 
@@ -593,6 +602,6 @@ scheduled task, Registry autorun entry, Windows service, tray process,
 persistent PATH change, authentication material, or another execution path.
 It does not represent Task Scheduler, Registry, service, tray, or unbounded
 loop behavior. The canonical launcher retains repository/tool/state preflight,
-fixed Inbox `#147`, one-task behavior, locking, pause/stop controls, logging,
+fixed control relay `#279`, one-task behavior, locking, pause/stop controls, logging,
 durable duplicate suppression, and no Codex auto-retry. Manual Dispatcher
 `PollOnce` remains recovery only.

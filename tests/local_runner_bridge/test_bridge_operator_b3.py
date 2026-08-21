@@ -1,3 +1,4 @@
+import base64
 import json
 import sys
 from datetime import datetime, timezone
@@ -62,7 +63,7 @@ def inbox_marker(**overrides):
         "request_id": "b3a-151-20260616T080000Z",
         "repo": "HarryWhite-TW/local-ai-workbench",
         "target_issue": "151",
-        "target_dispatch_request_id": "dispatch-151",
+        "target_dispatch_request_id": "b3a-151-20260616T080000Z",
         "branch": "feature/bridge-operator-b3a",
         "head": HEAD,
         "expires": "20260616T080500Z",
@@ -85,7 +86,7 @@ def dispatch_marker(**overrides):
         "head": HEAD,
         "expires": "20260616T080500Z",
         "requested_by": "chatgpt",
-        "request_id": "dispatch-151",
+        "request_id": "b3a-151-20260616T080000Z",
     }
     fields.update(overrides)
     return "CHATGPT-DISPATCH " + " ".join(
@@ -102,7 +103,7 @@ def result_comment(**overrides):
         "result": "success",
         "branch": "feature/bridge-operator-b3a",
         "head": HEAD,
-        "request_id": "dispatch-151",
+        "request_id": "b3a-151-20260616T080000Z",
     }
     fields.update(overrides)
     return "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1\n" + json.dumps(fields)
@@ -113,9 +114,7 @@ class FakeGitHub:
         self.inbox_comments = inbox_comments if inbox_comments is not None else [
             CommentRecord(id=1, body=inbox_marker(), author="HarryWhite-TW")
         ]
-        self.target_comments = target_comments if target_comments is not None else [
-            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW")
-        ]
+        self.target_comments = target_comments if target_comments is not None else []
         self.fail_reads = fail_reads
         self.issues_read = []
         self.comments_read = []
@@ -340,12 +339,14 @@ def processed_record(**overrides):
         "protocol": "lawb.bridge_operator_b3_processed_request.v1",
         "request_id": "processed-a",
         "target_issue": 151,
-        "target_dispatch_request_id": "dispatch-151",
+        "target_dispatch_request_id": None,
         "requested_action": "maybe-status-check",
         "expected_branch": "feature/bridge-operator-b3a",
         "expected_head": HEAD,
     }
     payload.update(overrides)
+    if payload["target_dispatch_request_id"] is None:
+        payload["target_dispatch_request_id"] = payload["request_id"]
     return payload
 
 
@@ -364,12 +365,12 @@ def test_dry_run_loop_observes_fixed_inbox_without_dispatcher(tmp_path):
     summary = run(tmp_path, client)
 
     assert summary["result"] == "success"
-    assert summary["configured_inbox_issue"] == 147
+    assert summary["configured_inbox_issue"] == DEFAULT_INBOX_ISSUE
     assert summary["eligible_request_observed"] is True
     assert summary["dry_run_observation_written"] is True
     assert summary["processed_request_written"] is False
-    assert client.issues_read == [147, 151]
-    assert client.comments_read == [147, 151]
+    assert client.issues_read == [DEFAULT_INBOX_ISSUE, 151]
+    assert client.comments_read == [DEFAULT_INBOX_ISSUE]
     assert not (tmp_path / "processed_requests.jsonl").exists()
     observations = (tmp_path / "dry_run_observations.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(observations) == 1
@@ -451,7 +452,7 @@ def test_b3b_processed_a_plus_new_b_dispatches_only_b_and_appends_one_record(tmp
         "cycle": 1,
         "request_id": "processed-a",
         "target_issue": 151,
-        "target_dispatch_request_id": "dispatch-151",
+        "target_dispatch_request_id": "processed-a",
         "requested_action": "maybe-status-check",
         "expected_branch": "feature/bridge-operator-b3a",
         "expected_head": HEAD,
@@ -464,10 +465,10 @@ def test_b3b_processed_a_plus_new_b_dispatches_only_b_and_appends_one_record(tmp
     calls = []
     client = FakeGitHub(
         inbox_comments=[
-            CommentRecord(id=1, body=inbox_marker(request_id="processed-a"), author="HarryWhite-TW"),
+            CommentRecord(id=1, body=inbox_marker(request_id="processed-a", target_dispatch_request_id="processed-a"), author="HarryWhite-TW"),
             CommentRecord(
                 id=2,
-                body=inbox_marker(request_id="current-b", target_dispatch_request_id="dispatch-b"),
+                body=inbox_marker(request_id="current-b", target_dispatch_request_id="current-b"),
                 author="HarryWhite-TW",
             ),
         ],
@@ -483,7 +484,7 @@ def test_b3b_processed_a_plus_new_b_dispatches_only_b_and_appends_one_record(tmp
         or client.target_comments.append(
             CommentRecord(
                 id=20,
-                body=result_comment(request_id="dispatch-b"),
+                body=result_comment(request_id="current-b"),
                 author="HarryWhite-TW",
             )
         )
@@ -559,7 +560,7 @@ def test_b3b_consumed_only_inbox_is_safe_wait_without_dispatcher_or_failure(tmp_
                 "protocol": "lawb.bridge_operator_b3_processed_request.v1",
                 "request_id": "b3a-151-20260616T080000Z",
                 "target_issue": 151,
-                "target_dispatch_request_id": "dispatch-151",
+                "target_dispatch_request_id": "b3a-151-20260616T080000Z",
                 "requested_action": "maybe-status-check",
                 "expected_branch": "feature/bridge-operator-b3a",
                 "expected_head": HEAD,
@@ -640,6 +641,7 @@ def test_b3c_mixed_supported_repository_history_selects_hag_and_dispatches_once(
                 body=inbox_marker(
                     request_id="local-current-history",
                     repo=DEFAULT_REPOSITORY,
+                    target_dispatch_request_id="local-current-history",
                 ),
                 author="HarryWhite-TW",
             ),
@@ -649,7 +651,7 @@ def test_b3c_mixed_supported_repository_history_selects_hag_and_dispatches_once(
                     request_id=hag_request_id,
                     repo=HAG_REPOSITORY,
                     target_issue="1",
-                    target_dispatch_request_id=hag_dispatch_id,
+                    target_dispatch_request_id=hag_request_id,
                     branch=hag_branch,
                     action="run-reviewbundle",
                 ),
@@ -664,7 +666,7 @@ def test_b3c_mixed_supported_repository_history_selects_hag_and_dispatches_once(
                 body=dispatch_marker(
                     repo=HAG_REPOSITORY,
                     issue="1",
-                    request_id=hag_dispatch_id,
+                    request_id=hag_request_id,
                     branch=hag_branch,
                     action="run-reviewbundle",
                 ),
@@ -682,7 +684,7 @@ def test_b3c_mixed_supported_repository_history_selects_hag_and_dispatches_once(
                 body=result_comment(
                     repo=HAG_REPOSITORY,
                     issue=1,
-                    request_id=hag_dispatch_id,
+                    request_id=hag_request_id,
                     branch=hag_branch,
                     action="run-reviewbundle",
                 ),
@@ -766,7 +768,7 @@ def test_b3b_preexisting_matching_durable_completion_reconciles_without_dispatch
     assert len(processed) == 1
     payload = json.loads(processed[0])
     assert payload["request_id"] == "b3a-151-20260616T080000Z"
-    assert payload["target_dispatch_request_id"] == "dispatch-151"
+    assert payload["target_dispatch_request_id"] == "b3a-151-20260616T080000Z"
     assert payload["completion_source"] == "durable_evidence_reconciliation"
     assert payload["dispatcher_invoked"] is False
     assert payload["result_verified"] is True
@@ -798,7 +800,7 @@ def test_b3b_multi_cycle_reconciliation_does_not_misclassify_later_dispatcher_lo
                 id=2,
                 body=inbox_marker(
                     request_id="b3b-second-20260616T080001Z",
-                    target_dispatch_request_id="dispatch-second",
+                    target_dispatch_request_id="b3b-second-20260616T080001Z",
                 ),
                 author="HarryWhite-TW",
             )
@@ -816,7 +818,7 @@ def test_b3b_multi_cycle_reconciliation_does_not_misclassify_later_dispatcher_lo
         client.target_comments.append(
             CommentRecord(
                 id=40,
-                body=result_comment(request_id="dispatch-second"),
+                body=result_comment(request_id="b3b-second-20260616T080001Z"),
                 author="HarryWhite-TW",
             )
         )
@@ -851,7 +853,7 @@ def test_b3b_multi_cycle_reconciliation_does_not_misclassify_later_dispatcher_lo
     assert records[0]["completion_source"] == "durable_evidence_reconciliation"
     assert records[0]["dispatcher_invoked"] is False
     assert records[1]["dispatcher_invoked"] is True
-    assert records[1]["target_dispatch_request_id"] == "dispatch-second"
+    assert records[1]["target_dispatch_request_id"] == "b3b-second-20260616T080001Z"
     assert records[1]["result_verified"] is True
 
     relevant_logs = [
@@ -980,7 +982,7 @@ def test_b3c_later_request_does_not_inherit_prior_result_visibility(tmp_path):
                 id=2,
                 body=inbox_marker(
                     request_id="b3c-real-20260616T080001Z",
-                    target_dispatch_request_id="dispatch-real",
+                    target_dispatch_request_id="b3c-real-20260616T080001Z",
                     action="run-reviewbundle",
                 ),
                 author="HarryWhite-TW",
@@ -1027,12 +1029,12 @@ def test_b3c_later_request_does_not_inherit_prior_result_visibility(tmp_path):
     )
 
     assert summary["request_id"] == "b3c-real-20260616T080001Z"
-    assert summary["target_dispatch_request_id"] == "dispatch-real"
+    assert summary["target_dispatch_request_id"] == "b3c-real-20260616T080001Z"
     assert summary["blocked_reasons"] == ["dispatcher_pre_runner_transient_failure"]
     assert summary["processed_request_written"] is False
     assert summary["processed_request_already_seen"] is False
     assert summary["effective_dispatcher_timeout_seconds"] == 180
-    assert "dispatch-real" in summary["dispatcher_invocation_args"]
+    assert "-RelayRequestBase64" in summary["dispatcher_invocation_args"]
     assert summary["dispatcher_result_writeback_reached"] is False
     assert summary["dispatcher_result_writeback_verified"] is False
     assert summary["target_result_verified"] is False
@@ -1300,8 +1302,8 @@ def test_b3b_unsupported_action_and_duplicate_request_fail_before_dispatcher(tmp
         tmp_path / "duplicate",
         FakeGitHub(
             inbox_comments=[
-                CommentRecord(id=1, body=inbox_marker(request_id="first"), author="HarryWhite-TW"),
-                CommentRecord(id=2, body=inbox_marker(request_id="second"), author="HarryWhite-TW"),
+                CommentRecord(id=1, body=inbox_marker(request_id="first", target_dispatch_request_id="first"), author="HarryWhite-TW"),
+                CommentRecord(id=2, body=inbox_marker(request_id="second", target_dispatch_request_id="second"), author="HarryWhite-TW"),
             ]
         ),
         dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
@@ -1392,9 +1394,11 @@ def test_b3c_structured_pre_runner_rejection_is_settled_without_redispatch(tmp_p
     assert first["runner_reached"] is False
     assert first["codex_reached"] is False
     assert len(calls) == 1
-    assert "-ExpectedDispatchRequestId" in calls[0]["args"]
-    expected_index = calls[0]["args"].index("-ExpectedDispatchRequestId")
-    assert calls[0]["args"][expected_index + 1] == "dispatch-151"
+    assert "-ExpectedDispatchRequestId" not in calls[0]["args"]
+    relay_index = calls[0]["args"].index("-RelayRequestBase64")
+    relay = json.loads(base64.b64decode(calls[0]["args"][relay_index + 1]).decode("utf-8"))
+    assert relay["request_id"] == "b3a-151-20260616T080000Z"
+    assert relay["target_dispatch_request_id"] == relay["request_id"]
     assert not (tmp_path / "in_flight.json").exists()
     record = read_processed_request_records(tmp_path / "processed_requests.jsonl")[
         "b3a-151-20260616T080000Z"
@@ -1831,7 +1835,7 @@ def test_closed_target_issue_blocks(tmp_path):
     assert_b1_failure_blocks(tmp_path, summary, "target_issue_closed")
 
 
-def test_missing_or_duplicate_target_dispatch_marker_blocks(tmp_path):
+def test_normal_control_relay_does_not_require_target_dispatch_marker(tmp_path):
     missing = run(
         tmp_path / "missing",
         FakeGitHub(target_comments=[]),
@@ -1846,8 +1850,11 @@ def test_missing_or_duplicate_target_dispatch_marker_blocks(tmp_path):
         ),
     )
 
-    assert_b1_failure_blocks(tmp_path / "missing", missing, "target_dispatch_request_not_found")
-    assert_b1_failure_blocks(tmp_path / "duplicate", duplicate, "ambiguous_target_dispatch_request")
+    assert missing["result"] == "success"
+    assert duplicate["result"] == "success"
+    assert missing["target_dispatch_request_id"] == missing["request_id"]
+    assert duplicate["target_dispatch_request_id"] == duplicate["request_id"]
+    assert missing["current_run"]["request_id"] == missing["request_id"]
 
 
 def test_dirty_repo_or_local_readiness_failure_blocks(tmp_path):
@@ -1889,18 +1896,11 @@ def test_dirty_same_node_continuation_requires_matching_launcher_binding_before_
             inbox_comments=[
                 CommentRecord(
                     id=1,
-                    body=inbox_marker(action="run-reviewbundle"),
+                    body=inbox_marker(action="run-reviewbundle", expected_state=expected_state),
                     author="HarryWhite-TW",
                 )
             ],
             target_comments=[
-                CommentRecord(
-                    id=10,
-                    body=dispatch_marker(
-                        action="run-reviewbundle", expected_state=expected_state
-                    ),
-                    author="HarryWhite-TW",
-                ),
                 CommentRecord(
                     id=int(parent_id),
                     body=result_comment(
@@ -2068,7 +2068,7 @@ def test_heartbeat_writes_expected_fields(tmp_path):
     assert heartbeat["protocol"] == "lawb.bridge_operator_b3_heartbeat.v1"
     assert heartbeat["mode"] == "b3a-dry-run"
     assert heartbeat["repo"] == "HarryWhite-TW/local-ai-workbench"
-    assert heartbeat["inbox_issue"] == 147
+    assert heartbeat["inbox_issue"] == DEFAULT_INBOX_ISSUE
     assert heartbeat["request_id"] == "b3a-151-20260616T080000Z"
     assert summary["result"] == "success"
     assert_safety(summary)
@@ -2649,7 +2649,7 @@ def test_b3c_nonfatal_probe_rejection_is_suppressed_and_later_request_runs(
                 id=1,
                 body=inbox_marker(
                     request_id=rejected_request_id,
-                    target_dispatch_request_id="dispatch-too-long",
+                    target_dispatch_request_id=rejected_request_id,
                     expires="20260616T080501Z",
                 ),
                 author="HarryWhite-TW",
@@ -2677,7 +2677,7 @@ def test_b3c_nonfatal_probe_rejection_is_suppressed_and_later_request_runs(
                     id=2,
                     body=inbox_marker(
                         request_id=valid_request_id,
-                        target_dispatch_request_id="dispatch-valid",
+                        target_dispatch_request_id=valid_request_id,
                     ),
                     author="HarryWhite-TW",
                 )
@@ -2695,7 +2695,7 @@ def test_b3c_nonfatal_probe_rejection_is_suppressed_and_later_request_runs(
         client.target_comments.append(
             CommentRecord(
                 id=20,
-                body=result_comment(request_id="dispatch-valid"),
+                body=result_comment(request_id=valid_request_id),
                 author="HarryWhite-TW",
             )
         )

@@ -64,7 +64,7 @@ def dispatch_marker(repository=HAG_REPOSITORY, **overrides):
     return "CHATGPT-DISPATCH " + " ".join(f"{key}={value}" for key, value in fields.items())
 
 
-def result_comment(repository=HAG_REPOSITORY):
+def result_comment(repository=HAG_REPOSITORY, request_id="hag-dispatch-218"):
     return "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1\n" + json.dumps(
         {
             "schema": "lawb.runner_result.v1",
@@ -74,7 +74,7 @@ def result_comment(repository=HAG_REPOSITORY):
             "result": "success",
             "branch": "wf-hag-xr-01-single-target-routing",
             "head": HEAD,
-            "request_id": "hag-dispatch-218",
+            "request_id": request_id,
         }
     )
 
@@ -87,21 +87,22 @@ class ControlClient:
 
     def get_issue(self, issue_number):
         self.reads.append(("issue", issue_number))
-        assert issue_number == 147
-        return IssueRecord(number=147, state="open", body="")
+        assert issue_number in (147, 279)
+        return IssueRecord(number=issue_number, state="open", body="")
 
     def list_issue_comments(self, issue_number):
         self.reads.append(("comments", issue_number))
-        assert issue_number == 147
+        assert issue_number in (147, 279)
         if self.comments is not None:
             return self.comments
         return [CommentRecord(id=1, body=inbox_marker(self.repository), author="HarryWhite-TW")]
 
 
 class TargetClient:
-    def __init__(self, *, repository=HAG_REPOSITORY, include_result=False):
+    def __init__(self, *, repository=HAG_REPOSITORY, include_result=False, result_request_id="hag-dispatch-218"):
         self.repository = repository
         self.include_result = include_result
+        self.result_request_id = result_request_id
         self.comment_reads = 0
         self.reads = []
 
@@ -121,8 +122,8 @@ class TargetClient:
                 author="HarryWhite-TW",
             )
         ]
-        if self.include_result and self.comment_reads >= 3:
-            comments.append(CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"))
+        if self.include_result and self.comment_reads >= 2:
+            comments.append(CommentRecord(id=20, body=result_comment(request_id=self.result_request_id), author="HarryWhite-TW"))
         return comments
 
 
@@ -440,8 +441,16 @@ def test_hag_wrong_path_origin_branch_head_dirty_and_staged_fail_closed():
 
 
 def test_hag_b2_uses_control_dispatcher_and_target_result_surface():
-    control = ControlClient()
-    target = TargetClient(include_result=True)
+    control = ControlClient(
+        comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(target_dispatch_request_id="shared-request-id"),
+                author="HarryWhite-TW",
+            )
+        ]
+    )
+    target = TargetClient(include_result=True, result_request_id="shared-request-id")
     calls = []
 
     def invoke(**kwargs):

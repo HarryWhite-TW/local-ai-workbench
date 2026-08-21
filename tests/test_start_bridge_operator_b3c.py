@@ -2347,7 +2347,7 @@ def test_ready_preflight_publish_status_creates_one_fixed_comment(
     assert calls[0]["args"][hostname_index + 1] == "github.com"
     assert (
         calls[0]["endpoint"]
-        == "repos/HarryWhite-TW/local-ai-workbench/issues/147/comments"
+        == "repos/HarryWhite-TW/local-ai-workbench/issues/279/comments"
     )
     assert remote["protocol"] == "lawb.bridge_status.v1"
     assert remote["operator_session_id"] == remote["run_id"]
@@ -2398,7 +2398,7 @@ def test_foreground_publish_status_creates_then_updates_same_comment_once(
     assert result.returncode == 0
     assert payload["result"] == "completed"
     assert [call["method"] for call in calls] == ["POST", "PATCH"]
-    assert calls[0]["endpoint"].endswith("/issues/147/comments")
+    assert calls[0]["endpoint"].endswith("/issues/279/comments")
     assert (
         calls[1]["endpoint"]
         == "repos/HarryWhite-TW/local-ai-workbench/issues/comments/45123"
@@ -2886,7 +2886,7 @@ def test_hag_target_keeps_status_destination_fixed_to_control_inbox(tmp_path: Pa
     assert len(calls) == 2
     assert (
         calls[0]["endpoint"]
-        == "repos/HarryWhite-TW/local-ai-workbench/issues/147/comments"
+        == "repos/HarryWhite-TW/local-ai-workbench/issues/279/comments"
     )
     assert (
         calls[1]["endpoint"]

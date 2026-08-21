@@ -30,6 +30,7 @@ from local_runner_bridge.bridge_operator_b2 import (
     DISPATCHER_RUNNER_MAY_HAVE_STARTED,
     DispatcherInvocationResult,
     build_dispatcher_command,
+    build_relay_dispatch_contract,
     default_dispatcher_invoker,
 )
 from local_runner_bridge.durable_evidence_provider import GitHubIssueCommentEvidenceProvider
@@ -399,6 +400,7 @@ def run_bridge_operator_b3_dry_run_loop(
                     state_root=state_root,
                     repo_root=repo_root,
                     repository=repository,
+                    inbox_issue=inbox_issue,
                     control_client=control_client,
                     target_client=target_client,
                     local_checker=local_checker,
@@ -832,6 +834,7 @@ def _run_b1_with_bounded_retry(
     state_root: Path,
     repo_root: str | Path,
     repository: str,
+    inbox_issue: int,
     control_client: Any,
     target_client: Any,
     local_checker: Any | None,
@@ -854,7 +857,7 @@ def _run_b1_with_bounded_retry(
             return {"result": "blocked", "blocked_reasons": ["corrupted_state"]}
         try:
             last = run_bridge_operator_b1_dry_run(
-                inbox_issue=DEFAULT_INBOX_ISSUE,
+                inbox_issue=inbox_issue,
                 repo_root=repo_root,
                 repository=repository,
                 github_client=control_client,
@@ -1557,7 +1560,7 @@ def _delegate_b3_request(
         repo_root=control_repo_root,
         target_repo_root=repo_root,
         target_issue=int(b1_summary["target_issue"]),
-        expected_dispatch_request_id=str(b1_summary["target_dispatch_request_id"]),
+        relay_request=build_relay_dispatch_contract(b1_summary),
         repository=repository,
     )
     summary["dispatcher_invocation_args"] = args
