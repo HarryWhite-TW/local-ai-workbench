@@ -311,6 +311,55 @@ function Get-CommentBodyText {
     return Get-ObjectPropertyText -Object $Comment -PropertyName "body"
 }
 
+function Get-ExactControlRelayRestComment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelayCommentId
+    )
+
+    $ghPath = Resolve-GhPath
+    $endpoint = "repos/$ControlRelayRepository/issues/comments/$RelayCommentId"
+    $result = Invoke-ReadOnlyCommand `
+        -FilePath $ghPath `
+        -Arguments @("api", $endpoint) `
+        -Action "gh api control relay comment"
+    if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($result.Stdout)) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay REST comment id=$RelayCommentId could not be read exactly."
+    }
+
+    try {
+        $comment = $result.Stdout | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        Throw-DeterministicAdmissionRejection -Message "Control relay REST comment id=$RelayCommentId returned invalid JSON."
+    }
+
+    if (-not [string]::Equals(
+        (Get-ObjectPropertyText -Object $comment -PropertyName "id"),
+        $RelayCommentId,
+        [System.StringComparison]::Ordinal
+    )) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay REST comment id does not match the B1 handoff."
+    }
+
+    $expectedIssueUrl = "https://api.github.com/repos/$ControlRelayRepository/issues/$NormalControlRelayIssue"
+    if (-not [string]::Equals(
+        (Get-ObjectPropertyText -Object $comment -PropertyName "issue_url"),
+        $expectedIssueUrl,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay REST comment is not bound to $ControlRelayRepository #$NormalControlRelayIssue."
+    }
+
+    $restUser = $comment.PSObject.Properties["user"]
+    $restAuthor = if ($null -eq $restUser) { "" } else { Get-ObjectPropertyText -Object $restUser.Value -PropertyName "login" }
+    return [pscustomobject]@{
+        id = Get-ObjectPropertyText -Object $comment -PropertyName "id"
+        author = [pscustomobject]@{ login = $restAuthor }
+        body = Get-ObjectPropertyText -Object $comment -PropertyName "body"
+    }
+}
+
 function Get-SameNodeContinuationParentCommentId {
     param([Parameter(Mandatory = $true)][hashtable]$Fields)
     if (-not $Fields.ContainsKey("expected_state")) { return "" }
@@ -1249,18 +1298,7 @@ function Assert-FreshControlRelayMatchesHandoff {
         Throw-DeterministicAdmissionRejection -Message "Control relay #$NormalControlRelayIssue is not OPEN."
     }
 
-    $matchingComments = @($controlRead.Comments | Where-Object {
-        [string]::Equals(
-            (Get-ObjectPropertyText -Object $_ -PropertyName "id"),
-            [string]$Relay.relay_comment_id,
-            [System.StringComparison]::Ordinal
-        )
-    })
-    if ($matchingComments.Count -ne 1) {
-        Throw-DeterministicAdmissionRejection -Message "Control relay comment id=$($Relay.relay_comment_id) was not found exactly once on #$NormalControlRelayIssue."
-    }
-
-    $freshComment = $matchingComments[0]
+    $freshComment = Get-ExactControlRelayRestComment -RelayCommentId ([string]$Relay.relay_comment_id)
     $freshAuthor = Get-CommentAuthorLogin -Comment $freshComment
     if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value $freshAuthor)) {
         Throw-DeterministicAdmissionRejection -Message "Fresh control relay author '$freshAuthor' is not trusted."
