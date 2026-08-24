@@ -42,6 +42,7 @@ def run_timeout_guard_script(tmp_path: Path, body: str) -> subprocess.CompletedP
         cwd=REPO_ROOT,
         text=True,
         capture_output=True,
+        errors="replace",
         timeout=30,
     )
 
@@ -144,6 +145,7 @@ def test_normal_runner_modes_still_require_issue_number():
         cwd=REPO_ROOT,
         text=True,
         capture_output=True,
+        errors="replace",
         timeout=30,
     )
 
@@ -509,6 +511,9 @@ def test_execution_route_forwards_model_and_reasoning_and_preserves_unknown_exec
         "reasoning_effort": "UNKNOWN",
     }
     assert evidence["observed_route"] == evidence["executed_route"]
+    assert evidence["usage"] == "UNKNOWN"
+    assert evidence["quota"] == "UNKNOWN"
+    assert evidence["cost"] == "UNKNOWN"
 
 
 def test_execution_route_catalog_rejects_unavailable_reasoning_without_fallback(tmp_path):
@@ -2645,16 +2650,29 @@ def test_same_node_continuation_revalidates_exact_parent_candidate_and_budget(tm
             diff_fingerprint = $state.DiffFingerprint
             files_fingerprint = $state.FilesFingerprint
         }} | ConvertTo-Json -Depth 16 -Compress
-        $comments = @([pscustomobject]@{{ id = "5311"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parent" }})
+        $canonicalUrl = "https://github.com/HarryWhite-TW/local-ai-workbench/issues/204#issuecomment-5311"
+        $comments = @([pscustomobject]@{{ id = "IC_kwDOnode5311"; databaseId = $null; url = $canonicalUrl; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parent" }})
         $accepted = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $absentDatabaseIdComments = @([pscustomobject]@{{ id = "IC_kwDOnode5311"; url = $canonicalUrl; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parent" }})
+        $absentDatabaseId = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $absentDatabaseIdComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $numericDatabaseIdComments = @([pscustomobject]@{{ id = "IC_kwDOnode5311"; databaseId = "5311"; url = "https://example.invalid/not-used"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parent" }})
+        $numericDatabaseId = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $numericDatabaseIdComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $wrongIdentityComments = @([pscustomobject]@{{ id = "IC_kwDOnode5312"; databaseId = $null; url = "https://github.com/HarryWhite-TW/local-ai-workbench/issues/204#issuecomment-5312"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parent" }})
+        $wrongIdentity = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $wrongIdentityComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $malformedUrlComments = @([pscustomobject]@{{ id = "IC_kwDOnode5311"; databaseId = $null; url = "https://github.com/HarryWhite-TW/local-ai-workbench/issues/204#issuecomment-not-a-number"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parent" }})
+        $malformedUrl = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $malformedUrlComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $wrongRepositoryUrlComments = @([pscustomobject]@{{ id = "IC_kwDOnode5311"; databaseId = $null; url = "https://github.com/other-owner/other-repo/issues/204#issuecomment-5311"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parent" }})
+        $wrongRepositoryUrl = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $wrongRepositoryUrlComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $wrongIssueUrlComments = @([pscustomobject]@{{ id = "IC_kwDOnode5311"; databaseId = $null; url = "https://github.com/HarryWhite-TW/local-ai-workbench/issues/205#issuecomment-5311"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parent" }})
+        $wrongIssueUrl = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $wrongIssueUrlComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
         $missing = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments @() -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
-        $untrustedComments = @([pscustomobject]@{{ id = "5311"; author = [pscustomobject]@{{ login = "other-user" }}; body = "$RunnerResultMarker`n$parent" }})
+        $untrustedComments = @([pscustomobject]@{{ id = "IC_kwDOnode5311"; databaseId = $null; url = $canonicalUrl; author = [pscustomobject]@{{ login = "other-user" }}; body = "$RunnerResultMarker`n$parent" }})
         $untrusted = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $untrustedComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
         $staged = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $false
         $budgetParentObject = $parent | ConvertFrom-Json
         $budgetParentObject.same_node_continuation.remaining_budget = 0
         $budgetParent = $budgetParentObject | ConvertTo-Json -Depth 16 -Compress
-        $budgetComments = @([pscustomobject]@{{ id = "5311"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$budgetParent" }})
+        $budgetComments = @([pscustomobject]@{{ id = "IC_kwDOnode5311"; databaseId = $null; url = $canonicalUrl; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$budgetParent" }})
         $budget = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $budgetComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
         $child = [ordered]@{{
             repo = $script:Repo
@@ -2662,7 +2680,7 @@ def test_same_node_continuation_revalidates_exact_parent_candidate_and_budget(tm
             action = "run-reviewbundle"
             same_node_continuation = [ordered]@{{ protocol = $SameNodeContinuationProtocol; parent_comment_id = "5311"; remaining_budget = 0; is_human_approval = $false }}
         }} | ConvertTo-Json -Depth 8 -Compress
-        $replayComments = @($comments[0], [pscustomobject]@{{ id = "5312"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$child" }})
+        $replayComments = @($comments[0], [pscustomobject]@{{ id = "IC_kwDOnode5312"; databaseId = $null; url = "https://github.com/HarryWhite-TW/local-ai-workbench/issues/204#issuecomment-5312"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$child" }})
         $replay = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $replayComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
         $headBinding = ($binding | ConvertTo-Json -Depth 16 -Compress) | ConvertFrom-Json
         $headBinding.runtime_contract | Add-Member -NotePropertyName expected_head -NotePropertyValue ("b" * 40)
@@ -2672,7 +2690,7 @@ def test_same_node_continuation_revalidates_exact_parent_candidate_and_budget(tm
         [System.IO.File]::WriteAllText({str(repo / 'seed.txt')!r}, "candidate one`n", [System.Text.UTF8Encoding]::new($false))
         [System.IO.File]::WriteAllText({str(repo / 'extra.txt')!r}, "extra`n", [System.Text.UTF8Encoding]::new($false))
         $extraPath = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $binding -CandidateManifest (Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")) -CurrentStatus (Get-GitStatusShort) -NoStage $true
-        [ordered]@{{ accepted = $accepted; missing = $missing; untrusted = $untrusted; staged = $staged; budget = $budget; replay = $replay; head_drift = $headDrift; drift = $drift; extra_path = $extraPath }} | ConvertTo-Json -Depth 16 -Compress
+        [ordered]@{{ accepted = $accepted; absent_database_id = $absentDatabaseId; numeric_database_id = $numericDatabaseId; wrong_identity = $wrongIdentity; malformed_url = $malformedUrl; wrong_repository_url = $wrongRepositoryUrl; wrong_issue_url = $wrongIssueUrl; missing = $missing; untrusted = $untrusted; staged = $staged; budget = $budget; replay = $replay; head_drift = $headDrift; drift = $drift; extra_path = $extraPath }} | ConvertTo-Json -Depth 16 -Compress
         """,
     )
 
@@ -2680,6 +2698,12 @@ def test_same_node_continuation_revalidates_exact_parent_candidate_and_budget(tm
     payload = json.loads(result.stdout)
     assert payload["accepted"]["admitted"] is True
     assert payload["accepted"]["is_human_approval"] is False
+    assert payload["absent_database_id"]["admitted"] is True
+    assert payload["numeric_database_id"]["admitted"] is True
+    assert "trusted_parent_comment_missing_or_ambiguous" in payload["wrong_identity"]["reasons"]
+    assert "trusted_parent_comment_missing_or_ambiguous" in payload["malformed_url"]["reasons"]
+    assert "trusted_parent_comment_missing_or_ambiguous" in payload["wrong_repository_url"]["reasons"]
+    assert "trusted_parent_comment_missing_or_ambiguous" in payload["wrong_issue_url"]["reasons"]
     assert "trusted_parent_comment_missing_or_ambiguous" in payload["missing"]["reasons"]
     assert "trusted_parent_author_untrusted" in payload["untrusted"]["reasons"]
     assert "staged_changes_detected" in payload["staged"]["reasons"]
@@ -2689,7 +2713,7 @@ def test_same_node_continuation_revalidates_exact_parent_candidate_and_budget(tm
     assert payload["drift"]["admitted"] is False
     assert "candidate_manifest_fingerprint_mismatch" in payload["drift"]["reasons"]
     assert payload["extra_path"]["admitted"] is False
-    assert "candidate_fingerprint_mismatch" in payload["extra_path"]["reasons"]
+    assert "candidate_manifest_fingerprint_mismatch" in payload["extra_path"]["reasons"]
 
 
 def test_successful_child_commit_with_clean_worktree_fails_closed(tmp_path):

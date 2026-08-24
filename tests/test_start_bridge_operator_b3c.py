@@ -2415,6 +2415,8 @@ def test_foreground_publish_status_creates_then_updates_same_comment_once(
     assert update_payload["target_issue"] == 188
     assert update_payload["dispatcher_invoked"] is True
     assert operator_log.count("INVOCATION") == 1
+    assert "--status-comment-id 45123" in operator_log
+    assert "--status-gh-path" in operator_log
     assert payload["status_comment_create_succeeded"] is True
     assert payload["status_comment_update_succeeded"] is True
     assert payload["status_publication_result"] == "updated"

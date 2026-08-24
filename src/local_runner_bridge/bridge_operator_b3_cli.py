@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from local_runner_bridge.bridge_operator_b1 import DEFAULT_REPOSITORY, GitHubApiClient
@@ -64,7 +65,82 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=[B3A_MODE, B3B_MODE, B3C_MODE], default=B3A_MODE)
     parser.add_argument("--timeout-seconds", type=int)
     parser.add_argument("--operator-session-id")
+    parser.add_argument("--status-comment-id", type=int)
+    parser.add_argument("--status-gh-path")
     return parser
+
+
+def _status_progress_reporter(args: argparse.Namespace):
+    if args.status_comment_id is None and args.status_gh_path is None:
+        return None
+    if args.status_comment_id is None or not args.status_gh_path:
+        raise ValueError("status_progress_binding_incomplete")
+    if args.status_comment_id <= 0:
+        raise ValueError("status_progress_comment_id_invalid")
+
+    gh_path = Path(args.status_gh_path)
+    if not gh_path.is_file():
+        raise ValueError("status_progress_gh_path_invalid")
+
+    def report(current_run: dict) -> None:
+        lifecycle = current_run.get("lifecycle") or {}
+        if lifecycle.get("stage") != "REQUEST_ACCEPTED":
+            raise ValueError("status_progress_lifecycle_invalid")
+        request_id = current_run.get("request_id")
+        issue_number = current_run.get("issue_number")
+        if (
+            not isinstance(request_id, str)
+            or not request_id
+            or not isinstance(issue_number, int)
+            or current_run.get("requested_action") != "run-reviewbundle"
+        ):
+            raise ValueError("status_progress_request_identity_invalid")
+        payload = {
+            "protocol": "lawb.bridge_status.v1",
+            "run_id": args.operator_session_id,
+            "stage": "operator",
+            "result": "running",
+            "repository": args.repo,
+            "request_id": request_id,
+            "target_issue": issue_number,
+            "requested_action": current_run["requested_action"],
+            "current_run": current_run,
+            "next_action": "review_operator_result",
+        }
+        body = (
+            "LAWBRIDGE-STATUS protocol=lawb.bridge_status.v1\n\n```json\n"
+            + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+            + "\n```"
+        )
+        completed = subprocess.run(
+            [
+                str(gh_path),
+                "api",
+                "--hostname",
+                "github.com",
+                "--method",
+                "PATCH",
+                "repos/HarryWhite-TW/local-ai-workbench/issues/comments/"
+                + str(args.status_comment_id),
+                "--input",
+                "-",
+            ],
+            input=json.dumps({"body": body}, separators=(",", ":")),
+            text=True,
+            capture_output=True,
+            timeout=args.timeout_seconds,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("status_progress_write_failed")
+        try:
+            response = json.loads(completed.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("status_progress_write_unverified") from error
+        if response.get("id") != args.status_comment_id:
+            raise RuntimeError("status_progress_write_unverified")
+
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -76,6 +152,12 @@ def main(argv: list[str] | None = None) -> int:
         if error.code == 0:
             raise
         print(json.dumps(_blocked_summary(["invalid_arguments"]), sort_keys=True))
+        return 2
+
+    try:
+        status_progress_reporter = _status_progress_reporter(args)
+    except ValueError as error:
+        print(json.dumps(_blocked_summary([str(error)]), sort_keys=True))
         return 2
 
     token = os.environ.get(args.github_token_env) if args.github_token_env else None
@@ -102,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         mode=args.mode,
         timeout_seconds=args.timeout_seconds,
         operator_session_id=args.operator_session_id,
+        status_progress_reporter=status_progress_reporter,
     )
     print(json.dumps(summary, sort_keys=True))
     return 0 if summary.get("result") == "success" else 1

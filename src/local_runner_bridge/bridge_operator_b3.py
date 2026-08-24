@@ -131,6 +131,7 @@ def run_bridge_operator_b3_dry_run_loop(
     lifecycle_fault_injector: Callable[[str], None] | None = None,
     workflow_notifications_enabled: bool | None = None,
     notification_submitter: Callable[[str, str], NotificationSubmission] | None = None,
+    status_progress_reporter: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Run a visible bounded loop, dry-run by default."""
     control_root = Path(control_repo_root if control_repo_root is not None else repo_root).resolve()
@@ -420,6 +421,13 @@ def run_bridge_operator_b3_dry_run_loop(
                 _copy_b1_identity(summary, b1_summary)
                 if b1_summary.get("result") == "success":
                     summary["eligible_request_observed"] = True
+                    if (
+                        mode == B3C_MODE
+                        and b1_summary.get("requested_action") == B3C_ALLOWED_ACTION
+                    ):
+                        _report_request_accepted_progress(
+                            summary, status_progress_reporter
+                        )
                     if mode == B3A_MODE:
                         appended = _append_observation_if_new(
                             state_root,
@@ -689,6 +697,7 @@ def _base_summary(
         "processed_request_written": False,
         "processed_request_already_seen": False,
         "current_delegation_outcome": None,
+        "status_progress_publication": "not_requested",
         "nonfatal_request_rejection_count": 0,
         "suppressed_request_rejection_cycle_count": 0,
         "last_nonfatal_request_rejection_reason": None,
@@ -2135,6 +2144,7 @@ def _reset_request_execution_visibility(summary: dict[str, Any]) -> None:
             "processed_request_written": False,
             "processed_request_already_seen": False,
             "current_delegation_outcome": None,
+            "status_progress_publication": "not_requested",
             "durable_reconciliation_performed": False,
             "durable_reconciliation_decision": None,
             "durable_reconciliation_reason": None,
@@ -2167,6 +2177,29 @@ def _reset_request_execution_visibility(summary: dict[str, Any]) -> None:
             "current_run": {},
         }
     )
+
+
+def _report_request_accepted_progress(
+    summary: dict[str, Any], reporter: Callable[[dict[str, Any]], None] | None
+) -> None:
+    """Report only validated, request-bound non-terminal B3-C progress."""
+    if reporter is None:
+        return
+    try:
+        progress = _current_run_visibility(summary)
+        progress.update(
+            {
+                "requested_action": summary.get("requested_action"),
+                "expected_branch": summary.get("expected_branch"),
+                "expected_head": summary.get("expected_head"),
+            }
+        )
+        reporter(progress)
+    except Exception:
+        # A visibility write failure must not create a false terminal result or retry.
+        summary["status_progress_publication"] = "unverified"
+        return
+    summary["status_progress_publication"] = "reported"
 
 
 def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> None:

@@ -968,6 +968,52 @@ def test_current_run_lifecycle_visibility_is_request_local_and_keeps_uncertainty
     }
 
 
+def test_b3c_publishes_request_bound_progress_before_dispatcher(tmp_path):
+    progress_reports = []
+
+    def invoker(**_kwargs):
+        assert progress_reports
+        return DispatcherInvocationResult(returncode=0)
+
+    client = FakeGitHub()
+    client.inbox_comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(action="run-reviewbundle"),
+            author="HarryWhite-TW",
+        )
+    ]
+    client.target_comments.append(
+        CommentRecord(
+            id=20,
+            body=result_comment(action="run-reviewbundle"),
+            author="HarryWhite-TW",
+        )
+    )
+
+    summary = run(
+        tmp_path,
+        client,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=180,
+        status_progress_reporter=progress_reports.append,
+    )
+
+    assert len(progress_reports) == 1
+    progress = progress_reports[0]
+    assert progress["request_id"] == "b3a-151-20260616T080000Z"
+    assert progress["issue_number"] == 151
+    assert progress["requested_action"] == "run-reviewbundle"
+    assert progress["lifecycle"] == {
+        "stage": "REQUEST_ACCEPTED",
+        "certainty": "verified",
+        "basis": "current_request_identity",
+    }
+    assert progress["dispatcher_invoked"] is False
+    assert summary["status_progress_publication"] == "reported"
+
+
 def test_b3c_later_request_does_not_inherit_prior_result_visibility(tmp_path):
     client = FakeGitHub(
         target_comments=[
