@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
-from typing import Any
+from typing import Any, Mapping
 
 from local_runner_bridge.bridge_operator_b1 import (
     DEFAULT_REPOSITORY,
+    NORMAL_CONTROL_RELAY_ISSUE,
     SUPPORTED_TARGET_REPOSITORIES,
     TRUSTED_ACTORS,
     CommentRecord,
@@ -24,7 +26,7 @@ SUMMARY_PROTOCOL = "lawb.bridge_operator_b2_delegation_summary.v1"
 TOOL_PREFLIGHT_PROTOCOL = "lawb.rv2_03_tool_resolution_preflight.v1"
 RUNNER_RESULT_MARKER = "LAWBRUNNER-RESULT"
 RUNNER_RESULT_PROTOCOL = "lawb.runner_result.v1"
-DEFAULT_INBOX_ISSUE = 147
+DEFAULT_INBOX_ISSUE = NORMAL_CONTROL_RELAY_ISSUE
 DEFAULT_TIMEOUT_SECONDS = 600
 DISPATCHER_REJECTED_BEFORE_RUNNER_EXIT_CODE = 20
 DISPATCHER_RUNNER_REACH_UNCERTAIN_EXIT_CODE = 21
@@ -63,7 +65,7 @@ def run_bridge_operator_b2_once(
     summary = _base_summary(repository, inbox_issue, control_root, target_root)
 
     if inbox_issue != DEFAULT_INBOX_ISSUE:
-        _block(summary, "unsupported_inbox_issue")
+        _block(summary, "unsupported_control_relay_issue")
         return summary
     if repository not in SUPPORTED_TARGET_REPOSITORIES:
         _block(summary, "unsupported_target_repository")
@@ -161,7 +163,7 @@ def run_bridge_operator_b2_once(
         repo_root=control_root,
         target_repo_root=target_root,
         target_issue=int(summary["target_issue"]),
-        expected_dispatch_request_id=str(summary["target_dispatch_request_id"]),
+        relay_request=build_relay_dispatch_contract(b1_summary),
         repository=repository,
         reviewed_codex_path=preflight_validation.get("codex_path_binding"),
     )
@@ -235,6 +237,7 @@ def build_dispatcher_command(
     target_repo_root: str | Path | None = None,
     target_issue: int,
     expected_dispatch_request_id: str | None = None,
+    relay_request: Mapping[str, Any] | None = None,
     repository: str = DEFAULT_REPOSITORY,
     reviewed_codex_path: str | None = None,
 ) -> list[str]:
@@ -252,7 +255,14 @@ def build_dispatcher_command(
         repository,
         "-PostResultComment",
     ]
-    if expected_dispatch_request_id:
+    if expected_dispatch_request_id and relay_request is not None:
+        raise ValueError("relay_request_and_expected_dispatch_request_id_are_mutually_exclusive")
+    if relay_request is not None:
+        encoded_relay = base64.b64encode(
+            json.dumps(dict(relay_request), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        args.extend(["-RelayRequestBase64", encoded_relay])
+    elif expected_dispatch_request_id:
         args.extend(["-ExpectedDispatchRequestId", expected_dispatch_request_id])
     if reviewed_codex_path:
         args.extend(["-ReviewedCodexPath", reviewed_codex_path])
@@ -260,6 +270,48 @@ def build_dispatcher_command(
     if target_root != Path(repo_root).resolve():
         args.extend(["-TargetRepoRoot", str(target_root)])
     return args
+
+
+def build_relay_dispatch_contract(b1_summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Create the exact local handoff for one B1-validated #279 relay request."""
+    required = (
+        "configured_inbox_issue",
+        "inbox_comment_id",
+        "inbox_request_author",
+        "request_id",
+        "target_dispatch_request_id",
+        "target_issue",
+        "target_repository",
+        "expected_branch",
+        "expected_head",
+        "expires",
+        "requested_action",
+    )
+    if b1_summary.get("control_relay_mode") != "single_relay":
+        raise ValueError("single_control_relay_required")
+    if any(b1_summary.get(key) is None for key in required):
+        raise ValueError("relay_dispatch_contract_incomplete")
+    if b1_summary["target_dispatch_request_id"] != b1_summary["request_id"]:
+        raise ValueError("relay_dispatch_contract_identity_mismatch")
+    contract: dict[str, Any] = {
+        "protocol": "lawb.bridge_relay_dispatch.v1",
+        "relay_issue": b1_summary["configured_inbox_issue"],
+        "relay_comment_id": str(b1_summary["inbox_comment_id"]),
+        "relay_author": b1_summary["inbox_request_author"],
+        "request_id": b1_summary["request_id"],
+        "target_dispatch_request_id": b1_summary["target_dispatch_request_id"],
+        "target_issue": b1_summary["target_issue"],
+        "repo": b1_summary["target_repository"],
+        "branch": b1_summary["expected_branch"],
+        "head": b1_summary["expected_head"],
+        "expires": b1_summary["expires"],
+        "action": b1_summary["requested_action"],
+        "requested_by": "chatgpt",
+    }
+    expected_state = b1_summary.get("target_expected_state")
+    if expected_state is not None:
+        contract["expected_state"] = expected_state
+    return contract
 
 
 def build_dispatcher_preflight_command(

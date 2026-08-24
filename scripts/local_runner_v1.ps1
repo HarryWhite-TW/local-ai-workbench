@@ -3818,6 +3818,180 @@ $initialStatusForEvidence = if ([string]::IsNullOrWhiteSpace($initialStatus)) {
     "(clean)"
 }
 else { $initialStatus }
+
+function Get-RuntimeContractExecutionRoute {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RuntimeContractBinding
+    )
+
+    $contractProperty = $RuntimeContractBinding.PSObject.Properties["runtime_contract"]
+    if ($null -eq $contractProperty -or $null -eq $contractProperty.Value) {
+        return $null
+    }
+    $routeProperty = $contractProperty.Value.PSObject.Properties["execution_route"]
+    if ($null -eq $routeProperty -or $null -eq $routeProperty.Value) {
+        return $null
+    }
+    $route = $routeProperty.Value
+    $modelProperty = $route.PSObject.Properties["model"]
+    $reasoningProperty = $route.PSObject.Properties["reasoning_effort"]
+    if ($null -eq $modelProperty -or $null -eq $reasoningProperty) {
+        throw "execution_route_binding_invalid"
+    }
+    return [pscustomobject]@{
+        Model = [string]$modelProperty.Value
+        ReasoningEffort = [string]$reasoningProperty.Value
+    }
+}
+
+function Get-CodexExecutionRouteArguments {
+    param(
+        [AllowNull()]
+        [object]$ExecutionRoute
+    )
+
+    if ($null -eq $ExecutionRoute) {
+        return @()
+    }
+    $model = [string]$ExecutionRoute.Model
+    $reasoningEffort = [string]$ExecutionRoute.ReasoningEffort
+    if ($model -notmatch '^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$') {
+        throw "execution_route_model_invalid"
+    }
+    if ($reasoningEffort -notin @("low", "medium", "high", "xhigh", "max", "ultra")) {
+        throw "execution_route_reasoning_effort_invalid"
+    }
+    return @(
+        "--model",
+        $model,
+        "--config",
+        ('model_reasoning_effort="' + $reasoningEffort + '"')
+    )
+}
+
+function Invoke-ReviewedCodexModelCatalogProbe {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$CodexCommand,
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$TimeoutSeconds = 30
+    )
+
+    $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    $probeArguments = @($CodexCommand.ArgumentPrefix) + @("debug", "models", "--bundled")
+    $probe = Invoke-CapturedNativeProcess `
+        -FilePath ([string]$CodexCommand.FilePath) `
+        -Arguments $probeArguments `
+        -WorkingDirectory $RepoPath `
+        -StandardInput "" `
+        -StandardInputEncoding $utf8 `
+        -StandardOutputEncoding $utf8 `
+        -StandardErrorEncoding $utf8 `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action "codex debug models --bundled reviewed exact launcher"
+
+    $filePathMatches = [string]::Equals(
+        [System.IO.Path]::GetFullPath([string]$probe.FilePath),
+        [System.IO.Path]::GetFullPath([string]$CodexCommand.FilePath),
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+    $launcherSourceMatchesReviewedPath = -not [string]::IsNullOrWhiteSpace([string]$CodexCommand.ReviewedCodexPath) -and [string]::Equals(
+        [System.IO.Path]::GetFullPath([string]$CodexCommand.Source),
+        [System.IO.Path]::GetFullPath([string]$CodexCommand.ReviewedCodexPath),
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+    $argumentsMatch = Test-StringArrayEqual -Left ([string[]]@($probe.Arguments)) -Right ([string[]]$probeArguments)
+    if ($probe.TimedOut -or $probe.ExitCode -ne 0 -or -not $filePathMatches -or -not $launcherSourceMatchesReviewedPath -or -not $argumentsMatch -or -not [bool]$CodexCommand.PathBindingMatch) {
+        throw "execution_route_catalog_probe_failed"
+    }
+    try {
+        $catalog = $probe.Stdout | ConvertFrom-Json -ErrorAction Stop
+        $models = @($catalog.models)
+    }
+    catch {
+        throw "execution_route_catalog_invalid"
+    }
+    if ($models.Count -eq 0) {
+        throw "execution_route_catalog_invalid"
+    }
+    return [pscustomobject]@{
+        Models = $models
+        ProbeArguments = @($probeArguments)
+        LauncherSource = [string]$CodexCommand.Source
+    }
+}
+
+function New-ExecutionRouteEvidence {
+    param(
+        [AllowNull()]
+        [object]$ExecutionRoute,
+        [Parameter(Mandatory = $true)]
+        [object]$CodexCommand
+    )
+
+    if ($null -eq $ExecutionRoute) {
+        return [ordered]@{
+            status = "not_requested"
+            requested_route = $null
+            bound_cli_arguments = @()
+            executed_route = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
+            observed_route = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
+        }
+    }
+
+    $routeArguments = @(Get-CodexExecutionRouteArguments -ExecutionRoute $ExecutionRoute)
+    $requestedRoute = [ordered]@{
+        model = [string]$ExecutionRoute.Model
+        reasoning_effort = [string]$ExecutionRoute.ReasoningEffort
+    }
+    $catalogProbe = Invoke-ReviewedCodexModelCatalogProbe -CodexCommand $CodexCommand
+    $model = @($catalogProbe.Models | Where-Object { [string]$_.slug -eq $requestedRoute.model } | Select-Object -First 1)
+    $status = "supported"
+    $reason = "none"
+    if ($model.Count -eq 0) {
+        $status = "unavailable"
+        $reason = "requested_model_unavailable"
+    }
+    else {
+        $supportedEfforts = @($model[0].supported_reasoning_levels | ForEach-Object { [string]$_.effort })
+        if ($supportedEfforts -notcontains $requestedRoute.reasoning_effort) {
+            $status = "unavailable"
+            $reason = "requested_reasoning_effort_unavailable"
+        }
+    }
+    return [ordered]@{
+        status = $status
+        reason = $reason
+        requested_route = $requestedRoute
+        bound_cli_arguments = $routeArguments
+        catalog_probe = [ordered]@{
+            launcher_source = $catalogProbe.LauncherSource
+            arguments = $catalogProbe.ProbeArguments
+            status = "verified"
+        }
+        executed_route = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
+        observed_route = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
+    }
+}
+
+function Set-ExecutionRouteInvocationEvidence {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ExecutionRouteEvidence,
+        [Parameter(Mandatory = $true)]
+        [object]$Result
+    )
+
+    $ExecutionRouteEvidence["invocation"] = [ordered]@{
+        reached = $true
+        exit_code = [string]$Result.ExitCode
+        timed_out = [bool]$Result.TimedOut
+    }
+    # Codex exec does not emit a machine-readable effective model identity.
+    $ExecutionRouteEvidence["executed_route"] = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
+    $ExecutionRouteEvidence["observed_route"] = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
+}
 $initialModifiedFiles = Get-ModifiedFilesFromStatus -Status $initialStatus
 $initialChangedFiles = @(Convert-FileTextToArray -Text $initialModifiedFiles)
 $initialDiffStat = Get-GitOutput -GitArgs @("diff", "--stat") -Action "git diff --stat"
@@ -4040,10 +4214,19 @@ $codexVersionProbe = Invoke-ReviewedCodexVersionProbe -CodexCommand $codexComman
 if (-not [bool]$codexVersionProbe.Passed) {
     throw "Reviewed Codex version probe failed closed before task invocation: $($codexVersionProbe.FailureReason)"
 }
+$executionRoute = Get-RuntimeContractExecutionRoute -RuntimeContractBinding $runtimeContractBinding
+$executionRouteEvidence = New-ExecutionRouteEvidence `
+    -ExecutionRoute $executionRoute `
+    -CodexCommand $codexCommand
+$runtimeContractBinding | Add-Member -NotePropertyName "execution_route_evidence" -NotePropertyValue $executionRouteEvidence -Force
+if ($executionRouteEvidence.status -eq "unavailable") {
+    throw "Execution route is unavailable: $($executionRouteEvidence.reason)"
+}
 $codexUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
 $codexArguments = @(
     "--ask-for-approval",
-    "never",
+    "never"
+) + @($executionRouteEvidence.bound_cli_arguments) + @(
     "exec",
     "--sandbox",
     "workspace-write",
@@ -4083,6 +4266,7 @@ $codexResult = Invoke-CapturedNativeProcess `
     -StandardErrorEncoding $codexUtf8 `
     -TimeoutSeconds $ReviewBundleCodexTimeoutSeconds `
     -Action "codex ReviewBundle candidate generation"
+Set-ExecutionRouteInvocationEvidence -ExecutionRouteEvidence $executionRouteEvidence -Result $codexResult
 
 $postExecutionObservation = Get-ReviewBundleGitObservation
 $postExecutionManifest = Get-BoundedCandidateManifest -AllowedFiles @($runtimeContractBinding.allowed_files)

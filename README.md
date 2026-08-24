@@ -36,7 +36,8 @@ Current baseline:
   HAG at the stable stop point;
 - Bridge Operator, Dispatcher, Runner, and Codex remain development-workflow
   tooling, not product runtime;
-- the fixed Bridge Inbox remains Issue `#147`;
+- the normal fixed Bridge control relay is Issue `#279`; Issue `#147` remains
+  legacy compatibility/history only;
 - a stable control/reference checkout can route one exact LAWB request to a
   separate clean engineering workspace bound by repository, branch, and full
   HEAD;

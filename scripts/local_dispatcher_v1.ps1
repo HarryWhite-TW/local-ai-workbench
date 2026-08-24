@@ -1,13 +1,12 @@
 <#
 .SYNOPSIS
-Runs one safe local CHATGPT-DISPATCH poll for an explicit GitHub issue.
+Runs one safe local dispatch for an explicit GitHub issue.
 
 .DESCRIPTION
-local_dispatcher_v1.ps1 implements manual PollOnce only for
-CHATGPT-DISPATCH protocol=lawb.dispatch.v1. It reads only the explicitly
-selected issue, validates either one explicitly identified dispatch marker or
-exactly one current standalone marker for manual recovery, and executes only
-supported bounded dispatcher actions in this slice.
+local_dispatcher_v1.ps1 implements manual PollOnce for one
+CHATGPT-DISPATCH marker or one B1-validated fixed control-relay handoff. It
+reads only the explicit target issue, validates one exact request identity,
+and executes only supported bounded dispatcher actions in this slice.
 
 The dispatcher never treats CHATGPT-DISPATCH as approval for commit, push,
 issue close, labels, PRs, merges, force push, or approval chaining.
@@ -29,6 +28,7 @@ param(
     [int]$IssueNumber = 0,
     [int[]]$IssueNumbers = @(),
     [string]$ExpectedDispatchRequestId = "",
+    [string]$RelayRequestBase64 = "",
     [string]$ReviewedCodexPath = "",
     [ValidateNotNullOrEmpty()]
     [string]$Repo = "HarryWhite-TW/local-ai-workbench",
@@ -45,6 +45,11 @@ $HagDispatchRepo = "HarryWhite-TW/human-approval-automation-gateway"
 $SupportedTargetRepos = @($ExpectedDispatchRepo, $HagDispatchRepo)
 $DispatchMarkerPrefix = "CHATGPT-DISPATCH"
 $DispatchProtocol = "lawb.dispatch.v1"
+$ControlRelayProtocol = "lawb.bridge_relay_dispatch.v1"
+$ControlRelayMarkerPrefix = "BRIDGE-INBOX-REQUEST"
+$ControlRelayRequestProtocol = "lawb.bridge_inbox_request.v1"
+$NormalControlRelayIssue = 279
+$ControlRelayRepository = "HarryWhite-TW/local-ai-workbench"
 $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
 $DryRunProtocol = "lawb.dispatch_dry_run.v1"
@@ -304,6 +309,55 @@ function Get-CommentBodyText {
     )
 
     return Get-ObjectPropertyText -Object $Comment -PropertyName "body"
+}
+
+function Get-ExactControlRelayRestComment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelayCommentId
+    )
+
+    $ghPath = Resolve-GhPath
+    $endpoint = "repos/$ControlRelayRepository/issues/comments/$RelayCommentId"
+    $result = Invoke-ReadOnlyCommand `
+        -FilePath $ghPath `
+        -Arguments @("api", $endpoint) `
+        -Action "gh api control relay comment"
+    if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($result.Stdout)) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay REST comment id=$RelayCommentId could not be read exactly."
+    }
+
+    try {
+        $comment = $result.Stdout | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        Throw-DeterministicAdmissionRejection -Message "Control relay REST comment id=$RelayCommentId returned invalid JSON."
+    }
+
+    if (-not [string]::Equals(
+        (Get-ObjectPropertyText -Object $comment -PropertyName "id"),
+        $RelayCommentId,
+        [System.StringComparison]::Ordinal
+    )) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay REST comment id does not match the B1 handoff."
+    }
+
+    $expectedIssueUrl = "https://api.github.com/repos/$ControlRelayRepository/issues/$NormalControlRelayIssue"
+    if (-not [string]::Equals(
+        (Get-ObjectPropertyText -Object $comment -PropertyName "issue_url"),
+        $expectedIssueUrl,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay REST comment is not bound to $ControlRelayRepository #$NormalControlRelayIssue."
+    }
+
+    $restUser = $comment.PSObject.Properties["user"]
+    $restAuthor = if ($null -eq $restUser) { "" } else { Get-ObjectPropertyText -Object $restUser.Value -PropertyName "login" }
+    return [pscustomobject]@{
+        id = Get-ObjectPropertyText -Object $comment -PropertyName "id"
+        author = [pscustomobject]@{ login = $restAuthor }
+        body = Get-ObjectPropertyText -Object $comment -PropertyName "body"
+    }
 }
 
 function Get-SameNodeContinuationParentCommentId {
@@ -917,7 +971,9 @@ function Assert-DispatchMarkerMatchesLocalState {
 function Get-IssueDispatchMarkerReadResult {
     param(
         [Parameter(Mandatory = $true)]
-        [int]$IssueNumber
+        [int]$IssueNumber,
+        [switch]$IncludeDispatchMarkers = $true,
+        [string]$Repository = $Repo
     )
 
     $ghPath = Resolve-GhPath
@@ -927,7 +983,7 @@ function Get-IssueDispatchMarkerReadResult {
         "view",
         "$IssueNumber",
         "--repo",
-        $Repo,
+        $Repository,
         "--json",
         "number,title,state,comments"
     )
@@ -964,7 +1020,7 @@ function Get-IssueDispatchMarkerReadResult {
         $lineNumber = 0
         foreach ($line in $lines) {
             $lineNumber += 1
-            if ($line.StartsWith($DispatchMarkerPrefix, [System.StringComparison]::Ordinal)) {
+            if ($IncludeDispatchMarkers -and $line.StartsWith($DispatchMarkerPrefix, [System.StringComparison]::Ordinal)) {
                 if (-not [string]::Equals($trimmedBody, $line, [System.StringComparison]::Ordinal)) {
                     Throw-DeterministicAdmissionRejection -Message "Malformed dispatch marker comment. CHATGPT-DISPATCH must be one standalone issue comment line."
                 }
@@ -993,6 +1049,7 @@ function Get-IssueDispatchMarkerReadResult {
         IssueNumber = $IssueNumber
         Title = $issueTitle
         IssueState = $issueState
+        Comments = @($comments)
         Markers = @($markers)
         RunnerResults = @($runnerResults)
     }
@@ -1128,6 +1185,248 @@ function Get-ValidatedDispatchSelection {
         Branch = $branch
         Head = $head
         NowUtc = $NowUtc
+        Selected = $selected
+    }
+}
+
+function ConvertFrom-RelayRequestBase64 {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$EncodedRequest
+    )
+
+    if ([string]::IsNullOrWhiteSpace($EncodedRequest) -or $EncodedRequest -notmatch '^[A-Za-z0-9+/]+={0,2}$') {
+        Throw-DeterministicAdmissionRejection -Message "Relay request handoff is not valid base64."
+    }
+
+    try {
+        $bytes = [System.Convert]::FromBase64String($EncodedRequest)
+        $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+        $json = $utf8.GetString($bytes)
+        $payload = $json | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        Throw-DeterministicAdmissionRejection -Message "Relay request handoff is not valid UTF-8 JSON."
+    }
+
+    if ($null -eq $payload) {
+        Throw-DeterministicAdmissionRejection -Message "Relay request handoff is empty."
+    }
+
+    $requiredFields = @(
+        "protocol", "relay_issue", "relay_comment_id", "relay_author",
+        "request_id", "target_dispatch_request_id", "target_issue", "repo",
+        "branch", "head", "expires", "action", "requested_by"
+    )
+    $knownFields = @($requiredFields + "expected_state")
+    $actualFields = @($payload.PSObject.Properties | ForEach-Object { $_.Name })
+    foreach ($fieldName in $actualFields) {
+        if (-not (Test-ExactListValue -Values $knownFields -Value $fieldName)) {
+            Throw-DeterministicAdmissionRejection -Message "Relay request contains unknown field '$fieldName'."
+        }
+    }
+    foreach ($fieldName in $requiredFields) {
+        $property = $payload.PSObject.Properties[$fieldName]
+        if ($null -eq $property -or $null -eq $property.Value -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            Throw-DeterministicAdmissionRejection -Message "Relay request is missing required field '$fieldName'."
+        }
+    }
+
+    return $payload
+}
+
+function ConvertFrom-ControlRelayMarkerLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$MarkerLine
+    )
+
+    if (-not (Test-AsciiText -Text $MarkerLine)) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay marker contains non-ASCII text."
+    }
+
+    $parts = $MarkerLine.Split(" ")
+    if ($parts.Count -lt 2 -or -not [string]::Equals($parts[0], $ControlRelayMarkerPrefix, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Malformed control relay marker."
+    }
+    if (@($parts | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+        Throw-DeterministicAdmissionRejection -Message "Malformed control relay marker spacing."
+    }
+
+    $requiredFields = @(
+        "protocol", "request_id", "repo", "target_issue", "target_dispatch_request_id",
+        "branch", "head", "expires", "action", "requested_by"
+    )
+    $knownFields = @($requiredFields + "expected_state")
+    $seenFields = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    $fields = @{}
+    foreach ($part in @($parts | Select-Object -Skip 1)) {
+        if ($part -notmatch "^([a-z_]+)=(\S+)$") {
+            Throw-DeterministicAdmissionRejection -Message "Malformed control relay marker field '$part'."
+        }
+        $fieldName = $Matches[1]
+        $fieldValue = $Matches[2]
+        if (-not (Test-ExactListValue -Values $knownFields -Value $fieldName)) {
+            Throw-DeterministicAdmissionRejection -Message "Unknown control relay marker field '$fieldName'."
+        }
+        if (-not $seenFields.Add($fieldName)) {
+            Throw-DeterministicAdmissionRejection -Message "Duplicate control relay marker field '$fieldName'."
+        }
+        $fields[$fieldName] = $fieldValue
+    }
+    foreach ($requiredField in $requiredFields) {
+        if (-not $seenFields.Contains($requiredField)) {
+            Throw-DeterministicAdmissionRejection -Message "Missing required control relay marker field '$requiredField'."
+        }
+    }
+    return $fields
+}
+
+function Assert-FreshControlRelayMatchesHandoff {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Relay,
+        [Parameter(Mandatory = $true)]
+        [datetime]$NowUtc
+    )
+
+    $controlRead = Get-IssueDispatchMarkerReadResult `
+        -IssueNumber $NormalControlRelayIssue `
+        -IncludeDispatchMarkers:$false `
+        -Repository $ControlRelayRepository
+    if (-not [string]::Equals([string]$controlRead.IssueState, "OPEN", [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay #$NormalControlRelayIssue is not OPEN."
+    }
+
+    $freshComment = Get-ExactControlRelayRestComment -RelayCommentId ([string]$Relay.relay_comment_id)
+    $freshAuthor = Get-CommentAuthorLogin -Comment $freshComment
+    if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value $freshAuthor)) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay author '$freshAuthor' is not trusted."
+    }
+    if (-not [string]::Equals($freshAuthor, [string]$Relay.relay_author, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay author does not match the B1 handoff."
+    }
+
+    $body = Get-CommentBodyText -Comment $freshComment
+    if ([string]::IsNullOrWhiteSpace($body) -or -not [string]::Equals($body, $body.Trim(), [System.StringComparison]::Ordinal) -or $body -match "[\r\n]") {
+        Throw-DeterministicAdmissionRejection -Message "Control relay marker must be one standalone comment line."
+    }
+    $freshFields = ConvertFrom-ControlRelayMarkerLine -MarkerLine $body
+    if (-not [string]::Equals([string]$freshFields["protocol"], $ControlRelayRequestProtocol, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Control relay request protocol is not supported."
+    }
+
+    foreach ($fieldName in @("request_id", "target_dispatch_request_id", "target_issue", "repo", "branch", "head", "expires", "action", "requested_by")) {
+        if (-not [string]::Equals([string]$freshFields[$fieldName], [string]$Relay.$fieldName, [System.StringComparison]::Ordinal)) {
+            Throw-DeterministicAdmissionRejection -Message "Fresh control relay field '$fieldName' does not match the B1 handoff."
+        }
+    }
+    $handoffExpectedState = Get-ObjectPropertyText -Object $Relay -PropertyName "expected_state"
+    $freshExpectedState = [string]$freshFields["expected_state"]
+    if (-not [string]::Equals($freshExpectedState, $handoffExpectedState, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay field 'expected_state' does not match the B1 handoff."
+    }
+    if (-not [string]::Equals([string]$freshFields["target_dispatch_request_id"], [string]$freshFields["request_id"], [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay identity mismatch. target_dispatch_request_id must equal request_id."
+    }
+
+    $expiresUtc = ConvertTo-DispatchExpiryUtc -Expires ([string]$freshFields["expires"])
+    if ($expiresUtc -le $NowUtc) {
+        Throw-DeterministicAdmissionRejection -Message "Fresh control relay expired at $($expiresUtc.ToString("yyyy-MM-ddTHH:mm:ssZ"))."
+    }
+
+    return [pscustomobject]@{
+        Comment = $freshComment
+        Fields = $freshFields
+        ExpiresUtc = $expiresUtc
+    }
+}
+
+function Get-ValidatedRelaySelection {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber,
+        [Parameter(Mandatory = $true)]
+        [string]$EncodedRequest,
+        [datetime]$NowUtc = [System.DateTime]::UtcNow
+    )
+
+    $relay = ConvertFrom-RelayRequestBase64 -EncodedRequest $EncodedRequest
+    if (-not [string]::Equals([string]$relay.protocol, $ControlRelayProtocol, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Relay request protocol is not supported."
+    }
+    if ([string]$relay.relay_issue -ne [string]$NormalControlRelayIssue) {
+        Throw-DeterministicAdmissionRejection -Message "Relay request is not bound to normal control relay #$NormalControlRelayIssue."
+    }
+    if ([string]$relay.relay_comment_id -notmatch '^[1-9][0-9]*$') {
+        Throw-DeterministicAdmissionRejection -Message "Relay request comment id is invalid."
+    }
+    if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value ([string]$relay.relay_author))) {
+        Throw-DeterministicAdmissionRejection -Message "Relay request author '$($relay.relay_author)' is not trusted."
+    }
+    if ([string]$relay.request_id -notmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$') {
+        Throw-DeterministicAdmissionRejection -Message "Relay request_id is invalid."
+    }
+    if (-not [string]::Equals([string]$relay.target_dispatch_request_id, [string]$relay.request_id, [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Relay request identity mismatch. target_dispatch_request_id must equal request_id."
+    }
+
+    $targetIssue = 0
+    if (-not [int]::TryParse([string]$relay.target_issue, [ref]$targetIssue) -or $targetIssue -lt 1) {
+        Throw-DeterministicAdmissionRejection -Message "Relay target_issue is invalid."
+    }
+    if ($targetIssue -ne $IssueNumber) {
+        Throw-DeterministicAdmissionRejection -Message "Relay target_issue=$targetIssue does not match explicit issue #$IssueNumber."
+    }
+
+    $branch = Get-CurrentBranch
+    $head = Get-CurrentFullHead
+    $fields = @{
+        protocol = $DispatchProtocol
+        request_id = [string]$relay.request_id
+        issue = [string]$targetIssue
+        repo = [string]$relay.repo
+        branch = [string]$relay.branch
+        head = [string]$relay.head
+        expires = [string]$relay.expires
+        action = [string]$relay.action
+        requested_by = [string]$relay.requested_by
+    }
+    $expectedState = Get-ObjectPropertyText -Object $relay -PropertyName "expected_state"
+    if (-not [string]::IsNullOrWhiteSpace($expectedState)) {
+        $fields["expected_state"] = $expectedState
+    }
+    $freshRelay = Assert-FreshControlRelayMatchesHandoff -Relay $relay -NowUtc $NowUtc
+    $expiresUtc = $freshRelay.ExpiresUtc
+
+    Assert-DispatchFieldEquals -Fields $fields -Name "requested_by" -Expected "chatgpt"
+    Assert-DispatchMarkerMatchesLocalState `
+        -Fields $fields `
+        -ExpectedIssueNumber $IssueNumber `
+        -CurrentBranch $branch `
+        -CurrentHead $head `
+        -ExpiresUtc $expiresUtc `
+        -NowUtc $NowUtc
+
+    $readResult = Get-IssueDispatchMarkerReadResult -IssueNumber $IssueNumber -IncludeDispatchMarkers:$false
+    if (-not [string]::Equals([string]$readResult.IssueState, "OPEN", [System.StringComparison]::Ordinal)) {
+        Throw-DeterministicAdmissionRejection -Message "Target issue #$IssueNumber is not OPEN."
+    }
+
+    $selected = [pscustomobject]@{
+        Marker = [pscustomobject]@{ Line = "BRIDGE-INBOX-REQUEST"; Comment = $freshRelay.Comment }
+        Fields = $fields
+        ExpiresUtc = $expiresUtc
+        IsCurrent = $true
+    }
+
+    return [pscustomobject]@{
+        ReadResult = $readResult
+        Markers = @()
+        Branch = $branch
+        Head = $head
+        NowUtc = $NowUtc
+        AuthoritySource = "single_control_relay"
         Selected = $selected
     }
 }
@@ -1619,13 +1918,15 @@ function Invoke-AcceptedDispatchAction {
     $fields = $selected.Fields
     $action = [string]$fields["action"]
     $requestId = [string]$fields["request_id"]
+    $authoritySource = Get-ObjectPropertyText -Object $selection -PropertyName "AuthoritySource"
+    $authorityLabel = if ([string]::Equals($authoritySource, "single_control_relay", [System.StringComparison]::Ordinal)) { "Control relay" } else { "Dispatch" }
 
     Write-Host "$DispatcherName $DispatcherVersion"
     Write-Host "Mode: $ModeName"
     Write-Host "Issue number: #$Issue"
     Write-Host "Issue state: $($selection.ReadResult.IssueState)"
-    Write-Host "Dispatch comment id: $(Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "id")"
-    Write-Host "Dispatch comment author: $(Get-CommentAuthorLogin -Comment $selected.Marker.Comment)"
+    Write-Host "$authorityLabel comment id: $(Get-ObjectPropertyText -Object $selected.Marker.Comment -PropertyName "id")"
+    Write-Host "$authorityLabel comment author: $(Get-CommentAuthorLogin -Comment $selected.Marker.Comment)"
     Write-Host "Parsed action: $action"
     Write-Host "Request id: $requestId"
     Write-Host "Branch: $($selection.Branch)"
@@ -1675,8 +1976,14 @@ function Invoke-AcceptedDispatchAction {
         "maybe-status-check observed git status: $($actionResult.StatusSummary)."
     }
 
+    $authoritySummary = if ([string]::Equals($authoritySource, "single_control_relay", [System.StringComparison]::Ordinal)) {
+        "The B1-validated #$NormalControlRelayIssue control relay matched request identity, target issue, repo, branch, HEAD, expiry, and allowed action."
+    }
+    else {
+        "The selected CHATGPT-DISPATCH marker matched request identity, issue, repo, branch, HEAD, expiry, and allowed action."
+    }
     $validationOverrides = @{
-        dispatch_marker = (New-RunnerValidationResult -Status "passed" -Summary "The selected CHATGPT-DISPATCH marker matched request identity, issue, repo, branch, HEAD, expiry, and allowed action.")
+        dispatch_marker = (New-RunnerValidationResult -Status "passed" -Summary $authoritySummary)
         git_status_clean = (New-RunnerValidationResult -Status $(if ($actionResult.StatusSummary -eq "clean") { "passed" } else { "warning" }) -Summary $gitStatusValidationSummary)
         final_head_matches_initial = (New-RunnerValidationResult -Status $(if ($finalHeadMatchesInitial) { "passed" } else { "failed" }) -Summary $(if ($finalHeadMatchesInitial) { "Final full HEAD matches the initial dispatcher observation." } else { "Final full HEAD differs from the initial dispatcher observation." }))
         final_index_clean = (New-RunnerValidationResult -Status $(if ($finalIndexClean) { "passed" } else { "failed" }) -Summary $(if ($finalIndexClean) { "The final staged area was observed clean." } else { "The final staged area contains changes." }))
@@ -1711,7 +2018,10 @@ function Invoke-AcceptedDispatchAction {
 }
 
 function Invoke-PollOnce {
-    $script:ExplicitDispatchFailureExitEnabled = -not [string]::IsNullOrWhiteSpace($ExpectedDispatchRequestId)
+    $script:ExplicitDispatchFailureExitEnabled = (
+        -not [string]::IsNullOrWhiteSpace($ExpectedDispatchRequestId) -or
+        -not [string]::IsNullOrWhiteSpace($RelayRequestBase64)
+    )
 
     if ($IssueNumber -lt 1) {
         Throw-DeterministicAdmissionRejection -Message "PollOnce requires -IssueNumber <N> and scans only that issue."
@@ -1722,9 +2032,14 @@ function Invoke-PollOnce {
     }
 
     Assert-RepoRoot
-    $selection = Get-ValidatedDispatchSelection `
-        -IssueNumber $IssueNumber `
-        -ExpectedRequestId $ExpectedDispatchRequestId
+    $selection = if (-not [string]::IsNullOrWhiteSpace($RelayRequestBase64)) {
+        Get-ValidatedRelaySelection -IssueNumber $IssueNumber -EncodedRequest $RelayRequestBase64
+    }
+    else {
+        Get-ValidatedDispatchSelection `
+            -IssueNumber $IssueNumber `
+            -ExpectedRequestId $ExpectedDispatchRequestId
+    }
     Invoke-AcceptedDispatchAction -Selection $selection -Issue $IssueNumber -ModeName "PollOnce" -SafetyBoundary $PollOnceSafetyBoundary
 }
 
@@ -1966,6 +2281,14 @@ try {
 
     if (-not [string]::IsNullOrWhiteSpace($ExpectedDispatchRequestId) -and -not $PollOnce) {
         throw "-ExpectedDispatchRequestId is valid only with -PollOnce."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RelayRequestBase64) -and -not $PollOnce) {
+        throw "-RelayRequestBase64 is valid only with -PollOnce."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedDispatchRequestId) -and -not [string]::IsNullOrWhiteSpace($RelayRequestBase64)) {
+        throw "-ExpectedDispatchRequestId and -RelayRequestBase64 are mutually exclusive."
     }
 
     if ($ToolResolutionPreflight) {

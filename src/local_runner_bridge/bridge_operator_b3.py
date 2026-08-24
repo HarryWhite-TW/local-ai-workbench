@@ -30,6 +30,7 @@ from local_runner_bridge.bridge_operator_b2 import (
     DISPATCHER_RUNNER_MAY_HAVE_STARTED,
     DispatcherInvocationResult,
     build_dispatcher_command,
+    build_relay_dispatch_contract,
     default_dispatcher_invoker,
 )
 from local_runner_bridge.durable_evidence_provider import GitHubIssueCommentEvidenceProvider
@@ -95,7 +96,13 @@ NONFATAL_REQUEST_REJECTION_REASONS = frozenset(
         "health_probe_expiry_exceeds_5_minutes",
     }
 )
-SAFE_WAIT_B1_REASONS = frozenset({"missing_request", "no_current_request_after_consumption"})
+SAFE_WAIT_B1_REASONS = frozenset(
+    {
+        "missing_request",
+        "missing_current_request",
+        "no_current_request_after_consumption",
+    }
+)
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$")
 
 
@@ -399,6 +406,7 @@ def run_bridge_operator_b3_dry_run_loop(
                     state_root=state_root,
                     repo_root=repo_root,
                     repository=repository,
+                    inbox_issue=inbox_issue,
                     control_client=control_client,
                     target_client=target_client,
                     local_checker=local_checker,
@@ -832,6 +840,7 @@ def _run_b1_with_bounded_retry(
     state_root: Path,
     repo_root: str | Path,
     repository: str,
+    inbox_issue: int,
     control_client: Any,
     target_client: Any,
     local_checker: Any | None,
@@ -854,7 +863,7 @@ def _run_b1_with_bounded_retry(
             return {"result": "blocked", "blocked_reasons": ["corrupted_state"]}
         try:
             last = run_bridge_operator_b1_dry_run(
-                inbox_issue=DEFAULT_INBOX_ISSUE,
+                inbox_issue=inbox_issue,
                 repo_root=repo_root,
                 repository=repository,
                 github_client=control_client,
@@ -1557,7 +1566,7 @@ def _delegate_b3_request(
         repo_root=control_repo_root,
         target_repo_root=repo_root,
         target_issue=int(b1_summary["target_issue"]),
-        expected_dispatch_request_id=str(b1_summary["target_dispatch_request_id"]),
+        relay_request=build_relay_dispatch_contract(b1_summary),
         repository=repository,
     )
     summary["dispatcher_invocation_args"] = args
@@ -2198,10 +2207,63 @@ def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> No
             summary[key] = b1_summary.get(key)
 
 
+def _request_lifecycle_visibility(summary: dict[str, Any]) -> dict[str, str]:
+    """Derive only request-local stages that existing evidence can establish."""
+    if summary.get("target_result_verified"):
+        return {
+            "stage": "TERMINAL_RESULT_READY",
+            "certainty": "verified",
+            "basis": "trusted_terminal_result",
+        }
+    if summary.get("current_failure_recorded"):
+        return {
+            "stage": "BLOCKED_OR_FAILED",
+            "certainty": "verified",
+            "basis": "current_failure_record",
+        }
+    reach = summary.get("dispatcher_execution_reach")
+    if reach == DISPATCHER_REJECTED_BEFORE_RUNNER:
+        return {
+            "stage": "BLOCKED_OR_FAILED",
+            "certainty": "verified",
+            "basis": "dispatcher_rejected_before_runner",
+        }
+    if reach == DISPATCHER_FAILED_BEFORE_RUNNER:
+        return {
+            "stage": "BLOCKED_OR_FAILED",
+            "certainty": "verified",
+            "basis": "dispatcher_failed_before_runner",
+        }
+    if reach == DISPATCHER_RUNNER_MAY_HAVE_STARTED:
+        return {
+            "stage": "RUNNER_OR_CODEX_REACH_UNCERTAIN",
+            "certainty": "unknown",
+            "basis": "dispatcher_runner_reach_uncertain",
+        }
+    if summary.get("dispatcher_invoked"):
+        return {
+            "stage": "DISPATCHER_REACHED",
+            "certainty": "verified",
+            "basis": "operator_dispatcher_invocation",
+        }
+    if summary.get("selected_request_state") == "CURRENT" and summary.get("request_id"):
+        return {
+            "stage": "REQUEST_ACCEPTED",
+            "certainty": "verified",
+            "basis": "current_request_identity",
+        }
+    return {
+        "stage": "UNKNOWN",
+        "certainty": "unknown",
+        "basis": "no_current_request_evidence",
+    }
+
+
 def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "request_id": summary.get("request_id"),
         "issue_number": summary.get("target_issue"),
+        "lifecycle": _request_lifecycle_visibility(summary),
         "mode": summary.get("mode"),
         "max_cycles": summary.get("configured_max_cycles"),
         "operator_dispatcher_invocation_performed": bool(

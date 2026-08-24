@@ -17,7 +17,9 @@ def _runner_core() -> str:
     source = RUNNER.read_text(encoding="utf-8")
     start = source.index("Set-StrictMode -Version Latest")
     end = source.index("\nAssert-TargetRepositoryBinding")
-    return source[start:end]
+    route_start = source.index("function Get-RuntimeContractExecutionRoute")
+    route_end = source.index("\n$initialModifiedFiles = Get-ModifiedFilesFromStatus", route_start)
+    return source[start:end] + "\n" + source[route_start:route_end]
 
 
 def _powershell() -> str:
@@ -437,6 +439,113 @@ def test_resolved_cmd_launch_spec_executes_production_composition_without_real_c
         """,
     )
     assert_success(result)
+
+
+def test_execution_route_forwards_model_and_reasoning_and_preserves_unknown_execution_identity(
+    tmp_path,
+):
+    result = run_timeout_guard_script(
+        tmp_path,
+        """
+        $script:RepoPath = "."
+        $script:CatalogCalls = 0
+        function Invoke-CapturedNativeProcess {
+            param(
+                [string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory, [string]$StandardInput,
+                [System.Text.Encoding]$StandardInputEncoding, [System.Text.Encoding]$StandardOutputEncoding,
+                [System.Text.Encoding]$StandardErrorEncoding, [int]$TimeoutSeconds, [string]$Action
+            )
+            if ($Action -ne "codex debug models --bundled reviewed exact launcher") {
+                throw "unexpected action $Action"
+            }
+            $script:CatalogCalls += 1
+            return [pscustomobject]@{
+                ExitCode = 0; TimedOut = $false; FilePath = $FilePath; Arguments = @($Arguments)
+                Stdout = '{"models":[{"slug":"gpt-5.6-terra","supported_reasoning_levels":[{"effort":"high"}]}]}'
+            }
+        }
+        $command = [pscustomobject]@{
+            FilePath = "C:/Windows/System32/cmd.exe"
+            ArgumentPrefix = @("/d", "/s", "/c", "call", "C:/Tools/codex.cmd")
+            Source = "C:/Tools/codex.cmd"
+            ReviewedCodexPath = "C:/Tools/codex.cmd"
+            PathBindingMatch = $true
+        }
+        $route = [pscustomobject]@{ Model = "gpt-5.6-terra"; ReasoningEffort = "high" }
+        $evidence = New-ExecutionRouteEvidence -ExecutionRoute $route -CodexCommand $command
+        $fakeResult = [pscustomobject]@{ ExitCode = 0; TimedOut = $false }
+        Set-ExecutionRouteInvocationEvidence -ExecutionRouteEvidence $evidence -Result $fakeResult
+        [ordered]@{ calls = $script:CatalogCalls; evidence = $evidence } | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    evidence = payload["evidence"]
+    assert payload["calls"] == 1
+    assert evidence["status"] == "supported"
+    assert evidence["requested_route"] == {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "high",
+    }
+    assert evidence["bound_cli_arguments"] == [
+        "--model",
+        "gpt-5.6-terra",
+        "--config",
+        'model_reasoning_effort="high"',
+    ]
+    assert evidence["catalog_probe"]["arguments"][-3:] == [
+        "debug",
+        "models",
+        "--bundled",
+    ]
+    assert evidence["invocation"] == {
+        "reached": True,
+        "exit_code": "0",
+        "timed_out": False,
+    }
+    assert evidence["executed_route"] == {
+        "model": "UNKNOWN",
+        "reasoning_effort": "UNKNOWN",
+    }
+    assert evidence["observed_route"] == evidence["executed_route"]
+
+
+def test_execution_route_catalog_rejects_unavailable_reasoning_without_fallback(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        """
+        $script:RepoPath = "."
+        function Invoke-CapturedNativeProcess {
+            param(
+                [string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory, [string]$StandardInput,
+                [System.Text.Encoding]$StandardInputEncoding, [System.Text.Encoding]$StandardOutputEncoding,
+                [System.Text.Encoding]$StandardErrorEncoding, [int]$TimeoutSeconds, [string]$Action
+            )
+            return [pscustomobject]@{
+                ExitCode = 0; TimedOut = $false; FilePath = $FilePath; Arguments = @($Arguments)
+                Stdout = '{"models":[{"slug":"gpt-5.6-terra","supported_reasoning_levels":[{"effort":"low"}]}]}'
+            }
+        }
+        $command = [pscustomobject]@{
+            FilePath = "C:/Windows/System32/cmd.exe"
+            ArgumentPrefix = @("/d", "/s", "/c", "call", "C:/Tools/codex.cmd")
+            Source = "C:/Tools/codex.cmd"
+            ReviewedCodexPath = "C:/Tools/codex.cmd"
+            PathBindingMatch = $true
+        }
+        $route = [pscustomobject]@{ Model = "gpt-5.6-terra"; ReasoningEffort = "high" }
+        $evidence = New-ExecutionRouteEvidence -ExecutionRoute $route -CodexCommand $command
+        $evidence | ConvertTo-Json -Depth 8 -Compress
+        """,
+    )
+
+    assert_success(result)
+    evidence = json.loads(result.stdout)
+    assert evidence["status"] == "unavailable"
+    assert evidence["reason"] == "requested_reasoning_effort_unavailable"
+    assert evidence["bound_cli_arguments"][1] == "gpt-5.6-terra"
+    assert evidence["bound_cli_arguments"][-1] == 'model_reasoning_effort="high"'
 
 
 def test_resolve_codex_command_uses_safe_priority_independent_of_input_order(tmp_path):

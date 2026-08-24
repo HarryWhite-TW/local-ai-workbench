@@ -1,4 +1,5 @@
 import json
+import base64
 import re
 import shutil
 import subprocess
@@ -100,11 +101,15 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $IssueNumbers = @()
             $PostResultComment = $false
             $ExpectedDispatchRequestId = ""
+            $RelayRequestBase64 = ""
             $ReviewedCodexPath = ""
             $script:Branch = "master"
             $script:Head = "{HEAD}"
             $script:GitStatus = ""
             $script:Markers = @()
+            $script:ControlRelayComments = @()
+            $script:ControlRelayRestComments = @()
+            $script:ReadRequests = @()
             $script:IssueMarkers = @{{}}
             $script:IssueStates = @{{}}
             $script:PostCalls = 0
@@ -135,6 +140,35 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                     createdAt = "2026-05-18T00:00:00Z"
                     body = $Body
                 }}
+            }}
+
+            function New-TestRestComment {{
+                param(
+                    [Parameter(Mandatory = $true)][string]$Body,
+                    [string]$Id = "5368634428",
+                    [string]$NodeId = "IC_kwTEST_RELAY_NODE",
+                    [string]$AuthorLogin = "HarryWhite-TW",
+                    [string]$IssueUrl = "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/279"
+                )
+                return [pscustomobject]@{{
+                    id = $Id
+                    node_id = $NodeId
+                    issue_url = $IssueUrl
+                    user = [pscustomobject]@{{ login = $AuthorLogin }}
+                    body = $Body
+                }}
+            }}
+
+            function Set-TestControlRelay {{
+                param(
+                    [Parameter(Mandatory = $true)][string]$Body,
+                    [string]$RestId = "5368634428",
+                    [string]$NodeId = "IC_kwTEST_RELAY_NODE",
+                    [string]$AuthorLogin = "HarryWhite-TW",
+                    [string]$IssueUrl = "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/279"
+                )
+                $script:ControlRelayComments = @((New-TestComment -Body $Body -Id $NodeId -AuthorLogin $AuthorLogin))
+                $script:ControlRelayRestComments = @((New-TestRestComment -Body $Body -Id $RestId -NodeId $NodeId -AuthorLogin $AuthorLogin -IssueUrl $IssueUrl))
             }}
 
             function New-TestMarker {{
@@ -174,6 +208,26 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                 return $line
             }}
 
+            function New-ControlRelayLine {{
+                param(
+                    [string]$RequestId = "relay-83-request",
+                    [string]$TargetDispatchRequestId = $RequestId,
+                    [string]$TargetIssue = "83",
+                    [string]$RepoValue = "HarryWhite-TW/local-ai-workbench",
+                    [string]$Branch = $script:Branch,
+                    [string]$Head = $script:Head,
+                    [string]$Expires = "20990101T000000Z",
+                    [string]$Action = "maybe-status-check",
+                    [string]$RequestedBy = "chatgpt",
+                    [string]$ExpectedState = ""
+                )
+                $line = "BRIDGE-INBOX-REQUEST protocol=lawb.bridge_inbox_request.v1 request_id=$RequestId repo=$RepoValue target_issue=$TargetIssue target_dispatch_request_id=$TargetDispatchRequestId branch=$Branch head=$Head expires=$Expires action=$Action requested_by=$RequestedBy"
+                if (-not [string]::IsNullOrWhiteSpace($ExpectedState)) {{
+                    $line = "$line expected_state=$ExpectedState"
+                }}
+                return $line
+            }}
+
             function Assert-RepoRoot {{}}
             function Resolve-GhPath {{ return "gh" }}
             function Get-CurrentBranch {{ return $script:Branch }}
@@ -198,16 +252,35 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                         Stderr = ""
                     }}
                 }}
+                if ($Action -eq "gh api control relay comment") {{
+                    $requestedCommentId = ($Arguments[1] -split "/")[-1]
+                    $matches = @($script:ControlRelayRestComments | Where-Object {{ [string]$_.id -eq $requestedCommentId }})
+                    if ($matches.Count -ne 1) {{
+                        return [pscustomobject]@{{ ExitCode = 1; Stdout = ""; Stderr = "not found" }}
+                    }}
+                    return [pscustomobject]@{{
+                        ExitCode = 0
+                        Stdout = ($matches[0] | ConvertTo-Json -Depth 8)
+                        Stderr = ""
+                    }}
+                }}
                 $requestedIssue = [int]$Arguments[2]
-                $sourceMarkers = $script:Markers
-                if ($script:IssueMarkers.ContainsKey($requestedIssue)) {{
-                    $sourceMarkers = @($script:IssueMarkers[$requestedIssue])
+                $requestedRepo = $Arguments[$Arguments.IndexOf("--repo") + 1]
+                $script:ReadRequests += "$requestedRepo#$requestedIssue"
+                $comments = @()
+                if ($requestedRepo -eq "HarryWhite-TW/local-ai-workbench" -and $requestedIssue -eq 279) {{
+                    $comments = @($script:ControlRelayComments)
+                }} else {{
+                    $sourceMarkers = $script:Markers
+                    if ($script:IssueMarkers.ContainsKey($requestedIssue)) {{
+                        $sourceMarkers = @($script:IssueMarkers[$requestedIssue])
+                    }}
+                    $comments = @($sourceMarkers | ForEach-Object {{ $_.Comment }})
                 }}
                 $issueState = "OPEN"
                 if ($script:IssueStates.ContainsKey($requestedIssue)) {{
                     $issueState = [string]$script:IssueStates[$requestedIssue]
                 }}
-                $comments = @($sourceMarkers | ForEach-Object {{ $_.Comment }})
                 $payload = [pscustomobject]@{{
                     number = $requestedIssue
                     title = "Issue $requestedIssue"
@@ -263,6 +336,7 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
             $IssueNumbers = @()
             $PostResultComment = $false
             $ExpectedDispatchRequestId = ""
+            $RelayRequestBase64 = ""
             $ReviewedCodexPath = ""
             $script:ForbiddenCalls = @()
             function git {{ $script:ForbiddenCalls += "git" }}
@@ -433,6 +507,7 @@ def run_case(tmp_path: Path, setup: str, post: bool = False) -> subprocess.Compl
             Write-Host "POSTED_BODY_BASE64=$([System.BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant())"
         }}
         Write-Host "FORBIDDEN_CALLS=$(@($script:ForbiddenCalls).Count)"
+        Write-Host "READ_REQUESTS=$($script:ReadRequests -join '|')"
         """,
     )
 
@@ -571,6 +646,181 @@ def test_explicit_request_id_allows_health_and_real_markers_to_overlap(tmp_path)
     assert summary["action"] == "run-reviewbundle"
 
 
+def test_single_control_relay_runs_without_target_chatgpt_dispatch_marker(tmp_path):
+    relay = {
+        "protocol": "lawb.bridge_relay_dispatch.v1",
+        "relay_issue": 279,
+        "relay_comment_id": "5368634428",
+        "relay_author": "HarryWhite-TW",
+        "request_id": "relay-83-request",
+        "target_dispatch_request_id": "relay-83-request",
+        "target_issue": 83,
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "branch": "master",
+        "head": HEAD,
+        "expires": "20990101T000000Z",
+        "action": "maybe-status-check",
+        "requested_by": "chatgpt",
+    }
+    encoded = base64.b64encode(json.dumps(relay, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+    result = run_case(
+        tmp_path,
+        f'''
+        $RelayRequestBase64 = "{encoded}"
+        $script:Markers = @()
+        Set-TestControlRelay -Body (New-ControlRelayLine)
+        ''',
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "Control relay comment id: 5368634428" in result.stdout
+    summary = extract_summary(result.stdout)
+    assert summary["request_id"] == "relay-83-request"
+    assert "B1-validated #279 control relay" in summary["validations"]["dispatch_marker"]["summary"]
+
+
+def test_single_control_relay_uses_rest_id_not_graphql_node_id(tmp_path):
+    encoded = relay_handoff()
+
+    result = run_case(
+        tmp_path,
+        f'''
+        $RelayRequestBase64 = "{encoded}"
+        $script:Markers = @()
+        Set-TestControlRelay -Body (New-ControlRelayLine) -RestId "5368634428" -NodeId "IC_kwTEST_DISTINCT_GRAPHQL_NODE"
+        ''',
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
+
+
+def test_single_control_relay_rejects_graphql_node_id_as_rest_handoff(tmp_path):
+    encoded = relay_handoff(relay_comment_id="IC_kwTEST_DISTINCT_GRAPHQL_NODE")
+
+    result = run_case(
+        tmp_path,
+        f'''
+        $RelayRequestBase64 = "{encoded}"
+        $script:Markers = @()
+        Set-TestControlRelay -Body (New-ControlRelayLine)
+        ''',
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Relay request comment id is invalid" in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+
+
+def test_single_control_relay_rejects_tampered_request_identity(tmp_path):
+    relay = {
+        "protocol": "lawb.bridge_relay_dispatch.v1",
+        "relay_issue": 279,
+        "relay_comment_id": "2791",
+        "relay_author": "HarryWhite-TW",
+        "request_id": "relay-83-request",
+        "target_dispatch_request_id": "other-request",
+        "target_issue": 83,
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "branch": "master",
+        "head": HEAD,
+        "expires": "20990101T000000Z",
+        "action": "maybe-status-check",
+        "requested_by": "chatgpt",
+    }
+    encoded = base64.b64encode(json.dumps(relay, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+    result = run_case(tmp_path, f'$RelayRequestBase64 = "{encoded}"')
+
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Relay request identity mismatch" in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("contract_overrides", "control_setup", "expected_error"),
+    [
+        ({}, "$script:ControlRelayRestComments = @()", "could not be read exactly"),
+        ({"relay_comment_id": "2792"}, 'Set-TestControlRelay -Body (New-ControlRelayLine)', "could not be read exactly"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine) -AuthorLogin "other-user"', "Fresh control relay author"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine -RequestId "changed-request")', "field 'request_id'"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine -TargetIssue "84")', "field 'target_issue'"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine -RepoValue "HarryWhite-TW/human-approval-automation-gateway")', "field 'repo'"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine -Branch "other")', "field 'branch'"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine -Head ("f" * 40))', "field 'head'"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine -Action "run-reviewbundle")', "field 'action'"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine -RequestedBy "operator")', "field 'requested_by'"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine -Expires "20990102T000000Z")', "field 'expires'"),
+        ({"expires": "20200101T000000Z"}, 'Set-TestControlRelay -Body (New-ControlRelayLine -Expires "20200101T000000Z")', "Fresh control relay expired"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine -TargetDispatchRequestId "other-request")', "field 'target_dispatch_request_id'"),
+        ({}, 'Set-TestControlRelay -Body "BRIDGE-INBOX-REQUEST malformed"', "Malformed control relay marker field"),
+        ({}, 'Set-TestControlRelay -Body (New-ControlRelayLine) -IssueUrl "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/278"', "is not bound"),
+        ({"expected_state": "same_node_exact_candidate_continuation_v1:parent_comment_id=5311"}, 'Set-TestControlRelay -Body (New-ControlRelayLine -ExpectedState "same_node_exact_candidate_continuation_v1:parent_comment_id=9999")', "field 'expected_state'"),
+    ],
+)
+def test_single_control_relay_fresh_read_failures_block_before_action(
+    tmp_path, contract_overrides, control_setup, expected_error
+):
+    encoded = relay_handoff(**contract_overrides)
+
+    result = run_case(
+        tmp_path,
+        f'''
+        $RelayRequestBase64 = "{encoded}"
+        $script:Markers = @()
+        {control_setup}
+        ''',
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert expected_error in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+
+
+def test_single_control_relay_fresh_read_uses_fixed_lawb_control_repo_for_hag_target(tmp_path):
+    encoded = relay_handoff(repo="HarryWhite-TW/human-approval-automation-gateway")
+
+    result = run_case(
+        tmp_path,
+        f'''
+        $Repo = "HarryWhite-TW/human-approval-automation-gateway"
+        $RelayRequestBase64 = "{encoded}"
+        $script:Markers = @()
+        Set-TestControlRelay -Body (New-ControlRelayLine -RepoValue "HarryWhite-TW/human-approval-automation-gateway")
+        ''',
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "READ_REQUESTS=HarryWhite-TW/local-ai-workbench#279|HarryWhite-TW/human-approval-automation-gateway#83" in result.stdout
+
+
+def test_single_control_relay_preserves_target_issue_open_check(tmp_path):
+    result = run_case(
+        tmp_path,
+        f'''
+        $RelayRequestBase64 = "{relay_handoff()}"
+        $script:Markers = @()
+        Set-TestControlRelay -Body (New-ControlRelayLine)
+        $script:IssueStates[83] = "CLOSED"
+        ''',
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Target issue #83 is not OPEN" in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+
+
 def test_explicit_request_id_rejects_duplicate_or_conflicting_same_identity(tmp_path):
     result = run_case(
         tmp_path,
@@ -704,6 +954,28 @@ def test_dispatcher_entrypoint_preserves_uncertainty_after_runner_start(tmp_path
     ],
     ids=["manual-pollonce", "dry-run", "bounded-poll", "tool-preflight"],
 )
+
+
+def relay_handoff(**overrides) -> str:
+    payload = {
+        "protocol": "lawb.bridge_relay_dispatch.v1",
+        "relay_issue": 279,
+        "relay_comment_id": "5368634428",
+        "relay_author": "HarryWhite-TW",
+        "request_id": "relay-83-request",
+        "target_dispatch_request_id": "relay-83-request",
+        "target_issue": 83,
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "branch": "master",
+        "head": HEAD,
+        "expires": "20990101T000000Z",
+        "action": "maybe-status-check",
+        "requested_by": "chatgpt",
+    }
+    payload.update(overrides)
+    return base64.b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
 def test_dispatcher_entrypoint_preserves_legacy_mode_failure_exit_code(
     arguments, expected_message
 ):

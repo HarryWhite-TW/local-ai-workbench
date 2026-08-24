@@ -21,6 +21,12 @@ DISPATCH_MARKER = "CHATGPT-DISPATCH"
 DEFAULT_REPOSITORY = "HarryWhite-TW/local-ai-workbench"
 HAG_REPOSITORY = "HarryWhite-TW/human-approval-automation-gateway"
 SUPPORTED_TARGET_REPOSITORIES = (DEFAULT_REPOSITORY, HAG_REPOSITORY)
+NORMAL_CONTROL_RELAY_ISSUE = 279
+LEGACY_CONTROL_INBOX_ISSUE = 147
+SUPPORTED_CONTROL_RELAY_ISSUES = (
+    NORMAL_CONTROL_RELAY_ISSUE,
+    LEGACY_CONTROL_INBOX_ISSUE,
+)
 TRUSTED_ACTORS = ("HarryWhite-TW",)
 SAME_NODE_CONTINUATION_PREFIX = "same_node_exact_candidate_continuation_v1:parent_comment_id="
 RUNNER_RESULT_MARKER = "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1"
@@ -85,9 +91,10 @@ def run_bridge_operator_b1_dry_run(
     if repository not in SUPPORTED_TARGET_REPOSITORIES:
         _block(summary, "unsupported_target_repository")
         return summary
-    if not isinstance(inbox_issue, int) or inbox_issue <= 0:
-        _block(summary, "invalid_inbox_issue")
+    if inbox_issue not in SUPPORTED_CONTROL_RELAY_ISSUES:
+        _block(summary, "unsupported_control_relay_issue")
         return summary
+    direct_relay = inbox_issue == NORMAL_CONTROL_RELAY_ISSUE
 
     control_client = github_client or GitHubApiClient(DEFAULT_REPOSITORY)
     target_client = target_github_client
@@ -125,7 +132,13 @@ def run_bridge_operator_b1_dry_run(
             summary["parse_errors"] = request["errors"]
             return summary
         fields = request["fields"]
-        _validate_request_fields(fields, summary, now_utc, enforce_expiry=False)
+        _validate_request_fields(
+            fields,
+            summary,
+            now_utc,
+            enforce_expiry=False,
+            direct_relay=direct_relay,
+        )
         if summary["blocked_reasons"]:
             return summary
         expires = _parse_utc_basic(str(fields["expires"]))
@@ -186,6 +199,9 @@ def run_bridge_operator_b1_dry_run(
 
     summary["inbox_comment_id"] = marker["comment_id"]
     summary["inbox_request_author"] = marker["author"]
+    summary["control_relay_mode"] = (
+        "single_relay" if direct_relay else "legacy_double_dispatch"
+    )
     summary["request_id"] = fields["request_id"]
     summary["target_issue"] = fields["target_issue"]
     summary["target_dispatch_request_id"] = fields["target_dispatch_request_id"]
@@ -195,7 +211,7 @@ def run_bridge_operator_b1_dry_run(
     summary["expires"] = fields["expires"]
     summary["selected_request_state"] = CURRENT
 
-    _validate_request_fields(fields, summary, now_utc)
+    _validate_request_fields(fields, summary, now_utc, direct_relay=direct_relay)
     if summary["blocked_reasons"]:
         return summary
 
@@ -212,16 +228,27 @@ def run_bridge_operator_b1_dry_run(
         _block(summary, "target_issue_closed")
         return summary
 
-    try:
-        target_comments = target_client.list_issue_comments(fields["target_issue"])
-    except Exception as error:
-        _block(summary, "github_read_unavailable")
-        summary["target_comments_error_type"] = type(error).__name__
-        return summary
+    target_comments: list[CommentRecord] = []
+    needs_target_comment_read = not direct_relay or "expected_state" in fields
+    if needs_target_comment_read:
+        try:
+            target_comments = target_client.list_issue_comments(fields["target_issue"])
+        except Exception as error:
+            _block(summary, "github_read_unavailable")
+            summary["target_comments_error_type"] = type(error).__name__
+            return summary
 
-    _validate_target_dispatch_identity(target_comments, fields, summary, now_utc)
-    if summary["blocked_reasons"]:
-        return summary
+    if direct_relay:
+        # The one trusted #279 relay marker is the only normal dispatch
+        # authority. Its request id is also the result-binding identity.
+        summary["target_dispatch_authority"] = "control_relay"
+        summary["target_dispatch_request_id"] = fields["request_id"]
+        if fields.get("expected_state") is not None:
+            summary["target_expected_state"] = fields["expected_state"]
+    else:
+        _validate_target_dispatch_identity(target_comments, fields, summary, now_utc)
+        if summary["blocked_reasons"]:
+            return summary
 
     continuation_admitted = _validate_same_node_continuation_parent(
         target_comments,
@@ -335,7 +362,8 @@ def parse_bridge_inbox_request(line: str) -> dict[str, Any]:
     if missing:
         return {"result": "blocked", "errors": ["missing_fields"], "missing": missing}
 
-    extras = sorted(set(fields) - set(required))
+    optional = ("expected_state",)
+    extras = sorted(set(fields) - set(required) - set(optional))
     if extras:
         return {"result": "blocked", "errors": ["unexpected_fields"], "extras": extras}
 
@@ -618,6 +646,7 @@ def _validate_request_fields(
     now_utc: datetime,
     *,
     enforce_expiry: bool = True,
+    direct_relay: bool = False,
 ) -> None:
     checks = (
         (fields["protocol"] == REQUEST_PROTOCOL, "unsupported_protocol"),
@@ -636,6 +665,9 @@ def _validate_request_fields(
     for passed, reason in checks:
         if not passed:
             _block(summary, reason)
+
+    if direct_relay and fields["target_dispatch_request_id"] != fields["request_id"]:
+        _block(summary, "relay_request_identity_mismatch")
 
     if enforce_expiry:
         expires = _parse_utc_basic(str(fields["expires"]))

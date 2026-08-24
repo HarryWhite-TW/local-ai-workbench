@@ -174,10 +174,15 @@ The bounded bridge feasibility path has been proven:
 5. Dispatcher / Runner can write structured results back to GitHub.
 6. ChatGPT can read and review those results without the user pasting a long Codex transcript.
 
-The verified current schema pair is:
+The normal operating schema pair is:
 
-- `CHATGPT-DISPATCH protocol=lawb.dispatch.v1`
+- `BRIDGE-INBOX-REQUEST protocol=lawb.bridge_inbox_request.v1` on control
+  relay `#279`, with `target_dispatch_request_id=request_id`
 - `LAWBRUNNER-RESULT protocol=lawb.runner_result.v1`
+
+`CHATGPT-DISPATCH protocol=lawb.dispatch.v1` remains the explicit manual
+recovery compatibility path; it is not required on the target Issue in the
+normal Bridge route.
 
 The verified manual recovery path is:
 
@@ -198,7 +203,10 @@ The following implementation slices are integrated into `master`:
 7. Bridge Operator safety visibility, diagnostics, and course-environment bootstrap support.
 8. B4-D fresh-reboot smoke plan and local-only manifest validator.
 
-The permanent fixed Bridge Inbox is Issue `#147`.
+The permanent normal fixed Bridge control relay is Issue `#279`. It supplies
+the one trusted request binding before B1 delegates the verified local contract
+to Dispatcher. Issue `#147` is retained only for historical/legacy
+compatibility and is not the normal launcher or status surface.
 
 One supervised B4-D `run-reviewbundle` smoke succeeded on clean `master` at full HEAD `f41172b1ab25b2f4db4408f2fa825deb6e754cbb`. The validated manifest SHA-256 was `34d17e23f94f939765b5ed761d34aa1b3ec018e31f868857431c02314e9bf080`. The evidence is dispatch comment `4795080463`, Inbox comment `4795082149`, Runner review-bundle comment `4795131449`, and matching `LAWBRUNNER-RESULT` comment `4795131543`.
 

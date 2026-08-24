@@ -4,7 +4,7 @@ Runs the canonical Bridge Operator B3-C preflight and, only when explicitly
 requested, starts one bounded foreground B3-C process.
 
 .DESCRIPTION
-The default invocation is preflight-only. It does not read Inbox #147 or invoke
+The default invocation is preflight-only. It does not read control relay #279 or invoke
 Bridge Operator, Dispatcher, Runner, Codex, or a GitHub write path.
 
 .EXAMPLE
@@ -46,7 +46,7 @@ $SupportedRepositories = @($ControlRepository, $HagRepository)
 $StatusProtocol = "lawb.bridge_status.v1"
 $StatusMarker = "LAWBRIDGE-STATUS"
 $StatusHostname = "github.com"
-$StatusCreateEndpoint = "repos/HarryWhite-TW/local-ai-workbench/issues/147/comments"
+$StatusCreateEndpoint = "repos/HarryWhite-TW/local-ai-workbench/issues/279/comments"
 $StatusUpdateEndpointPrefix = "repos/HarryWhite-TW/local-ai-workbench/issues/comments"
 $SameNodeContinuationExpectedStatePrefix = "same_node_exact_candidate_continuation_v1:parent_comment_id="
 $SameNodeContinuationProtocol = "lawb.same_node_exact_candidate_continuation.v1"

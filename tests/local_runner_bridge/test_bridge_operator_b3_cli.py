@@ -120,7 +120,7 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
         ("client", "HarryWhite-TW/local-ai-workbench", "ghp_TEST_SECRET_DO_NOT_LEAK"),
         (
             "run",
-            147,
+                279,
             "HarryWhite-TW/local-ai-workbench",
             "C:\\repo",
             2,
@@ -189,7 +189,7 @@ def test_cli_accepts_b3c_run_reviewbundle_mode(monkeypatch, capsys):
     assert result == 0
     assert calls == [
         ("client", "HarryWhite-TW/local-ai-workbench", None),
-        ("run", "b3c-run-reviewbundle", 147),
+            ("run", "b3c-run-reviewbundle", 279),
     ]
     assert_safety(summary)
 
