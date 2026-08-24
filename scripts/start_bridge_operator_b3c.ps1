@@ -2429,6 +2429,13 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
     )) {
         $operatorArguments += @("--target-repo-root", $ResolvedTargetRepoRoot)
     }
+    if ($statusCommentNeedsUpdate -and $statusCommentCreateSucceeded -and
+        $null -ne $statusCommentId) {
+        $operatorArguments += @(
+            "--status-comment-id", [string]$statusCommentId,
+            "--status-gh-path", $reviewedGhPath
+        )
+    }
 
     $previousPath = $env:PATH
     $previousPythonPath = $env:PYTHONPATH

@@ -136,6 +136,54 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
     assert_safety(summary)
 
 
+def test_status_progress_reporter_writes_only_request_accepted_status(monkeypatch, tmp_path):
+    gh = tmp_path / "gh.exe"
+    gh.write_text("placeholder", encoding="utf-8")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return type("Completed", (), {"returncode": 0, "stdout": '{"id":45123}'})()
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    args = cli._parser().parse_args(
+        [
+            "--repo-root", "C:/repo",
+            "--max-cycles", "1",
+            "--poll-interval-seconds", "0",
+            "--mode", "b3c-run-reviewbundle",
+            "--operator-session-id", "a" * 32,
+            "--status-comment-id", "45123",
+            "--status-gh-path", str(gh),
+        ]
+    )
+
+    reporter = cli._status_progress_reporter(args)
+    reporter(
+        {
+            "request_id": "status-request-001",
+            "issue_number": 188,
+            "requested_action": "run-reviewbundle",
+            "lifecycle": {
+                "stage": "REQUEST_ACCEPTED",
+                "certainty": "verified",
+                "basis": "current_request_identity",
+            },
+            "dispatcher_invoked": False,
+        }
+    )
+
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[-2:] == ["--input", "-"]
+    assert command[-3].endswith("issues/comments/45123")
+    body = json.loads(kwargs["input"])["body"]
+    payload = json.loads(body.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
+    assert payload["result"] == "running"
+    assert payload["request_id"] == "status-request-001"
+    assert payload["current_run"]["lifecycle"]["stage"] == "REQUEST_ACCEPTED"
+
+
 def test_cli_accepts_b3c_run_reviewbundle_mode(monkeypatch, capsys):
     calls = []
 

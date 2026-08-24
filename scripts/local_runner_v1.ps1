@@ -133,8 +133,8 @@ function Invoke-Captured {
         [scriptblock]$Command
     )
 
-    $stdoutFile = New-TemporaryFile
-    $stderrFile = New-TemporaryFile
+    $stdoutFile = New-RunnerTemporaryFile
+    $stderrFile = New-RunnerTemporaryFile
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
@@ -154,6 +154,11 @@ function Invoke-Captured {
         Stdout = if ($null -eq $stdout) { "" } else { $stdout.TrimEnd() }
         Stderr = if ($null -eq $stderr) { "" } else { $stderr.TrimEnd() }
     }
+}
+
+function New-RunnerTemporaryFile {
+    $path = [System.IO.Path]::GetTempFileName()
+    return Get-Item -LiteralPath $path -Force
 }
 
 function Invoke-Git {
@@ -829,7 +834,11 @@ function Get-SameNodeExactCandidateContinuationAdmission {
     if ([string]$CandidateManifest.status -ne "verified") { $reasons.Add("candidate_manifest_unverified") }
 
     $matching = @($IssueComments | Where-Object {
-        [string]::Equals([string]$_.id, $ParentCommentId, [System.StringComparison]::Ordinal)
+        [string]::Equals(
+            (Get-IssueCommentNumericIdentity -Comment $_),
+            $ParentCommentId,
+            [System.StringComparison]::Ordinal
+        )
     })
     if ($matching.Count -ne 1) { $reasons.Add("trusted_parent_comment_missing_or_ambiguous") }
 
@@ -875,7 +884,7 @@ function Get-SameNodeExactCandidateContinuationAdmission {
 
         foreach ($candidateComment in @($IssueComments)) {
             if ([string]::Equals(
-                [string]$candidateComment.id,
+                (Get-IssueCommentNumericIdentity -Comment $candidateComment),
                 $ParentCommentId,
                 [System.StringComparison]::Ordinal
             )) { continue }
@@ -919,6 +928,33 @@ function Get-SameNodeExactCandidateContinuationAdmission {
         is_human_approval = $false
         reasons = @($reasons | Select-Object -Unique)
     }
+}
+
+function Get-IssueCommentNumericIdentity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Comment
+    )
+
+    $databaseIdProperty = $Comment.PSObject.Properties["databaseId"]
+    if ($null -ne $databaseIdProperty -and $null -ne $databaseIdProperty.Value) {
+        $databaseId = [string]$databaseIdProperty.Value
+        if ($databaseId -match '^[1-9][0-9]{0,18}$') { return $databaseId }
+        return $null
+    }
+
+    $urlProperty = $Comment.PSObject.Properties["url"]
+    if ($null -eq $urlProperty -or [string]::IsNullOrWhiteSpace([string]$urlProperty.Value)) {
+        return $null
+    }
+    $expectedUrlPattern = '^https://github\.com/' +
+        [regex]::Escape($Repo) +
+        '/issues/' +
+        [regex]::Escape([string]$IssueNumber) +
+        '#issuecomment-([1-9][0-9]{0,18})$'
+    $match = [regex]::Match([string]$urlProperty.Value, $expectedUrlPattern)
+    if (-not $match.Success) { return $null }
+    return $match.Groups[1].Value
 }
 
 function Get-ReviewBundleInvariantViolationReasons {
@@ -3133,7 +3169,7 @@ function Post-IssueComment {
         [string]$Comment
     )
 
-    $commentFile = New-TemporaryFile
+    $commentFile = New-RunnerTemporaryFile
     try {
         Set-Content -LiteralPath $commentFile.FullName -Value $Comment -Encoding UTF8
         $commentResult = Invoke-Captured {
@@ -3937,6 +3973,9 @@ function New-ExecutionRouteEvidence {
             bound_cli_arguments = @()
             executed_route = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
             observed_route = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
+            usage = "UNKNOWN"
+            quota = "UNKNOWN"
+            cost = "UNKNOWN"
         }
     }
 
@@ -3972,6 +4011,9 @@ function New-ExecutionRouteEvidence {
         }
         executed_route = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
         observed_route = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
+        usage = "UNKNOWN"
+        quota = "UNKNOWN"
+        cost = "UNKNOWN"
     }
 }
 
