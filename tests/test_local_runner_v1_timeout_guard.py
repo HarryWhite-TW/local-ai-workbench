@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import shutil
 import subprocess
@@ -20,6 +21,15 @@ def _runner_core() -> str:
     route_start = source.index("function Get-RuntimeContractExecutionRoute")
     route_end = source.index("\n$initialModifiedFiles = Get-ModifiedFilesFromStatus", route_start)
     return source[start:end] + "\n" + source[route_start:route_end]
+
+
+def _runner_function(name: str) -> str:
+    source = RUNNER.read_text(encoding="utf-8")
+    start = source.index(f"function {name} {{")
+    end = source.find("\nfunction ", start + 1)
+    if end < 0:
+        end = source.index("\nif ($Mode", start)
+    return source[start:end]
 
 
 def _powershell() -> str:
@@ -137,6 +147,80 @@ def test_target_repository_binding_accepts_hag_origin_and_rejects_wrong_origin(t
     )
     assert_success(rejected)
     assert "blocked" in rejected.stdout
+
+
+def test_read_final_audit_allows_exact_alternate_worktree_but_preserves_other_mode_and_target_gates(tmp_path):
+    control = tmp_path / "control"
+    init_git_repo(control)
+    subprocess.run(
+        ["git", "-C", str(control), "remote", "add", "origin", "https://github.com/HarryWhite-TW/local-ai-workbench.git"],
+        check=True,
+    )
+    target = tmp_path / "target-worktree"
+    subprocess.run(
+        ["git", "-C", str(control), "worktree", "add", "-q", "-b", "read-final-audit-target", str(target)],
+        check=True,
+    )
+    wrong_origin = tmp_path / "wrong-origin"
+    init_git_repo(wrong_origin)
+    subprocess.run(
+        ["git", "-C", str(wrong_origin), "remote", "add", "origin", "https://github.com/HarryWhite-TW/human-approval-automation-gateway.git"],
+        check=True,
+    )
+    non_root = target / "nested"
+    non_root.mkdir()
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $Repo = "HarryWhite-TW/local-ai-workbench"
+        $ControlRepoRoot = {control.as_posix()!r}
+        $RepoPath = {target.as_posix()!r}
+        $Mode = "ReadFinalAudit"
+        Assert-TargetRepositoryBinding
+        $readFinalAuditAllowed = $true
+
+        $Mode = "ReviewBundle"
+        Assert-TargetRepositoryBinding
+        $reviewBundleAllowed = $true
+
+        function Test-TargetBindingRejected {{
+            param([scriptblock]$Operation, [string]$Expected)
+            try {{ & $Operation; return $false }} catch {{ return $_.Exception.Message -eq $Expected }}
+        }}
+
+        $RepoPath = {target.as_posix()!r}
+        $restrictedModes = @("CommitApproved", "ApprovalStateDiagnostic", "CommitApprovalStateDiagnostic")
+        $restrictedModeResults = @()
+        foreach ($restrictedMode in $restrictedModes) {{
+            $Mode = $restrictedMode
+            $restrictedModeResults += Test-TargetBindingRejected {{ Assert-TargetRepositoryBinding }} "cross_repository_mode_not_supported"
+        }}
+
+        $Mode = "ReadFinalAudit"
+        $RepoPath = {wrong_origin.as_posix()!r}
+        $wrongOriginRejected = Test-TargetBindingRejected {{ Assert-TargetRepositoryBinding }} "wrong_target_origin"
+        $RepoPath = {non_root.as_posix()!r}
+        $nonRootRejected = Test-TargetBindingRejected {{ Assert-TargetRepositoryBinding }} "target_not_git_repository_root"
+
+        [ordered]@{{
+            read_final_audit_allowed = $readFinalAuditAllowed
+            reviewbundle_allowed = $reviewBundleAllowed
+            restricted_modes_rejected = @($restrictedModeResults)
+            wrong_origin_rejected = $wrongOriginRejected
+            non_root_rejected = $nonRootRejected
+        }} | ConvertTo-Json -Compress
+        """,
+    )
+
+    assert_success(result)
+    assert json.loads(result.stdout) == {
+        "read_final_audit_allowed": True,
+        "reviewbundle_allowed": True,
+        "restricted_modes_rejected": [True, True, True],
+        "wrong_origin_rejected": True,
+        "non_root_rejected": True,
+    }
 
 
 def test_normal_runner_modes_still_require_issue_number():
@@ -2716,6 +2800,393 @@ def test_same_node_continuation_revalidates_exact_parent_candidate_and_budget(tm
     assert "candidate_manifest_fingerprint_mismatch" in payload["extra_path"]["reasons"]
 
 
+def test_read_final_audit_exact_byte_identity_migrates_only_legacy_diff_observation(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / "seed.txt").write_text("candidate one\n", encoding="utf-8")
+    binding = json.dumps(_binding("passed", allowed_files=["seed.txt"]))
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $script:Repo = "HarryWhite-TW/local-ai-workbench"
+        $script:IssueNumber = 204
+        $script:TrustedCandidateContinuationCommentId = "5311"
+        $binding = '{binding}' | ConvertFrom-Json
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $state = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $manifest
+        $legacyParent = [pscustomobject]@{{
+            candidate_acceptance = "eligible"
+            approval_token_semantics = "candidate_review_snapshot_not_human_approval"
+            action = "run-reviewbundle"
+            result = "success"
+            repo = $script:Repo
+            issue = "204"
+            branch = $state.Branch
+            head = $state.Head
+            changed_files = @("seed.txt")
+            same_node_continuation = [pscustomobject]@{{ protocol = $SameNodeContinuationProtocol; remaining_budget = 1; is_human_approval = $false }}
+            runtime_contract_binding = [pscustomobject]@{{ runtime_contract = $binding.runtime_contract }}
+            candidate_evidence_manifest = $manifest
+            diff_fingerprint = ("a" * 64)
+            files_fingerprint = $state.FilesFingerprint
+        }}
+        $parentJson = $legacyParent | ConvertTo-Json -Depth 20 -Compress
+        $comments = @([pscustomobject]@{{ id = "node-id"; databaseId = "5311"; author = [pscustomobject]@{{ login = "HarryWhite-TW" }}; body = "$RunnerResultMarker`n$parentJson" }})
+        $legacyAdmission = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true -AllowReadFinalAuditLegacyDiffMismatch
+        $strictAdmission = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId "5311" -IssueComments $comments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus (Get-GitStatusShort) -NoStage $true
+        $legacyPayload = New-FinalReviewEvidencePayload -Parent $legacyParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -ReadbackRequestId "readback-204-legacy" | ConvertFrom-Json
+
+        $matchingParent = ($legacyParent | ConvertTo-Json -Depth 20 -Compress) | ConvertFrom-Json
+        $matchingParent.diff_fingerprint = $state.DiffFingerprint
+        $matchingIdentity = Get-FinalReviewExactCandidateIdentity -Parent $matchingParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -NoStage $true
+
+        $shaParent = ($legacyParent | ConvertTo-Json -Depth 20 -Compress) | ConvertFrom-Json
+        $shaParent.candidate_evidence_manifest.entries[0].sha256 = ("b" * 64)
+        $shaIdentity = Get-FinalReviewExactCandidateIdentity -Parent $shaParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -NoStage $true
+        $lengthParent = ($legacyParent | ConvertTo-Json -Depth 20 -Compress) | ConvertFrom-Json
+        $lengthParent.candidate_evidence_manifest.entries[0].length = [int64]$lengthParent.candidate_evidence_manifest.entries[0].length + 1
+        $lengthIdentity = Get-FinalReviewExactCandidateIdentity -Parent $lengthParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -NoStage $true
+        $filesParent = ($legacyParent | ConvertTo-Json -Depth 20 -Compress) | ConvertFrom-Json
+        $filesParent.files_fingerprint = ("c" * 64)
+        $filesIdentity = Get-FinalReviewExactCandidateIdentity -Parent $filesParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -NoStage $true
+        $branchParent = ($legacyParent | ConvertTo-Json -Depth 20 -Compress) | ConvertFrom-Json
+        $branchParent.branch = "other"
+        $branchIdentity = Get-FinalReviewExactCandidateIdentity -Parent $branchParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -NoStage $true
+        $headParent = ($legacyParent | ConvertTo-Json -Depth 20 -Compress) | ConvertFrom-Json
+        $headParent.head = ("d" * 40)
+        $headIdentity = Get-FinalReviewExactCandidateIdentity -Parent $headParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -NoStage $true
+        $runtimeParent = ($legacyParent | ConvertTo-Json -Depth 20 -Compress) | ConvertFrom-Json
+        $runtimeParent.runtime_contract_binding.runtime_contract | Add-Member -NotePropertyName expected_head -NotePropertyValue ("e" * 40) -Force
+        $runtimeIdentity = Get-FinalReviewExactCandidateIdentity -Parent $runtimeParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -NoStage $true
+        $incompleteParent = ($legacyParent | ConvertTo-Json -Depth 20 -Compress) | ConvertFrom-Json
+        $incompleteParent.candidate_evidence_manifest = [pscustomobject]@{{ fingerprint = $manifest.fingerprint }}
+        $incompleteIdentity = Get-FinalReviewExactCandidateIdentity -Parent $incompleteParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -NoStage $true
+
+        Set-Content -LiteralPath {str(repo / 'seed.txt')!r} -Value "candidate two" -Encoding UTF8
+        $byteManifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $byteState = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $byteManifest
+        $byteIdentity = Get-FinalReviewExactCandidateIdentity -Parent $legacyParent -CandidateManifest $byteManifest -ApprovalState $byteState -RuntimeContractBinding $binding -NoStage $true
+        [System.IO.File]::WriteAllText({str(repo / 'seed.txt')!r}, "candidate one`n", [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText({str(repo / 'extra.txt')!r}, "extra`n", [System.Text.UTF8Encoding]::new($false))
+        $extraManifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $extraState = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $extraManifest
+        $extraIdentity = Get-FinalReviewExactCandidateIdentity -Parent $legacyParent -CandidateManifest $extraManifest -ApprovalState $extraState -RuntimeContractBinding $binding -NoStage $true
+        $stagedIdentity = Get-FinalReviewExactCandidateIdentity -Parent $legacyParent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -NoStage $false
+        Remove-Item -LiteralPath {str(repo / 'extra.txt')!r} -Force
+        Remove-Item -LiteralPath {str(repo / 'seed.txt')!r} -Force
+        $missingManifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $missingState = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $missingManifest
+        $missingIdentity = Get-FinalReviewExactCandidateIdentity -Parent $legacyParent -CandidateManifest $missingManifest -ApprovalState $missingState -RuntimeContractBinding $binding -NoStage $true
+
+        [ordered]@{{
+            legacy_admission = $legacyAdmission
+            strict_admission = $strictAdmission
+            legacy_payload = $legacyPayload
+            matching = $matchingIdentity
+            byte = $byteIdentity
+            extra = $extraIdentity
+            staged = $stagedIdentity
+            missing = $missingIdentity
+            sha = $shaIdentity
+            length = $lengthIdentity
+            files = $filesIdentity
+            branch = $branchIdentity
+            head = $headIdentity
+            runtime = $runtimeIdentity
+            incomplete = $incompleteIdentity
+        }} | ConvertTo-Json -Depth 20 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout.splitlines()[-1])
+    assert payload["legacy_admission"]["admitted"] is True
+    assert payload["legacy_admission"]["canonical_candidate_identity"] == "passed"
+    assert payload["legacy_admission"]["legacy_diff_observation_match"] is False
+    assert "candidate_fingerprint_mismatch" in payload["strict_admission"]["reasons"]
+    assert payload["legacy_payload"]["identity_profile"] == "lawb.final_review_exact_candidate_bytes.v1"
+    assert payload["legacy_payload"]["canonical_candidate_identity"] == "passed"
+    assert payload["legacy_payload"]["legacy_diff_observation_match"] is False
+    assert payload["matching"]["canonical_candidate_identity"] == "passed"
+    for key in ("byte", "extra", "staged", "missing", "sha", "length", "files", "branch", "head", "runtime", "incomplete"):
+        assert payload[key]["canonical_candidate_identity"] == "failed", key
+
+
+def test_final_review_evidence_payload_binds_exact_text_and_rejects_unsafe_inputs(tmp_path):
+    repo = tmp_path / "repo"
+    head = init_git_repo(repo)
+    (repo / "seed.txt").write_text("candidate one\n", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $script:Repo = "HarryWhite-TW/local-ai-workbench"
+        $script:IssueNumber = 204
+        $script:TrustedCandidateContinuationCommentId = "5311"
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $state = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $manifest
+        $binding = [pscustomobject]@{{ status = "passed"; contract_present = $true; allowed_files = @("seed.txt"); runtime_contract = [ordered]@{{ version = "test" }} }}
+        $parent = [pscustomobject]@{{
+            action = "run-reviewbundle"; result = "success"; repo = $script:Repo; issue = "204"
+            branch = "master"; head = "{head}"; changed_files = @("seed.txt")
+            runtime_contract_binding = [pscustomobject]@{{ runtime_contract = $binding.runtime_contract }}
+            candidate_evidence_manifest = $manifest
+            diff_fingerprint = $state.DiffFingerprint; files_fingerprint = $state.FilesFingerprint
+        }}
+        $payload = New-FinalReviewEvidencePayload -Parent $parent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -ReadbackRequestId "readback-204-01" | ConvertFrom-Json
+        Set-Content -LiteralPath {str(repo / 'seed.txt')!r} -Value "candidate two" -Encoding UTF8
+        $tamperRejected = $false
+        try {{ New-FinalReviewEvidencePayload -Parent $parent -CandidateManifest (Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")) -ApprovalState (Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest (Get-BoundedCandidateManifest -AllowedFiles @("seed.txt"))) -RuntimeContractBinding $binding -ReadbackRequestId "readback-204-01" | Out-Null }} catch {{ $tamperRejected = $true }}
+        $snapshotTamperRejected = $false
+        try {{ New-FinalReviewEvidencePayload -Parent $parent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -ReadbackRequestId "readback-204-01" | Out-Null }} catch {{ $snapshotTamperRejected = $true }}
+        $finalRevalidationRejected = $false
+        try {{ Assert-FinalReviewCandidateIdentity -Parent $parent -InitialManifest $manifest -InitialState $state -RuntimeContractBinding $binding }} catch {{ $finalRevalidationRejected = $true }}
+        $missingRequestRejected = $false
+        try {{ New-FinalReviewEvidencePayload -Parent $parent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -ReadbackRequestId "" | Out-Null }} catch {{ $missingRequestRejected = $true }}
+        $unsafeToken = Test-FinalReviewSensitiveContent -Text "github_pat_abcdefghijklmnopqrstuvwxyz"
+        $unsafeGenericPem = Test-FinalReviewSensitiveContent -Text "-----BEGIN PRIVATE KEY-----`nSYNTHETIC_PLACEHOLDER_ONLY`n-----END PRIVATE KEY-----"
+        $unsafeRsaPem = Test-FinalReviewSensitiveContent -Text "-----BEGIN RSA PRIVATE KEY-----`nSYNTHETIC_PLACEHOLDER_ONLY`n-----END RSA PRIVATE KEY-----"
+        $unsafeOpenSshPem = Test-FinalReviewSensitiveContent -Text "-----BEGIN OPENSSH PRIVATE KEY-----`nSYNTHETIC_PLACEHOLDER_ONLY`n-----END OPENSSH PRIVATE KEY-----"
+        $harmless = Test-FinalReviewSensitiveContent -Text "ordinary reviewer evidence"
+        [ordered]@{{ payload = $payload; tamper_rejected = $tamperRejected; snapshot_tamper_rejected = $snapshotTamperRejected; final_revalidation_rejected = $finalRevalidationRejected; missing_request_rejected = $missingRequestRejected; unsafe_token = $unsafeToken; unsafe_generic_pem = $unsafeGenericPem; unsafe_rsa_pem = $unsafeRsaPem; unsafe_openssh_pem = $unsafeOpenSshPem; harmless = $harmless }} | ConvertTo-Json -Depth 12 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout.splitlines()[-1])
+    assert payload["payload"]["protocol"] == "lawb.final_review_evidence.v1"
+    assert payload["payload"]["action"] == "read-final-audit"
+    assert payload["payload"]["request_id"] == "readback-204-01"
+    assert payload["payload"]["snapshots"][0]["path"] == "seed.txt"
+    assert payload["payload"]["snapshots"][0]["text"] == "candidate one\r\n"
+    assert "diff --git a/seed.txt b/seed.txt" in payload["payload"]["unified_diff"]
+    assert payload["tamper_rejected"] is True
+    assert payload["snapshot_tamper_rejected"] is True
+    assert payload["final_revalidation_rejected"] is True
+    assert payload["missing_request_rejected"] is True
+    assert payload["unsafe_token"] is True
+    assert payload["unsafe_generic_pem"] is True
+    assert payload["unsafe_rsa_pem"] is True
+    assert payload["unsafe_openssh_pem"] is True
+    assert payload["harmless"] is False
+
+
+def test_read_final_audit_transport_binds_request_id_and_fails_closed_on_partial_publish(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / "seed.txt").write_text("candidate one\n", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $script:Repo = "HarryWhite-TW/local-ai-workbench"
+        $script:IssueNumber = 204
+        $script:TrustedCandidateContinuationCommentId = "5311"
+        $script:ReadFinalAuditRequestId = "readback-204-01"
+        $issueBody = ""
+        $issueComments = @()
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $state = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $manifest
+        $binding = [pscustomobject]@{{ status = "passed"; contract_present = $true; allowed_files = @("seed.txt"); runtime_contract = [ordered]@{{ version = "test" }} }}
+        $parent = [pscustomobject]@{{
+            action = "run-reviewbundle"; result = "success"; repo = $script:Repo; issue = "204"
+            branch = $state.Branch; head = $state.Head; changed_files = @("seed.txt")
+            runtime_contract_binding = [pscustomobject]@{{ runtime_contract = $binding.runtime_contract }}
+            candidate_evidence_manifest = $manifest
+            diff_fingerprint = $state.DiffFingerprint; files_fingerprint = $state.FilesFingerprint
+        }}
+        function Resolve-PythonRuntimeCommand {{ return "python" }}
+        function Invoke-RuntimeContractEvaluator {{ param($Action, $PythonPath, $Payload) return $binding }}
+        function Get-SameNodeExactCandidateContinuationAdmission {{ return [pscustomobject]@{{ admitted = $true; reasons = @() }} }}
+        function Get-ExactFinalReviewParentComment {{ return [pscustomobject]@{{ Parent = $parent }} }}
+        $script:PostedBodies = [System.Collections.Generic.List[string]]::new()
+        function Post-IssueComment {{ param([string]$Comment) $script:PostedBodies.Add($Comment); return [pscustomobject]@{{ ExitCode = 0; Stdout = "posted"; Stderr = "" }} }}
+        Invoke-ReadFinalAuditMode
+        $envelopes = @($script:PostedBodies | ForEach-Object {{ ConvertFrom-FirstJsonObjectAfterMarker -Body $_ -Marker $FinalReviewEvidenceMarker }})
+        [ordered]@{{ result = "complete"; envelopes = $envelopes; source = Get-Content -LiteralPath {str(repo / 'seed.txt')!r} -Raw }} | ConvertTo-Json -Depth 20 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout.splitlines()[-1])
+    envelopes = payload["envelopes"]
+    assert payload["result"] == "complete"
+    assert payload["source"] == "candidate one\r\n"
+    assert len(envelopes) >= 1
+    assert [entry["sequence"] for entry in envelopes] == list(range(1, len(envelopes) + 1))
+    assert {entry["chunk_count"] for entry in envelopes} == {len(envelopes)}
+    assert {entry["request_id"] for entry in envelopes} == {"readback-204-01"}
+    assert {entry["action"] for entry in envelopes} == {"read-final-audit"}
+    assert len({entry["payload_sha256"] for entry in envelopes}) == 1
+    assert all(
+        hashlib.sha256(base64.b64decode(entry["data_base64"])).hexdigest()
+        == entry["chunk_sha256"]
+        for entry in envelopes
+    )
+    assert (
+        hashlib.sha256(
+            b"".join(base64.b64decode(entry["data_base64"]) for entry in envelopes)
+        ).hexdigest()
+        == envelopes[0]["payload_sha256"]
+    )
+
+    partial = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $script:Repo = "HarryWhite-TW/local-ai-workbench"
+        $script:IssueNumber = 204
+        $script:TrustedCandidateContinuationCommentId = "5311"
+        $script:ReadFinalAuditRequestId = "readback-204-02"
+        $issueBody = ""
+        $issueComments = @()
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $state = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $manifest
+        $binding = [pscustomobject]@{{ status = "passed"; contract_present = $true; allowed_files = @("seed.txt"); runtime_contract = [ordered]@{{ version = "test" }} }}
+        $parent = [pscustomobject]@{{ action = "run-reviewbundle"; result = "success"; repo = $script:Repo; issue = "204"; branch = $state.Branch; head = $state.Head; changed_files = @("seed.txt"); runtime_contract_binding = [pscustomobject]@{{ runtime_contract = $binding.runtime_contract }}; candidate_evidence_manifest = $manifest; diff_fingerprint = $state.DiffFingerprint; files_fingerprint = $state.FilesFingerprint }}
+        function Resolve-PythonRuntimeCommand {{ return "python" }}
+        function Invoke-RuntimeContractEvaluator {{ param($Action, $PythonPath, $Payload) return $binding }}
+        function Get-SameNodeExactCandidateContinuationAdmission {{ return [pscustomobject]@{{ admitted = $true; reasons = @() }} }}
+        function Get-ExactFinalReviewParentComment {{ return [pscustomobject]@{{ Parent = $parent }} }}
+        $script:PostCalls = 0
+        $FinalReviewEvidenceChunkBytes = 10
+        $FinalReviewEvidenceMaxChunks = 1000
+        function Post-IssueComment {{ param([string]$Comment) $script:PostCalls += 1; if ($script:PostCalls -eq 2) {{ return [pscustomobject]@{{ ExitCode = 1; Stdout = ""; Stderr = "network" }} }}; return [pscustomobject]@{{ ExitCode = 0; Stdout = "posted"; Stderr = "" }} }}
+        try {{ Invoke-ReadFinalAuditMode; "UNEXPECTED_COMPLETE" }} catch {{ "ERROR=$($_.Exception.Message)" }}
+        """,
+    )
+
+    assert_success(partial)
+    assert "ERROR=remote_evidence_publication_uncertain" in partial.stdout
+    assert "UNEXPECTED_COMPLETE" not in partial.stdout
+
+
+def test_final_review_duplicate_detection_requires_trusted_valid_exact_envelope(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        """
+        $script:Repo = "HarryWhite-TW/local-ai-workbench"
+        $script:IssueNumber = 204
+        $parentId = "5311"
+        $chunk = [System.Text.Encoding]::UTF8.GetBytes("synthetic evidence")
+        $chunkSha = Get-Sha256Bytes -Bytes $chunk
+        function New-EvidenceBody {
+            param([string]$ParentId, [int]$Sequence = 1, [int]$ChunkCount = 1)
+            return $FinalReviewEvidenceMarker + "`n" + ([ordered]@{
+                protocol = $FinalReviewEvidenceProtocol
+                repository = $script:Repo
+                issue = $script:IssueNumber
+                action = "read-final-audit"
+                request_id = "readback-204-duplicate"
+                parent_comment_id = $ParentId
+                sequence = $Sequence
+                chunk_count = $ChunkCount
+                payload_sha256 = $chunkSha
+                chunk_sha256 = $chunkSha
+                encoding = "base64-utf8-json"
+                data_base64 = [Convert]::ToBase64String($chunk)
+            } | ConvertTo-Json -Compress)
+        }
+        $trustedExact = [pscustomobject]@{ author = [pscustomobject]@{ login = "HarryWhite-TW" }; body = (New-EvidenceBody -ParentId $parentId) }
+        $trustedPartial = [pscustomobject]@{ author = [pscustomobject]@{ login = "HarryWhite-TW" }; body = (New-EvidenceBody -ParentId $parentId -ChunkCount 2) }
+        $untrustedExact = [pscustomobject]@{ author = [pscustomobject]@{ login = "untrusted-user" }; body = (New-EvidenceBody -ParentId $parentId) }
+        $trustedMalformed = [pscustomobject]@{ author = [pscustomobject]@{ login = "HarryWhite-TW" }; body = $FinalReviewEvidenceMarker + "`n{`"parent_comment_id`":`"5311`"}" }
+        $otherParent = [pscustomobject]@{ author = [pscustomobject]@{ login = "HarryWhite-TW" }; body = (New-EvidenceBody -ParentId "7777") }
+        [ordered]@{
+            trusted_exact = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $trustedExact -ParentCommentId $parentId
+            trusted_partial = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $trustedPartial -ParentCommentId $parentId
+            untrusted_exact = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $untrustedExact -ParentCommentId $parentId
+            trusted_malformed = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $trustedMalformed -ParentCommentId $parentId
+            other_parent = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $otherParent -ParentCommentId $parentId
+        } | ConvertTo-Json -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "trusted_exact": True,
+        "trusted_partial": True,
+        "untrusted_exact": False,
+        "trusted_malformed": False,
+        "other_parent": False,
+    }
+    admission_source = _runner_function("Get-SameNodeExactCandidateContinuationAdmission")
+    final_source = _runner_function("Invoke-ReadFinalAuditMode")
+    assert "Test-TrustedFinalReviewEvidenceCommentForParent" in admission_source
+    assert "Test-TrustedFinalReviewEvidenceCommentForParent" in final_source
+
+
+def test_read_final_audit_post_publication_mutation_has_no_terminal_complete_claim(tmp_path):
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / "seed.txt").write_text("candidate one\n", encoding="utf-8")
+
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $script:RepoPath = {repo.as_posix()!r}
+        $script:Repo = "HarryWhite-TW/local-ai-workbench"
+        $script:IssueNumber = 204
+        $script:TrustedCandidateContinuationCommentId = "5311"
+        $script:ReadFinalAuditRequestId = "readback-204-03"
+        $issueBody = ""
+        $issueComments = @()
+        $manifest = Get-BoundedCandidateManifest -AllowedFiles @("seed.txt")
+        $state = Get-ApprovalState -IssueNumberForState 204 -RequireChanges -AllowedFiles @("seed.txt") -CandidateManifest $manifest
+        $binding = [pscustomobject]@{{ status = "passed"; contract_present = $true; allowed_files = @("seed.txt"); runtime_contract = [ordered]@{{ version = "test" }} }}
+        $parent = [pscustomobject]@{{ action = "run-reviewbundle"; result = "success"; repo = $script:Repo; issue = "204"; branch = $state.Branch; head = $state.Head; changed_files = @("seed.txt"); runtime_contract_binding = [pscustomobject]@{{ runtime_contract = $binding.runtime_contract }}; candidate_evidence_manifest = $manifest; diff_fingerprint = $state.DiffFingerprint; files_fingerprint = $state.FilesFingerprint }}
+        function Resolve-PythonRuntimeCommand {{ return "python" }}
+        function Invoke-RuntimeContractEvaluator {{ param($Action, $PythonPath, $Payload) return $binding }}
+        function Get-SameNodeExactCandidateContinuationAdmission {{ return [pscustomobject]@{{ admitted = $true; reasons = @() }} }}
+        function Get-ExactFinalReviewParentComment {{ return [pscustomobject]@{{ Parent = $parent }} }}
+        $script:PostCalls = 0
+        $FinalReviewEvidenceChunkBytes = 10
+        $FinalReviewEvidenceMaxChunks = 1000
+        function Post-IssueComment {{
+            param([string]$Comment)
+            $script:PostCalls += 1
+            if ($script:PostCalls -eq 1) {{
+                Set-Content -LiteralPath {str(repo / 'seed.txt')!r} -Value "candidate two" -Encoding UTF8
+            }}
+            return [pscustomobject]@{{ ExitCode = 0; Stdout = "posted"; Stderr = "" }}
+        }}
+        try {{ Invoke-ReadFinalAuditMode; "UNEXPECTED_COMPLETE" }} catch {{ "ERROR=$($_.Exception.Message)" }}
+        "POST_CALLS=$script:PostCalls"
+        """,
+    )
+
+    assert_success(result)
+    assert "POST_CALLS=" in result.stdout
+    assert int(next(line.split("=", 1)[1] for line in result.stdout.splitlines() if line.startswith("POST_CALLS="))) > 1
+    assert "ERROR=final_review_candidate_identity_revalidation_failed:" in result.stdout
+    assert "complete_evidence_published" not in result.stdout
+    assert "UNEXPECTED_COMPLETE" not in result.stdout
+
+
+def test_reviewbundle_success_binding_requires_exact_posted_comment_identity(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        _runner_function("Get-PostedReviewBundleCommentId")
+        + """
+        $Repo = "HarryWhite-TW/local-ai-workbench"
+        $IssueNumber = 204
+        $valid = Get-PostedReviewBundleCommentId -PostStdout "https://github.com/HarryWhite-TW/local-ai-workbench/issues/204#issuecomment-5313180922"
+        $invalidRejected = $false
+        try { Get-PostedReviewBundleCommentId -PostStdout "https://github.com/HarryWhite-TW/local-ai-workbench/issues/204" } catch { $invalidRejected = $true }
+        [ordered]@{ valid = $valid; invalid_rejected = $invalidRejected } | ConvertTo-Json -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload == {"valid": "5313180922", "invalid_rejected": True}
+
+
 def test_successful_child_commit_with_clean_worktree_fails_closed(tmp_path):
     repo = tmp_path / "repo"
     head_before = init_git_repo(repo)
@@ -3398,8 +3869,8 @@ def test_runner_result_reports_snapshot_eligibility_without_isolation_overclaim(
             -ReviewId "review" `
             -DiffFingerprint ("2" * 64) `
             -FilesFingerprint ("3" * 64) `
-            -ChangedFilesText "src/example.py" `
-            -FinalStatus " M src/example.py" `
+            -ChangedFilesText "seed.txt" `
+            -FinalStatus " M seed.txt" `
             -CodexExitCode "0" `
             -FinalIndexClean $true `
             -FinalHeadMatchesInitial $true `
@@ -3418,6 +3889,90 @@ def test_runner_result_reports_snapshot_eligibility_without_isolation_overclaim(
     assert summary["execution_assurance"]["observable_evidence"] == "verified"
     assert summary["execution_assurance"]["isolation_guarantee"] == "unverified"
     assert summary["trusted_parent_actions"]["push_invoked"] is False
+
+
+def test_runner_result_reviewer_ready_eligibility_rejects_added_deleted_and_mixed_states(tmp_path):
+    binding = json.dumps(_binding("passed", allowed_files=["seed.txt", "added.txt"]))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $binding = '{binding}' | ConvertFrom-Json
+        function Get-Acceptance {{
+            param([string]$Status, [string]$ChangedFiles, [object[]]$Entries)
+            $manifest = [pscustomobject]@{{
+                status = "verified"
+                evidence_profile = $CandidateEvidenceProfile
+                fingerprint = ("a" * 64)
+                entries = $Entries
+            }}
+            $assurance = New-ExecutionAssurance `
+                -RuntimeContractBinding $binding `
+                -ObservableEvidence "verified" `
+                -CandidateManifest $manifest
+            $json = New-RunnerResultSummaryJson `
+                -IssueNumberText "204" `
+                -Action "run-reviewbundle" `
+                -Result "success" `
+                -Branch "feature/runtime-contract" `
+                -Head ("1" * 40) `
+                -ReviewId "review" `
+                -DiffFingerprint ("2" * 64) `
+                -FilesFingerprint ("3" * 64) `
+                -ChangedFilesText $ChangedFiles `
+                -FinalStatus $Status `
+                -CodexExitCode "0" `
+                -FinalIndexClean $true `
+                -FinalHeadMatchesInitial $true `
+                -ApprovalTokenGenerated $true `
+                -RuntimeContractBinding $binding `
+                -ExecutionAssurance $assurance `
+                -CandidateEvidenceManifest $manifest
+            return ($json | ConvertFrom-Json).candidate_acceptance
+        }}
+        $modified = [pscustomobject]@{{ path = "seed.txt"; state = "regular_file" }}
+        $added = [pscustomobject]@{{ path = "added.txt"; state = "regular_file" }}
+        $deleted = [pscustomobject]@{{ path = "seed.txt"; state = "absent" }}
+        [ordered]@{{
+            modified = Get-Acceptance -Status " M seed.txt" -ChangedFiles "seed.txt" -Entries @($modified)
+            added = Get-Acceptance -Status "?? added.txt" -ChangedFiles "added.txt" -Entries @($added)
+            deleted = Get-Acceptance -Status " D seed.txt" -ChangedFiles "seed.txt" -Entries @($deleted)
+            mixed = Get-Acceptance -Status " M seed.txt`n?? added.txt" -ChangedFiles "seed.txt`nadded.txt" -Entries @($modified, $added)
+        }} | ConvertTo-Json -Compress
+        """,
+    )
+
+    assert_success(result)
+    assert json.loads(result.stdout) == {
+        "modified": "eligible",
+        "added": "ineligible",
+        "deleted": "ineligible",
+        "mixed": "ineligible",
+    }
+
+
+def test_review_candidate_binding_carries_exact_eligibility_and_changed_files(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        """
+        $summary = [pscustomobject]@{
+            candidate_acceptance = "eligible"
+            changed_files = @("PLANS.md", "docs/checkpoint.md")
+        }
+        New-ReviewCandidateBindingJson `
+            -ReviewBundleCommentId "5313180922" `
+            -CandidateManifestFingerprint ("a" * 64) `
+            -PostedRunnerSummary $summary
+        """,
+    )
+
+    assert_success(result)
+    binding = json.loads(result.stdout)
+    assert binding == {
+        "review_bundle_comment_id": "5313180922",
+        "candidate_manifest_fingerprint": "a" * 64,
+        "candidate_acceptance": "eligible",
+        "changed_files": ["PLANS.md", "docs/checkpoint.md"],
+    }
 
 
 def test_pre_execution_contract_violation_blocks_before_fake_codex(tmp_path):

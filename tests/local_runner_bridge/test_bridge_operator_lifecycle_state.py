@@ -21,11 +21,14 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     inspect_expected_process,
     inspect_lock_file,
     load_in_flight,
+    load_review_candidate,
     new_in_flight_payload,
+    new_review_candidate_payload,
     quarantine_lock,
     updated_in_flight_payload,
     write_durable_json,
     write_exclusive_json,
+    write_or_replace_review_candidate,
 )
 
 NOW = datetime(2026, 8, 5, 4, 0, 0, tzinfo=timezone.utc)
@@ -66,6 +69,24 @@ def in_flight_payload() -> dict:
         process_identity=process_identity(),
         prepared_at=NOW,
     )
+
+
+def review_candidate_payload(*, target_repo_root: str, **overrides) -> dict:
+    value = new_review_candidate_payload(
+        target_repository="HarryWhite-TW/local-ai-workbench",
+        target_issue=151,
+        dispatch_request_id="review-candidate-151",
+        action="run-reviewbundle",
+        branch="ov1-test",
+        expected_head=HEAD,
+        terminal_result_comment_id="5313180923",
+        review_bundle_comment_id="5313180922",
+        candidate_manifest_fingerprint="a" * 64,
+        target_repo_root=target_repo_root,
+        recorded_at=NOW,
+    )
+    value.update(overrides)
+    return value
 
 
 def dispatcher_rejection_terminal(**overrides) -> dict:
@@ -285,3 +306,34 @@ def test_durable_jsonl_append_fsyncs_and_preserves_records(tmp_path, monkeypatch
     ]
     assert len(calls) == 2
     assert [record["request_id"] for record in records] == ["first", "second"]
+
+
+def test_review_candidate_record_is_strict_and_replacement_is_request_bound(tmp_path):
+    path = tmp_path / "review_candidate.json"
+    candidate_root = str((tmp_path / "candidate-151").resolve())
+    first = review_candidate_payload(target_repo_root=candidate_root)
+
+    assert write_or_replace_review_candidate(
+        path, first, operator_session_id=SESSION
+    ) == "written"
+    assert load_review_candidate(path) == first
+    assert first["schema_version"] == 2
+    assert first["target_repo_root"] == candidate_root
+    assert write_or_replace_review_candidate(
+        path, first, operator_session_id=SESSION
+    ) == "already_present"
+
+    conflicting = review_candidate_payload(
+        target_repo_root=candidate_root,
+        candidate_manifest_fingerprint="b" * 64,
+    )
+    with pytest.raises(LifecycleEvidenceError, match="review_candidate_conflict"):
+        write_or_replace_review_candidate(
+            path, conflicting, operator_session_id=SESSION
+        )
+
+    malformed = dict(first)
+    malformed["eligible"] = True
+    path.write_text(json.dumps(malformed), encoding="utf-8")
+    with pytest.raises(LifecycleEvidenceError, match="review_candidate_invalid"):
+        load_review_candidate(path)

@@ -16,8 +16,11 @@ B3-B adds the first real Dispatcher delegation slice for exactly one eligible
 terminal result.
 
 B3-C adds the explicit opt-in real Dispatcher delegation slice for exactly one
-eligible `run-reviewbundle` or `maybe-status-check` request. It uses the same
-existing Dispatcher `PollOnce` path and never invokes Runner or Codex directly.
+eligible `run-reviewbundle`, `read-final-audit`, or `maybe-status-check` request.
+`read-final-audit` is a request-bound, same-node dirty-candidate readback: Runner
+re-reads the named trusted review-bundle parent and publishes only bounded,
+digest-checked reviewer evidence without invoking Codex. It uses the same existing
+Dispatcher `PollOnce` path and never invokes Runner or Codex directly.
 
 B3 is development workflow tooling only. It is not Local
 Document-to-Knowledge Workbench product runtime.
@@ -33,8 +36,8 @@ Document-to-Knowledge Workbench product runtime.
   - `b3b-maybe-status-check`: foreground bounded loop with real Dispatcher
     delegation for `maybe-status-check` only
   - `b3c-run-reviewbundle`: foreground bounded loop with real Dispatcher
-    delegation for `run-reviewbundle` and the on-demand `maybe-status-check`
-    probe
+    delegation for `run-reviewbundle`, `read-final-audit`, and the on-demand
+    `maybe-status-check` probe
 - Dispatcher invocation: forbidden in B3-A; allowed once per unprocessed
   eligible request in B3-B or B3-C
 - Runner invocation: forbidden
@@ -430,7 +433,8 @@ B3-B blocks or skips before Dispatcher when:
 
 B3-C blocks or skips before Dispatcher when:
 
-- the request action is neither `run-reviewbundle` nor `maybe-status-check`;
+- the request action is neither `run-reviewbundle`, `read-final-audit`, nor
+  `maybe-status-check`;
 - the request was already written to `processed_requests.jsonl`;
 - B1 validation fails;
 - local readiness reports a dirty repo or wrong HEAD;

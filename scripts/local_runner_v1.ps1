@@ -17,7 +17,7 @@ stops before calling Codex and posts a failure review bundle when possible.
 param(
     [ValidateRange(0, [int]::MaxValue)]
     [int]$IssueNumber = 0,
-    [ValidateSet("ReviewBundle", "CommitApproved", "ApprovalStateDiagnostic", "CommitApprovalStateDiagnostic")]
+    [ValidateSet("ReviewBundle", "ReadFinalAudit", "CommitApproved", "ApprovalStateDiagnostic", "CommitApprovalStateDiagnostic")]
     [string]$Mode = "ReviewBundle",
     [switch]$ToolResolutionPreflight,
     [string]$RequiredAction = "",
@@ -29,7 +29,8 @@ param(
     [string]$MachineEvidencePath = "",
     [string]$DisplayPilotRequestId = "",
     [switch]$SuppressReviewBundleComment,
-    [string]$TrustedCandidateContinuationCommentId = ""
+    [string]$TrustedCandidateContinuationCommentId = "",
+    [string]$ReadFinalAuditRequestId = ""
 )
 
 Set-StrictMode -Version Latest
@@ -75,9 +76,16 @@ $MaxGitOutputChars = 5000
 $ReviewBundleCodexTimeoutSeconds = 1200
 $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
+$ReviewCandidateBindingMarker = "LAWBRUNNER-REVIEW-CANDIDATE-BINDING protocol=lawb.review_candidate_binding.v2"
 $ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
 $CandidateEvidenceProfile = "local_git_candidate_observation.v1"
 $SameNodeContinuationProtocol = "lawb.same_node_exact_candidate_continuation.v1"
+$FinalReviewEvidenceProtocol = "lawb.final_review_evidence.v1"
+$FinalReviewEvidenceMarker = "LAWBRUNNER-FINAL-REVIEW-EVIDENCE protocol=$FinalReviewEvidenceProtocol"
+$FinalReviewExactCandidateIdentityProfile = "lawb.final_review_exact_candidate_bytes.v1"
+$FinalReviewEvidenceMaxPayloadBytes = 240000
+$FinalReviewEvidenceChunkBytes = 36000
+$FinalReviewEvidenceMaxChunks = 7
 $TrustedRunnerResultAuthors = @("HarryWhite-TW")
 $LocalIsolationProvider = "codex_cli_workspace_write"
 $script:CommitApprovedLocalCommitCreated = "unknown"
@@ -220,7 +228,7 @@ function Assert-TargetRepositoryBinding {
     if (-not [string]::Equals($originRepository, $Repo, [System.StringComparison]::Ordinal)) {
         throw "wrong_target_origin"
     }
-    if ($Mode -ne "ReviewBundle" -and
+    if ($Mode -notin @("ReviewBundle", "ReadFinalAudit") -and
         (-not [string]::Equals($Repo, "HarryWhite-TW/local-ai-workbench", [System.StringComparison]::Ordinal) -or
          -not [string]::Equals($RepoPath, $ControlRepoRoot, [System.StringComparison]::OrdinalIgnoreCase))) {
         throw "cross_repository_mode_not_supported"
@@ -404,6 +412,38 @@ function Get-ModifiedFilesFromStatus {
     }
 
     return (($paths | Sort-Object -Unique) -join [Environment]::NewLine)
+}
+
+function Test-ReviewerReadyCandidateStatusSupported {
+    param(
+        [AllowEmptyString()]
+        [string]$Status,
+        [AllowEmptyCollection()]
+        [string[]]$ChangedFiles = @()
+    )
+
+    $statusLines = @($Status -split "\r?\n" | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    })
+    if ($statusLines.Count -eq 0 -or $ChangedFiles.Count -eq 0) { return $false }
+
+    $observedPaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $statusLines) {
+        if ($line -notmatch '^ M ([A-Za-z0-9._/-]+)$') { return $false }
+        $path = [string]$Matches[1]
+        if ($path.StartsWith("/", [System.StringComparison]::Ordinal) -or
+            $path.Contains("\") -or $path.Contains("//") -or
+            @($path.Split("/") | Where-Object { $_ -in @("", ".", "..") }).Count -gt 0) {
+            return $false
+        }
+        $observedPaths.Add($path)
+    }
+
+    $observed = @($observedPaths.ToArray() | Sort-Object -Unique)
+    $expected = @($ChangedFiles | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    return $observed.Count -eq $statusLines.Count -and
+        $expected.Count -eq $ChangedFiles.Count -and
+        (($observed -join "`n") -ceq ($expected -join "`n"))
 }
 
 function Test-GitStatusHasStagedChanges {
@@ -807,6 +847,151 @@ function ConvertFrom-FirstJsonObjectAfterMarker {
     throw "runner_result_json_unterminated"
 }
 
+function Get-FinalReviewExactCandidateIdentity {
+    param(
+        [Parameter(Mandatory = $true)][object]$Parent,
+        [Parameter(Mandatory = $true)][object]$CandidateManifest,
+        [Parameter(Mandatory = $true)][object]$ApprovalState,
+        [Parameter(Mandatory = $true)][object]$RuntimeContractBinding,
+        [Parameter(Mandatory = $true)][bool]$NoStage
+    )
+
+    $reasons = [System.Collections.Generic.List[string]]::new()
+    if ([string]$Parent.action -cne "run-reviewbundle" -or
+        [string]$Parent.result -cne "success" -or
+        [string]$Parent.repo -cne $Repo -or
+        [string]$Parent.issue -cne [string]$IssueNumber) {
+        $reasons.Add("trusted_parent_exact_result_identity_mismatch")
+    }
+    if ([string]$Parent.branch -cne [string]$ApprovalState.Branch -or
+        [string]$Parent.head -cne [string]$ApprovalState.Head) {
+        $reasons.Add("trusted_parent_exact_branch_or_head_mismatch")
+    }
+    if (-not $NoStage) { $reasons.Add("staged_changes_detected") }
+    if ([string]$CandidateManifest.status -cne "verified") {
+        $reasons.Add("candidate_manifest_unverified")
+    }
+    if ([string]$Parent.files_fingerprint -cne [string]$ApprovalState.FilesFingerprint) {
+        $reasons.Add("candidate_files_fingerprint_mismatch")
+    }
+
+    $parentContract = $null
+    $parentBindingProperty = $Parent.PSObject.Properties["runtime_contract_binding"]
+    if ($null -ne $parentBindingProperty -and $null -ne $parentBindingProperty.Value) {
+        $parentContract = $parentBindingProperty.Value.runtime_contract
+    }
+    if ($null -eq $parentContract -or
+        ((($parentContract | ConvertTo-Json -Depth 16 -Compress)) -cne (($RuntimeContractBinding.runtime_contract | ConvertTo-Json -Depth 16 -Compress)))) {
+        $reasons.Add("trusted_parent_runtime_contract_mismatch")
+    }
+
+    $allowedNormalization = ConvertTo-NormalizedRuntimeContractPathSet `
+        -Paths @($RuntimeContractBinding.allowed_files) `
+        -InvalidReason "invalid_allowed_file"
+    if (@($allowedNormalization.Reasons).Count -gt 0) {
+        $reasons.Add("invalid_allowed_file")
+    }
+    $allowedFiles = @($allowedNormalization.Paths)
+    $currentEntries = @($CandidateManifest.entries)
+    $currentByPath = @{}
+    foreach ($entry in $currentEntries) {
+        $path = [string]$entry.path
+        if ([string]::IsNullOrWhiteSpace($path) -or $currentByPath.ContainsKey($path)) {
+            $reasons.Add("candidate_manifest_entries_invalid")
+            continue
+        }
+        $currentByPath[$path] = $entry
+    }
+    [string[]]$currentEntryPaths = @($currentByPath.Keys)
+    [System.Array]::Sort($currentEntryPaths, [System.StringComparer]::Ordinal)
+    if ($currentEntries.Count -ne $allowedFiles.Count -or
+        (($currentEntryPaths -join "`n") -cne ($allowedFiles -join "`n"))) {
+        $reasons.Add("candidate_manifest_allowed_file_set_mismatch")
+    }
+
+    $parentManifest = $null
+    $parentManifestProperty = $Parent.PSObject.Properties["candidate_evidence_manifest"]
+    if ($null -eq $parentManifestProperty -or $null -eq $parentManifestProperty.Value) {
+        $reasons.Add("trusted_parent_candidate_manifest_missing")
+    }
+    else {
+        $parentManifest = $parentManifestProperty.Value
+        $parentManifestStatusProperty = $parentManifest.PSObject.Properties["status"]
+        $parentManifestFingerprintProperty = $parentManifest.PSObject.Properties["fingerprint"]
+        $parentManifestEntriesProperty = $parentManifest.PSObject.Properties["entries"]
+        if ($null -eq $parentManifestStatusProperty -or [string]$parentManifestStatusProperty.Value -cne "verified") {
+            $reasons.Add("trusted_parent_candidate_manifest_unverified")
+        }
+        if ($null -eq $parentManifestFingerprintProperty -or
+            [string]$parentManifestFingerprintProperty.Value -cne [string]$CandidateManifest.fingerprint) {
+            $reasons.Add("candidate_manifest_fingerprint_mismatch")
+        }
+        [object[]]$parentEntries = @()
+        if ($null -ne $parentManifestEntriesProperty) {
+            $parentEntries = @($parentManifestEntriesProperty.Value)
+        }
+        $parentByPath = @{}
+        foreach ($entry in $parentEntries) {
+            $path = [string]$entry.path
+            if ([string]::IsNullOrWhiteSpace($path) -or $parentByPath.ContainsKey($path)) {
+                $reasons.Add("trusted_parent_candidate_manifest_entries_invalid")
+                continue
+            }
+            $parentByPath[$path] = $entry
+        }
+        [string[]]$parentEntryPaths = @($parentByPath.Keys)
+        [System.Array]::Sort($parentEntryPaths, [System.StringComparer]::Ordinal)
+        if ($parentEntries.Count -ne $allowedFiles.Count -or
+            (($parentEntryPaths -join "`n") -cne ($allowedFiles -join "`n"))) {
+            $reasons.Add("trusted_parent_candidate_manifest_allowed_file_set_mismatch")
+        }
+        foreach ($path in $allowedFiles) {
+            if (-not $currentByPath.ContainsKey($path) -or -not $parentByPath.ContainsKey($path)) {
+                $reasons.Add("candidate_manifest_entry_set_mismatch")
+                continue
+            }
+            $currentEntry = $currentByPath[$path]
+            $parentEntry = $parentByPath[$path]
+            if ([string]$parentEntry.path -cne [string]$currentEntry.path -or
+                [string]$parentEntry.state -cne [string]$currentEntry.state -or
+                [string]$parentEntry.sha256 -cne [string]$currentEntry.sha256 -or
+                [int64]$parentEntry.length -ne [int64]$currentEntry.length) {
+                $reasons.Add("candidate_manifest_entry_mismatch")
+            }
+        }
+    }
+
+    $parentChangedFiles = @($Parent.changed_files | ForEach-Object { [string]$_ })
+    $currentChangedFiles = @($ApprovalState.ModifiedFiles | ForEach-Object { [string]$_ })
+    [string[]]$parentChangedUnique = @($parentChangedFiles | Select-Object -Unique)
+    [string[]]$currentChangedUnique = @($currentChangedFiles | Select-Object -Unique)
+    [System.Array]::Sort($parentChangedUnique, [System.StringComparer]::Ordinal)
+    [System.Array]::Sort($currentChangedUnique, [System.StringComparer]::Ordinal)
+    if ($parentChangedFiles.Count -eq 0 -or
+        $parentChangedFiles.Count -ne $parentChangedUnique.Count -or
+        $currentChangedFiles.Count -ne $currentChangedUnique.Count -or
+        (($parentChangedUnique -join "`n") -cne ($currentChangedUnique -join "`n"))) {
+        $reasons.Add("candidate_changed_file_set_mismatch")
+    }
+
+    $canonicalEntryLines = @($allowedFiles | ForEach-Object {
+        $entry = $currentByPath[$_]
+        "$($entry.path)|$($entry.state)|$($entry.sha256)|$($entry.length)"
+    })
+    $canonicalPayload = "profile=$FinalReviewExactCandidateIdentityProfile`nrepo=$Repo`nissue=$IssueNumber`nbranch=$($ApprovalState.Branch)`nhead=$($ApprovalState.Head)`nallowed=`n$($allowedFiles -join "`n")`nmanifest=$($CandidateManifest.fingerprint)`nfiles=$($ApprovalState.FilesFingerprint)`nchanged=`n$($currentChangedUnique -join "`n")`nentries=`n$($canonicalEntryLines -join "`n")"
+    $legacyDiffMatch = [string]$Parent.diff_fingerprint -ceq [string]$ApprovalState.DiffFingerprint
+    $uniqueReasons = @($reasons | Select-Object -Unique)
+    return [pscustomobject]@{
+        profile = $FinalReviewExactCandidateIdentityProfile
+        canonical_candidate_identity = if ($uniqueReasons.Count -eq 0) { "passed" } else { "failed" }
+        canonical_candidate_identity_fingerprint = if ($uniqueReasons.Count -eq 0) { Get-Sha256Text -Text $canonicalPayload } else { $null }
+        parent_legacy_diff_fingerprint = [string]$Parent.diff_fingerprint
+        current_rendered_diff_fingerprint = [string]$ApprovalState.DiffFingerprint
+        legacy_diff_observation_match = $legacyDiffMatch
+        reasons = $uniqueReasons
+    }
+}
+
 function Get-SameNodeExactCandidateContinuationAdmission {
     param(
         [Parameter(Mandatory = $true)]
@@ -821,10 +1006,12 @@ function Get-SameNodeExactCandidateContinuationAdmission {
         [Parameter(Mandatory = $true)]
         [string]$CurrentStatus,
         [Parameter(Mandatory = $true)]
-        [bool]$NoStage
+        [bool]$NoStage,
+        [switch]$AllowReadFinalAuditLegacyDiffMismatch
     )
 
     $reasons = [System.Collections.Generic.List[string]]::new()
+    $exactIdentity = $null
     if ($ParentCommentId -notmatch '^[1-9][0-9]{0,18}$') { $reasons.Add("invalid_continuation_parent_comment_id") }
     if ([string]::IsNullOrWhiteSpace($CurrentStatus)) { $reasons.Add("continuation_requires_dirty_candidate") }
     if (-not $NoStage) { $reasons.Add("staged_changes_detected") }
@@ -875,8 +1062,17 @@ function Get-SameNodeExactCandidateContinuationAdmission {
         }
         try {
             $state = Get-ApprovalState -IssueNumberForState $IssueNumber -RequireChanges -AllowedFiles @($RuntimeContractBinding.allowed_files) -CandidateManifest $CandidateManifest
-            if ([string]$parent.diff_fingerprint -cne [string]$state.DiffFingerprint -or
-                [string]$parent.files_fingerprint -cne [string]$state.FilesFingerprint) {
+            if ($AllowReadFinalAuditLegacyDiffMismatch) {
+                $exactIdentity = Get-FinalReviewExactCandidateIdentity `
+                    -Parent $parent `
+                    -CandidateManifest $CandidateManifest `
+                    -ApprovalState $state `
+                    -RuntimeContractBinding $RuntimeContractBinding `
+                    -NoStage $NoStage
+                foreach ($reason in @($exactIdentity.reasons)) { $reasons.Add([string]$reason) }
+            }
+            elseif ([string]$parent.diff_fingerprint -cne [string]$state.DiffFingerprint -or
+                    [string]$parent.files_fingerprint -cne [string]$state.FilesFingerprint) {
                 $reasons.Add("candidate_fingerprint_mismatch")
             }
         }
@@ -888,6 +1084,12 @@ function Get-SameNodeExactCandidateContinuationAdmission {
                 $ParentCommentId,
                 [System.StringComparison]::Ordinal
             )) { continue }
+            if (Test-TrustedFinalReviewEvidenceCommentForParent `
+                -Comment $candidateComment `
+                -ParentCommentId $ParentCommentId) {
+                $reasons.Add("trusted_parent_review_evidence_already_published")
+                continue
+            }
             $candidateAuthor = ""
             if ($null -ne $candidateComment.author) {
                 $candidateAuthor = [string]$candidateComment.author.login
@@ -926,8 +1128,323 @@ function Get-SameNodeExactCandidateContinuationAdmission {
         }
         else { [int]$parent.same_node_continuation.remaining_budget }
         is_human_approval = $false
+        identity_profile = if ($null -ne $exactIdentity) { [string]$exactIdentity.profile } else { $null }
+        canonical_candidate_identity = if ($null -ne $exactIdentity) { [string]$exactIdentity.canonical_candidate_identity } else { "not_evaluated" }
+        canonical_candidate_identity_fingerprint = if ($null -ne $exactIdentity) { [string]$exactIdentity.canonical_candidate_identity_fingerprint } else { $null }
+        parent_legacy_diff_fingerprint = if ($null -ne $exactIdentity) { [string]$exactIdentity.parent_legacy_diff_fingerprint } else { $null }
+        current_rendered_diff_fingerprint = if ($null -ne $exactIdentity) { [string]$exactIdentity.current_rendered_diff_fingerprint } else { $null }
+        legacy_diff_observation_match = if ($null -ne $exactIdentity) { [bool]$exactIdentity.legacy_diff_observation_match } else { $null }
         reasons = @($reasons | Select-Object -Unique)
     }
+}
+
+function Get-Sha256Bytes {
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return (($sha256.ComputeHash($Bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
+    }
+    finally { $sha256.Dispose() }
+}
+
+function Get-ExactFinalReviewParentComment {
+    param([Parameter(Mandatory = $true)][string]$ParentCommentId)
+
+    if ($ParentCommentId -notmatch '^[1-9][0-9]{0,18}$') {
+        throw "invalid_continuation_parent_comment_id"
+    }
+    $result = Invoke-Captured {
+        & $Gh api "repos/$Repo/issues/comments/$ParentCommentId"
+    }
+    if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($result.Stdout)) {
+        throw "trusted_parent_exact_read_unavailable"
+    }
+    try { $comment = $result.Stdout | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw "trusted_parent_exact_read_invalid" }
+
+    $expectedIssueUrl = "https://api.github.com/repos/$Repo/issues/$IssueNumber"
+    if ([string]$comment.id -cne $ParentCommentId -or
+        [string]$comment.user.login -cne $TrustedRunnerResultAuthors[0] -or
+        -not [string]::Equals([string]$comment.issue_url, $expectedIssueUrl, [System.StringComparison]::Ordinal)) {
+        throw "trusted_parent_exact_identity_mismatch"
+    }
+    try {
+        $parent = ConvertFrom-FirstJsonObjectAfterMarker -Body ([string]$comment.body) -Marker $RunnerResultMarker
+    }
+    catch { throw "trusted_parent_exact_payload_invalid" }
+    return [pscustomobject]@{ Comment = $comment; Parent = $parent }
+}
+
+function Test-FinalReviewSensitiveContent {
+    param([Parameter(Mandatory = $true)][string]$Text)
+
+    $patterns = @(
+        '(?i)\b(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9_]{8,}\b',
+        '(?i)\bgithub_pat_[A-Za-z0-9_]{8,}\b',
+        '(?i)\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b',
+        '(?i)\bAKIA[0-9A-Z]{16}\b',
+        '(?im)\b(?:authorization|password|secret|credential|access[_-]?token|api[_-]?key)\b\s*[:=]\s*(?:Bearer\s+)?["'']?[A-Za-z0-9._~+/=-]{8,}',
+        '(?im)^-----BEGIN (?:ENCRYPTED |RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----\r?$'
+    )
+    foreach ($pattern in $patterns) {
+        if ([regex]::IsMatch($Text, $pattern)) { return $true }
+    }
+    return $false
+}
+
+function Test-TrustedFinalReviewEvidenceCommentForParent {
+    param(
+        [Parameter(Mandatory = $true)][object]$Comment,
+        [Parameter(Mandatory = $true)][string]$ParentCommentId
+    )
+
+    $author = ""
+    if ($null -ne $Comment.author) { $author = [string]$Comment.author.login }
+    if ($author -notin $TrustedRunnerResultAuthors -or
+        ([string]$Comment.body).IndexOf(
+            $FinalReviewEvidenceMarker,
+            [System.StringComparison]::Ordinal
+        ) -lt 0) {
+        return $false
+    }
+
+    try {
+        $envelope = ConvertFrom-FirstJsonObjectAfterMarker `
+            -Body ([string]$Comment.body) `
+            -Marker $FinalReviewEvidenceMarker
+        if ([string]$envelope.protocol -cne $FinalReviewEvidenceProtocol -or
+            [string]$envelope.repository -cne $Repo -or
+            [string]$envelope.issue -cne [string]$IssueNumber -or
+            [string]$envelope.action -cne "read-final-audit" -or
+            -not (Test-ReadFinalAuditRequestIdSafe -Value ([string]$envelope.request_id)) -or
+            [string]$envelope.parent_comment_id -cne $ParentCommentId -or
+            -not ($envelope.sequence -is [int] -or $envelope.sequence -is [long]) -or
+            -not ($envelope.chunk_count -is [int] -or $envelope.chunk_count -is [long]) -or
+            [long]$envelope.sequence -lt 1 -or
+            [long]$envelope.chunk_count -lt 1 -or
+            [long]$envelope.sequence -gt [long]$envelope.chunk_count -or
+            [long]$envelope.chunk_count -gt $FinalReviewEvidenceMaxChunks -or
+            [string]$envelope.payload_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$envelope.chunk_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$envelope.encoding -cne "base64-utf8-json" -or
+            [string]::IsNullOrWhiteSpace([string]$envelope.data_base64)) {
+            return $false
+        }
+        $chunk = [Convert]::FromBase64String([string]$envelope.data_base64)
+        if ($chunk.Length -gt $FinalReviewEvidenceChunkBytes -or
+            (Get-Sha256Bytes -Bytes $chunk) -cne [string]$envelope.chunk_sha256) {
+            return $false
+        }
+        return $true
+    }
+    catch { return $false }
+}
+
+function Test-ReadFinalAuditRequestIdSafe {
+    param([AllowNull()][string]$Value)
+
+    return -not [string]::IsNullOrWhiteSpace($Value) -and
+        $Value -match '^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$'
+}
+
+function New-FinalReviewEvidencePayload {
+    param(
+        [Parameter(Mandatory = $true)][object]$Parent,
+        [Parameter(Mandatory = $true)][object]$CandidateManifest,
+        [Parameter(Mandatory = $true)][object]$ApprovalState,
+        [Parameter(Mandatory = $true)][object]$RuntimeContractBinding,
+        [Parameter(Mandatory = $true)][string]$ReadbackRequestId
+    )
+
+    if (-not (Test-ReadFinalAuditRequestIdSafe -Value $ReadbackRequestId)) {
+        throw "read_final_audit_request_id_invalid_or_missing"
+    }
+
+    $identity = Get-FinalReviewExactCandidateIdentity `
+        -Parent $Parent `
+        -CandidateManifest $CandidateManifest `
+        -ApprovalState $ApprovalState `
+        -RuntimeContractBinding $RuntimeContractBinding `
+        -NoStage (-not (Test-GitStatusHasStagedChanges -Status ([string]$ApprovalState.Status)))
+    if ([string]$identity.canonical_candidate_identity -cne "passed") {
+        throw "trusted_parent_exact_candidate_binding_mismatch:$(@($identity.reasons) -join ',')"
+    }
+
+    $changedFiles = @($Parent.changed_files | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    if ($changedFiles.Count -eq 0) { throw "candidate_changed_files_missing" }
+    $observedChangedFiles = @(Convert-FileTextToArray -Text (Get-ModifiedFilesFromStatus -Status (Get-GitStatusShort)))
+    if ((@($changedFiles) -join "`n") -cne (@($observedChangedFiles) -join "`n")) {
+        throw "trusted_parent_exact_changed_file_mismatch"
+    }
+    $manifestByPath = @{}
+    foreach ($entry in @($CandidateManifest.entries)) { $manifestByPath[[string]$entry.path] = $entry }
+    $snapshots = [System.Collections.Generic.List[object]]::new()
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    foreach ($path in $changedFiles) {
+        if (-not $manifestByPath.ContainsKey($path)) { throw "candidate_extra_file_detected" }
+        $entry = $manifestByPath[$path]
+        if ([string]$entry.state -cne "regular_file") { throw "candidate_unsupported_file_state" }
+        $filePath = Join-Path -Path $RepoPath -ChildPath ($path -replace '/', '\')
+        $bytes = [System.IO.File]::ReadAllBytes($filePath)
+        if ($bytes -contains [byte]0) { throw "candidate_binary_content_rejected" }
+        try { $text = $strictUtf8.GetString($bytes) }
+        catch { throw "candidate_unsupported_text_encoding" }
+        if (Test-FinalReviewSensitiveContent -Text $text) { throw "candidate_sensitive_content_rejected" }
+        $snapshotSha256 = Get-Sha256Bytes -Bytes $bytes
+        if ([string]$entry.sha256 -cne $snapshotSha256 -or [int64]$entry.length -ne [int64]$bytes.Length) {
+            throw "candidate_snapshot_manifest_mismatch"
+        }
+        $snapshots.Add([ordered]@{
+            path = $path
+            sha256 = $snapshotSha256
+            length = [int64]$bytes.Length
+            text = $text
+        })
+    }
+    $diff = Get-GitOutput -GitArgs (@("diff", "--no-ext-diff", "--no-textconv", "--unified=3", "--") + $changedFiles) -Action "git diff exact reviewer evidence"
+    if ($diff -match '(?m)^Binary files |GIT binary patch') { throw "candidate_binary_content_rejected" }
+    if (Test-FinalReviewSensitiveContent -Text $diff) { throw "candidate_sensitive_content_rejected" }
+    return ([ordered]@{
+        protocol = $FinalReviewEvidenceProtocol
+        kind = "exact_candidate_readback"
+        repository = $Repo
+        issue = $IssueNumber
+        action = "read-final-audit"
+        request_id = $ReadbackRequestId
+        parent_comment_id = $TrustedCandidateContinuationCommentId
+        branch = [string]$Parent.branch
+        head = [string]$Parent.head
+        candidate_manifest_fingerprint = [string]$CandidateManifest.fingerprint
+        diff_fingerprint = [string]$ApprovalState.DiffFingerprint
+        files_fingerprint = [string]$ApprovalState.FilesFingerprint
+        identity_profile = [string]$identity.profile
+        canonical_candidate_identity = [string]$identity.canonical_candidate_identity
+        canonical_candidate_identity_fingerprint = [string]$identity.canonical_candidate_identity_fingerprint
+        parent_legacy_diff_fingerprint = [string]$identity.parent_legacy_diff_fingerprint
+        current_rendered_diff_fingerprint = [string]$identity.current_rendered_diff_fingerprint
+        legacy_diff_observation_match = [bool]$identity.legacy_diff_observation_match
+        snapshots = @($snapshots.ToArray())
+        unified_diff = $diff
+    } | ConvertTo-Json -Depth 20 -Compress)
+}
+
+function Assert-FinalReviewCandidateIdentity {
+    param(
+        [Parameter(Mandatory = $true)][object]$Parent,
+        [Parameter(Mandatory = $true)][object]$InitialManifest,
+        [Parameter(Mandatory = $true)][object]$InitialState,
+        [Parameter(Mandatory = $true)][object]$RuntimeContractBinding
+    )
+
+    $reasons = [System.Collections.Generic.List[string]]::new()
+    $initialIdentity = Get-FinalReviewExactCandidateIdentity `
+        -Parent $Parent `
+        -CandidateManifest $InitialManifest `
+        -ApprovalState $InitialState `
+        -RuntimeContractBinding $RuntimeContractBinding `
+        -NoStage (-not (Test-GitStatusHasStagedChanges -Status ([string]$InitialState.Status)))
+    foreach ($reason in @($initialIdentity.reasons)) { $reasons.Add("initial_$reason") }
+
+    $observation = Get-ReviewBundleGitObservation
+    if ([string]::IsNullOrWhiteSpace([string]$observation.Status)) { $reasons.Add("candidate_no_longer_dirty") }
+    if (-not [bool]$observation.NoStage) { $reasons.Add("candidate_staged_state_changed") }
+
+    try {
+        $finalManifest = Get-BoundedCandidateManifest -AllowedFiles @($RuntimeContractBinding.allowed_files)
+        $finalState = Get-ApprovalState -IssueNumberForState $IssueNumber -RequireChanges -AllowedFiles @($RuntimeContractBinding.allowed_files) -CandidateManifest $finalManifest
+        $finalIdentity = Get-FinalReviewExactCandidateIdentity `
+            -Parent $Parent `
+            -CandidateManifest $finalManifest `
+            -ApprovalState $finalState `
+            -RuntimeContractBinding $RuntimeContractBinding `
+            -NoStage ([bool]$observation.NoStage)
+        foreach ($reason in @($finalIdentity.reasons)) { $reasons.Add("final_$reason") }
+        if ([string]$initialIdentity.canonical_candidate_identity_fingerprint -cne [string]$finalIdentity.canonical_candidate_identity_fingerprint) {
+            $reasons.Add("canonical_candidate_identity_changed")
+        }
+    }
+    catch {
+        $reasons.Add("candidate_final_state_unavailable")
+    }
+
+    if ($reasons.Count -gt 0) {
+        throw "final_review_candidate_identity_revalidation_failed:$(@($reasons | Select-Object -Unique) -join ',')"
+    }
+}
+
+function Invoke-ReadFinalAuditMode {
+    if ([string]::IsNullOrWhiteSpace($TrustedCandidateContinuationCommentId)) {
+        throw "read_final_audit_parent_comment_required"
+    }
+    if (-not (Test-ReadFinalAuditRequestIdSafe -Value $ReadFinalAuditRequestId)) {
+        throw "read_final_audit_request_id_invalid_or_missing"
+    }
+    $observation = Get-ReviewBundleGitObservation
+    if ([string]::IsNullOrWhiteSpace([string]$observation.Status) -or -not [bool]$observation.NoStage) {
+        throw "read_final_audit_requires_unstaged_dirty_candidate"
+    }
+    $runtimeContractPython = Resolve-PythonRuntimeCommand
+    $binding = Invoke-RuntimeContractEvaluator -Action "inspect" -PythonPath $runtimeContractPython -Payload ([ordered]@{
+        surface_text = $issueBody; logical_issue = $IssueNumber; repository = $Repo
+        branch = (Get-GitOutput -GitArgs @("branch", "--show-current") -Action "git branch --show-current")
+        head = [string]$observation.Head
+    })
+    if ([string]$binding.status -cne "passed" -or -not [bool]$binding.contract_present) {
+        throw "read_final_audit_runtime_contract_unverified"
+    }
+    $manifest = Get-BoundedCandidateManifest -AllowedFiles @($binding.allowed_files)
+    $admission = Get-SameNodeExactCandidateContinuationAdmission -ParentCommentId $TrustedCandidateContinuationCommentId -IssueComments $issueComments -RuntimeContractBinding $binding -CandidateManifest $manifest -CurrentStatus ([string]$observation.Status) -NoStage ([bool]$observation.NoStage) -AllowReadFinalAuditLegacyDiffMismatch
+    if (-not [bool]$admission.admitted) { throw "read_final_audit_continuation_rejected:$(@($admission.reasons) -join ',')" }
+    $exactParent = Get-ExactFinalReviewParentComment -ParentCommentId $TrustedCandidateContinuationCommentId
+    foreach ($comment in @($issueComments)) {
+        if (Test-TrustedFinalReviewEvidenceCommentForParent `
+            -Comment $comment `
+            -ParentCommentId $TrustedCandidateContinuationCommentId) {
+            throw "read_final_audit_already_published_or_ambiguous"
+        }
+    }
+    $state = Get-ApprovalState -IssueNumberForState $IssueNumber -RequireChanges -AllowedFiles @($binding.allowed_files) -CandidateManifest $manifest
+    $payloadJson = New-FinalReviewEvidencePayload -Parent $exactParent.Parent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -ReadbackRequestId $ReadFinalAuditRequestId
+    $payloadBytes = [System.Text.Encoding]::UTF8.GetBytes($payloadJson)
+    if ($payloadBytes.Length -gt $FinalReviewEvidenceMaxPayloadBytes) { throw "review_evidence_payload_oversize" }
+    $chunkCount = [int][Math]::Ceiling($payloadBytes.Length / [double]$FinalReviewEvidenceChunkBytes)
+    if ($chunkCount -lt 1 -or $chunkCount -gt $FinalReviewEvidenceMaxChunks) { throw "review_evidence_chunk_count_invalid" }
+    $digest = Get-Sha256Bytes -Bytes $payloadBytes
+    Assert-FinalReviewCandidateIdentity -Parent $exactParent.Parent -InitialManifest $manifest -InitialState $state -RuntimeContractBinding $binding
+    for ($index = 0; $index -lt $chunkCount; $index++) {
+        $offset = $index * $FinalReviewEvidenceChunkBytes
+        $length = [Math]::Min($FinalReviewEvidenceChunkBytes, $payloadBytes.Length - $offset)
+        $chunk = New-Object byte[] $length
+        [Array]::Copy($payloadBytes, $offset, $chunk, 0, $length)
+        $body = $FinalReviewEvidenceMarker + "`n" + ([ordered]@{
+            protocol = $FinalReviewEvidenceProtocol; repository = $Repo; issue = $IssueNumber
+            action = "read-final-audit"; request_id = $ReadFinalAuditRequestId
+            parent_comment_id = $TrustedCandidateContinuationCommentId; sequence = $index + 1; chunk_count = $chunkCount
+            payload_sha256 = $digest; chunk_sha256 = Get-Sha256Bytes -Bytes $chunk; encoding = "base64-utf8-json"
+            data_base64 = [Convert]::ToBase64String($chunk)
+        } | ConvertTo-Json -Compress)
+        $post = Post-IssueComment -Comment $body
+        if ($post.ExitCode -ne 0) { throw "remote_evidence_publication_uncertain" }
+    }
+    Assert-FinalReviewCandidateIdentity -Parent $exactParent.Parent -InitialManifest $manifest -InitialState $state -RuntimeContractBinding $binding
+    $admissionIdentityProfile = $admission.PSObject.Properties["identity_profile"]
+    $admissionCanonicalIdentity = $admission.PSObject.Properties["canonical_candidate_identity"]
+    $admissionCanonicalFingerprint = $admission.PSObject.Properties["canonical_candidate_identity_fingerprint"]
+    $admissionParentLegacyDiff = $admission.PSObject.Properties["parent_legacy_diff_fingerprint"]
+    $admissionCurrentRenderedDiff = $admission.PSObject.Properties["current_rendered_diff_fingerprint"]
+    $admissionLegacyDiffMatch = $admission.PSObject.Properties["legacy_diff_observation_match"]
+    Write-Output (([ordered]@{
+        protocol = $FinalReviewEvidenceProtocol; result = "complete_evidence_published"; final_acceptance = "not_granted"
+        action = "read-final-audit"; request_id = $ReadFinalAuditRequestId
+        parent_comment_id = $TrustedCandidateContinuationCommentId; chunk_count = $chunkCount; payload_sha256 = $digest
+        identity_profile = if ($null -eq $admissionIdentityProfile) { $null } else { [string]$admissionIdentityProfile.Value }
+        canonical_candidate_identity = if ($null -eq $admissionCanonicalIdentity) { $null } else { [string]$admissionCanonicalIdentity.Value }
+        canonical_candidate_identity_fingerprint = if ($null -eq $admissionCanonicalFingerprint) { $null } else { [string]$admissionCanonicalFingerprint.Value }
+        parent_legacy_diff_fingerprint = if ($null -eq $admissionParentLegacyDiff) { $null } else { [string]$admissionParentLegacyDiff.Value }
+        current_rendered_diff_fingerprint = if ($null -eq $admissionCurrentRenderedDiff) { $null } else { [string]$admissionCurrentRenderedDiff.Value }
+        legacy_diff_observation_match = if ($null -eq $admissionLegacyDiffMatch) { $null } else { [bool]$admissionLegacyDiffMatch.Value }
+        codex_invoked = $false; candidate_mutated = $false
+    } | ConvertTo-Json -Compress))
 }
 
 function Get-IssueCommentNumericIdentity {
@@ -2410,6 +2927,7 @@ function New-RunnerResultSummaryJson {
             -RuntimeContractBinding $RuntimeContractBinding `
             -ObservableEvidence "unverified"
     }
+    $changedFiles = @(Convert-FileTextToArray -Text $ChangedFilesText)
     $candidateManifestVerified = $null -ne $CandidateEvidenceManifest -and
         [string]::Equals([string]$CandidateEvidenceManifest.status, "verified", [System.StringComparison]::Ordinal) -and
         -not [string]::IsNullOrWhiteSpace([string]$CandidateEvidenceManifest.fingerprint) -and
@@ -2418,8 +2936,18 @@ function New-RunnerResultSummaryJson {
             [string]$ExecutionAssurance.candidate_manifest_fingerprint,
             [System.StringComparison]::Ordinal
         )
+    $candidateManifestStateSupported = $candidateManifestVerified -and
+        @($CandidateEvidenceManifest.entries).Count -gt 0 -and
+        @($CandidateEvidenceManifest.entries | Where-Object {
+            [string]$_.state -cne "regular_file"
+        }).Count -eq 0
+    $candidateStatusSupported = Test-ReviewerReadyCandidateStatusSupported `
+        -Status $FinalStatus `
+        -ChangedFiles $changedFiles
     $candidateSnapshotEligible = $ApprovalTokenGenerated -and
         $candidateManifestVerified -and
+        $candidateManifestStateSupported -and
+        $candidateStatusSupported -and
         (Test-ApprovalContextAllowed `
             -RuntimeContractBinding $RuntimeContractBinding `
             -FinalIndexClean $FinalIndexClean `
@@ -2427,7 +2955,6 @@ function New-RunnerResultSummaryJson {
             -ExecutionAssurance $ExecutionAssurance)
 
     $issueValue = [int]$IssueNumberText
-    $changedFiles = @(Convert-FileTextToArray -Text $ChangedFilesText)
     $finalClean = [string]::IsNullOrWhiteSpace($FinalStatus) -or $FinalStatus.Trim() -eq "(clean)"
     $codexStatus = if ($CodexExitCode -eq "0") { "passed" } elseif ($CodexExitCode -like "not run*") { "not_run" } else { "failed" }
 
@@ -2475,6 +3002,30 @@ function New-RunnerResultSummaryJson {
     }
 
     return ($summary | ConvertTo-Json -Depth 8)
+}
+
+function New-ReviewCandidateBindingJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$ReviewBundleCommentId,
+        [Parameter(Mandatory = $true)][string]$CandidateManifestFingerprint,
+        [Parameter(Mandatory = $true)][object]$PostedRunnerSummary
+    )
+
+    $candidateAcceptance = [string]$PostedRunnerSummary.candidate_acceptance
+    $candidateChangedFiles = @(
+        $PostedRunnerSummary.changed_files | ForEach-Object { [string]$_ }
+    )
+    if ($ReviewBundleCommentId -notmatch '^[1-9][0-9]{0,18}$' -or
+        $CandidateManifestFingerprint -cnotmatch '^[0-9a-f]{64}$' -or
+        $candidateAcceptance -cnotin @("eligible", "ineligible")) {
+        throw "review_candidate_binding_unavailable"
+    }
+    return ([ordered]@{
+        review_bundle_comment_id = $ReviewBundleCommentId
+        candidate_manifest_fingerprint = $CandidateManifestFingerprint
+        candidate_acceptance = $candidateAcceptance
+        changed_files = @($candidateChangedFiles)
+    } | ConvertTo-Json -Compress)
 }
 
 function Get-StatusLines {
@@ -4152,6 +4703,32 @@ if (-not (Test-IssueAllowsWriteCapableRun -Title $issueTitle -Body $issueBody)) 
     exit 3
 }
 
+function Get-PostedReviewBundleCommentId {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$PostStdout
+    )
+
+    $pattern = '^https://github\.com/' + [regex]::Escape($Repo) +
+        '/issues/' + [regex]::Escape([string]$IssueNumber) +
+        '#issuecomment-([1-9][0-9]{0,18})/?$'
+    $matches = @(
+        $PostStdout -split "`r?`n" |
+            ForEach-Object { [regex]::Match($_.Trim(), $pattern) } |
+            Where-Object { $_.Success }
+    )
+    if ($matches.Count -ne 1) {
+        throw "review_bundle_comment_id_unavailable"
+    }
+    return $matches[0].Groups[1].Value
+}
+
+if ($Mode -eq "ReadFinalAudit") {
+    Invoke-ReadFinalAuditMode
+    exit 0
+}
+
 $headBeforeFull = $headBefore
 $runtimeContractPython = Resolve-PythonRuntimeCommand
 $runtimeContractBinding = Invoke-RuntimeContractEvaluator `
@@ -4475,9 +5052,23 @@ if ($commentResult.ExitCode -ne 0) {
     throw "gh issue comment failed with exit code $($commentResult.ExitCode): $($commentResult.Stderr)"
 }
 
-Write-Output $commentResult.Stdout
 $overallExitCode = if (
     [string]::Equals([string]$runtimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal) -or
     -not [string]::Equals([string]$executionAssurance.observable_evidence, "verified", [System.StringComparison]::Ordinal)
 ) { 2 } else { $codexResult.ExitCode }
+if ($overallExitCode -eq 0 -and -not $SuppressReviewBundleComment) {
+    $reviewBundleCommentId = Get-PostedReviewBundleCommentId -PostStdout $commentResult.Stdout
+    $candidateManifestFingerprint = [string]$postExecutionManifest.fingerprint
+    if ($candidateManifestFingerprint -cnotmatch '^[0-9a-f]{64}$') {
+        throw "review_candidate_manifest_fingerprint_unavailable"
+    }
+    $postedRunnerSummary = ConvertFrom-FirstJsonObjectAfterMarker `
+        -Body $comment -Marker $RunnerResultMarker
+    Write-Output $ReviewCandidateBindingMarker
+    Write-Output (New-ReviewCandidateBindingJson `
+        -ReviewBundleCommentId $reviewBundleCommentId `
+        -CandidateManifestFingerprint $candidateManifestFingerprint `
+        -PostedRunnerSummary $postedRunnerSummary)
+}
+Write-Output $commentResult.Stdout
 exit $overallExitCode

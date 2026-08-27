@@ -18,29 +18,34 @@ Its shared philosophy is:
 
 This checkpoint describes ecosystem-level strategy. It does not replace fresh Git, GitHub, environment, tool, or authentication verification, and it does not authorize implementation or remote mutation.
 
-## ECO-CP1 closeout position — 2026-08-13
+## Current Workflow reconciliation — 2026-08-24
 
-The Display Pilot documentation package was published through LAWB PR #267,
-Issue #264 was subsequently completed, and the later supervising ChatGPT source
-review and acceptance adjudication established `DONE / ACCEPTED / PUBLISHED /
-DURABLY CLOSED`. Operating V1 remains accepted and published, LAWB remains the
-sole canonical daily Workflow runtime/reference host, HGW remains non-executing
-and not cut over, and HAG remains bounded, foreground-only, loopback-only, and
-fake-only.
+Issue #281 is accepted, published, and closed. Its request-bound non-terminal
+progress is established where the accepted evidence proves it, and PR #283 is
+the merged publication of request-bound Workflow operator visibility. The fixed
+normal relay/status surface remains open Issue #279.
 
-The final cross-repository state is:
+ChatGPT remains the primary UI. Manual relay is fallback/recovery only, not the
+target daily workflow. The current evidence is a Machine View: it supports
+request-local inspectability, but it does not establish continuous live
+Bridge-to-Dispatcher-to-Runner-to-Codex telemetry or a fully comfortable,
+polished human-facing presentation. Those limitations remain current and
+explicit.
 
-`ECO-CP1 ACCEPTED — STABLE STOP POINT`
+LAWB remains the product runtime; Bridge and Workflow tooling remain separate
+development-workflow infrastructure. HGW remains non-executing and not cut
+over, and HAG remains bounded, foreground-only, loopback-only, and fake-only.
+No active implementation node exists. The current priority is a comfortable,
+repeatable Human-Governed Workflow daily loop, but neither
+`WORKFLOW-COMFORTABLE-DAILY-LOOP-ACCEPTANCE-01` nor any PRT item is activated.
+PRT items are optional reality-validation assets, not a mandatory numbered
+queue.
 
-This final-state checkpoint becomes effective only when the exact ECO-CP1
-publication commits are present on canonical LAWB, HGW, and HAG and have been
-independently read back. On a noncanonical review branch it is a proposed
-canonical record and does not assert that merge/readback has already occurred.
-Under that canonical-state condition, durable-truth publication and post-merge
-readback are complete. Fresh ChatGPT-direct repaired E2E remains `UNVERIFIED`
-with a platform-blocked qualifier, live execution visibility remains `PARTIAL`,
-and historical #264 Runner/Codex reach remains `UNVERIFIED`. The user-facing
-ChatGPT-only execution transport is not claimed fully solved.
+MCP / ChatGPT App, Desktop Agent, VM executor, service, tray, and repository
+extraction remain future or separately gated work. No Product or Workflow node
+activates automatically. Roadmap tracker #168 is outside this two-document
+edit scope; if it remains inconsistent with this current truth, it is a
+residual external durable-truth gap requiring separate reconciliation.
 
 ## Formal components and roles
 

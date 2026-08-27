@@ -1,5 +1,6 @@
 import base64
 import json
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -109,6 +110,19 @@ def result_comment(**overrides):
     return "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1\n" + json.dumps(fields)
 
 
+def review_candidate_binding(
+    *changed_files: str,
+    comment_id: str = "5313180922",
+    acceptance: str = "eligible",
+):
+    return {
+        "review_bundle_comment_id": comment_id,
+        "candidate_manifest_fingerprint": "a" * 64,
+        "candidate_acceptance": acceptance,
+        "changed_files": list(changed_files),
+    }
+
+
 class FakeGitHub:
     def __init__(self, *, inbox_comments=None, target_comments=None, fail_reads=False):
         self.inbox_comments = inbox_comments if inbox_comments is not None else [
@@ -154,6 +168,42 @@ def ready(state_dir=None, *, assert_lock=False, **overrides):
         return LocalReadiness(**values)
 
     return checker
+
+
+def init_lawb_git_repo(
+    path: Path,
+    *,
+    branch: str,
+    repository: str = DEFAULT_REPOSITORY,
+) -> str:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-b", branch, str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "B3 Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "b3-test@example.invalid"],
+        check=True,
+    )
+    (path / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-m", "fixture"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(path),
+            "remote",
+            "add",
+            "origin",
+            f"https://github.com/{repository}.git",
+        ],
+        check=True,
+    )
+    return subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def run(tmp_path, client=None, readiness=None, **kwargs):
@@ -2056,6 +2106,946 @@ def test_dirty_same_node_continuation_requires_matching_launcher_binding_before_
     assert evidence["launcher_binding"] == "matched"
     assert evidence["is_human_approval"] is False
     assert evidence["remaining_budget_before"] == 1
+
+
+def test_successful_reviewbundle_persists_reviewer_state_before_settlement(tmp_path):
+    candidate_root = tmp_path / "candidate"
+    candidate_head = init_lawb_git_repo(
+        candidate_root, branch="feature/bridge-operator-b3a"
+    )
+    binding = review_candidate_binding("reviewer-evidence.txt")
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    action="run-reviewbundle", head=candidate_head
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(
+                    action="run-reviewbundle", head=candidate_head
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+    )
+
+    def invoker(**kwargs):
+        (candidate_root / "reviewer-evidence.txt").write_text(
+            "reviewer-ready evidence\n", encoding="utf-8"
+        )
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(
+                    action="run-reviewbundle", head=candidate_head, **binding
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=candidate_root,
+        control_repo_root=candidate_root,
+        state_dir=tmp_path / "state",
+        github_client=client,
+        local_checker=ready(
+            tmp_path / "state",
+            repo_root=str(candidate_root.resolve()),
+            head=candidate_head,
+        ),
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        operator_session_id=SESSION_A,
+    )
+
+    state_root = tmp_path / "state"
+    candidate = json.loads((state_root / "review_candidate.json").read_text(encoding="utf-8"))
+    assert summary["result"] == "success"
+    assert summary["review_candidate_state"] == "written"
+    assert candidate["terminal_result_comment_id"] == "20"
+    assert candidate["review_bundle_comment_id"] == binding["review_bundle_comment_id"]
+    assert candidate["candidate_manifest_fingerprint"] == binding[
+        "candidate_manifest_fingerprint"
+    ]
+    assert candidate["target_repo_root"] == str(candidate_root.resolve())
+    assert summary["next_task_availability"] == "not_configured"
+    assert not (state_root / "repository_routing.json").exists()
+    assert (state_root / "processed_requests.jsonl").exists()
+    assert not (state_root / "in_flight.json").exists()
+
+
+def test_successful_hag_reviewbundle_persists_candidate_without_lawb_rotation(
+    tmp_path, monkeypatch
+):
+    candidate_root = tmp_path / "hag-candidate"
+    branch = "feature/hag-review-candidate"
+    request_id = "hag-review-candidate-request"
+    candidate_head = init_lawb_git_repo(
+        candidate_root,
+        branch=branch,
+        repository=HAG_REPOSITORY,
+    )
+    binding = review_candidate_binding("reviewer-evidence.txt")
+    control = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    repo=HAG_REPOSITORY,
+                    target_issue="1",
+                    target_dispatch_request_id=request_id,
+                    request_id=request_id,
+                    branch=branch,
+                    head=candidate_head,
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            )
+        ]
+    )
+    target = FakeGitHub(
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(
+                    repo=HAG_REPOSITORY,
+                    issue="1",
+                    request_id=request_id,
+                    branch=branch,
+                    head=candidate_head,
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            )
+        ]
+    )
+
+    def invoker(**kwargs):
+        (candidate_root / "reviewer-evidence.txt").write_text(
+            "reviewer-ready HAG evidence\n", encoding="utf-8"
+        )
+        target.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(
+                    repo=HAG_REPOSITORY,
+                    issue=1,
+                    request_id=request_id,
+                    branch=branch,
+                    head=candidate_head,
+                    action="run-reviewbundle",
+                    **binding,
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    def unexpected_lawb_rotation(**kwargs):
+        raise AssertionError("HAG completion must not rotate a LAWB successor")
+
+    monkeypatch.setattr(
+        bridge_operator_b3,
+        "_prepare_next_lawb_execution_target",
+        unexpected_lawb_rotation,
+    )
+    state_root = tmp_path / "state"
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=candidate_root,
+        control_repo_root=candidate_root,
+        repository=HAG_REPOSITORY,
+        state_dir=state_root,
+        github_client=control,
+        target_github_client=target,
+        local_checker=ready(
+            state_root,
+            repo_root=str(candidate_root.resolve()),
+            branch=branch,
+            head=candidate_head,
+            origin_repository=HAG_REPOSITORY,
+            staged_clean=True,
+        ),
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        operator_session_id=SESSION_A,
+    )
+
+    candidate = json.loads(
+        (state_root / "review_candidate.json").read_text(encoding="utf-8")
+    )
+    assert summary["result"] == "success"
+    assert summary["review_candidate_state"] == "written"
+    assert candidate["target_repository"] == HAG_REPOSITORY
+    assert candidate["target_repo_root"] == str(candidate_root.resolve())
+    assert (state_root / "processed_requests.jsonl").exists()
+    assert not (state_root / "repository_routing.json").exists()
+
+
+def test_hag_review_candidate_inspection_rejects_lawb_origin(tmp_path):
+    candidate_root = tmp_path / "wrong-origin"
+    branch = "feature/hag-review-candidate"
+    candidate_head = init_lawb_git_repo(candidate_root, branch=branch)
+
+    candidate, error = bridge_operator_b3._inspect_review_candidate_worktree(
+        candidate_root,
+        expected_repository=HAG_REPOSITORY,
+        expected_branch=branch,
+        expected_head=candidate_head,
+        expected_changed_files=["tracked.txt"],
+    )
+
+    assert candidate is None
+    assert error == "execution_target_origin_mismatch"
+
+
+def test_reviewer_candidate_transition_prepares_local_clean_successor(tmp_path):
+    """B3, not a user/test-supplied v2 route, selects the next LAWB target."""
+    state_root = tmp_path / "state"
+    control_root = tmp_path / "control"
+    candidate_root = tmp_path / "preserved-reviewer-candidate"
+    control_head = init_lawb_git_repo(control_root, branch="control")
+    candidate_head = init_lawb_git_repo(candidate_root, branch="reviewer-ready")
+    routing_path = state_root / "repository_routing.json"
+    state_root.mkdir()
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": "lawb.bridge_operator_local_routing.v1",
+                "repository": DEFAULT_REPOSITORY,
+                "target_repo_root": str(candidate_root.resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert "selected_target" not in json.loads(routing_path.read_text(encoding="utf-8"))
+
+    binding = review_candidate_binding("reviewer-evidence.txt")
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    action="run-reviewbundle",
+                    branch="reviewer-ready",
+                    head=candidate_head,
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(
+                    action="run-reviewbundle",
+                    branch="reviewer-ready",
+                    head=candidate_head,
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+    )
+
+    def candidate_ready(root):
+        assert Path(root).resolve() == candidate_root.resolve()
+        return LocalReadiness(
+            repo_root=str(candidate_root.resolve()),
+            branch="reviewer-ready",
+            head=candidate_head,
+            clean=True,
+            gh_available=True,
+            gh_authenticated=True,
+            gh_read_available=True,
+            errors=(),
+        )
+
+    def invoker(**kwargs):
+        # The review completion leaves its original candidate preserved and dirty.
+        (candidate_root / "reviewer-evidence.txt").write_text(
+            "reviewer-ready evidence\n", encoding="utf-8"
+        )
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(
+                    action="run-reviewbundle",
+                    branch="reviewer-ready",
+                    head=candidate_head,
+                    **binding,
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=candidate_root,
+        control_repo_root=control_root,
+        state_dir=state_root,
+        github_client=client,
+        local_checker=candidate_ready,
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        operator_session_id=SESSION_A,
+    )
+
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    selected = routing["selected_target"]
+    target_root = Path(selected["target_repo_root"])
+    expected_parent = (state_root / "execution-targets").resolve()
+    assert summary["result"] == "success"
+    assert summary["execution_target_transition"] == "prepared"
+    assert summary["next_task_availability"] == "ready"
+    assert routing["protocol"] == "lawb.bridge_operator_local_routing.v2"
+    assert target_root.parent.resolve() == expected_parent
+    assert selected["branch"].startswith("codex/workflow-execution-")
+    assert selected["head"] == control_head
+    assert subprocess.run(
+        ["git", "-C", str(target_root), "status", "--porcelain=v1"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+    assert subprocess.run(
+        ["git", "-C", str(target_root), "diff", "--cached", "--name-only"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+    assert (candidate_root / "reviewer-evidence.txt").read_text(encoding="utf-8") == (
+        "reviewer-ready evidence\n"
+    )
+    assert subprocess.run(
+        ["git", "-C", str(candidate_root), "diff", "--cached", "--name-only"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+
+
+def test_reviewer_candidate_transition_rotates_existing_v2_target_without_relay(tmp_path):
+    state_root = tmp_path / "state"
+    control_root = tmp_path / "control"
+    candidate_a = tmp_path / "preserved-reviewer-candidate-a"
+    control_head = init_lawb_git_repo(control_root, branch="control")
+    candidate_a_head = init_lawb_git_repo(candidate_a, branch="reviewer-a")
+    state_root.mkdir()
+    routing_path = state_root / "repository_routing.json"
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": "lawb.bridge_operator_local_routing.v1",
+                "repository": DEFAULT_REPOSITORY,
+                "target_repo_root": str(candidate_a.resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def run_review_cycle(
+        candidate_root: Path,
+        *,
+        branch: str,
+        head: str,
+        issue: int,
+        request_id: str,
+        evidence_name: str,
+        session_id: str,
+    ):
+        binding = review_candidate_binding(
+            evidence_name, comment_id=str(5313180922 + issue)
+        )
+        client = FakeGitHub(
+            inbox_comments=[
+                CommentRecord(
+                    id=1,
+                    body=inbox_marker(
+                        action="run-reviewbundle",
+                        target_issue=str(issue),
+                        target_dispatch_request_id=request_id,
+                        request_id=request_id,
+                        branch=branch,
+                        head=head,
+                    ),
+                    author="HarryWhite-TW",
+                )
+            ],
+            target_comments=[
+                CommentRecord(
+                    id=10,
+                    body=dispatch_marker(
+                        action="run-reviewbundle",
+                        issue=str(issue),
+                        request_id=request_id,
+                        branch=branch,
+                        head=head,
+                    ),
+                    author="HarryWhite-TW",
+                )
+            ],
+        )
+
+        def candidate_ready(root):
+            assert Path(root).resolve() == candidate_root.resolve()
+            return LocalReadiness(
+                repo_root=str(candidate_root.resolve()),
+                branch=branch,
+                head=head,
+                clean=True,
+                gh_available=True,
+                gh_authenticated=True,
+                gh_read_available=True,
+                errors=(),
+            )
+
+        def invoker(**kwargs):
+            (candidate_root / evidence_name).write_text(
+                "reviewer-ready evidence\n", encoding="utf-8"
+            )
+            client.target_comments.append(
+                CommentRecord(
+                    id=20,
+                    body=result_comment(
+                        action="run-reviewbundle",
+                        issue=issue,
+                        request_id=request_id,
+                        branch=branch,
+                        head=head,
+                        **binding,
+                    ),
+                    author="HarryWhite-TW",
+                )
+            )
+            return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+        return run_bridge_operator_b3_dry_run_loop(
+            repo_root=candidate_root,
+            control_repo_root=control_root,
+            state_dir=state_root,
+            github_client=client,
+            local_checker=candidate_ready,
+            now_utc=NOW,
+            sleeper=lambda seconds: None,
+            mode=B3C_MODE,
+            dispatcher_invoker=invoker,
+            timeout_seconds=30,
+            operator_session_id=session_id,
+        )
+
+    first = run_review_cycle(
+        candidate_a,
+        branch="reviewer-a",
+        head=candidate_a_head,
+        issue=151,
+        request_id="b3a-151-20260616T080000Z",
+        evidence_name="reviewer-a-evidence.txt",
+        session_id=SESSION_A,
+    )
+    routing_after_first = json.loads(routing_path.read_text(encoding="utf-8"))
+    review_after_first = json.loads(
+        (state_root / "review_candidate.json").read_text(encoding="utf-8")
+    )
+    candidate_b = Path(routing_after_first["selected_target"]["target_repo_root"])
+    candidate_b_branch = routing_after_first["selected_target"]["branch"]
+    candidate_b_head = routing_after_first["selected_target"]["head"]
+
+    second = run_review_cycle(
+        candidate_b,
+        branch=candidate_b_branch,
+        head=candidate_b_head,
+        issue=152,
+        request_id="b3a-152-20260616T080100Z",
+        evidence_name="reviewer-b-evidence.txt",
+        session_id=SESSION_B,
+    )
+    routing_after_second = json.loads(routing_path.read_text(encoding="utf-8"))
+    review_after_second = json.loads(
+        (state_root / "review_candidate.json").read_text(encoding="utf-8")
+    )
+    candidate_c = Path(routing_after_second["selected_target"]["target_repo_root"])
+
+    assert first["result"] == "success"
+    assert first["next_task_availability"] == "ready"
+    assert second["result"] == "success"
+    assert second["next_task_availability"] == "ready"
+    assert routing_after_first["protocol"] == "lawb.bridge_operator_local_routing.v2"
+    assert routing_after_second["protocol"] == "lawb.bridge_operator_local_routing.v2"
+    assert candidate_b != candidate_a
+    assert candidate_c != candidate_a
+    assert candidate_c != candidate_b
+    assert review_after_first["target_repo_root"] == str(candidate_a.resolve())
+    assert review_after_second["target_repo_root"] == str(candidate_b.resolve())
+    assert review_after_second["dispatch_request_id"] != review_after_first[
+        "dispatch_request_id"
+    ]
+    assert routing_after_second["selected_target"]["head"] == control_head
+    assert candidate_c.parent.resolve() == (state_root / "execution-targets").resolve()
+    assert (candidate_a / "reviewer-a-evidence.txt").read_text(encoding="utf-8") == (
+        "reviewer-ready evidence\n"
+    )
+    assert (candidate_b / "reviewer-b-evidence.txt").read_text(encoding="utf-8") == (
+        "reviewer-ready evidence\n"
+    )
+    for root in (candidate_c,):
+        assert subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain=v1"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout == ""
+        assert subprocess.run(
+            ["git", "-C", str(root), "diff", "--cached", "--name-only"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout == ""
+
+
+def test_clean_ineligible_successor_settles_without_replacing_candidate_or_rotating(
+    tmp_path,
+):
+    state_root = tmp_path / "state"
+    candidate_a = tmp_path / "preserved-candidate-a"
+    candidate_b = tmp_path / "clean-successor-b"
+    state_root.mkdir()
+    candidate_a_head = init_lawb_git_repo(candidate_a, branch="reviewer-a")
+    candidate_b_head = init_lawb_git_repo(candidate_b, branch="successor-b")
+    (candidate_a / "candidate-a.txt").write_text("candidate A\n", encoding="utf-8")
+    review_candidate = {
+        "protocol": "lawb.bridge_operator_review_candidate.v1",
+        "schema_version": 2,
+        "target_repository": DEFAULT_REPOSITORY,
+        "target_issue": 150,
+        "dispatch_request_id": "review-candidate-a-150",
+        "action": "run-reviewbundle",
+        "branch": "reviewer-a",
+        "expected_head": candidate_a_head,
+        "terminal_result_comment_id": "19",
+        "review_bundle_comment_id": "5313180921",
+        "candidate_manifest_fingerprint": "b" * 64,
+        "target_repo_root": str(candidate_a.resolve()),
+        "recorded_at_utc": "2026-06-16T07:59:00Z",
+    }
+    candidate_path = state_root / "review_candidate.json"
+    candidate_path.write_text(
+        json.dumps(review_candidate, separators=(",", ":")), encoding="utf-8"
+    )
+    routing = {
+        "protocol": "lawb.bridge_operator_local_routing.v2",
+        "repository": DEFAULT_REPOSITORY,
+        "selected_target": {
+            "selection_id": "candidate-successor-b",
+            "target_repo_root": str(candidate_b.resolve()),
+            "branch": "successor-b",
+            "head": candidate_b_head,
+        },
+    }
+    routing_path = state_root / "repository_routing.json"
+    routing_path.write_text(
+        json.dumps(routing, separators=(",", ":")), encoding="utf-8"
+    )
+    candidate_before = candidate_path.read_bytes()
+    routing_before = routing_path.read_bytes()
+    request_id = "clean-successor-b-151"
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    action="run-reviewbundle",
+                    request_id=request_id,
+                    target_dispatch_request_id=request_id,
+                    branch="successor-b",
+                    head=candidate_b_head,
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(
+                    action="run-reviewbundle",
+                    request_id=request_id,
+                    branch="successor-b",
+                    head=candidate_b_head,
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+    )
+
+    def invoker(**kwargs):
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(
+                    action="run-reviewbundle",
+                    request_id=request_id,
+                    branch="successor-b",
+                    head=candidate_b_head,
+                    **review_candidate_binding(acceptance="ineligible"),
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=candidate_b,
+        control_repo_root=candidate_b,
+        state_dir=state_root,
+        github_client=client,
+        local_checker=ready(
+            state_root,
+            repo_root=str(candidate_b.resolve()),
+            branch="successor-b",
+            head=candidate_b_head,
+        ),
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        operator_session_id=SESSION_B,
+    )
+
+    assert summary["result"] == "success"
+    assert summary["review_candidate_state"] == "retained_ineligible"
+    assert summary["next_task_availability"] == "unchanged"
+    assert candidate_path.read_bytes() == candidate_before
+    assert routing_path.read_bytes() == routing_before
+    assert not (state_root / "execution-targets").exists()
+    assert subprocess.run(
+        ["git", "-C", str(candidate_b), "status", "--porcelain=v1"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+    assert not (state_root / "in_flight.json").exists()
+    assert not (state_root / "operator.lock").exists()
+
+
+def test_configured_transition_failure_keeps_review_completion_success(tmp_path):
+    state_root = tmp_path / "state"
+    control_root = tmp_path / "control"
+    candidate_root = tmp_path / "preserved-reviewer-candidate"
+    init_lawb_git_repo(control_root, branch="control")
+    candidate_head = init_lawb_git_repo(candidate_root, branch="reviewer-ready")
+    (control_root / "unrelated-control-dirty.txt").write_text(
+        "must not be cleaned\n", encoding="utf-8"
+    )
+    state_root.mkdir()
+    routing_path = state_root / "repository_routing.json"
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": "lawb.bridge_operator_local_routing.v1",
+                "repository": DEFAULT_REPOSITORY,
+                "target_repo_root": str(candidate_root.resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_routing = routing_path.read_bytes()
+    binding = review_candidate_binding("reviewer-evidence.txt")
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    action="run-reviewbundle",
+                    branch="reviewer-ready",
+                    head=candidate_head,
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(
+                    action="run-reviewbundle",
+                    branch="reviewer-ready",
+                    head=candidate_head,
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+    )
+
+    def candidate_ready(root):
+        assert Path(root).resolve() == candidate_root.resolve()
+        return LocalReadiness(
+            repo_root=str(candidate_root.resolve()),
+            branch="reviewer-ready",
+            head=candidate_head,
+            clean=True,
+            gh_available=True,
+            gh_authenticated=True,
+            gh_read_available=True,
+            errors=(),
+        )
+
+    def invoker(**kwargs):
+        (candidate_root / "reviewer-evidence.txt").write_text(
+            "reviewer-ready evidence\n", encoding="utf-8"
+        )
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(
+                    action="run-reviewbundle",
+                    branch="reviewer-ready",
+                    head=candidate_head,
+                    **binding,
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=candidate_root,
+        control_repo_root=control_root,
+        state_dir=state_root,
+        github_client=client,
+        local_checker=candidate_ready,
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        operator_session_id=SESSION_A,
+    )
+
+    candidate = json.loads((state_root / "review_candidate.json").read_text(encoding="utf-8"))
+    state = json.loads((state_root / "state.json").read_text(encoding="utf-8"))
+    assert summary["result"] == "success"
+    assert summary["review_candidate_state"] == "written"
+    assert summary["next_task_availability"] == "unavailable"
+    assert summary["next_task_availability_reason"] == "execution_target_control_not_clean"
+    assert candidate["terminal_result_comment_id"] == "20"
+    assert state["next_task_availability"] == "unavailable"
+    assert state["next_task_availability_reason"] == "execution_target_control_not_clean"
+    assert routing_path.read_bytes() == original_routing
+    assert not (state_root / "in_flight.json").exists()
+    assert not (state_root / "operator.lock").exists()
+    assert (control_root / "unrelated-control-dirty.txt").read_text(encoding="utf-8") == (
+        "must not be cleaned\n"
+    )
+
+
+def test_stale_v2_branch_binding_keeps_review_completion_success(tmp_path):
+    state_root = tmp_path / "state"
+    control_root = tmp_path / "control"
+    candidate_root = tmp_path / "preserved-reviewer-candidate"
+    init_lawb_git_repo(control_root, branch="control")
+    candidate_head = init_lawb_git_repo(candidate_root, branch="reviewer-ready")
+    state_root.mkdir()
+    routing_path = state_root / "repository_routing.json"
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": "lawb.bridge_operator_local_routing.v2",
+                "repository": DEFAULT_REPOSITORY,
+                "selected_target": {
+                    "selection_id": "stale-selection",
+                    "target_repo_root": str(candidate_root.resolve()),
+                    "branch": "stale-branch",
+                    "head": candidate_head,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_routing = routing_path.read_bytes()
+    binding = review_candidate_binding("reviewer-evidence.txt")
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    action="run-reviewbundle",
+                    branch="reviewer-ready",
+                    head=candidate_head,
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(
+                    action="run-reviewbundle",
+                    branch="reviewer-ready",
+                    head=candidate_head,
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+    )
+
+    def candidate_ready(root):
+        assert Path(root).resolve() == candidate_root.resolve()
+        return LocalReadiness(
+            repo_root=str(candidate_root.resolve()),
+            branch="reviewer-ready",
+            head=candidate_head,
+            clean=True,
+            gh_available=True,
+            gh_authenticated=True,
+            gh_read_available=True,
+            errors=(),
+        )
+
+    def invoker(**kwargs):
+        (candidate_root / "reviewer-evidence.txt").write_text(
+            "reviewer-ready evidence\n", encoding="utf-8"
+        )
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(
+                    action="run-reviewbundle",
+                    branch="reviewer-ready",
+                    head=candidate_head,
+                    **binding,
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=candidate_root,
+        control_repo_root=control_root,
+        state_dir=state_root,
+        github_client=client,
+        local_checker=candidate_ready,
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        operator_session_id=SESSION_A,
+    )
+
+    assert summary["result"] == "success"
+    assert summary["review_candidate_state"] == "written"
+    assert summary["next_task_availability"] == "unavailable"
+    assert summary["next_task_availability_reason"] == "execution_target_routing_v2_branch_mismatch"
+    assert routing_path.read_bytes() == original_routing
+    assert not (state_root / "execution-targets").exists()
+    assert not (state_root / "in_flight.json").exists()
+    assert not (state_root / "operator.lock").exists()
+
+
+def test_b3c_read_final_audit_uses_b1_admitted_candidate_without_launcher_binding(
+    tmp_path, monkeypatch
+):
+    parent_id = "5311"
+    expected_state = (
+        "same_node_exact_candidate_continuation_v1:parent_comment_id=" + parent_id
+    )
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(action="read-final-audit", expected_state=expected_state),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(action="read-final-audit"),
+                author="HarryWhite-TW",
+            ),
+            CommentRecord(
+                id=int(parent_id),
+                body=result_comment(
+                    action="run-reviewbundle", request_id="trusted-parent-dispatch"
+                ),
+                author="HarryWhite-TW",
+            ),
+        ],
+    )
+    calls = []
+    progress_reports = []
+
+    def invoker(**kwargs):
+        calls.append(kwargs)
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(action="read-final-audit"),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.delenv("LAWB_SAME_NODE_CONTINUATION_BINDING", raising=False)
+    summary = run_b3c(
+        tmp_path,
+        client=client,
+        readiness=ready(tmp_path, clean=False, staged_clean=True),
+        dispatcher_invoker=invoker,
+        status_progress_reporter=progress_reports.append,
+    )
+
+    assert summary["result"] == "success"
+    assert summary["dispatcher_invocation_count"] == 1
+    assert len(calls) == 1
+    assert progress_reports == []
+    assert summary["status_progress_publication"] == "not_requested"
+    assert "same_node_candidate_continuation" not in summary
+    assert summary["requested_action"] == "read-final-audit"
+
+
+def test_b3b_read_final_audit_is_blocked_before_dispatcher(tmp_path):
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(action="read-final-audit"),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(action="read-final-audit"),
+                author="HarryWhite-TW",
+            )
+        ],
+    )
+    calls = []
+
+    summary = run_b3b(
+        tmp_path,
+        client=client,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert summary["blocked_reasons"] == ["run_reviewbundle_not_enabled_in_b3b"]
+    assert calls == []
+    assert_safety(summary)
 
 
 def test_rejects_inbox_override_and_does_not_read_github(tmp_path):
