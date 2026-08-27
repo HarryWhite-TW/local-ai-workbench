@@ -52,6 +52,55 @@ def runner_core():
     return source[start:end]
 
 
+def final_binding_block():
+    source = RUNNER.read_text(encoding="utf-8")
+    start = source.index("$overallExitCode = if (")
+    end = source.index("\nexit $overallExitCode", start)
+    return source[start:end]
+
+
+def runner_function(name):
+    source = RUNNER.read_text(encoding="utf-8")
+    start = source.index(f"function {name} {{")
+    end = source.find("\nfunction ", start + 1)
+    if end < 0:
+        end = source.index("\nif ($Mode", start)
+    return source[start:end]
+
+
+def final_binding_body(*, suppress):
+    post_stdout = (
+        "ReviewBundle comment suppressed; machine evidence written."
+        if suppress
+        else "https://github.com/HarryWhite-TW/human-approval-automation-gateway/"
+        "issues/9#issuecomment-12345"
+    )
+    setup = """
+    $SuppressReviewBundleComment = __SUPPRESS__
+    $runtimeContractBinding = [pscustomobject]@{ status = "passed" }
+    $executionAssurance = [pscustomobject]@{ observable_evidence = "verified" }
+    $codexResult = [pscustomobject]@{ ExitCode = 0 }
+    $postExecutionManifest = [pscustomobject]@{ fingerprint = ("a" * 64) }
+    $comment = $RunnerResultMarker + "`n" + ([ordered]@{
+        candidate_acceptance = "eligible"
+        changed_files = @("src/example.py")
+    } | ConvertTo-Json -Compress)
+    $commentResult = [pscustomobject]@{
+        ExitCode = 0
+        Stdout = '__POST_STDOUT__'
+        Stderr = ""
+    }
+    """
+    return (
+        setup.replace("__SUPPRESS__", "$true" if suppress else "$false")
+        .replace("__POST_STDOUT__", post_stdout)
+        + "\n"
+        + runner_function("Get-PostedReviewBundleCommentId")
+        + "\n"
+        + final_binding_block()
+    )
+
+
 def run_script(tmp_path, *, prefix="", body="", binary=False):
     script = tmp_path / "machine_evidence_harness.ps1"
     script.write_text(
@@ -338,6 +387,36 @@ def test_machine_evidence_without_suppression_records_comment_post(tmp_path):
     assert payload["review_bundle_comment_suppressed"] is False
     assert payload["github_comment_posted"] is True
     assert payload["safety_flags"]["github_write_performed"] is True
+
+
+def test_suppressed_success_skips_final_review_candidate_binding(tmp_path):
+    request = tmp_path / "req-9"
+    request.mkdir()
+    evidence = request / "runner-machine-evidence.json"
+    result = run_script(
+        tmp_path,
+        prefix=prefix(path=evidence, suppress=True),
+        body=final_binding_body(suppress=True),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "ReviewBundle comment suppressed" in result.stdout
+    assert "LAWBRUNNER-REVIEW-CANDIDATE-BINDING" not in result.stdout
+    assert "review_bundle_comment_id_unavailable" not in result.stdout
+    assert "review_bundle_comment_id_unavailable" not in result.stderr
+
+
+def test_unsuppressed_success_preserves_final_review_candidate_binding(tmp_path):
+    result = run_script(
+        tmp_path,
+        prefix=prefix(),
+        body=final_binding_body(suppress=False),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "LAWBRUNNER-REVIEW-CANDIDATE-BINDING" in result.stdout
+    assert '"review_bundle_comment_id":"12345"' in result.stdout
+    assert '"candidate_acceptance":"eligible"' in result.stdout
 
 
 def test_post_comment_evidence_write_failure_is_visible_without_false_record(tmp_path):

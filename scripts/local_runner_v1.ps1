@@ -5056,7 +5056,7 @@ $overallExitCode = if (
     [string]::Equals([string]$runtimeContractBinding.status, "contract_violation", [System.StringComparison]::Ordinal) -or
     -not [string]::Equals([string]$executionAssurance.observable_evidence, "verified", [System.StringComparison]::Ordinal)
 ) { 2 } else { $codexResult.ExitCode }
-if ($overallExitCode -eq 0) {
+if ($overallExitCode -eq 0 -and -not $SuppressReviewBundleComment) {
     $reviewBundleCommentId = Get-PostedReviewBundleCommentId -PostStdout $commentResult.Stdout
     $candidateManifestFingerprint = [string]$postExecutionManifest.fingerprint
     if ($candidateManifestFingerprint -cnotmatch '^[0-9a-f]{64}$') {
