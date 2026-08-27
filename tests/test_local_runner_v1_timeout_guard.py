@@ -2946,8 +2946,12 @@ def test_final_review_evidence_payload_binds_exact_text_and_rejects_unsafe_input
         try {{ Assert-FinalReviewCandidateIdentity -Parent $parent -InitialManifest $manifest -InitialState $state -RuntimeContractBinding $binding }} catch {{ $finalRevalidationRejected = $true }}
         $missingRequestRejected = $false
         try {{ New-FinalReviewEvidencePayload -Parent $parent -CandidateManifest $manifest -ApprovalState $state -RuntimeContractBinding $binding -ReadbackRequestId "" | Out-Null }} catch {{ $missingRequestRejected = $true }}
-        $unsafe = Test-FinalReviewSensitiveContent -Text "github_pat_abcdefghijklmnopqrstuvwxyz"
-        [ordered]@{{ payload = $payload; tamper_rejected = $tamperRejected; snapshot_tamper_rejected = $snapshotTamperRejected; final_revalidation_rejected = $finalRevalidationRejected; missing_request_rejected = $missingRequestRejected; unsafe = $unsafe }} | ConvertTo-Json -Depth 12 -Compress
+        $unsafeToken = Test-FinalReviewSensitiveContent -Text "github_pat_abcdefghijklmnopqrstuvwxyz"
+        $unsafeGenericPem = Test-FinalReviewSensitiveContent -Text "-----BEGIN PRIVATE KEY-----`nSYNTHETIC_PLACEHOLDER_ONLY`n-----END PRIVATE KEY-----"
+        $unsafeRsaPem = Test-FinalReviewSensitiveContent -Text "-----BEGIN RSA PRIVATE KEY-----`nSYNTHETIC_PLACEHOLDER_ONLY`n-----END RSA PRIVATE KEY-----"
+        $unsafeOpenSshPem = Test-FinalReviewSensitiveContent -Text "-----BEGIN OPENSSH PRIVATE KEY-----`nSYNTHETIC_PLACEHOLDER_ONLY`n-----END OPENSSH PRIVATE KEY-----"
+        $harmless = Test-FinalReviewSensitiveContent -Text "ordinary reviewer evidence"
+        [ordered]@{{ payload = $payload; tamper_rejected = $tamperRejected; snapshot_tamper_rejected = $snapshotTamperRejected; final_revalidation_rejected = $finalRevalidationRejected; missing_request_rejected = $missingRequestRejected; unsafe_token = $unsafeToken; unsafe_generic_pem = $unsafeGenericPem; unsafe_rsa_pem = $unsafeRsaPem; unsafe_openssh_pem = $unsafeOpenSshPem; harmless = $harmless }} | ConvertTo-Json -Depth 12 -Compress
         """,
     )
 
@@ -2963,7 +2967,11 @@ def test_final_review_evidence_payload_binds_exact_text_and_rejects_unsafe_input
     assert payload["snapshot_tamper_rejected"] is True
     assert payload["final_revalidation_rejected"] is True
     assert payload["missing_request_rejected"] is True
-    assert payload["unsafe"] is True
+    assert payload["unsafe_token"] is True
+    assert payload["unsafe_generic_pem"] is True
+    assert payload["unsafe_rsa_pem"] is True
+    assert payload["unsafe_openssh_pem"] is True
+    assert payload["harmless"] is False
 
 
 def test_read_final_audit_transport_binds_request_id_and_fails_closed_on_partial_publish(tmp_path):
@@ -3055,6 +3063,62 @@ def test_read_final_audit_transport_binds_request_id_and_fails_closed_on_partial
     assert_success(partial)
     assert "ERROR=remote_evidence_publication_uncertain" in partial.stdout
     assert "UNEXPECTED_COMPLETE" not in partial.stdout
+
+
+def test_final_review_duplicate_detection_requires_trusted_valid_exact_envelope(tmp_path):
+    result = run_timeout_guard_script(
+        tmp_path,
+        """
+        $script:Repo = "HarryWhite-TW/local-ai-workbench"
+        $script:IssueNumber = 204
+        $parentId = "5311"
+        $chunk = [System.Text.Encoding]::UTF8.GetBytes("synthetic evidence")
+        $chunkSha = Get-Sha256Bytes -Bytes $chunk
+        function New-EvidenceBody {
+            param([string]$ParentId, [int]$Sequence = 1, [int]$ChunkCount = 1)
+            return $FinalReviewEvidenceMarker + "`n" + ([ordered]@{
+                protocol = $FinalReviewEvidenceProtocol
+                repository = $script:Repo
+                issue = $script:IssueNumber
+                action = "read-final-audit"
+                request_id = "readback-204-duplicate"
+                parent_comment_id = $ParentId
+                sequence = $Sequence
+                chunk_count = $ChunkCount
+                payload_sha256 = $chunkSha
+                chunk_sha256 = $chunkSha
+                encoding = "base64-utf8-json"
+                data_base64 = [Convert]::ToBase64String($chunk)
+            } | ConvertTo-Json -Compress)
+        }
+        $trustedExact = [pscustomobject]@{ author = [pscustomobject]@{ login = "HarryWhite-TW" }; body = (New-EvidenceBody -ParentId $parentId) }
+        $trustedPartial = [pscustomobject]@{ author = [pscustomobject]@{ login = "HarryWhite-TW" }; body = (New-EvidenceBody -ParentId $parentId -ChunkCount 2) }
+        $untrustedExact = [pscustomobject]@{ author = [pscustomobject]@{ login = "untrusted-user" }; body = (New-EvidenceBody -ParentId $parentId) }
+        $trustedMalformed = [pscustomobject]@{ author = [pscustomobject]@{ login = "HarryWhite-TW" }; body = $FinalReviewEvidenceMarker + "`n{`"parent_comment_id`":`"5311`"}" }
+        $otherParent = [pscustomobject]@{ author = [pscustomobject]@{ login = "HarryWhite-TW" }; body = (New-EvidenceBody -ParentId "7777") }
+        [ordered]@{
+            trusted_exact = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $trustedExact -ParentCommentId $parentId
+            trusted_partial = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $trustedPartial -ParentCommentId $parentId
+            untrusted_exact = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $untrustedExact -ParentCommentId $parentId
+            trusted_malformed = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $trustedMalformed -ParentCommentId $parentId
+            other_parent = Test-TrustedFinalReviewEvidenceCommentForParent -Comment $otherParent -ParentCommentId $parentId
+        } | ConvertTo-Json -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "trusted_exact": True,
+        "trusted_partial": True,
+        "untrusted_exact": False,
+        "trusted_malformed": False,
+        "other_parent": False,
+    }
+    admission_source = _runner_function("Get-SameNodeExactCandidateContinuationAdmission")
+    final_source = _runner_function("Invoke-ReadFinalAuditMode")
+    assert "Test-TrustedFinalReviewEvidenceCommentForParent" in admission_source
+    assert "Test-TrustedFinalReviewEvidenceCommentForParent" in final_source
 
 
 def test_read_final_audit_post_publication_mutation_has_no_terminal_complete_claim(tmp_path):
@@ -3805,8 +3869,8 @@ def test_runner_result_reports_snapshot_eligibility_without_isolation_overclaim(
             -ReviewId "review" `
             -DiffFingerprint ("2" * 64) `
             -FilesFingerprint ("3" * 64) `
-            -ChangedFilesText "src/example.py" `
-            -FinalStatus " M src/example.py" `
+            -ChangedFilesText "seed.txt" `
+            -FinalStatus " M seed.txt" `
             -CodexExitCode "0" `
             -FinalIndexClean $true `
             -FinalHeadMatchesInitial $true `
@@ -3825,6 +3889,65 @@ def test_runner_result_reports_snapshot_eligibility_without_isolation_overclaim(
     assert summary["execution_assurance"]["observable_evidence"] == "verified"
     assert summary["execution_assurance"]["isolation_guarantee"] == "unverified"
     assert summary["trusted_parent_actions"]["push_invoked"] is False
+
+
+def test_runner_result_reviewer_ready_eligibility_rejects_added_deleted_and_mixed_states(tmp_path):
+    binding = json.dumps(_binding("passed", allowed_files=["seed.txt", "added.txt"]))
+    result = run_timeout_guard_script(
+        tmp_path,
+        f"""
+        $binding = '{binding}' | ConvertFrom-Json
+        function Get-Acceptance {{
+            param([string]$Status, [string]$ChangedFiles, [object[]]$Entries)
+            $manifest = [pscustomobject]@{{
+                status = "verified"
+                evidence_profile = $CandidateEvidenceProfile
+                fingerprint = ("a" * 64)
+                entries = $Entries
+            }}
+            $assurance = New-ExecutionAssurance `
+                -RuntimeContractBinding $binding `
+                -ObservableEvidence "verified" `
+                -CandidateManifest $manifest
+            $json = New-RunnerResultSummaryJson `
+                -IssueNumberText "204" `
+                -Action "run-reviewbundle" `
+                -Result "success" `
+                -Branch "feature/runtime-contract" `
+                -Head ("1" * 40) `
+                -ReviewId "review" `
+                -DiffFingerprint ("2" * 64) `
+                -FilesFingerprint ("3" * 64) `
+                -ChangedFilesText $ChangedFiles `
+                -FinalStatus $Status `
+                -CodexExitCode "0" `
+                -FinalIndexClean $true `
+                -FinalHeadMatchesInitial $true `
+                -ApprovalTokenGenerated $true `
+                -RuntimeContractBinding $binding `
+                -ExecutionAssurance $assurance `
+                -CandidateEvidenceManifest $manifest
+            return ($json | ConvertFrom-Json).candidate_acceptance
+        }}
+        $modified = [pscustomobject]@{{ path = "seed.txt"; state = "regular_file" }}
+        $added = [pscustomobject]@{{ path = "added.txt"; state = "regular_file" }}
+        $deleted = [pscustomobject]@{{ path = "seed.txt"; state = "absent" }}
+        [ordered]@{{
+            modified = Get-Acceptance -Status " M seed.txt" -ChangedFiles "seed.txt" -Entries @($modified)
+            added = Get-Acceptance -Status "?? added.txt" -ChangedFiles "added.txt" -Entries @($added)
+            deleted = Get-Acceptance -Status " D seed.txt" -ChangedFiles "seed.txt" -Entries @($deleted)
+            mixed = Get-Acceptance -Status " M seed.txt`n?? added.txt" -ChangedFiles "seed.txt`nadded.txt" -Entries @($modified, $added)
+        }} | ConvertTo-Json -Compress
+        """,
+    )
+
+    assert_success(result)
+    assert json.loads(result.stdout) == {
+        "modified": "eligible",
+        "added": "ineligible",
+        "deleted": "ineligible",
+        "mixed": "ineligible",
+    }
 
 
 def test_review_candidate_binding_carries_exact_eligibility_and_changed_files(tmp_path):

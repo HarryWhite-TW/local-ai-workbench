@@ -414,6 +414,38 @@ function Get-ModifiedFilesFromStatus {
     return (($paths | Sort-Object -Unique) -join [Environment]::NewLine)
 }
 
+function Test-ReviewerReadyCandidateStatusSupported {
+    param(
+        [AllowEmptyString()]
+        [string]$Status,
+        [AllowEmptyCollection()]
+        [string[]]$ChangedFiles = @()
+    )
+
+    $statusLines = @($Status -split "\r?\n" | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    })
+    if ($statusLines.Count -eq 0 -or $ChangedFiles.Count -eq 0) { return $false }
+
+    $observedPaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $statusLines) {
+        if ($line -notmatch '^ M ([A-Za-z0-9._/-]+)$') { return $false }
+        $path = [string]$Matches[1]
+        if ($path.StartsWith("/", [System.StringComparison]::Ordinal) -or
+            $path.Contains("\") -or $path.Contains("//") -or
+            @($path.Split("/") | Where-Object { $_ -in @("", ".", "..") }).Count -gt 0) {
+            return $false
+        }
+        $observedPaths.Add($path)
+    }
+
+    $observed = @($observedPaths.ToArray() | Sort-Object -Unique)
+    $expected = @($ChangedFiles | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    return $observed.Count -eq $statusLines.Count -and
+        $expected.Count -eq $ChangedFiles.Count -and
+        (($observed -join "`n") -ceq ($expected -join "`n"))
+}
+
 function Test-GitStatusHasStagedChanges {
     param(
         [AllowEmptyString()]
@@ -1052,21 +1084,15 @@ function Get-SameNodeExactCandidateContinuationAdmission {
                 $ParentCommentId,
                 [System.StringComparison]::Ordinal
             )) { continue }
+            if (Test-TrustedFinalReviewEvidenceCommentForParent `
+                -Comment $candidateComment `
+                -ParentCommentId $ParentCommentId) {
+                $reasons.Add("trusted_parent_review_evidence_already_published")
+                continue
+            }
             $candidateAuthor = ""
             if ($null -ne $candidateComment.author) {
                 $candidateAuthor = [string]$candidateComment.author.login
-            }
-            if ($candidateAuthor -in $TrustedRunnerResultAuthors -and
-                ([string]$candidateComment.body).IndexOf(
-                    $FinalReviewEvidenceMarker,
-                    [System.StringComparison]::Ordinal
-                ) -ge 0 -and
-                ([string]$candidateComment.body).IndexOf(
-                    ('"parent_comment_id":"' + $ParentCommentId + '"'),
-                    [System.StringComparison]::Ordinal
-                ) -ge 0) {
-                $reasons.Add("trusted_parent_review_evidence_already_published")
-                continue
             }
             if ($candidateAuthor -notin $TrustedRunnerResultAuthors -or
                 ([string]$candidateComment.body).IndexOf(
@@ -1157,12 +1183,61 @@ function Test-FinalReviewSensitiveContent {
         '(?i)\bgithub_pat_[A-Za-z0-9_]{8,}\b',
         '(?i)\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b',
         '(?i)\bAKIA[0-9A-Z]{16}\b',
-        '(?im)\b(?:authorization|password|secret|credential|access[_-]?token|api[_-]?key)\b\s*[:=]\s*(?:Bearer\s+)?["'']?[A-Za-z0-9._~+/=-]{8,}'
+        '(?im)\b(?:authorization|password|secret|credential|access[_-]?token|api[_-]?key)\b\s*[:=]\s*(?:Bearer\s+)?["'']?[A-Za-z0-9._~+/=-]{8,}',
+        '(?im)^-----BEGIN (?:ENCRYPTED |RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----\r?$'
     )
     foreach ($pattern in $patterns) {
         if ([regex]::IsMatch($Text, $pattern)) { return $true }
     }
     return $false
+}
+
+function Test-TrustedFinalReviewEvidenceCommentForParent {
+    param(
+        [Parameter(Mandatory = $true)][object]$Comment,
+        [Parameter(Mandatory = $true)][string]$ParentCommentId
+    )
+
+    $author = ""
+    if ($null -ne $Comment.author) { $author = [string]$Comment.author.login }
+    if ($author -notin $TrustedRunnerResultAuthors -or
+        ([string]$Comment.body).IndexOf(
+            $FinalReviewEvidenceMarker,
+            [System.StringComparison]::Ordinal
+        ) -lt 0) {
+        return $false
+    }
+
+    try {
+        $envelope = ConvertFrom-FirstJsonObjectAfterMarker `
+            -Body ([string]$Comment.body) `
+            -Marker $FinalReviewEvidenceMarker
+        if ([string]$envelope.protocol -cne $FinalReviewEvidenceProtocol -or
+            [string]$envelope.repository -cne $Repo -or
+            [string]$envelope.issue -cne [string]$IssueNumber -or
+            [string]$envelope.action -cne "read-final-audit" -or
+            -not (Test-ReadFinalAuditRequestIdSafe -Value ([string]$envelope.request_id)) -or
+            [string]$envelope.parent_comment_id -cne $ParentCommentId -or
+            -not ($envelope.sequence -is [int] -or $envelope.sequence -is [long]) -or
+            -not ($envelope.chunk_count -is [int] -or $envelope.chunk_count -is [long]) -or
+            [long]$envelope.sequence -lt 1 -or
+            [long]$envelope.chunk_count -lt 1 -or
+            [long]$envelope.sequence -gt [long]$envelope.chunk_count -or
+            [long]$envelope.chunk_count -gt $FinalReviewEvidenceMaxChunks -or
+            [string]$envelope.payload_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$envelope.chunk_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$envelope.encoding -cne "base64-utf8-json" -or
+            [string]::IsNullOrWhiteSpace([string]$envelope.data_base64)) {
+            return $false
+        }
+        $chunk = [Convert]::FromBase64String([string]$envelope.data_base64)
+        if ($chunk.Length -gt $FinalReviewEvidenceChunkBytes -or
+            (Get-Sha256Bytes -Bytes $chunk) -cne [string]$envelope.chunk_sha256) {
+            return $false
+        }
+        return $true
+    }
+    catch { return $false }
 }
 
 function Test-ReadFinalAuditRequestIdSafe {
@@ -1322,8 +1397,9 @@ function Invoke-ReadFinalAuditMode {
     if (-not [bool]$admission.admitted) { throw "read_final_audit_continuation_rejected:$(@($admission.reasons) -join ',')" }
     $exactParent = Get-ExactFinalReviewParentComment -ParentCommentId $TrustedCandidateContinuationCommentId
     foreach ($comment in @($issueComments)) {
-        if (([string]$comment.body).IndexOf($FinalReviewEvidenceMarker, [System.StringComparison]::Ordinal) -ge 0 -and
-            ([string]$comment.body).IndexOf(('"parent_comment_id":"' + $TrustedCandidateContinuationCommentId + '"'), [System.StringComparison]::Ordinal) -ge 0) {
+        if (Test-TrustedFinalReviewEvidenceCommentForParent `
+            -Comment $comment `
+            -ParentCommentId $TrustedCandidateContinuationCommentId) {
             throw "read_final_audit_already_published_or_ambiguous"
         }
     }
@@ -2851,6 +2927,7 @@ function New-RunnerResultSummaryJson {
             -RuntimeContractBinding $RuntimeContractBinding `
             -ObservableEvidence "unverified"
     }
+    $changedFiles = @(Convert-FileTextToArray -Text $ChangedFilesText)
     $candidateManifestVerified = $null -ne $CandidateEvidenceManifest -and
         [string]::Equals([string]$CandidateEvidenceManifest.status, "verified", [System.StringComparison]::Ordinal) -and
         -not [string]::IsNullOrWhiteSpace([string]$CandidateEvidenceManifest.fingerprint) -and
@@ -2859,8 +2936,18 @@ function New-RunnerResultSummaryJson {
             [string]$ExecutionAssurance.candidate_manifest_fingerprint,
             [System.StringComparison]::Ordinal
         )
+    $candidateManifestStateSupported = $candidateManifestVerified -and
+        @($CandidateEvidenceManifest.entries).Count -gt 0 -and
+        @($CandidateEvidenceManifest.entries | Where-Object {
+            [string]$_.state -cne "regular_file"
+        }).Count -eq 0
+    $candidateStatusSupported = Test-ReviewerReadyCandidateStatusSupported `
+        -Status $FinalStatus `
+        -ChangedFiles $changedFiles
     $candidateSnapshotEligible = $ApprovalTokenGenerated -and
         $candidateManifestVerified -and
+        $candidateManifestStateSupported -and
+        $candidateStatusSupported -and
         (Test-ApprovalContextAllowed `
             -RuntimeContractBinding $RuntimeContractBinding `
             -FinalIndexClean $FinalIndexClean `
@@ -2868,7 +2955,6 @@ function New-RunnerResultSummaryJson {
             -ExecutionAssurance $ExecutionAssurance)
 
     $issueValue = [int]$IssueNumberText
-    $changedFiles = @(Convert-FileTextToArray -Text $ChangedFilesText)
     $finalClean = [string]::IsNullOrWhiteSpace($FinalStatus) -or $FinalStatus.Trim() -eq "(clean)"
     $codexStatus = if ($CodexExitCode -eq "0") { "passed" } elseif ($CodexExitCode -like "not run*") { "not_run" } else { "failed" }
 

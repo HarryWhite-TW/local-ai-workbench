@@ -170,7 +170,12 @@ def ready(state_dir=None, *, assert_lock=False, **overrides):
     return checker
 
 
-def init_lawb_git_repo(path: Path, *, branch: str) -> str:
+def init_lawb_git_repo(
+    path: Path,
+    *,
+    branch: str,
+    repository: str = DEFAULT_REPOSITORY,
+) -> str:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-b", branch, str(path)], check=True)
     subprocess.run(["git", "-C", str(path), "config", "user.name", "B3 Test"], check=True)
@@ -189,7 +194,7 @@ def init_lawb_git_repo(path: Path, *, branch: str) -> str:
             "remote",
             "add",
             "origin",
-            "https://github.com/HarryWhite-TW/local-ai-workbench.git",
+            f"https://github.com/{repository}.git",
         ],
         check=True,
     )
@@ -2177,6 +2182,133 @@ def test_successful_reviewbundle_persists_reviewer_state_before_settlement(tmp_p
     assert not (state_root / "repository_routing.json").exists()
     assert (state_root / "processed_requests.jsonl").exists()
     assert not (state_root / "in_flight.json").exists()
+
+
+def test_successful_hag_reviewbundle_persists_candidate_without_lawb_rotation(
+    tmp_path, monkeypatch
+):
+    candidate_root = tmp_path / "hag-candidate"
+    branch = "feature/hag-review-candidate"
+    request_id = "hag-review-candidate-request"
+    candidate_head = init_lawb_git_repo(
+        candidate_root,
+        branch=branch,
+        repository=HAG_REPOSITORY,
+    )
+    binding = review_candidate_binding("reviewer-evidence.txt")
+    control = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    repo=HAG_REPOSITORY,
+                    target_issue="1",
+                    target_dispatch_request_id=request_id,
+                    request_id=request_id,
+                    branch=branch,
+                    head=candidate_head,
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            )
+        ]
+    )
+    target = FakeGitHub(
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(
+                    repo=HAG_REPOSITORY,
+                    issue="1",
+                    request_id=request_id,
+                    branch=branch,
+                    head=candidate_head,
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            )
+        ]
+    )
+
+    def invoker(**kwargs):
+        (candidate_root / "reviewer-evidence.txt").write_text(
+            "reviewer-ready HAG evidence\n", encoding="utf-8"
+        )
+        target.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(
+                    repo=HAG_REPOSITORY,
+                    issue=1,
+                    request_id=request_id,
+                    branch=branch,
+                    head=candidate_head,
+                    action="run-reviewbundle",
+                    **binding,
+                ),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    def unexpected_lawb_rotation(**kwargs):
+        raise AssertionError("HAG completion must not rotate a LAWB successor")
+
+    monkeypatch.setattr(
+        bridge_operator_b3,
+        "_prepare_next_lawb_execution_target",
+        unexpected_lawb_rotation,
+    )
+    state_root = tmp_path / "state"
+    summary = run_bridge_operator_b3_dry_run_loop(
+        repo_root=candidate_root,
+        control_repo_root=candidate_root,
+        repository=HAG_REPOSITORY,
+        state_dir=state_root,
+        github_client=control,
+        target_github_client=target,
+        local_checker=ready(
+            state_root,
+            repo_root=str(candidate_root.resolve()),
+            branch=branch,
+            head=candidate_head,
+            origin_repository=HAG_REPOSITORY,
+            staged_clean=True,
+        ),
+        now_utc=NOW,
+        sleeper=lambda seconds: None,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=30,
+        operator_session_id=SESSION_A,
+    )
+
+    candidate = json.loads(
+        (state_root / "review_candidate.json").read_text(encoding="utf-8")
+    )
+    assert summary["result"] == "success"
+    assert summary["review_candidate_state"] == "written"
+    assert candidate["target_repository"] == HAG_REPOSITORY
+    assert candidate["target_repo_root"] == str(candidate_root.resolve())
+    assert (state_root / "processed_requests.jsonl").exists()
+    assert not (state_root / "repository_routing.json").exists()
+
+
+def test_hag_review_candidate_inspection_rejects_lawb_origin(tmp_path):
+    candidate_root = tmp_path / "wrong-origin"
+    branch = "feature/hag-review-candidate"
+    candidate_head = init_lawb_git_repo(candidate_root, branch=branch)
+
+    candidate, error = bridge_operator_b3._inspect_review_candidate_worktree(
+        candidate_root,
+        expected_repository=HAG_REPOSITORY,
+        expected_branch=branch,
+        expected_head=candidate_head,
+        expected_changed_files=["tracked.txt"],
+    )
+
+    assert candidate is None
+    assert error == "execution_target_origin_mismatch"
 
 
 def test_reviewer_candidate_transition_prepares_local_clean_successor(tmp_path):

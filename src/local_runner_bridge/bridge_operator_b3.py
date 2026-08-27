@@ -1066,6 +1066,9 @@ def _persist_review_candidate_if_available(
         return "review_candidate_local_root_unavailable"
     candidate, candidate_error = _inspect_review_candidate_worktree(
         target_repo_root,
+        expected_repository=str(
+            b1_summary.get("target_repository", b1_summary.get("repository"))
+        ),
         expected_branch=str(b1_summary["expected_branch"]),
         expected_head=str(b1_summary["expected_head"]).lower(),
         expected_changed_files=changed_files,
@@ -1160,7 +1163,11 @@ def _git_stdout(root: Path, *arguments: str) -> tuple[str | None, str | None]:
     return completed.stdout.strip(), None
 
 
-def _inspect_clean_lawb_worktree(root: Path) -> tuple[dict[str, str] | None, str | None]:
+def _inspect_clean_lawb_worktree(
+    root: Path,
+    *,
+    expected_repository: str = DEFAULT_REPOSITORY,
+) -> tuple[dict[str, str] | None, str | None]:
     if not root.is_dir():
         return None, "execution_target_root_unavailable"
     top_level, error = _git_stdout(root, "rev-parse", "--show-toplevel")
@@ -1172,7 +1179,11 @@ def _inspect_clean_lawb_worktree(root: Path) -> tuple[dict[str, str] | None, str
     except OSError:
         return None, "execution_target_git_root_mismatch"
     origin, error = _git_stdout(root, "remote", "get-url", "origin")
-    if error is not None or origin is None or _normalized_lawb_origin(origin) != DEFAULT_REPOSITORY.casefold():
+    if (
+        error is not None
+        or origin is None
+        or _normalized_lawb_origin(origin) != expected_repository.casefold()
+    ):
         return None, "execution_target_origin_mismatch"
     branch, error = _git_stdout(root, "branch", "--show-current")
     if error is not None or branch is None or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch) is None:
@@ -1198,11 +1209,15 @@ def _inspect_clean_lawb_worktree(root: Path) -> tuple[dict[str, str] | None, str
 def _inspect_review_candidate_worktree(
     root: Path,
     *,
+    expected_repository: str,
     expected_branch: str,
     expected_head: str,
     expected_changed_files: tuple[str, ...] | list[str],
 ) -> tuple[dict[str, str] | None, str | None]:
-    candidate, error = _inspect_clean_lawb_worktree(root)
+    candidate, error = _inspect_clean_lawb_worktree(
+        root,
+        expected_repository=expected_repository,
+    )
     if error is not None or candidate is None:
         return None, error or "review_candidate_local_binding_invalid"
     if candidate["branch"] != expected_branch:

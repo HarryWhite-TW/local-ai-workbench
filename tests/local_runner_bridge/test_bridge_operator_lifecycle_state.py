@@ -71,7 +71,7 @@ def in_flight_payload() -> dict:
     )
 
 
-def review_candidate_payload(**overrides) -> dict:
+def review_candidate_payload(*, target_repo_root: str, **overrides) -> dict:
     value = new_review_candidate_payload(
         target_repository="HarryWhite-TW/local-ai-workbench",
         target_issue=151,
@@ -82,7 +82,7 @@ def review_candidate_payload(**overrides) -> dict:
         terminal_result_comment_id="5313180923",
         review_bundle_comment_id="5313180922",
         candidate_manifest_fingerprint="a" * 64,
-        target_repo_root=r"C:\review-candidates\candidate-151",
+        target_repo_root=target_repo_root,
         recorded_at=NOW,
     )
     value.update(overrides)
@@ -310,19 +310,23 @@ def test_durable_jsonl_append_fsyncs_and_preserves_records(tmp_path, monkeypatch
 
 def test_review_candidate_record_is_strict_and_replacement_is_request_bound(tmp_path):
     path = tmp_path / "review_candidate.json"
-    first = review_candidate_payload()
+    candidate_root = str((tmp_path / "candidate-151").resolve())
+    first = review_candidate_payload(target_repo_root=candidate_root)
 
     assert write_or_replace_review_candidate(
         path, first, operator_session_id=SESSION
     ) == "written"
     assert load_review_candidate(path) == first
     assert first["schema_version"] == 2
-    assert first["target_repo_root"] == r"C:\review-candidates\candidate-151"
+    assert first["target_repo_root"] == candidate_root
     assert write_or_replace_review_candidate(
         path, first, operator_session_id=SESSION
     ) == "already_present"
 
-    conflicting = review_candidate_payload(candidate_manifest_fingerprint="b" * 64)
+    conflicting = review_candidate_payload(
+        target_repo_root=candidate_root,
+        candidate_manifest_fingerprint="b" * 64,
+    )
     with pytest.raises(LifecycleEvidenceError, match="review_candidate_conflict"):
         write_or_replace_review_candidate(
             path, conflicting, operator_session_id=SESSION
