@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import subprocess
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
@@ -52,12 +54,14 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     inspect_lock_file,
     load_in_flight,
     new_in_flight_payload,
+    new_review_candidate_payload,
     parse_utc,
     quarantine_lock,
     remove_exact_json,
     updated_in_flight_payload,
     validate_process_identity,
     validate_session_id,
+    write_or_replace_review_candidate,
     write_durable_json,
     write_exclusive_json,
 )
@@ -72,12 +76,18 @@ STATE_PROTOCOL = "lawb.bridge_operator_b3_state.v1"
 OBSERVATION_PROTOCOL = "lawb.bridge_operator_b3_dry_run_observation.v1"
 PROCESSED_REQUEST_PROTOCOL = "lawb.bridge_operator_b3_processed_request.v1"
 FAILURE_PROTOCOL = "lawb.bridge_operator_b3_failure.v1"
+REVIEW_CANDIDATE_FILENAME = "review_candidate.json"
+ROUTING_FILENAME = "repository_routing.json"
+ROUTING_PROTOCOL_V1 = "lawb.bridge_operator_local_routing.v1"
+ROUTING_PROTOCOL_V2 = "lawb.bridge_operator_local_routing.v2"
+EXECUTION_TARGETS_DIRECTORY = "execution-targets"
 DISPATCHER_OUTCOME_COMPLETION_SOURCE = "dispatcher_outcome"
 B3A_MODE = "b3a-dry-run"
 B3B_MODE = "b3b-maybe-status-check"
 B3C_MODE = "b3c-run-reviewbundle"
 B3B_ALLOWED_ACTION = "maybe-status-check"
 B3C_ALLOWED_ACTION = "run-reviewbundle"
+B3C_FINAL_AUDIT_ACTION = "read-final-audit"
 SAME_NODE_LAUNCHER_BINDING_ENV = "LAWB_SAME_NODE_CONTINUATION_BINDING"
 SAME_NODE_LAUNCHER_BINDING_PROTOCOL = (
     "lawb.same_node_exact_candidate_continuation_launcher_binding.v1"
@@ -281,6 +291,8 @@ def run_bridge_operator_b3_dry_run_loop(
             )
             recovery = _recover_existing_in_flight(
                 state_root=state_root,
+                control_repo_root=control_root,
+                target_repo_root=target_root,
                 in_flight=existing_in_flight,
                 repository=repository,
                 client=target_client,
@@ -1011,6 +1023,401 @@ def _terminal_evidence(reconciliation: Any, now: datetime) -> dict[str, Any]:
     }
 
 
+def _persist_review_candidate_if_available(
+    *,
+    state_root: Path,
+    b1_summary: dict[str, Any],
+    reconciliation: Any,
+    now: datetime,
+    operator_session_id: str,
+    summary: dict[str, Any],
+    control_repo_root: Path | None = None,
+    target_repo_root: Path | None = None,
+) -> str | None:
+    """Persist only an eligible candidate whose trusted evidence matches local Git."""
+    if (
+        b1_summary.get("requested_action") != B3C_ALLOWED_ACTION
+        or reconciliation.decision != ReconciliationDecision.COMPLETED
+        or reconciliation.terminal_result != "success"
+    ):
+        return None
+    binding_status = getattr(reconciliation, "review_candidate_binding_status", "absent")
+    if binding_status == "absent":
+        summary["review_candidate_state"] = "legacy_terminal_without_binding"
+        return None
+    if binding_status != "valid" or not reconciliation.review_candidate_binding:
+        _block(summary, "review_candidate_binding_malformed")
+        return "review_candidate_binding_malformed"
+    binding = reconciliation.review_candidate_binding
+    if binding["candidate_acceptance"] == "ineligible":
+        summary["review_candidate_state"] = (
+            "retained_ineligible"
+            if (state_root / REVIEW_CANDIDATE_FILENAME).exists()
+            else "not_written_ineligible"
+        )
+        summary["next_task_availability"] = "unchanged"
+        return None
+    changed_files = binding["changed_files"]
+    if not changed_files:
+        _block(summary, "review_candidate_eligibility_invalid")
+        return "review_candidate_eligibility_invalid"
+    if target_repo_root is None:
+        _block(summary, "review_candidate_local_root_unavailable")
+        return "review_candidate_local_root_unavailable"
+    candidate, candidate_error = _inspect_review_candidate_worktree(
+        target_repo_root,
+        expected_branch=str(b1_summary["expected_branch"]),
+        expected_head=str(b1_summary["expected_head"]).lower(),
+        expected_changed_files=changed_files,
+    )
+    if candidate_error is not None or candidate is None:
+        reason = candidate_error or "review_candidate_local_binding_invalid"
+        _block(summary, reason)
+        return reason
+    try:
+        payload = new_review_candidate_payload(
+            target_repository=str(b1_summary.get("target_repository", b1_summary.get("repository"))),
+            target_issue=int(b1_summary["target_issue"]),
+            dispatch_request_id=str(b1_summary["target_dispatch_request_id"]),
+            action=B3C_ALLOWED_ACTION,
+            branch=str(b1_summary["expected_branch"]),
+            expected_head=str(b1_summary["expected_head"]).lower(),
+            terminal_result_comment_id=str(reconciliation.matched_evidence_ids[0]),
+            review_bundle_comment_id=binding["review_bundle_comment_id"],
+            candidate_manifest_fingerprint=binding["candidate_manifest_fingerprint"],
+            target_repo_root=candidate["root"],
+            recorded_at=now,
+        )
+        state = write_or_replace_review_candidate(
+            state_root / REVIEW_CANDIDATE_FILENAME,
+            payload,
+            operator_session_id=operator_session_id,
+        )
+    except (KeyError, TypeError, ValueError, OSError, LifecycleEvidenceError):
+        _block(summary, "review_candidate_write_failed")
+        return "review_candidate_write_failed"
+    summary["review_candidate_state"] = state
+    summary["review_candidate_parent_comment_id"] = binding["review_bundle_comment_id"]
+    if (
+        payload["target_repository"] == DEFAULT_REPOSITORY
+        and control_repo_root is not None
+        and target_repo_root is not None
+    ):
+        routing_path = state_root / ROUTING_FILENAME
+        admission, admission_reason = _availability_routing_admission(
+            routing_path, target_repo_root
+        )
+        if admission == "not_configured":
+            summary["next_task_availability"] = "not_configured"
+        elif admission_reason is not None:
+            summary["next_task_availability"] = "unavailable"
+            summary["next_task_availability_reason"] = admission_reason
+        else:
+            transition_error = _prepare_next_lawb_execution_target(
+                state_root=state_root,
+                control_repo_root=control_repo_root,
+                candidate_repo_root=target_repo_root,
+                operator_session_id=operator_session_id,
+                summary=summary,
+            )
+            if transition_error is not None:
+                summary["next_task_availability"] = "unavailable"
+                summary["next_task_availability_reason"] = transition_error
+            else:
+                summary["next_task_availability"] = "ready"
+    return None
+
+
+def _normalized_lawb_origin(origin: str) -> str | None:
+    value = origin.strip()
+    match = re.fullmatch(
+        r"https://github\.com/([^/]+/[^/]+?)(?:\.git)?/?", value, re.IGNORECASE
+    )
+    if match is None:
+        match = re.fullmatch(
+            r"(?:ssh://)?git@github\.com[:/]([^/]+/[^/]+?)(?:\.git)?", value,
+            re.IGNORECASE,
+        )
+    return None if match is None else match.group(1).casefold()
+
+
+def _git_stdout(root: Path, *arguments: str) -> tuple[str | None, str | None]:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return None, "execution_target_git_unavailable"
+    if completed.returncode != 0:
+        return None, "execution_target_git_unavailable"
+    return completed.stdout.strip(), None
+
+
+def _inspect_clean_lawb_worktree(root: Path) -> tuple[dict[str, str] | None, str | None]:
+    if not root.is_dir():
+        return None, "execution_target_root_unavailable"
+    top_level, error = _git_stdout(root, "rev-parse", "--show-toplevel")
+    if error is not None or top_level is None:
+        return None, "execution_target_not_git_repository"
+    try:
+        if Path(top_level).resolve() != root.resolve():
+            return None, "execution_target_git_root_mismatch"
+    except OSError:
+        return None, "execution_target_git_root_mismatch"
+    origin, error = _git_stdout(root, "remote", "get-url", "origin")
+    if error is not None or origin is None or _normalized_lawb_origin(origin) != DEFAULT_REPOSITORY.casefold():
+        return None, "execution_target_origin_mismatch"
+    branch, error = _git_stdout(root, "branch", "--show-current")
+    if error is not None or branch is None or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", branch) is None:
+        return None, "execution_target_branch_unreadable"
+    head, error = _git_stdout(root, "rev-parse", "HEAD")
+    if error is not None or head is None or re.fullmatch(r"[0-9a-fA-F]{40}", head) is None:
+        return None, "execution_target_head_unreadable"
+    status, error = _git_stdout(root, "status", "--porcelain=v1", "--untracked-files=all")
+    if error is not None or status is None:
+        return None, "execution_target_status_unreadable"
+    staged, error = _git_stdout(root, "diff", "--cached", "--name-only")
+    if error is not None or staged is None:
+        return None, "execution_target_staged_status_unreadable"
+    return {
+        "root": str(root.resolve()),
+        "branch": branch,
+        "head": head.lower(),
+        "status": status,
+        "staged": staged,
+    }, None
+
+
+def _inspect_review_candidate_worktree(
+    root: Path,
+    *,
+    expected_branch: str,
+    expected_head: str,
+    expected_changed_files: tuple[str, ...] | list[str],
+) -> tuple[dict[str, str] | None, str | None]:
+    candidate, error = _inspect_clean_lawb_worktree(root)
+    if error is not None or candidate is None:
+        return None, error or "review_candidate_local_binding_invalid"
+    if candidate["branch"] != expected_branch:
+        return None, "review_candidate_branch_mismatch"
+    if candidate["head"] != expected_head:
+        return None, "review_candidate_head_mismatch"
+    if candidate["staged"]:
+        return None, "review_candidate_staged_changes_present"
+    if not candidate["status"]:
+        return None, "review_candidate_worktree_clean"
+    unstaged, error = _git_stdout(root, "diff", "--name-only", "--")
+    if error is not None or unstaged is None:
+        return None, "review_candidate_status_unreadable"
+    untracked, error = _git_stdout(
+        root, "ls-files", "--others", "--exclude-standard"
+    )
+    if error is not None or untracked is None:
+        return None, "review_candidate_status_unreadable"
+    actual_files = tuple(
+        sorted(
+            {
+                path
+                for path in (*unstaged.splitlines(), *untracked.splitlines())
+                if path
+            }
+        )
+    )
+    if actual_files != tuple(sorted(expected_changed_files)):
+        return None, "review_candidate_changed_files_mismatch"
+    return candidate, None
+
+
+def _routing_binds_review_candidate(
+    routing_path: Path, candidate_root: Path
+) -> str | None:
+    try:
+        raw = routing_path.read_bytes()
+        value = json.loads(raw.decode("utf-8", errors="strict"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return "execution_target_routing_configuration_invalid"
+    if not isinstance(value, dict) or value.get("repository") != DEFAULT_REPOSITORY:
+        return "execution_target_routing_ambiguous"
+    if value.get("protocol") == ROUTING_PROTOCOL_V1:
+        if set(value) != {"protocol", "repository", "target_repo_root"}:
+            return "execution_target_routing_ambiguous"
+        configured_root = value.get("target_repo_root")
+        if not isinstance(configured_root, str):
+            return "execution_target_routing_configuration_invalid"
+        try:
+            if Path(configured_root).resolve() != candidate_root.resolve():
+                return "execution_target_routing_ambiguous"
+        except OSError:
+            return "execution_target_routing_configuration_invalid"
+        return None
+    if value.get("protocol") != ROUTING_PROTOCOL_V2 or set(value) != {
+        "protocol",
+        "repository",
+        "selected_target",
+    }:
+        return "execution_target_routing_ambiguous"
+    selected = value.get("selected_target")
+    if not isinstance(selected, dict) or set(selected) != {
+        "selection_id",
+        "target_repo_root",
+        "branch",
+        "head",
+    }:
+        return "execution_target_routing_configuration_invalid"
+    if (
+        not isinstance(selected.get("selection_id"), str)
+        or not selected["selection_id"]
+        or not isinstance(selected.get("target_repo_root"), str)
+        or not isinstance(selected.get("branch"), str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", selected["branch"]) is None
+        or not isinstance(selected.get("head"), str)
+        or re.fullmatch(r"[0-9a-fA-F]{40}", selected["head"]) is None
+    ):
+        return "execution_target_routing_configuration_invalid"
+    try:
+        if Path(selected["target_repo_root"]).resolve() != candidate_root.resolve():
+            return "execution_target_routing_v2_root_mismatch"
+    except OSError:
+        return "execution_target_routing_configuration_invalid"
+    candidate, candidate_error = _inspect_clean_lawb_worktree(candidate_root)
+    if candidate_error is not None:
+        return candidate_error
+    if candidate is None:
+        return "execution_target_candidate_unavailable"
+    if selected["branch"] != candidate["branch"]:
+        return "execution_target_routing_v2_branch_mismatch"
+    if selected["head"].lower() != candidate["head"]:
+        return "execution_target_routing_v2_head_mismatch"
+    return None
+
+
+def _availability_routing_admission(
+    routing_path: Path, candidate_root: Path
+) -> tuple[str, str | None]:
+    """Admit an availability transition only from trusted local routing."""
+    if not routing_path.exists():
+        return "not_configured", None
+    reason = _routing_binds_review_candidate(routing_path, candidate_root)
+    if reason is not None:
+        return "configured_unavailable", reason
+    return "configured", None
+
+
+def _prepare_next_lawb_execution_target(
+    *,
+    state_root: Path,
+    control_repo_root: Path,
+    candidate_repo_root: Path,
+    operator_session_id: str,
+    summary: dict[str, Any],
+) -> str | None:
+    """Prepare one local-only successor for a preserved reviewer candidate."""
+    candidate, candidate_error = _inspect_clean_lawb_worktree(candidate_repo_root)
+    if candidate_error is not None:
+        return candidate_error
+    if candidate is None:
+        return "execution_target_candidate_unavailable"
+    if not candidate["status"]:
+        summary["execution_target_transition"] = "not_required"
+        return None
+    if candidate["staged"]:
+        return "execution_target_candidate_staged"
+
+    routing_path = state_root / ROUTING_FILENAME
+    routing_error = _routing_binds_review_candidate(routing_path, candidate_repo_root)
+    if routing_error is not None:
+        return routing_error
+
+    control, control_error = _inspect_clean_lawb_worktree(control_repo_root)
+    if control_error is not None:
+        return "execution_target_control_" + control_error.removeprefix("execution_target_")
+    if control is None or control["status"] or control["staged"]:
+        return "execution_target_control_not_clean"
+
+    selection_material = "\n".join(
+        (candidate["root"], candidate["branch"], candidate["head"], candidate["status"])
+    ).encode("utf-8")
+    selection_id = "candidate-" + hashlib.sha256(selection_material).hexdigest()[:16]
+    branch = "codex/workflow-execution-" + selection_id.removeprefix("candidate-")
+    target_root = state_root / EXECUTION_TARGETS_DIRECTORY / selection_id
+    try:
+        target_root.parent.mkdir(parents=True, exist_ok=True)
+        if target_root.parent.resolve().parent != state_root.resolve():
+            return "execution_target_path_invalid"
+    except OSError:
+        return "execution_target_path_unavailable"
+
+    transition = "selected"
+    if not target_root.exists():
+        try:
+            completed = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(control_repo_root),
+                    "worktree",
+                    "add",
+                    "-b",
+                    branch,
+                    str(target_root),
+                    control["head"],
+                ],
+                cwd=str(control_repo_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="strict",
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError, UnicodeError):
+            return "execution_target_prepare_unavailable"
+        if completed.returncode != 0:
+            return "execution_target_prepare_failed"
+        transition = "prepared"
+
+    target, target_error = _inspect_clean_lawb_worktree(target_root)
+    if target_error is not None or target is None:
+        return target_error or "execution_target_validation_failed"
+    if target["branch"] != branch:
+        return "execution_target_branch_mismatch"
+    if target["head"] != control["head"]:
+        return "execution_target_head_mismatch"
+    if target["status"]:
+        return "execution_target_worktree_dirty"
+    if target["staged"]:
+        return "execution_target_staged_changes_present"
+
+    routing = {
+        "protocol": ROUTING_PROTOCOL_V2,
+        "repository": DEFAULT_REPOSITORY,
+        "selected_target": {
+            "selection_id": selection_id,
+            "target_repo_root": target["root"],
+            "branch": target["branch"],
+            "head": target["head"],
+        },
+    }
+    try:
+        write_durable_json(
+            routing_path,
+            routing,
+            operator_session_id=operator_session_id,
+        )
+    except (OSError, LifecycleEvidenceError):
+        return "execution_target_routing_write_failed"
+    summary["execution_target_transition"] = transition
+    summary["execution_target_selection_id"] = selection_id
+    return None
+
+
 def _dispatcher_rejection_terminal(request_id: str, now: datetime) -> dict[str, Any]:
     return {
         "evidence_id": f"local-dispatcher:{request_id}",
@@ -1111,6 +1518,8 @@ def _b1_identity_from_in_flight(
 def _recover_existing_in_flight(
     *,
     state_root: Path,
+    control_repo_root: Path,
+    target_repo_root: Path,
     in_flight: dict[str, Any],
     repository: str,
     client: Any,
@@ -1255,6 +1664,19 @@ def _recover_existing_in_flight(
         outcome["reason"] = "dispatched_in_flight_uncertain"
         return outcome
 
+    review_candidate_error = _persist_review_candidate_if_available(
+        state_root=state_root,
+        b1_summary=_b1_identity_from_in_flight(in_flight),
+        reconciliation=reconciliation,
+        now=now,
+        operator_session_id=str(in_flight["operator_session_id"]),
+        summary=summary,
+        control_repo_root=control_repo_root,
+        target_repo_root=target_repo_root,
+    )
+    if review_candidate_error is not None:
+        outcome["reason"] = review_candidate_error
+        return outcome
     try:
         _append_reconciled_processed_request(
             state_root,
@@ -1414,6 +1836,7 @@ def _delegate_b3_request(
     if summary.get("mode") == B3C_MODE and action not in {
         B3B_ALLOWED_ACTION,
         B3C_ALLOWED_ACTION,
+        B3C_FINAL_AUDIT_ACTION,
     }:
         _block(summary, "unsupported_action_in_b3c")
         return "unsupported_action_in_b3c"
@@ -1436,7 +1859,7 @@ def _delegate_b3_request(
     if readiness.get("staged_clean") is not True:
         _block(summary, "staged_files_present")
         return "staged_files_present"
-    if readiness.get("clean") is not True:
+    if readiness.get("clean") is not True and action == B3C_ALLOWED_ACTION:
         binding, binding_error = _validate_same_node_launcher_binding(
             repository=repository,
             b1_summary=b1_summary,
@@ -1491,6 +1914,18 @@ def _delegate_b3_request(
         ReconciliationDecision.COMPLETED,
         ReconciliationDecision.SETTLED_NON_SUCCESS,
     }:
+        review_candidate_error = _persist_review_candidate_if_available(
+            state_root=state_root,
+            b1_summary=b1_summary,
+            reconciliation=reconciliation,
+            now=now,
+            operator_session_id=operator_session_id,
+            summary=summary,
+            control_repo_root=Path(control_repo_root),
+            target_repo_root=Path(repo_root),
+        )
+        if review_candidate_error is not None:
+            return review_candidate_error
         _append_reconciled_processed_request(
             state_root,
             b1_summary,
@@ -1774,6 +2209,18 @@ def _delegate_b3_request(
     summary["target_result_author"] = reconciliation.terminal_author
     summary["target_result_verified"] = True
     summary["dispatcher_result_writeback_verified"] = True
+    review_candidate_error = _persist_review_candidate_if_available(
+        state_root=state_root,
+        b1_summary=b1_summary,
+        reconciliation=reconciliation,
+        now=now,
+        operator_session_id=operator_session_id,
+        summary=summary,
+        control_repo_root=Path(control_repo_root),
+        target_repo_root=Path(repo_root),
+    )
+    if review_candidate_error is not None:
+        return review_candidate_error
     _append_processed_request(
         state_root,
         b1_summary,
@@ -2360,6 +2807,8 @@ def _write_state(state_dir: Path, status: str, summary: dict[str, Any], now: dat
         "operator_session_id": summary.get("operator_session_id"),
         "started_at_utc": summary.get("started_at_utc"),
         "valid_until_utc": summary.get("valid_until_utc"),
+        "next_task_availability": summary.get("next_task_availability"),
+        "next_task_availability_reason": summary.get("next_task_availability_reason"),
     }
     _write_json(state_dir / "state.json", payload)
 
@@ -2393,6 +2842,8 @@ def _write_heartbeat(
         "configured_timeout_seconds": summary.get(
             "configured_timeout_seconds"
         ),
+        "next_task_availability": summary.get("next_task_availability"),
+        "next_task_availability_reason": summary.get("next_task_availability_reason"),
     }
     _write_json(state_dir / "heartbeat.json", payload)
 

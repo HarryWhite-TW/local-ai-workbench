@@ -30,7 +30,7 @@ SUPPORTED_CONTROL_RELAY_ISSUES = (
 TRUSTED_ACTORS = ("HarryWhite-TW",)
 SAME_NODE_CONTINUATION_PREFIX = "same_node_exact_candidate_continuation_v1:parent_comment_id="
 RUNNER_RESULT_MARKER = "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1"
-ALLOWED_ACTIONS = ("maybe-status-check", "run-reviewbundle")
+ALLOWED_ACTIONS = ("maybe-status-check", "run-reviewbundle", "read-final-audit")
 UTC_BASIC_FORMAT = "%Y%m%dT%H%M%SZ"
 CURRENT = "CURRENT"
 CONSUMED = "CONSUMED"
@@ -751,12 +751,12 @@ def _validate_local_readiness(
     if readiness.head != fields["head"]:
         _block(summary, "wrong_head")
     if (
-        fields["action"] == "run-reviewbundle"
+        fields["action"] in {"run-reviewbundle", "read-final-audit"}
         and readiness.clean is not True
         and not continuation_admitted
     ):
         _block(summary, "dirty_repository")
-    if fields["action"] == "run-reviewbundle" and readiness.staged_clean is not True:
+    if fields["action"] in {"run-reviewbundle", "read-final-audit"} and readiness.staged_clean is not True:
         _block(summary, "staged_files_present")
     if not readiness.gh_available:
         _block(summary, "missing_github_cli")

@@ -734,3 +734,44 @@ def test_request_object_is_not_mutated() -> None:
     resolve_durable_completion(REQUEST, provider, TRUSTED_AUTHORS)
 
     assert REQUEST == before
+
+
+@pytest.mark.parametrize(
+    ("binding", "expected_status"),
+    [
+        (
+            {
+                "review_bundle_comment_id": "5313180922",
+                "candidate_manifest_fingerprint": "a" * 64,
+                "candidate_acceptance": "eligible",
+                "changed_files": ["tracked.txt"],
+            },
+            "valid",
+        ),
+        ({"review_bundle_comment_id": "5313180922"}, "malformed"),
+        (
+            {
+                "review_bundle_comment_id": "٠١",
+                "candidate_manifest_fingerprint": "a" * 64,
+                "candidate_acceptance": "eligible",
+                "changed_files": ["tracked.txt"],
+            },
+            "malformed",
+        ),
+    ],
+)
+def test_optional_review_candidate_binding_is_surfaced_only_when_exact(
+    binding: dict[str, object], expected_status: str
+) -> None:
+    result = resolve_durable_completion(
+        REQUEST,
+        FakeProvider(read_result(comments=(make_comment("c1", extra_payload=binding),))),
+        TRUSTED_AUTHORS,
+    )
+
+    assert result.decision == ReconciliationDecision.COMPLETED
+    assert result.review_candidate_binding_status == expected_status
+    if expected_status == "valid":
+        assert result.review_candidate_binding == binding
+    else:
+        assert result.review_candidate_binding is None

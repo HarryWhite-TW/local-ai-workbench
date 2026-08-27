@@ -20,6 +20,7 @@ LAUNCHER_SOURCE = REPO_ROOT / "scripts" / "start_bridge_operator_b3c.ps1"
 EXPECTED_ORIGIN = "https://github.com/HarryWhite-TW/local-ai-workbench.git"
 HAG_ORIGIN = "https://github.com/HarryWhite-TW/human-approval-automation-gateway.git"
 ROUTING_PROTOCOL = "lawb.bridge_operator_local_routing.v1"
+ROUTING_PROTOCOL_V2 = "lawb.bridge_operator_local_routing.v2"
 ROUTING_FILE = "repository_routing.json"
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
@@ -28,6 +29,9 @@ from local_runner_bridge.bridge_operator_b1 import (  # noqa: E402
     IssueRecord,
     LocalReadiness,
     run_bridge_operator_b1_dry_run,
+)
+from local_runner_bridge.bridge_operator_b3 import (  # noqa: E402
+    _prepare_next_lawb_execution_target,
 )
 
 
@@ -587,6 +591,81 @@ def prepare_dirty_continuation_target(
     return fixture, target, parent_path, fingerprint, args
 
 
+def write_review_candidate_record(
+    state: Path,
+    *,
+    target: Path,
+    fingerprint: str,
+    terminal_id: int = 5313180923,
+    parent_id: int = 5313180922,
+    schema_version: int = 2,
+) -> tuple[Path, Path]:
+    branch = git(target, "branch", "--show-current").stdout.strip()
+    head = git(target, "rev-parse", "HEAD").stdout.strip().lower()
+    request_id = "workflow-review-candidate-287"
+    terminal_summary = {
+        "schema": "lawb.runner_result.v1",
+        "request_id": request_id,
+        "action": "run-reviewbundle",
+        "result": "success",
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "issue": 276,
+        "branch": branch,
+        "head": head,
+        "review_bundle_comment_id": str(parent_id),
+        "candidate_manifest_fingerprint": fingerprint,
+        "changed_files": [],
+    }
+    if schema_version == 2:
+        terminal_summary["candidate_acceptance"] = "eligible"
+        terminal_summary["changed_files"] = ["candidate.txt"]
+    terminal = {
+        "id": terminal_id,
+        "user": {"login": "HarryWhite-TW"},
+        "issue_url": (
+            "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/276"
+        ),
+        "body": "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1\n"
+        + json.dumps(terminal_summary, separators=(",", ":")),
+    }
+    record = {
+        "protocol": "lawb.bridge_operator_review_candidate.v1",
+        "schema_version": schema_version,
+        "target_repository": "HarryWhite-TW/local-ai-workbench",
+        "target_issue": 276,
+        "dispatch_request_id": request_id,
+        "action": "run-reviewbundle",
+        "branch": branch,
+        "expected_head": head,
+        "terminal_result_comment_id": str(terminal_id),
+        "review_bundle_comment_id": str(parent_id),
+        "candidate_manifest_fingerprint": fingerprint,
+        "recorded_at_utc": "2026-08-25T00:00:00Z",
+    }
+    if schema_version == 2:
+        record["target_repo_root"] = str(target.resolve())
+    terminal_path = state / "review-candidate-terminal.json"
+    record_path = state / "review_candidate.json"
+    terminal_path.write_text(json.dumps(terminal, separators=(",", ":")), encoding="utf-8")
+    record_path.write_text(json.dumps(record, separators=(",", ":")), encoding="utf-8")
+    return record_path, terminal_path
+
+
+def review_candidate_gh_responses(
+    terminal_path: Path, parent_path: Path
+) -> str:
+    return json.dumps(
+        {
+            "repos/HarryWhite-TW/local-ai-workbench/issues/comments/5313180923": str(
+                terminal_path
+            ),
+            "repos/HarryWhite-TW/local-ai-workbench/issues/comments/5313180922": str(
+                parent_path
+            ),
+        }
+    )
+
+
 def write_fake_bootstrap(path: Path) -> None:
     path.write_text(
         r"""
@@ -696,7 +775,9 @@ mode = os.environ.get("B3C_TEST_GH_MODE", "success")
 if method == "GET":
     if mode == "continuation_read_failure":
         raise SystemExit(7)
-    source = os.environ.get("B3C_TEST_CONTINUATION_COMMENT_JSON")
+    sources_json = os.environ.get("B3C_TEST_GH_GET_RESPONSES", "")
+    sources = json.loads(sources_json) if sources_json else {}
+    source = sources.get(endpoint) or os.environ.get("B3C_TEST_CONTINUATION_COMMENT_JSON")
     if not source:
         sys.stdout.write("{}")
     else:
@@ -1064,6 +1145,176 @@ def test_lawb_local_routing_config_selects_validated_target_and_reaches_cli(
     assert routing_path.read_bytes() == original_routing_bytes
 
 
+def test_lawb_v2_local_selection_binds_clean_target_identity_and_reaches_cli(
+    tmp_path: Path,
+):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "LAWB selected execution target"
+    init_git_repo(target, EXPECTED_ORIGIN)
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "selected target fixture")
+    git(target, "branch", "-m", "execution-target")
+    target_branch = git(target, "branch", "--show-current").stdout.strip()
+    target_head = git(target, "rev-parse", "HEAD").stdout.strip()
+    routing_path = fixture.state / ROUTING_FILE
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL_V2,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "selected_target": {
+                    "selection_id": "next-unrelated-task",
+                    "target_repo_root": str(target),
+                    "branch": target_branch,
+                    "head": target_head,
+                },
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    original_routing_bytes = routing_path.read_bytes()
+    fixture.operator_json.write_text(json.dumps({"result": "success"}), encoding="utf-8")
+
+    result, payload = fixture.run("-StartForeground", "-PublishStatus")
+    calls = read_gh_calls(fixture)
+    create_remote = status_payload(calls[0])
+    update_remote = status_payload(calls[1])
+
+    assert result.returncode == 0
+    assert payload["result"] == "completed"
+    assert payload["target_repo_root"] == str(target.resolve())
+    assert create_remote["branch"] == target_branch
+    assert create_remote["head"] == target_head
+    assert update_remote["branch"] == target_branch
+    assert update_remote["head"] == target_head
+    assert str(target) not in "\n".join(call["request_body"] for call in calls)
+    assert routing_path.read_bytes() == original_routing_bytes
+    assert not (fixture.state / "operator.lock").exists()
+    assert not (fixture.state / "in_flight.json").exists()
+
+
+def test_lawb_b3_transition_writes_selection_for_the_normal_launcher_path(
+    tmp_path: Path,
+):
+    fixture = LauncherHarness(tmp_path).create()
+    candidate = tmp_path / "preserved reviewer-ready candidate"
+    init_git_repo(candidate, EXPECTED_ORIGIN)
+    (candidate / "tracked.txt").write_text("reviewer base\n", encoding="utf-8")
+    git(candidate, "add", "tracked.txt")
+    git(candidate, "commit", "-m", "reviewer candidate")
+    git(candidate, "branch", "-m", "reviewer-ready")
+    (candidate / "reviewer-evidence.txt").write_text(
+        "preserved dirty evidence\n", encoding="utf-8"
+    )
+    routing_path = fixture.state / ROUTING_FILE
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "target_repo_root": str(candidate.resolve()),
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    assert "selected_target" not in json.loads(routing_path.read_text(encoding="utf-8"))
+
+    transition_summary: dict = {}
+    error = _prepare_next_lawb_execution_target(
+        state_root=fixture.state,
+        control_repo_root=fixture.repo,
+        candidate_repo_root=candidate,
+        operator_session_id="a" * 32,
+        summary=transition_summary,
+    )
+
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    selected = routing["selected_target"]
+    target = Path(selected["target_repo_root"])
+    fixture.operator_json.write_text(json.dumps({"result": "success"}), encoding="utf-8")
+    result, payload = fixture.run("-StartForeground")
+
+    assert error is None
+    assert transition_summary["execution_target_transition"] == "prepared"
+    assert routing["protocol"] == ROUTING_PROTOCOL_V2
+    assert target.parent.resolve() == (fixture.state / "execution-targets").resolve()
+    assert payload["result"] == "completed"
+    assert payload["target_repo_root"] == str(target.resolve())
+    assert git(target, "status", "--porcelain=v1").stdout == ""
+    assert git(target, "diff", "--cached", "--name-only").stdout == ""
+    assert (candidate / "reviewer-evidence.txt").read_text(encoding="utf-8") == (
+        "preserved dirty evidence\n"
+    )
+    assert git(candidate, "diff", "--cached", "--name-only").stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("selection", "expected_reason"),
+    [
+        (None, "lawb_routing_no_safe_target"),
+        (
+            {
+                "selection_id": "next-unrelated-task",
+                "target_repo_root": "PLACEHOLDER",
+                "branch": "wrong-branch",
+                "head": "PLACEHOLDER",
+            },
+            "lawb_routing_target_branch_mismatch",
+        ),
+        (
+            {
+                "selection_id": "next-unrelated-task",
+                "target_repo_root": "PLACEHOLDER",
+                "branch": "execution-target",
+                "head": "0" * 40,
+            },
+            "lawb_routing_target_head_mismatch",
+        ),
+    ],
+)
+def test_lawb_v2_selection_missing_or_identity_mismatch_fails_closed(
+    tmp_path: Path,
+    selection: dict | None,
+    expected_reason: str,
+):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "LAWB selected target mismatch"
+    init_git_repo(target, EXPECTED_ORIGIN)
+    (target / "tracked.txt").write_text("tracked", encoding="utf-8")
+    git(target, "add", "tracked.txt")
+    git(target, "commit", "-m", "selected target fixture")
+    git(target, "branch", "-m", "execution-target")
+    if selection is not None:
+        selection = dict(selection)
+        selection["target_repo_root"] = str(target)
+        selection["head"] = (
+            git(target, "rev-parse", "HEAD").stdout.strip()
+            if selection["head"] == "PLACEHOLDER"
+            else selection["head"]
+        )
+    (fixture.state / ROUTING_FILE).write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL_V2,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "selected_target": selection,
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = fixture.run("-StartForeground")
+
+    assert result.returncode == 2
+    assert expected_reason in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+
+
 def test_lawb_explicit_local_target_input_is_supported(tmp_path: Path):
     fixture = LauncherHarness(tmp_path).create()
     target = tmp_path / "explicit LAWB target"
@@ -1280,6 +1531,82 @@ def test_dirty_continuation_keeps_default_preflight_blocked(tmp_path: Path):
     assert not fixture.operator_log.exists()
 
 
+def test_verified_review_candidate_is_classification_only_and_stays_blocked(
+    tmp_path: Path,
+):
+    fixture, target, parent_path, fingerprint, _ = prepare_dirty_continuation_target(
+        tmp_path
+    )
+    _, terminal_path = write_review_candidate_record(
+        fixture.state, target=target, fingerprint=fingerprint
+    )
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        env=fixture.env(
+            B3C_TEST_GH_GET_RESPONSES=review_candidate_gh_responses(
+                terminal_path, parent_path
+            )
+        ),
+    )
+
+    assert result.returncode == 2
+    assert "target_repository_worktree_dirty" in payload["blocked_reasons"]
+    assert payload["review_candidate_status"] == "verified"
+    assert payload["review_candidate_reason"] == ""
+    assert payload["review_candidate_parent_comment_id"] == "5313180922"
+    assert payload["same_node_candidate_continuation"]["admitted"] is False
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+
+
+@pytest.mark.parametrize("case_name", ["malformed", "drifted"])
+def test_nonverified_review_candidate_cannot_relax_dirty_gate(
+    tmp_path: Path, case_name: str
+):
+    fixture, target, parent_path, fingerprint, _ = prepare_dirty_continuation_target(
+        tmp_path
+    )
+    record_path, terminal_path = write_review_candidate_record(
+        fixture.state, target=target, fingerprint=fingerprint
+    )
+    if case_name == "malformed":
+        record_path.write_text("{}", encoding="utf-8")
+    else:
+        (target / "candidate.txt").write_text("candidate drift\n", encoding="utf-8")
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        env=fixture.env(
+            B3C_TEST_GH_GET_RESPONSES=review_candidate_gh_responses(
+                terminal_path, parent_path
+            )
+        ),
+    )
+
+    assert result.returncode == 2
+    assert "target_repository_worktree_dirty" in payload["blocked_reasons"]
+    assert payload["review_candidate_status"] != "verified"
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+
+
+def test_review_candidate_remote_read_unavailable_is_not_admission(tmp_path: Path):
+    fixture, target, _, fingerprint, _ = prepare_dirty_continuation_target(tmp_path)
+    write_review_candidate_record(fixture.state, target=target, fingerprint=fingerprint)
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        env=fixture.env(B3C_TEST_GH_MODE="continuation_read_failure"),
+    )
+
+    assert result.returncode == 2
+    assert "target_repository_worktree_dirty" in payload["blocked_reasons"]
+    assert payload["review_candidate_status"] == "unavailable"
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+
+
 def test_exact_dirty_continuation_admits_only_fixed_b3c_handoff(tmp_path: Path):
     fixture, target, parent_path, fingerprint, args = prepare_dirty_continuation_target(
         tmp_path
@@ -1312,6 +1639,330 @@ def test_exact_dirty_continuation_admits_only_fixed_b3c_handoff(tmp_path: Path):
     assert binding["parent_comment_id"] == "5313180922"
     assert binding["candidate_manifest_fingerprint"] == fingerprint
     assert binding["is_human_approval"] is False
+    assert payload["dispatcher_invoked_directly"] is False
+    assert payload["runner_invoked_directly"] is False
+    assert payload["codex_invoked_directly"] is False
+
+
+def test_exact_continuation_uses_preserved_candidate_after_routing_advances(
+    tmp_path: Path,
+):
+    fixture, candidate_a, parent_path, fingerprint, args = (
+        prepare_dirty_continuation_target(tmp_path)
+    )
+    record_path, terminal_path = write_review_candidate_record(
+        fixture.state, target=candidate_a, fingerprint=fingerprint
+    )
+    candidate_b = tmp_path / "clean routed successor"
+    init_git_repo(candidate_b, EXPECTED_ORIGIN)
+    (candidate_b / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    git(candidate_b, "add", "tracked.txt")
+    git(candidate_b, "commit", "-m", "clean successor fixture")
+    git(candidate_b, "branch", "-m", "clean-successor")
+    candidate_b_head = git(candidate_b, "rev-parse", "HEAD").stdout.strip().lower()
+    (fixture.state / ROUTING_FILE).write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL_V2,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "selected_target": {
+                    "selection_id": "candidate-clean-successor",
+                    "target_repo_root": str(candidate_b.resolve()),
+                    "branch": "clean-successor",
+                    "head": candidate_b_head,
+                },
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    routing_before = (fixture.state / ROUTING_FILE).read_bytes()
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        *args,
+        env=fixture.env(
+            B3C_TEST_GH_GET_RESPONSES=review_candidate_gh_responses(
+                terminal_path, parent_path
+            )
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert payload["operator_invoked"] is True
+    assert payload["target_repo_root"] == str(candidate_a.resolve())
+    assert payload["target_repo_root"] != str(candidate_b.resolve())
+    assert payload["same_node_candidate_continuation"]["admitted"] is True
+    assert (fixture.state / ROUTING_FILE).read_bytes() == routing_before
+    assert json.loads(record_path.read_text(encoding="utf-8"))["target_repo_root"] == str(
+        candidate_a.resolve()
+    )
+
+
+def test_schema_v1_candidate_uses_exact_trusted_routing_for_continuation(
+    tmp_path: Path,
+):
+    fixture, candidate_a, parent_path, fingerprint, args = (
+        prepare_dirty_continuation_target(tmp_path)
+    )
+    write_review_candidate_record(
+        fixture.state,
+        target=candidate_a,
+        fingerprint=fingerprint,
+        schema_version=1,
+    )
+    routing_path = fixture.state / ROUTING_FILE
+    routing_before = routing_path.read_bytes()
+    terminal_comment = json.loads(
+        (fixture.state / "review-candidate-terminal.json").read_text(encoding="utf-8")
+    )
+    terminal_summary = json.loads(terminal_comment["body"].split("\n", 1)[1])
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        *args,
+        env=fixture.env(
+            B3C_TEST_GH_GET_RESPONSES=review_candidate_gh_responses(
+                fixture.state / "review-candidate-terminal.json", parent_path
+            )
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert payload["operator_invoked"] is True
+    assert payload["target_repo_root"] == str(candidate_a.resolve())
+    assert payload["same_node_candidate_continuation"]["admitted"] is True
+    assert routing_path.read_bytes() == routing_before
+    assert terminal_summary["result"] == "success"
+    assert terminal_summary["changed_files"] == []
+    assert "candidate_acceptance" not in terminal_summary
+
+
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "routing_missing",
+        "routing_invalid",
+        "routing_ambiguous",
+        "routing_wrong_repository",
+        "routing_wrong_root",
+        "wrong_origin",
+        "wrong_branch",
+        "wrong_head",
+        "fingerprint_mismatch",
+        "unexpected_clean",
+        "staged",
+        "extra_file",
+        "parent_ineligible",
+        "parent_changed_files_mismatch",
+        "parent_manifest_fingerprint_mismatch",
+    ],
+)
+def test_schema_v1_candidate_routing_binding_fails_closed_without_fallback(
+    tmp_path: Path, case_name: str
+):
+    fixture, candidate_a, parent_path, fingerprint, args = (
+        prepare_dirty_continuation_target(tmp_path)
+    )
+    record_path, terminal_path = write_review_candidate_record(
+        fixture.state,
+        target=candidate_a,
+        fingerprint=fingerprint,
+        schema_version=1,
+    )
+    candidate_b = tmp_path / "unrelated routed target b"
+    init_git_repo(candidate_b, EXPECTED_ORIGIN)
+    (candidate_b / "tracked.txt").write_text("unrelated\n", encoding="utf-8")
+    git(candidate_b, "add", "tracked.txt")
+    git(candidate_b, "commit", "-m", "unrelated target")
+    git(candidate_b, "branch", "-m", "unrelated-target")
+
+    routing_path = fixture.state / ROUTING_FILE
+    invoke_args = ["-StartForeground", *args]
+    if case_name == "routing_missing":
+        routing_path.unlink()
+    elif case_name == "routing_invalid":
+        routing_path.write_text("{}", encoding="utf-8")
+    elif case_name == "routing_ambiguous":
+        invoke_args.extend(["-TargetRepoRoot", str(candidate_b.resolve())])
+    elif case_name in {"routing_wrong_repository", "routing_wrong_root"}:
+        routing = json.loads(routing_path.read_text(encoding="utf-8"))
+        if case_name == "routing_wrong_repository":
+            routing["repository"] = "Other/repository"
+        else:
+            routing["target_repo_root"] = str(candidate_b.resolve())
+        routing_path.write_text(
+            json.dumps(routing, separators=(",", ":")), encoding="utf-8"
+        )
+    elif case_name == "wrong_origin":
+        git(
+            candidate_a,
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/other/repo.git",
+        )
+    elif case_name in {"wrong_branch", "wrong_head", "fingerprint_mismatch"}:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        if case_name == "wrong_branch":
+            record["branch"] = "wrong-branch"
+        elif case_name == "wrong_head":
+            record["expected_head"] = "f" * 40
+        else:
+            record["candidate_manifest_fingerprint"] = "f" * 64
+        record_path.write_text(
+            json.dumps(record, separators=(",", ":")), encoding="utf-8"
+        )
+    elif case_name == "unexpected_clean":
+        (candidate_a / "candidate.txt").write_text("candidate v1\n", encoding="utf-8")
+    elif case_name == "staged":
+        git(candidate_a, "add", "candidate.txt")
+    elif case_name == "extra_file":
+        (candidate_a / "extra.txt").write_text("extra\n", encoding="utf-8")
+    elif case_name in {
+        "parent_ineligible",
+        "parent_changed_files_mismatch",
+        "parent_manifest_fingerprint_mismatch",
+    }:
+        parent_comment = json.loads(parent_path.read_text(encoding="utf-8"))
+        marker, parent_payload = parent_comment["body"].split("\n", 1)
+        parent_summary = json.loads(parent_payload)
+        if case_name == "parent_ineligible":
+            parent_summary["candidate_acceptance"] = "ineligible"
+        elif case_name == "parent_changed_files_mismatch":
+            parent_summary["changed_files"] = ["contract.txt"]
+        else:
+            parent_summary["candidate_evidence_manifest"]["fingerprint"] = "f" * 64
+        parent_comment["body"] = marker + "\n" + json.dumps(
+            parent_summary, separators=(",", ":")
+        )
+        parent_path.write_text(
+            json.dumps(parent_comment, separators=(",", ":")), encoding="utf-8"
+        )
+
+    routing_before = routing_path.read_bytes() if routing_path.exists() else None
+    result, payload = fixture.run(
+        *invoke_args,
+        env=fixture.env(
+            B3C_TEST_GH_GET_RESPONSES=review_candidate_gh_responses(
+                terminal_path, parent_path
+            )
+        ),
+    )
+
+    assert result.returncode == 2
+    assert payload["result"] == "blocked"
+    assert payload["target_repo_root"] == ""
+    assert payload["target_repo_root"] != str(candidate_b.resolve())
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+    assert payload["dispatcher_invoked_directly"] is False
+    assert payload["runner_invoked_directly"] is False
+    assert payload["codex_invoked_directly"] is False
+    assert (
+        routing_path.read_bytes() if routing_path.exists() else None
+    ) == routing_before
+
+
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "wrong_root",
+        "missing_root",
+        "wrong_origin",
+        "wrong_branch",
+        "wrong_head",
+        "fingerprint_mismatch",
+        "unexpected_clean",
+        "staged",
+        "extra_file",
+        "terminal_eligibility_missing",
+        "terminal_ineligible",
+    ],
+)
+def test_preserved_candidate_binding_never_falls_back_to_routed_successor(
+    tmp_path: Path, case_name: str
+):
+    fixture, candidate_a, parent_path, fingerprint, args = (
+        prepare_dirty_continuation_target(tmp_path)
+    )
+    record_path, terminal_path = write_review_candidate_record(
+        fixture.state, target=candidate_a, fingerprint=fingerprint
+    )
+    candidate_b = tmp_path / "clean routed successor"
+    init_git_repo(candidate_b, EXPECTED_ORIGIN)
+    (candidate_b / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    git(candidate_b, "add", "tracked.txt")
+    git(candidate_b, "commit", "-m", "clean successor fixture")
+    git(candidate_b, "branch", "-m", "clean-successor")
+    candidate_b_head = git(candidate_b, "rev-parse", "HEAD").stdout.strip().lower()
+    (fixture.state / ROUTING_FILE).write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL_V2,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "selected_target": {
+                    "selection_id": "candidate-clean-successor",
+                    "target_repo_root": str(candidate_b.resolve()),
+                    "branch": "clean-successor",
+                    "head": candidate_b_head,
+                },
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    if case_name == "wrong_root":
+        record["target_repo_root"] = str((tmp_path / "missing candidate").resolve())
+    elif case_name == "missing_root":
+        record.pop("target_repo_root")
+    elif case_name == "wrong_origin":
+        git(candidate_a, "remote", "set-url", "origin", "https://github.com/other/repo.git")
+    elif case_name == "wrong_branch":
+        record["branch"] = "wrong-branch"
+    elif case_name == "wrong_head":
+        record["expected_head"] = "f" * 40
+    elif case_name == "fingerprint_mismatch":
+        record["candidate_manifest_fingerprint"] = "f" * 64
+    elif case_name == "unexpected_clean":
+        (candidate_a / "candidate.txt").write_text("candidate v1\n", encoding="utf-8")
+    elif case_name == "staged":
+        git(candidate_a, "add", "candidate.txt")
+    elif case_name == "extra_file":
+        (candidate_a / "extra.txt").write_text("extra\n", encoding="utf-8")
+    elif case_name in {"terminal_eligibility_missing", "terminal_ineligible"}:
+        terminal_comment = json.loads(terminal_path.read_text(encoding="utf-8"))
+        marker, terminal_payload = terminal_comment["body"].split("\n", 1)
+        terminal_summary = json.loads(terminal_payload)
+        if case_name == "terminal_eligibility_missing":
+            terminal_summary.pop("candidate_acceptance")
+        else:
+            terminal_summary["candidate_acceptance"] = "ineligible"
+        terminal_comment["body"] = marker + "\n" + json.dumps(
+            terminal_summary, separators=(",", ":")
+        )
+        terminal_path.write_text(
+            json.dumps(terminal_comment, separators=(",", ":")), encoding="utf-8"
+        )
+    record_path.write_text(
+        json.dumps(record, separators=(",", ":")), encoding="utf-8"
+    )
+
+    result, payload = fixture.run(
+        "-StartForeground",
+        *args,
+        env=fixture.env(
+            B3C_TEST_GH_GET_RESPONSES=review_candidate_gh_responses(
+                terminal_path, parent_path
+            )
+        ),
+    )
+
+    assert result.returncode == 2
+    assert payload["operator_invoked"] is False
+    assert payload["target_repo_root"] != str(candidate_b.resolve())
+    assert not fixture.operator_log.exists()
     assert payload["dispatcher_invoked_directly"] is False
     assert payload["runner_invoked_directly"] is False
     assert payload["codex_invoked_directly"] is False

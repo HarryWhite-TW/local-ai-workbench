@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
@@ -13,6 +14,12 @@ SUPPORTED_SURFACE = "issue_comment"
 SUCCESS_RESULT = "success"
 NON_SUCCESS_RESULTS = frozenset({"failure", "blocked"})
 TERMINAL_RESULTS = frozenset({SUCCESS_RESULT, *NON_SUCCESS_RESULTS})
+REVIEW_CANDIDATE_BINDING_FIELDS = (
+    "review_bundle_comment_id",
+    "candidate_manifest_fingerprint",
+    "candidate_acceptance",
+    "changed_files",
+)
 
 
 class ReconciliationDecision(str, Enum):
@@ -93,6 +100,8 @@ class ReconciliationResult:
     diagnostics: tuple[str, ...]
     terminal_result: str | None = None
     terminal_author: str | None = None
+    review_candidate_binding: dict[str, Any] | None = None
+    review_candidate_binding_status: str = "absent"
 
 
 class DurableEvidenceProvider(Protocol):
@@ -115,6 +124,8 @@ class _ParsedCandidate:
     branch: str
     head: str
     result_value: Any
+    review_candidate_binding: dict[str, Any] | None
+    review_candidate_binding_status: str
 
 
 def resolve_durable_completion(
@@ -261,6 +272,7 @@ def resolve_durable_completion(
             diagnostics=tuple(diagnostics),
             terminal_result=str(terminal.result_value),
             terminal_author=terminal.author,
+            review_candidate_binding_status=terminal.review_candidate_binding_status,
         )
 
     return _result(
@@ -270,6 +282,8 @@ def resolve_durable_completion(
         diagnostics=tuple(diagnostics),
         terminal_result=SUCCESS_RESULT,
         terminal_author=terminal.author,
+        review_candidate_binding=terminal.review_candidate_binding,
+        review_candidate_binding_status=terminal.review_candidate_binding_status,
     )
 
 
@@ -389,6 +403,8 @@ def _parse_comment(
             "diagnostics": (f"invalid_issue:{comment.evidence_id}",),
         }
 
+    binding, binding_status = _review_candidate_binding(payload)
+
     return {
         "kind": "candidate",
         "diagnostics": (),
@@ -403,8 +419,46 @@ def _parse_comment(
             branch=branch,
             head=head,
             result_value=payload["result"],
+            review_candidate_binding=binding,
+            review_candidate_binding_status=binding_status,
         ),
     }
+
+
+def _review_candidate_binding(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    present = [field for field in REVIEW_CANDIDATE_BINDING_FIELDS if field in payload]
+    if not present:
+        return None, "absent"
+    if len(present) != len(REVIEW_CANDIDATE_BINDING_FIELDS):
+        return None, "malformed"
+    comment_id = payload["review_bundle_comment_id"]
+    fingerprint = payload["candidate_manifest_fingerprint"]
+    acceptance = payload["candidate_acceptance"]
+    changed_files = payload["changed_files"]
+    if (
+        not isinstance(comment_id, str)
+        or re.fullmatch(r"[1-9][0-9]{0,18}", comment_id) is None
+        or not isinstance(fingerprint, str)
+        or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+        or acceptance not in {"eligible", "ineligible"}
+        or not isinstance(changed_files, list)
+        or any(
+            not isinstance(path, str)
+            or not path
+            or "\\" in path
+            or path.startswith("/")
+            or ".." in path.split("/")
+            for path in changed_files
+        )
+        or len(set(changed_files)) != len(changed_files)
+    ):
+        return None, "malformed"
+    return {
+        "review_bundle_comment_id": comment_id,
+        "candidate_manifest_fingerprint": fingerprint,
+        "candidate_acceptance": acceptance,
+        "changed_files": list(changed_files),
+    }, "valid"
 
 
 def _identity_mismatch_result(
@@ -449,6 +503,8 @@ def _result(
     diagnostics: tuple[str, ...] = (),
     terminal_result: str | None = None,
     terminal_author: str | None = None,
+    review_candidate_binding: dict[str, Any] | None = None,
+    review_candidate_binding_status: str = "absent",
 ) -> ReconciliationResult:
     return ReconciliationResult(
         decision=decision,
@@ -457,6 +513,8 @@ def _result(
         diagnostics=_sorted_strings(diagnostics),
         terminal_result=terminal_result,
         terminal_author=terminal_author,
+        review_candidate_binding=review_candidate_binding,
+        review_candidate_binding_status=review_candidate_binding_status,
     )
 
 

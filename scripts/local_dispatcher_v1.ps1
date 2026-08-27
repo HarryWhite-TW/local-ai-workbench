@@ -52,6 +52,7 @@ $NormalControlRelayIssue = 279
 $ControlRelayRepository = "HarryWhite-TW/local-ai-workbench"
 $RunnerResultProtocol = "lawb.runner_result.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=$RunnerResultProtocol"
+$ReviewCandidateBindingMarker = "LAWBRUNNER-REVIEW-CANDIDATE-BINDING protocol=lawb.review_candidate_binding.v2"
 $DryRunProtocol = "lawb.dispatch_dry_run.v1"
 $DryRunMarker = "LAWBRUNNER-DRYRUN protocol=$DryRunProtocol"
 $ToolResolutionPreflightProtocol = "lawb.rv2_03_tool_resolution_preflight.v1"
@@ -72,9 +73,8 @@ $GhCliFallbackPath = "C:\Program Files\GitHub CLI\gh.exe"
 $GhCliPortableFallbackPath = Join-Path $env:USERPROFILE "tools\gh-portable\bin\gh.exe"
 $MaxDryRunIssuesPerRun = 3
 $MaxBoundedPollIssuesPerRun = 3
-$AllowedDispatchActions = @("maybe-status-check", "run-reviewbundle")
+$AllowedDispatchActions = @("maybe-status-check", "run-reviewbundle", "read-final-audit")
 $TrustedDispatchAuthors = @("HarryWhite-TW")
-$ReservedDispatchActions = @("read-final-audit")
 $ForbiddenDispatchActions = @(
     "commit",
     "push",
@@ -99,7 +99,7 @@ $DispatchRequiredFields = @(
     "request_id"
 )
 $DispatchKnownFields = @($DispatchRequiredFields + "mode", "expected_state", "reason" | Sort-Object -Unique)
-$PollOnceSafetyBoundary = "PollOnce reads only the explicit issue and supports only maybe-status-check or run-reviewbundle. run-reviewbundle delegates once to runner v1 ReviewBundle after a clean-status preflight. It does not run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
+$PollOnceSafetyBoundary = "PollOnce reads only the explicit issue and supports only maybe-status-check, run-reviewbundle, or the request-bound read-final-audit. read-final-audit re-reads one trusted dirty candidate and publishes bounded reviewer evidence without invoking Codex. It does not run CommitApproved, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 $DryRunSafetyBoundary = "DryRunBoundedPoll reads only the explicit issue scope, validates marker selection, prints local decisions, and does not execute dispatch actions, post claim comments, post result comments, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 $BoundedPollSafetyBoundary = "BoundedPoll reads only the explicit issue scope, supports only maybe-status-check execution, executes at most one action per accepted dispatch, and does not run Codex, run runner v1, stage, commit, push, close issues, edit labels, create PRs, merge, force push, consume approvals, or chain approvals."
 
@@ -311,6 +311,87 @@ function Get-CommentBodyText {
     return Get-ObjectPropertyText -Object $Comment -PropertyName "body"
 }
 
+function ConvertFrom-FirstJsonObjectAfterMarker {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Body,
+        [Parameter(Mandatory = $true)]
+        [string]$Marker
+    )
+
+    $markerIndex = $Body.IndexOf($Marker, [System.StringComparison]::Ordinal)
+    if ($markerIndex -lt 0) { throw "runner_result_marker_missing" }
+    $start = $Body.IndexOf("{", $markerIndex + $Marker.Length)
+    if ($start -lt 0) { throw "runner_result_json_missing" }
+
+    $depth = 0
+    $inString = $false
+    $escaped = $false
+    for ($index = $start; $index -lt $Body.Length; $index++) {
+        $character = $Body[$index]
+        if ($inString) {
+            if ($escaped) { $escaped = $false }
+            elseif ($character -eq "\") { $escaped = $true }
+            elseif ($character -eq '"') { $inString = $false }
+            continue
+        }
+        if ($character -eq '"') { $inString = $true; continue }
+        if ($character -eq "{") { $depth += 1; continue }
+        if ($character -eq "}") {
+            $depth -= 1
+            if ($depth -eq 0) {
+                return $Body.Substring($start, $index - $start + 1) | ConvertFrom-Json -ErrorAction Stop
+            }
+        }
+    }
+    throw "runner_result_json_unterminated"
+}
+
+function Get-RunnerReviewCandidateBinding {
+    param([AllowEmptyString()][string]$RunnerStdout)
+
+    if ($RunnerStdout.IndexOf($ReviewCandidateBindingMarker, [System.StringComparison]::Ordinal) -lt 0) {
+        return $null
+    }
+    try {
+        $binding = ConvertFrom-FirstJsonObjectAfterMarker `
+            -Body $RunnerStdout -Marker $ReviewCandidateBindingMarker
+        $names = @($binding.PSObject.Properties | ForEach-Object { $_.Name })
+        $expectedNames = @(
+            "review_bundle_comment_id", "candidate_manifest_fingerprint",
+            "candidate_acceptance", "changed_files"
+        )
+        if ($names.Count -ne $expectedNames.Count -or
+            @($names | Where-Object { $_ -cnotin $expectedNames }).Count -ne 0) {
+            return $null
+        }
+        $commentId = [string]$binding.review_bundle_comment_id
+        $fingerprint = [string]$binding.candidate_manifest_fingerprint
+        $candidateAcceptance = [string]$binding.candidate_acceptance
+        $changedFiles = @($binding.changed_files | ForEach-Object { [string]$_ })
+        if ($commentId -notmatch '^[1-9][0-9]{0,18}$' -or
+            $fingerprint -cnotmatch '^[0-9a-f]{64}$' -or
+            $candidateAcceptance -cnotin @("eligible", "ineligible") -or
+            @($changedFiles | Where-Object {
+                [string]::IsNullOrWhiteSpace($_) -or $_ -match '\\' -or
+                [System.IO.Path]::IsPathRooted($_) -or
+                @($_ -split '/') -contains '..'
+            }).Count -ne 0 -or
+            @($changedFiles | Select-Object -Unique).Count -ne $changedFiles.Count) {
+            return $null
+        }
+        return [pscustomobject]@{
+            review_bundle_comment_id = $commentId
+            candidate_manifest_fingerprint = $fingerprint
+            candidate_acceptance = $candidateAcceptance
+            changed_files = @($changedFiles)
+        }
+    }
+    catch {
+        return $null
+    }
+}
+
 function Get-ExactControlRelayRestComment {
     param(
         [Parameter(Mandatory = $true)]
@@ -366,7 +447,7 @@ function Get-SameNodeContinuationParentCommentId {
     $value = [string]$Fields["expected_state"]
     if (-not $value.StartsWith($SameNodeContinuationExpectedStatePrefix, [System.StringComparison]::Ordinal)) { return "" }
     $commentId = $value.Substring($SameNodeContinuationExpectedStatePrefix.Length)
-    if ($commentId -notmatch '^[A-Za-z0-9_-]+$') {
+    if ($commentId -notmatch '^[1-9][0-9]{0,18}$') {
         Throw-DeterministicAdmissionRejection -Message "same-node continuation expected_state has an invalid parent comment id."
     }
     return $commentId
@@ -374,18 +455,71 @@ function Get-SameNodeContinuationParentCommentId {
 
 function Assert-SameNodeContinuationParentPresent {
     param(
-        [Parameter(Mandatory = $true)][object]$ReadResult,
         [Parameter(Mandatory = $true)][string]$ParentCommentId
     )
-    $matching = @($ReadResult.RunnerResults | Where-Object {
-        [string]::Equals([string]$_.Comment.id, $ParentCommentId, [System.StringComparison]::Ordinal)
-    })
-    if ($matching.Count -ne 1) {
+    if ($ParentCommentId -notmatch '^[1-9][0-9]{0,18}$') {
+        Throw-DeterministicAdmissionRejection -Message "Same-node continuation parent comment id is invalid."
+    }
+
+    $ghPath = Resolve-GhPath
+    $endpoint = "repos/$Repo/issues/comments/$ParentCommentId"
+    $result = Invoke-ReadOnlyCommand `
+        -FilePath $ghPath `
+        -Arguments @("api", $endpoint) `
+        -Action "gh api same-node continuation parent comment"
+    if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($result.Stdout)) {
         Throw-DeterministicAdmissionRejection -Message "Same-node continuation requires exactly one trusted parent review-bundle comment id=$ParentCommentId."
     }
-    $author = Get-CommentAuthorLogin -Comment $matching[0].Comment
+
+    try {
+        $comment = $result.Stdout | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        Throw-DeterministicAdmissionRejection -Message "Same-node continuation parent comment id=$ParentCommentId returned invalid JSON."
+    }
+
+    if (-not [string]::Equals(
+        (Get-ObjectPropertyText -Object $comment -PropertyName "id"),
+        $ParentCommentId,
+        [System.StringComparison]::Ordinal
+    )) {
+        Throw-DeterministicAdmissionRejection -Message "Same-node continuation parent REST id does not match the requested parent comment id."
+    }
+
+    $expectedIssueUrl = "https://api.github.com/repos/$Repo/issues/$IssueNumber"
+    if (-not [string]::Equals(
+        (Get-ObjectPropertyText -Object $comment -PropertyName "issue_url"),
+        $expectedIssueUrl,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        Throw-DeterministicAdmissionRejection -Message "Same-node continuation parent comment is not bound to $Repo #$IssueNumber."
+    }
+
+    $restUser = $comment.PSObject.Properties["user"]
+    $author = if ($null -eq $restUser) { "" } else { Get-ObjectPropertyText -Object $restUser.Value -PropertyName "login" }
     if (-not (Test-ExactListValue -Values $TrustedDispatchAuthors -Value $author)) {
         Throw-DeterministicAdmissionRejection -Message "Same-node continuation parent comment author '$author' is not trusted."
+    }
+
+    $body = Get-ObjectPropertyText -Object $comment -PropertyName "body"
+    $markerIndex = $body.IndexOf($RunnerResultMarker, [System.StringComparison]::Ordinal)
+    if ($markerIndex -lt 0) {
+        Throw-DeterministicAdmissionRejection -Message "Same-node continuation parent comment does not contain a LAWBRUNNER-RESULT."
+    }
+    try {
+        $summary = ConvertFrom-FirstJsonObjectAfterMarker -Body $body -Marker $RunnerResultMarker
+    }
+    catch {
+        Throw-DeterministicAdmissionRejection -Message "Same-node continuation parent LAWBRUNNER-RESULT is malformed."
+    }
+
+    if (-not (
+        [string]::Equals((Get-ObjectPropertyText -Object $summary -PropertyName "action"), "run-reviewbundle", [System.StringComparison]::Ordinal) -and
+        [string]::Equals((Get-ObjectPropertyText -Object $summary -PropertyName "result"), "success", [System.StringComparison]::Ordinal) -and
+        [string]::Equals((Get-ObjectPropertyText -Object $summary -PropertyName "repo"), $Repo, [System.StringComparison]::Ordinal) -and
+        [string]::Equals((Get-ObjectPropertyText -Object $summary -PropertyName "issue"), [string]$IssueNumber, [System.StringComparison]::Ordinal)
+    )) {
+        Throw-DeterministicAdmissionRejection -Message "Same-node continuation parent LAWBRUNNER-RESULT is not a successful review-bundle result for $Repo #$IssueNumber."
     }
 }
 
@@ -639,6 +773,8 @@ function New-RunnerResultSummaryJson {
         [hashtable]$ParentActionOverrides = @{},
         [string]$RequestId = $null,
         [string]$PollMode = $null,
+        [AllowNull()]
+        [object]$ReviewCandidateBinding = $null,
         [string]$NextRecommendedAction = "chatgpt_review"
     )
 
@@ -690,6 +826,14 @@ function New-RunnerResultSummaryJson {
         trusted_parent_actions = $parentActions
         child_action_non_claim = "transient_or_external_child_actions_not_guaranteed_absent"
         next_recommended_action = $NextRecommendedAction
+    }
+    if ([string]::Equals($Action, "run-reviewbundle", [System.StringComparison]::Ordinal) -and
+        [string]::Equals($Result, "success", [System.StringComparison]::Ordinal) -and
+        $null -ne $ReviewCandidateBinding) {
+        $summary.review_bundle_comment_id = [string]$ReviewCandidateBinding.review_bundle_comment_id
+        $summary.candidate_manifest_fingerprint = [string]$ReviewCandidateBinding.candidate_manifest_fingerprint
+        $summary.candidate_acceptance = [string]$ReviewCandidateBinding.candidate_acceptance
+        $summary.changed_files = @($ReviewCandidateBinding.changed_files)
     }
 
     return ($summary | ConvertTo-Json -Depth 8)
@@ -957,10 +1101,6 @@ function Assert-DispatchMarkerMatchesLocalState {
     $action = [string]$Fields["action"]
     if (Test-ExactListValue -Values $ForbiddenDispatchActions -Value $action) {
         Throw-DeterministicAdmissionRejection -Message "Forbidden dispatch action '$action'. CHATGPT-DISPATCH v1 cannot authorize commit, push, close, or approval-gated actions."
-    }
-
-    if (Test-ExactListValue -Values $ReservedDispatchActions -Value $action) {
-        Throw-DeterministicAdmissionRejection -Message "Reserved dispatch action '$action' is not implemented in this PollOnce slice."
     }
 
     if (-not (Test-ExactListValue -Values $AllowedDispatchActions -Value $action)) {
@@ -1461,7 +1601,7 @@ function Invoke-ReviewBundle {
         if ([string]::IsNullOrWhiteSpace($continuationParentCommentId)) {
             Throw-DeterministicAdmissionRejection -Message "run-reviewbundle requires a clean repo before dispatch. Current git status: $status"
         }
-        Assert-SameNodeContinuationParentPresent -ReadResult $Selection.ReadResult -ParentCommentId $continuationParentCommentId
+        Assert-SameNodeContinuationParentPresent -ParentCommentId $continuationParentCommentId
     }
 
     $runnerScript = Get-RunnerScriptPath
@@ -1475,12 +1615,58 @@ function Invoke-ReviewBundle {
         -Action "local_runner_v1.ps1 ReviewBundle"
 
     $result = if ($runnerResult.ExitCode -eq 0) { "success" } else { "failure" }
+    $reviewCandidateBinding = if ($result -eq "success") {
+        Get-RunnerReviewCandidateBinding -RunnerStdout $runnerResult.Stdout
+    }
+    else { $null }
 
     return [pscustomobject]@{
         Action = "run-reviewbundle"
         Result = $result
         Status = $status
         StatusSummary = if ([string]::IsNullOrWhiteSpace($status)) { "clean" } else { "same_node_exact_candidate_continuation" }
+        RunnerExitCode = $runnerResult.ExitCode
+        Stdout = $runnerResult.Stdout
+        Stderr = $runnerResult.Stderr
+        ReviewCandidateBinding = $reviewCandidateBinding
+    }
+}
+
+function Invoke-ReadFinalAudit {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Selection,
+        [Parameter(Mandatory = $true)]
+        [int]$Issue
+    )
+
+    $status = Get-GitStatusShort
+    $continuationParentCommentId = Get-SameNodeContinuationParentCommentId -Fields $Selection.Selected.Fields
+    if ([string]::IsNullOrWhiteSpace($continuationParentCommentId)) {
+        Throw-DeterministicAdmissionRejection -Message "read-final-audit requires same-node exact candidate parent evidence."
+    }
+    $readFinalAuditRequestId = [string]$Selection.Selected.Fields["request_id"]
+    if ([string]::IsNullOrWhiteSpace($readFinalAuditRequestId)) {
+        Throw-DeterministicAdmissionRejection -Message "read-final-audit requires the exact selected dispatch request_id."
+    }
+    if ([string]::IsNullOrWhiteSpace($status)) {
+        Throw-DeterministicAdmissionRejection -Message "read-final-audit requires the named dirty candidate; the repository is clean."
+    }
+    Assert-SameNodeContinuationParentPresent -ParentCommentId $continuationParentCommentId
+
+    $runnerScript = Get-RunnerScriptPath
+    $powerShellHost = Resolve-CurrentPowerShellHostPath
+    $script:RunnerMayHaveStarted = $true
+    $runnerResult = Invoke-WriteCommand `
+        -FilePath $powerShellHost `
+        -Arguments (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-IssueNumber", "$Issue", "-Mode", "ReadFinalAudit", "-TrustedCandidateContinuationCommentId", $continuationParentCommentId, "-ReadFinalAuditRequestId", $readFinalAuditRequestId) + $(if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal) -or -not [string]::Equals((ConvertTo-NormalizedProviderPath -Path $TargetRepoRoot), (ConvertTo-NormalizedProviderPath -Path $RepoRoot), [System.StringComparison]::OrdinalIgnoreCase)) { @("-Repo", $Repo, "-RepoPath", $TargetRepoRoot) } else { @() })) `
+        -Action "local_runner_v1.ps1 ReadFinalAudit"
+
+    return [pscustomobject]@{
+        Action = "read-final-audit"
+        Result = if ($runnerResult.ExitCode -eq 0) { "success" } else { "failure" }
+        Status = $status
+        StatusSummary = "same_node_exact_candidate_readback"
         RunnerExitCode = $runnerResult.ExitCode
         Stdout = $runnerResult.Stdout
         Stderr = $runnerResult.Stderr
@@ -1951,6 +2137,17 @@ function Invoke-AcceptedDispatchAction {
             Write-Host $actionResult.Stderr
         }
     }
+    elseif ([string]::Equals($action, "read-final-audit", [System.StringComparison]::Ordinal)) {
+        $actionResult = Invoke-ReadFinalAudit -Selection $selection -Issue $Issue
+        if (-not [string]::IsNullOrWhiteSpace($actionResult.Stdout)) {
+            Write-Host "Runner v1 stdout:"
+            Write-Host $actionResult.Stdout
+        }
+        if (-not [string]::IsNullOrWhiteSpace($actionResult.Stderr)) {
+            Write-Host "Runner v1 stderr:"
+            Write-Host $actionResult.Stderr
+        }
+    }
     else {
         throw "Internal dispatcher error: selected unsupported action '$action'."
     }
@@ -1972,6 +2169,9 @@ function Invoke-AcceptedDispatchAction {
     $gitStatusValidationSummary = if ([string]::Equals($action, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
         "run-reviewbundle pre-dispatch git status was clean."
     }
+    elseif ([string]::Equals($action, "read-final-audit", [System.StringComparison]::Ordinal)) {
+        "read-final-audit pre-dispatch git status was the named same-node candidate."
+    }
     else {
         "maybe-status-check observed git status: $($actionResult.StatusSummary)."
     }
@@ -1989,12 +2189,17 @@ function Invoke-AcceptedDispatchAction {
         final_index_clean = (New-RunnerValidationResult -Status $(if ($finalIndexClean) { "passed" } else { "failed" }) -Summary $(if ($finalIndexClean) { "The final staged area was observed clean." } else { "The final staged area contains changes." }))
     }
 
-    if ([string]::Equals($action, "run-reviewbundle", [System.StringComparison]::Ordinal)) {
+    if ([string]::Equals($action, "run-reviewbundle", [System.StringComparison]::Ordinal) -or
+        [string]::Equals($action, "read-final-audit", [System.StringComparison]::Ordinal)) {
         $runnerExitCode = if ($null -eq $actionResult.RunnerExitCode) { "unknown" } else { [string]$actionResult.RunnerExitCode }
         $runnerValidationStatus = if ([string]::Equals($actionResult.Result, "success", [System.StringComparison]::Ordinal)) { "passed" } else { "failed" }
         $validationOverrides["runner_v1"] = New-RunnerValidationResult -Status $runnerValidationStatus -Summary "runner v1 invocation attempted; exit code: $runnerExitCode."
     }
 
+    $reviewCandidateBindingForSummary = if ($null -ne $actionResult.PSObject.Properties["ReviewCandidateBinding"]) {
+        $actionResult.ReviewCandidateBinding
+    }
+    else { $null }
     $summaryJson = New-RunnerResultSummaryJson `
         -Issue $Issue `
         -Action $action `
@@ -2006,7 +2211,8 @@ function Invoke-AcceptedDispatchAction {
         -FinalHeadMatchesInitial $finalHeadMatchesInitial `
         -ValidationOverrides $validationOverrides `
         -RequestId $requestId `
-        -PollMode $ModeName
+        -PollMode $ModeName `
+        -ReviewCandidateBinding $reviewCandidateBindingForSummary
 
     Write-Host $RunnerResultMarker
     Write-Host $summaryJson
@@ -2211,8 +2417,9 @@ function Invoke-BoundedPoll {
             $selection = Get-ValidatedDispatchSelection -IssueNumber $issue
             $fields = $selection.Selected.Fields
 
-            if ([string]::Equals([string]$fields["action"], "run-reviewbundle", [System.StringComparison]::Ordinal)) {
-                throw "BoundedPoll does not execute run-reviewbundle. Use PollOnce with one explicit -IssueNumber."
+            $action = [string]$fields["action"]
+            if (-not [string]::Equals($action, "maybe-status-check", [System.StringComparison]::Ordinal)) {
+                throw "BoundedPoll executes only maybe-status-check; action '$action' requires PollOnce with one explicit -IssueNumber."
             }
 
             if (Test-MatchingRunnerResultExists -ReadResult $selection.ReadResult -Fields $fields) {

@@ -109,6 +109,7 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
             $script:Markers = @()
             $script:ControlRelayComments = @()
             $script:ControlRelayRestComments = @()
+            $script:SameNodeParentRestComments = @()
             $script:ReadRequests = @()
             $script:IssueMarkers = @{{}}
             $script:IssueStates = @{{}}
@@ -255,6 +256,18 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
                 if ($Action -eq "gh api control relay comment") {{
                     $requestedCommentId = ($Arguments[1] -split "/")[-1]
                     $matches = @($script:ControlRelayRestComments | Where-Object {{ [string]$_.id -eq $requestedCommentId }})
+                    if ($matches.Count -ne 1) {{
+                        return [pscustomobject]@{{ ExitCode = 1; Stdout = ""; Stderr = "not found" }}
+                    }}
+                    return [pscustomobject]@{{
+                        ExitCode = 0
+                        Stdout = ($matches[0] | ConvertTo-Json -Depth 8)
+                        Stderr = ""
+                    }}
+                }}
+                if ($Action -eq "gh api same-node continuation parent comment") {{
+                    $requestedCommentId = ($Arguments[1] -split "/")[-1]
+                    $matches = @($script:SameNodeParentRestComments | Where-Object {{ [string]$_.id -eq $requestedCommentId }})
                     if ($matches.Count -ne 1) {{
                         return [pscustomobject]@{{ ExitCode = 1; Stdout = ""; Stderr = "not found" }}
                     }}
@@ -935,27 +948,6 @@ def test_dispatcher_entrypoint_preserves_uncertainty_after_runner_start(tmp_path
     assert "mock post failed after runner" in result.stdout + result.stderr
 
 
-@pytest.mark.parametrize(
-    ("arguments", "expected_message"),
-    [
-        (["-PollOnce"], "PollOnce requires -IssueNumber"),
-        (
-            ["-DryRunBoundedPoll", "-Repo", "example/unsupported"],
-            "unsupported_target_repository",
-        ),
-        (
-            ["-BoundedPoll", "-Repo", "example/unsupported"],
-            "unsupported_target_repository",
-        ),
-        (
-            ["-ToolResolutionPreflight", "-RequiredAction", "unsupported"],
-            "ToolResolutionPreflight requires -RequiredAction",
-        ),
-    ],
-    ids=["manual-pollonce", "dry-run", "bounded-poll", "tool-preflight"],
-)
-
-
 def relay_handoff(**overrides) -> str:
     payload = {
         "protocol": "lawb.bridge_relay_dispatch.v1",
@@ -976,6 +968,27 @@ def relay_handoff(**overrides) -> str:
     return base64.b64encode(
         json.dumps(payload, separators=(",", ":")).encode("utf-8")
     ).decode("ascii")
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_message"),
+    [
+        (["-PollOnce"], "PollOnce requires -IssueNumber"),
+        (
+            ["-DryRunBoundedPoll", "-Repo", "example/unsupported"],
+            "unsupported_target_repository",
+        ),
+        (
+            ["-BoundedPoll", "-Repo", "example/unsupported"],
+            "unsupported_target_repository",
+        ),
+        (
+            ["-ToolResolutionPreflight", "-RequiredAction", "unsupported"],
+            "ToolResolutionPreflight requires -RequiredAction",
+        ),
+    ],
+    ids=["manual-pollonce", "dry-run", "bounded-poll", "tool-preflight"],
+)
 def test_dispatcher_entrypoint_preserves_legacy_mode_failure_exit_code(
     arguments, expected_message
 ):
@@ -1113,6 +1126,43 @@ def test_run_reviewbundle_real_stub_runner_binds_named_parameters(tmp_path):
     assert "Cannot convert value \"-IssueNumber\"" not in result.stdout
 
 
+def test_run_reviewbundle_carries_only_exact_runner_review_candidate_binding(tmp_path):
+    result = run_dispatcher_core_script(
+        tmp_path,
+        """
+        function Get-GitStatusShort { return "" }
+        function Get-RunnerScriptPath { return "runner.ps1" }
+        function Resolve-ReviewBundleCodexPathBinding { return "codex.exe" }
+        function Invoke-WriteCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            $binding = [ordered]@{
+                review_bundle_comment_id = "5313180922"
+                candidate_manifest_fingerprint = ("a" * 64)
+                candidate_acceptance = "eligible"
+                changed_files = @("tracked.txt")
+            } | ConvertTo-Json -Compress
+            return [pscustomobject]@{
+                ExitCode = 0
+                Stdout = "$ReviewCandidateBindingMarker`n$binding`nrunner comment url"
+                Stderr = ""
+            }
+        }
+        $result = Invoke-ReviewBundle -Selection ([pscustomobject]@{}) -Issue 83
+        $result | ConvertTo-Json -Depth 5 -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout)
+    assert payload["Result"] == "success"
+    assert payload["ReviewCandidateBinding"] == {
+        "review_bundle_comment_id": "5313180922",
+        "candidate_manifest_fingerprint": "a" * 64,
+        "candidate_acceptance": "eligible",
+        "changed_files": ["tracked.txt"],
+    }
+
+
 def test_run_reviewbundle_fails_closed_when_reviewed_codex_path_mismatches_preflight(tmp_path):
     result = run_case(
         tmp_path,
@@ -1174,10 +1224,12 @@ def test_run_reviewbundle_dirty_continuation_passes_only_named_trusted_parent_to
         tmp_path,
         """
         $script:GitStatus = " M scripts/local_runner_v1.ps1"
-        $parent = New-TestComment -Id "parent-1" -Body "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1`n{}"
+        $parentBody = "$RunnerResultMarker`n" + (@{ action = "run-reviewbundle"; result = "success"; repo = "HarryWhite-TW/local-ai-workbench"; issue = "83"; metadata = @{ nested = @{ note = "brace } inside JSON string" } } } | ConvertTo-Json -Depth 8 -Compress) + "`n`n### Run metadata`n`n- source: live-shaped regression`n`n### Modified files`n`n- scripts/local_runner_v1.ps1"
+        $parent = New-TestComment -Id "IC_kwLIST_SURFACE_PARENT" -Body $parentBody
         $parentResult = [pscustomobject]@{ Comment = $parent }
+        $script:SameNodeParentRestComments = @((New-TestRestComment -Id "5311" -Body $parentBody -IssueUrl "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/83"))
         $fields = @{
-            expected_state = "same_node_exact_candidate_continuation_v1:parent_comment_id=parent-1"
+            expected_state = "same_node_exact_candidate_continuation_v1:parent_comment_id=5311"
         }
         $selection = [pscustomobject]@{
             Selected = [pscustomobject]@{ Fields = $fields }
@@ -1195,6 +1247,130 @@ def test_run_reviewbundle_dirty_continuation_passes_only_named_trusted_parent_to
 
     assert_success(result)
     assert "ok" in result.stdout
+
+
+def test_same_node_parent_uses_exact_rest_id_and_rejects_invalid_rest_parents(tmp_path):
+    result = run_dispatcher_script(
+        tmp_path,
+        """
+        $parentBody = "$RunnerResultMarker`n" + (@{ action = "run-reviewbundle"; result = "success"; repo = "HarryWhite-TW/local-ai-workbench"; issue = "83" } | ConvertTo-Json -Compress)
+        $listSurfaceComment = New-TestComment -Id "IC_kwLIST_SURFACE_PARENT" -Body $parentBody
+        if ([string]$listSurfaceComment.id -eq "5311") { throw "fixture must model distinct list and REST identities" }
+        $script:SameNodeParentRestComments = @((New-TestRestComment -Id "5311" -Body $parentBody -IssueUrl "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/83"))
+        Assert-SameNodeContinuationParentPresent -ParentCommentId "5311"
+
+        function Test-ParentRejected {
+            param([scriptblock]$Operation)
+            try { & $Operation; return $false } catch { return $true }
+        }
+
+        $wrongRestIdRejected = Test-ParentRejected { Assert-SameNodeContinuationParentPresent -ParentCommentId "5312" }
+        $script:SameNodeParentRestComments = @((New-TestRestComment -Id "5311" -Body $parentBody -IssueUrl "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/999"))
+        $wrongIssueRejected = Test-ParentRejected { Assert-SameNodeContinuationParentPresent -ParentCommentId "5311" }
+        $script:SameNodeParentRestComments = @((New-TestRestComment -Id "5311" -Body $parentBody -AuthorLogin "untrusted" -IssueUrl "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/83"))
+        $untrustedAuthorRejected = Test-ParentRejected { Assert-SameNodeContinuationParentPresent -ParentCommentId "5311" }
+        $script:SameNodeParentRestComments = @((New-TestRestComment -Id "5311" -Body "not a runner result" -IssueUrl "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/83"))
+        $missingRunnerResultRejected = Test-ParentRejected { Assert-SameNodeContinuationParentPresent -ParentCommentId "5311" }
+        $script:SameNodeParentRestComments = @((New-TestRestComment -Id "5311" -Body "$RunnerResultMarker`n{{}}" -IssueUrl "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/83"))
+        $malformedRunnerResultRejected = Test-ParentRejected { Assert-SameNodeContinuationParentPresent -ParentCommentId "5311" }
+
+        [ordered]@{
+            wrong_rest_id_rejected = $wrongRestIdRejected
+            wrong_issue_rejected = $wrongIssueRejected
+            untrusted_author_rejected = $untrustedAuthorRejected
+            missing_runner_result_rejected = $missingRunnerResultRejected
+            malformed_runner_result_rejected = $malformedRunnerResultRejected
+        } | ConvertTo-Json -Compress
+        """,
+    )
+
+    assert_success(result)
+    payload = json.loads(result.stdout.splitlines()[-1])
+    assert payload == {
+        "wrong_rest_id_rejected": True,
+        "wrong_issue_rejected": True,
+        "untrusted_author_rejected": True,
+        "missing_runner_result_rejected": True,
+        "malformed_runner_result_rejected": True,
+    }
+
+
+def test_same_node_parent_accepts_first_json_object_before_trailing_reviewbundle_markdown(tmp_path):
+    result = run_dispatcher_script(
+        tmp_path,
+        """
+        $parentBody = "$RunnerResultMarker`n" + (@{ action = "run-reviewbundle"; result = "success"; repo = "HarryWhite-TW/local-ai-workbench"; issue = "83"; metadata = @{ nested = @{ note = "brace } inside JSON string" } } } | ConvertTo-Json -Depth 8 -Compress) + "`n`n### Run metadata`n`n- live-shaped evidence`n`n### Modified files`n`n- scripts/local_runner_v1.ps1"
+        $script:SameNodeParentRestComments = @((New-TestRestComment -Id "5311" -Body $parentBody -IssueUrl "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/83"))
+        Assert-SameNodeContinuationParentPresent -ParentCommentId "5311"
+        "ok"
+        """,
+    )
+
+    assert_success(result)
+    assert "ok" in result.stdout
+
+
+def test_pollonce_read_final_audit_delegates_only_named_trusted_candidate_to_runner(tmp_path):
+    continuation = "same_node_exact_candidate_continuation_v1:parent_comment_id=5311"
+    encoded = relay_handoff(
+        action="read-final-audit",
+        expected_state=continuation,
+    )
+    result = run_case(
+        tmp_path,
+        f"""
+        $script:GitStatus = " M scripts/local_runner_v1.ps1"
+        $RelayRequestBase64 = "{encoded}"
+        Set-TestControlRelay -Body (New-ControlRelayLine -Action "read-final-audit" -ExpectedState "{continuation}")
+        $parentBody = "$RunnerResultMarker`n" + (@{{ action = "run-reviewbundle"; result = "success"; repo = "HarryWhite-TW/local-ai-workbench"; issue = "83" }} | ConvertTo-Json -Compress)
+        $script:SameNodeParentRestComments = @((New-TestRestComment -Id "5311" -Body $parentBody -IssueUrl "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/83"))
+        $script:Markers = @(
+            (New-TestMarker -Line $RunnerResultMarker -Body $parentBody -Id "IC_kwLIST_SURFACE_PARENT")
+        )
+        """,
+        post=True,
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    assert "RUNNER_CALLS=1" in result.stdout
+    runner_args = extract_value(result.stdout, "RUNNER_ARGS=").split("|")
+    assert "ReadFinalAudit" in runner_args
+    assert runner_args[runner_args.index("-TrustedCandidateContinuationCommentId") + 1] == "5311"
+    assert runner_args[runner_args.index("-ReadFinalAuditRequestId") + 1] == "relay-83-request"
+    summary = extract_summary(result.stdout)
+    assert summary["action"] == "read-final-audit"
+    assert summary["request_id"] == "relay-83-request"
+    assert summary["result"] == "success"
+    assert summary["validations"]["runner_v1"]["status"] == "passed"
+    assert "POST_CALLS=1" in result.stdout
+    assert "FORBIDDEN_CALLS=0" in result.stdout
+
+
+def test_pollonce_read_final_audit_rejects_relay_request_id_mismatch_before_runner(tmp_path):
+    continuation = "same_node_exact_candidate_continuation_v1:parent_comment_id=5311"
+    encoded = relay_handoff(
+        action="read-final-audit",
+        request_id="readback-request-a",
+        target_dispatch_request_id="readback-request-a",
+        expected_state=continuation,
+    )
+    result = run_case(
+        tmp_path,
+        f"""
+        $script:GitStatus = " M scripts/local_runner_v1.ps1"
+        $RelayRequestBase64 = "{encoded}"
+        Set-TestControlRelay -Body (New-ControlRelayLine -RequestId "readback-request-b" -TargetDispatchRequestId "readback-request-b" -Action "read-final-audit" -ExpectedState "{continuation}")
+        $parentBody = "$RunnerResultMarker`n{{}}"
+        $script:Markers = @((New-TestMarker -Line $RunnerResultMarker -Body $parentBody -Id "5311"))
+        """,
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert "Fresh control relay field 'request_id' does not match the B1 handoff." in result.stdout
+    assert "RUNNER_CALLS=0" in result.stdout
+    assert "POST_CALLS=0" in result.stdout
 
 
 def test_valid_maybe_status_check_with_post_result_comment_posts_exactly_one_parseable_result(tmp_path):
@@ -1810,10 +1986,6 @@ def test_tool_resolution_preflight_blocks_on_contradictory_runner_contract(
             "Unsupported dispatch action",
         ),
         (
-            '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "read-final-audit")))',
-            "Reserved dispatch action",
-        ),
-        (
             '$script:Markers = @((New-TestMarker (New-DispatchLine -Action "commit")))',
             "Forbidden dispatch action",
         ),
@@ -2140,6 +2312,22 @@ def test_dry_run_existing_matching_result_fails_closed_as_already_handled(tmp_pa
     assert "Matching LAWBRUNNER-RESULT already exists" in summary["decisions"][0]["reason"]
 
 
+def test_dry_run_reports_eligible_read_final_audit_without_execution_or_posting(tmp_path):
+    result = run_dry_case(
+        tmp_path,
+        '$IssueNumber = 83; $script:Markers = @((New-TestMarker (New-DispatchLine -Action "read-final-audit" -RequestId "readback-dry-83")))',
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=success" in result.stdout
+    summary = extract_summary_after(result.stdout, DRY_RUN_MARKER)
+    assert summary["result"] == "success"
+    assert summary["decisions"][0]["decision"] == "accepted"
+    assert summary["decisions"][0]["action"] == "read-final-audit"
+    assert "POST_CALLS=0" in result.stdout
+    assert "FORBIDDEN_CALLS=0" in result.stdout
+
+
 def test_bounded_poll_single_issue_executes_maybe_status_check_and_posts_when_requested(tmp_path):
     result = run_bounded_case(
         tmp_path,
@@ -2257,6 +2445,28 @@ def test_bounded_poll_marker_validation_failure_prevents_all_action_execution(tm
     assert_success(result)
     assert "CASE_RESULT=failure" in result.stdout
     assert "Forbidden dispatch action 'push'" in result.stdout
+    assert "BoundedPoll failed closed before action execution" in result.stdout
+    assert MARKER not in result.stdout
+    assert "POST_CALLS=0" in result.stdout
+
+
+@pytest.mark.parametrize("action", ["run-reviewbundle", "read-final-audit"])
+def test_bounded_poll_rejects_non_status_actions_before_execution_or_post(tmp_path, action):
+    result = run_bounded_case(
+        tmp_path,
+        f'''
+        $IssueNumber = 83
+        $script:Markers = @((New-TestMarker (New-DispatchLine -Action "{action}" -RequestId "blocked-{action}-83")))
+        function Invoke-MaybeStatusCheck {{
+            throw "bounded poll must not execute non-status action"
+        }}
+        ''',
+        post=True,
+    )
+
+    assert_success(result)
+    assert "CASE_RESULT=failure" in result.stdout
+    assert f"BoundedPoll executes only maybe-status-check; action '{action}'" in result.stdout
     assert "BoundedPoll failed closed before action execution" in result.stdout
     assert MARKER not in result.stdout
     assert "POST_CALLS=0" in result.stdout

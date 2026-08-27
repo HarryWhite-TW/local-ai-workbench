@@ -20,6 +20,9 @@ LOCK_PROTOCOL = "lawb.bridge_operator_b3_lock.v2"
 LOCK_SCHEMA_VERSION = 2
 IN_FLIGHT_PROTOCOL = "lawb.bridge_operator_b3_in_flight.v1"
 IN_FLIGHT_SCHEMA_VERSION = 1
+REVIEW_CANDIDATE_PROTOCOL = "lawb.bridge_operator_review_candidate.v1"
+REVIEW_CANDIDATE_SCHEMA_VERSION = 2
+LEGACY_REVIEW_CANDIDATE_SCHEMA_VERSION = 1
 PREPARED = "PREPARED"
 DISPATCHED_NOT_LOCALLY_SETTLED = "DISPATCHED_NOT_LOCALLY_SETTLED"
 REJECTED_BEFORE_RUNNER = "REJECTED_BEFORE_RUNNER"
@@ -40,6 +43,8 @@ _SESSION_ID = re.compile(r"^[0-9a-f]{32}$")
 _START_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{7,255}$")
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$")
 _HEAD = re.compile(r"^[0-9a-f]{40}$")
+_COMMENT_ID = re.compile(r"^[1-9][0-9]{0,18}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class LifecycleEvidenceError(ValueError):
@@ -759,6 +764,133 @@ def validate_terminal_evidence(value: Any) -> dict[str, Any]:
     ):
         raise LifecycleEvidenceError("terminal_evidence_invalid")
     return dict(value)
+
+
+def new_review_candidate_payload(
+    *,
+    target_repository: str,
+    target_issue: int,
+    dispatch_request_id: str,
+    action: str,
+    branch: str,
+    expected_head: str,
+    terminal_result_comment_id: str,
+    review_bundle_comment_id: str,
+    candidate_manifest_fingerprint: str,
+    target_repo_root: str,
+    recorded_at: datetime,
+) -> dict[str, Any]:
+    payload = {
+        "protocol": REVIEW_CANDIDATE_PROTOCOL,
+        "schema_version": REVIEW_CANDIDATE_SCHEMA_VERSION,
+        "target_repository": target_repository,
+        "target_issue": target_issue,
+        "dispatch_request_id": dispatch_request_id,
+        "action": action,
+        "branch": branch,
+        "expected_head": expected_head,
+        "terminal_result_comment_id": terminal_result_comment_id,
+        "review_bundle_comment_id": review_bundle_comment_id,
+        "candidate_manifest_fingerprint": candidate_manifest_fingerprint,
+        "target_repo_root": target_repo_root,
+        "recorded_at_utc": format_utc(recorded_at),
+    }
+    validate_review_candidate_payload(payload)
+    return payload
+
+
+def validate_review_candidate_payload(value: Any) -> dict[str, Any]:
+    common_keys = {
+        "protocol",
+        "schema_version",
+        "target_repository",
+        "target_issue",
+        "dispatch_request_id",
+        "action",
+        "branch",
+        "expected_head",
+        "terminal_result_comment_id",
+        "review_bundle_comment_id",
+        "candidate_manifest_fingerprint",
+        "recorded_at_utc",
+    }
+    if not isinstance(value, dict):
+        raise LifecycleEvidenceError("review_candidate_invalid")
+    schema_version = value.get("schema_version")
+    expected_keys = (
+        common_keys | {"target_repo_root"}
+        if schema_version == REVIEW_CANDIDATE_SCHEMA_VERSION
+        else common_keys
+    )
+    if (
+        set(value) != expected_keys
+        or value.get("protocol") != REVIEW_CANDIDATE_PROTOCOL
+        or schema_version
+        not in {
+            LEGACY_REVIEW_CANDIDATE_SCHEMA_VERSION,
+            REVIEW_CANDIDATE_SCHEMA_VERSION,
+        }
+        or not isinstance(value.get("target_repository"), str)
+        or not value["target_repository"]
+        or type(value.get("target_issue")) is not int
+        or value["target_issue"] <= 0
+        or not isinstance(value.get("dispatch_request_id"), str)
+        or _REQUEST_ID.fullmatch(value["dispatch_request_id"]) is None
+        or value.get("action") != "run-reviewbundle"
+        or not isinstance(value.get("branch"), str)
+        or not value["branch"]
+        or not isinstance(value.get("expected_head"), str)
+        or _HEAD.fullmatch(value["expected_head"]) is None
+        or not isinstance(value.get("terminal_result_comment_id"), str)
+        or _COMMENT_ID.fullmatch(value["terminal_result_comment_id"]) is None
+        or not isinstance(value.get("review_bundle_comment_id"), str)
+        or _COMMENT_ID.fullmatch(value["review_bundle_comment_id"]) is None
+        or not isinstance(value.get("candidate_manifest_fingerprint"), str)
+        or _SHA256.fullmatch(value["candidate_manifest_fingerprint"]) is None
+        or parse_utc(value.get("recorded_at_utc")) is None
+    ):
+        raise LifecycleEvidenceError("review_candidate_invalid")
+    if schema_version == REVIEW_CANDIDATE_SCHEMA_VERSION:
+        target_repo_root = value.get("target_repo_root")
+        if (
+            not isinstance(target_repo_root, str)
+            or not target_repo_root
+            or "\x00" in target_repo_root
+            or not Path(target_repo_root).is_absolute()
+        ):
+            raise LifecycleEvidenceError("review_candidate_invalid")
+    return dict(value)
+
+
+def load_review_candidate(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        return validate_review_candidate_payload(_load_json_bytes(path.read_bytes()))
+    except (OSError, LifecycleEvidenceError) as error:
+        raise LifecycleEvidenceError("review_candidate_invalid") from error
+
+
+def write_or_replace_review_candidate(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    operator_session_id: str,
+) -> str:
+    """Persist one verified candidate pointer without treating it as authority."""
+    expected = validate_review_candidate_payload(payload)
+    existing = load_review_candidate(path)
+    if existing is not None:
+        if existing["dispatch_request_id"] == expected["dispatch_request_id"]:
+            comparable_keys = set(expected) - {"recorded_at_utc"}
+            if any(existing.get(key) != expected[key] for key in comparable_keys):
+                raise LifecycleEvidenceError("review_candidate_conflict")
+            return "already_present"
+        # A separately reconciled later successful review-bundle may replace it.
+        write_durable_json(path, expected, operator_session_id=operator_session_id)
+        return "replaced"
+    write_durable_json(path, expected, operator_session_id=operator_session_id)
+    return "written"
 
 
 def load_in_flight(path: Path) -> dict[str, Any] | None:

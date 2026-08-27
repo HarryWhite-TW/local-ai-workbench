@@ -52,6 +52,10 @@ $SameNodeContinuationExpectedStatePrefix = "same_node_exact_candidate_continuati
 $SameNodeContinuationProtocol = "lawb.same_node_exact_candidate_continuation.v1"
 $RunnerResultMarker = "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1"
 $CandidateEvidenceProfile = "local_git_candidate_observation.v1"
+$ReviewCandidateFilename = "review_candidate.json"
+$ReviewCandidateProtocol = "lawb.bridge_operator_review_candidate.v1"
+$ReviewCandidateSchemaVersion = 2
+$LegacyReviewCandidateSchemaVersion = 1
 $TrustedContinuationAuthors = @("HarryWhite-TW")
 $ProcessTreeTerminationTimeoutMilliseconds = 3000
 $CleanupCommandKillWaitMilliseconds = 1000
@@ -1396,6 +1400,139 @@ function Get-ExactDirtyPathsFromStatus {
     return @($paths.ToArray() | Sort-Object -Unique)
 }
 
+function Assert-ExactReviewCandidateIdentity {
+    <#
+    .SYNOPSIS
+    Verifies only immutable candidate identity.  This function neither reads
+    continuation budget nor creates any execution admission.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][object]$RepositoryEvidence,
+        [Parameter(Mandatory = $true)][object]$Comment,
+        [Parameter(Mandatory = $true)][string]$ParentCommentId,
+        [Parameter(Mandatory = $true)][long]$IssueNumber,
+        [Parameter(Mandatory = $true)][string]$ExpectedManifestFingerprint
+    )
+
+    if ($IssueNumber -le 0) { throw "same_node_continuation_issue_invalid" }
+    if ($ParentCommentId -notmatch '^[1-9][0-9]{0,18}$') {
+        throw "same_node_continuation_parent_comment_id_invalid"
+    }
+    if ($ExpectedManifestFingerprint -cnotmatch '^[0-9a-f]{64}$') {
+        throw "same_node_continuation_manifest_fingerprint_invalid"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$RepositoryEvidence.status)) {
+        throw "same_node_continuation_requires_dirty_candidate"
+    }
+    if (@($RepositoryEvidence.staged_paths).Count -ne 0) {
+        throw "same_node_continuation_staged_changes_present"
+    }
+    $dirtyPaths = @(Get-ExactDirtyPathsFromStatus -Status ([string]$RepositoryEvidence.status))
+    $commentId = Get-ObjectProperty -Object $Comment -Name "id"
+    $commentUser = Get-ObjectProperty -Object $Comment -Name "user"
+    $commentAuthor = [string](Get-ObjectProperty -Object $commentUser -Name "login")
+    $expectedIssueUrl = "https://api.github.com/repos/$ControlRepository/issues/$IssueNumber"
+    if ([string]$commentId -cne $ParentCommentId) {
+        throw "same_node_continuation_parent_id_mismatch"
+    }
+    if ($commentAuthor -notin $TrustedContinuationAuthors) {
+        throw "same_node_continuation_parent_untrusted"
+    }
+    if (-not [string]::Equals(
+        [string](Get-ObjectProperty -Object $Comment -Name "issue_url"),
+        $expectedIssueUrl,
+        [System.StringComparison]::Ordinal
+    )) {
+        throw "same_node_continuation_parent_issue_url_mismatch"
+    }
+    $parent = ConvertFrom-FirstJsonObjectAfterMarker `
+        -Body ([string](Get-ObjectProperty -Object $Comment -Name "body")) `
+        -Marker $RunnerResultMarker
+    if ([string](Get-ObjectProperty -Object $parent -Name "schema") -cne "lawb.runner_result.v1" -or
+        [string](Get-ObjectProperty -Object $parent -Name "repo") -cne $ControlRepository -or
+        [long](Get-ObjectProperty -Object $parent -Name "issue") -ne $IssueNumber -or
+        [long](Get-ObjectProperty -Object $parent -Name "selected_issue") -ne $IssueNumber -or
+        [string](Get-ObjectProperty -Object $parent -Name "action") -cne "run-reviewbundle" -or
+        [string](Get-ObjectProperty -Object $parent -Name "result") -cne "success" -or
+        [string](Get-ObjectProperty -Object $parent -Name "branch") -cne [string]$RepositoryEvidence.branch -or
+        [string](Get-ObjectProperty -Object $parent -Name "head") -cne [string]$RepositoryEvidence.head) {
+        throw "same_node_continuation_parent_identity_mismatch"
+    }
+    if ([string](Get-ObjectProperty -Object $parent -Name "candidate_acceptance") -cne "eligible" -or
+        [string](Get-ObjectProperty -Object $parent -Name "approval_token_semantics") -cne "candidate_review_snapshot_not_human_approval") {
+        throw "same_node_continuation_parent_acceptance_invalid"
+    }
+    $binding = Get-ObjectProperty -Object $parent -Name "runtime_contract_binding"
+    $contract = Get-ObjectProperty -Object $binding -Name "runtime_contract"
+    if ([string](Get-ObjectProperty -Object $binding -Name "status") -cne "passed" -or
+        (Get-ObjectProperty -Object $binding -Name "contract_present") -ne $true -or
+        [string](Get-ObjectProperty -Object $contract -Name "repository") -cne $ControlRepository -or
+        [long](Get-ObjectProperty -Object $contract -Name "logical_issue") -ne $IssueNumber -or
+        [string](Get-ObjectProperty -Object $contract -Name "branch") -cne [string]$RepositoryEvidence.branch -or
+        [string](Get-ObjectProperty -Object $contract -Name "expected_head") -cne [string]$RepositoryEvidence.head) {
+        throw "same_node_continuation_runtime_contract_mismatch"
+    }
+    $manifest = Get-ObjectProperty -Object $parent -Name "candidate_evidence_manifest"
+    $entries = @(Get-ObjectProperty -Object $manifest -Name "entries")
+    $allowedFiles = @(Get-ObjectProperty -Object $contract -Name "allowed_files")
+    if ([string](Get-ObjectProperty -Object $manifest -Name "status") -cne "verified" -or
+        [string](Get-ObjectProperty -Object $manifest -Name "evidence_profile") -cne $CandidateEvidenceProfile -or
+        $entries.Count -eq 0 -or $entries.Count -ne $allowedFiles.Count) {
+        throw "same_node_continuation_parent_manifest_invalid"
+    }
+    $manifestLines = [System.Collections.Generic.List[string]]::new()
+    $manifestPaths = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in $entries) {
+        $path = [string](Get-ObjectProperty -Object $entry -Name "path")
+        $state = [string](Get-ObjectProperty -Object $entry -Name "state")
+        $expectedSha = [string](Get-ObjectProperty -Object $entry -Name "sha256")
+        $expectedLength = Get-ObjectProperty -Object $entry -Name "length"
+        if ($path -notmatch '^[A-Za-z0-9._/-]+$' -or
+            $path.StartsWith("/", [System.StringComparison]::Ordinal) -or
+            $path.Contains("\") -or $path.Contains("//") -or
+            @($path.Split("/") | Where-Object { $_ -in @("", ".", "..") }).Count -gt 0 -or
+            $state -cne "regular_file" -or $expectedSha -cnotmatch '^[0-9a-f]{64}$' -or
+            -not ($expectedLength -is [int] -or $expectedLength -is [long]) -or
+            [long]$expectedLength -lt 0 -or $manifestPaths.Contains($path)) {
+            throw "same_node_continuation_parent_manifest_invalid"
+        }
+        $manifestPaths.Add($path)
+        $filePath = Join-Path $RepositoryRoot ($path -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+            throw "same_node_continuation_candidate_manifest_mismatch"
+        }
+        $bytes = [System.IO.File]::ReadAllBytes($filePath)
+        $actualSha = Get-Sha256Hex -Bytes $bytes
+        if ($actualSha -cne $expectedSha -or $bytes.Length -ne [long]$expectedLength) {
+            throw "same_node_continuation_candidate_manifest_mismatch"
+        }
+        $manifestLines.Add("$path|regular_file|$actualSha|$($bytes.Length)")
+    }
+    $sortedManifestPaths = @($manifestPaths.ToArray() | Sort-Object -Unique)
+    $sortedAllowedFiles = @($allowedFiles | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    if ((@($sortedManifestPaths) -join "`n") -cne (@($sortedAllowedFiles) -join "`n") -or
+        (@($manifestPaths.ToArray()) -join "`n") -cne (@($sortedManifestPaths) -join "`n")) {
+        throw "same_node_continuation_parent_manifest_scope_mismatch"
+    }
+    $changedFiles = @(Get-ObjectProperty -Object $parent -Name "changed_files" | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    if ((@($dirtyPaths) -join "`n") -cne (@($changedFiles) -join "`n")) {
+        throw "same_node_continuation_dirty_path_mismatch"
+    }
+    $payload = [string]::Join("`n", $manifestLines.ToArray())
+    $observedFingerprint = Get-Sha256Hex -Bytes ([System.Text.Encoding]::UTF8.GetBytes($payload))
+    if ([string](Get-ObjectProperty -Object $manifest -Name "payload") -cne $payload -or
+        [string](Get-ObjectProperty -Object $manifest -Name "fingerprint") -cne $observedFingerprint -or
+        $ExpectedManifestFingerprint -cne $observedFingerprint) {
+        throw "same_node_continuation_candidate_manifest_mismatch"
+    }
+    $assurance = Get-ObjectProperty -Object $parent -Name "execution_assurance"
+    if ([string](Get-ObjectProperty -Object $assurance -Name "candidate_manifest_fingerprint") -cne $observedFingerprint) {
+        throw "same_node_continuation_execution_assurance_mismatch"
+    }
+    return [pscustomobject]@{ parent = $parent; candidate_manifest_fingerprint = $observedFingerprint }
+}
+
 function Test-SameNodeExactCandidateContinuation {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -1412,18 +1549,6 @@ function Test-SameNodeExactCandidateContinuation {
     $observedFingerprint = ""
     $remainingBudget = $null
     try {
-        if ($IssueNumber -le 0) { throw "same_node_continuation_issue_invalid" }
-        if ($ExpectedManifestFingerprint -cnotmatch '^[0-9a-f]{64}$') {
-            throw "same_node_continuation_manifest_fingerprint_invalid"
-        }
-        if ([string]::IsNullOrWhiteSpace([string]$RepositoryEvidence.status)) {
-            throw "same_node_continuation_requires_dirty_candidate"
-        }
-        if (@($RepositoryEvidence.staged_paths).Count -ne 0) {
-            throw "same_node_continuation_staged_changes_present"
-        }
-        $dirtyPaths = @(Get-ExactDirtyPathsFromStatus `
-            -Status ([string]$RepositoryEvidence.status))
         $parentCommentId = Get-SameNodeContinuationParentCommentId `
             -ExpectedStateValue $ExpectedStateValue
         $comment = Get-SameNodeContinuationComment `
@@ -1431,40 +1556,15 @@ function Test-SameNodeExactCandidateContinuation {
             -ParentCommentId $parentCommentId `
             -WorkingDirectory $RepositoryRoot `
             -ProcessTimeoutSeconds $ProcessTimeoutSeconds
-        $commentId = Get-ObjectProperty -Object $comment -Name "id"
-        $commentUser = Get-ObjectProperty -Object $comment -Name "user"
-        $commentAuthor = [string](Get-ObjectProperty -Object $commentUser -Name "login")
-        $expectedIssueUrl = "https://api.github.com/repos/$ControlRepository/issues/$IssueNumber"
-        if ([string]$commentId -cne $parentCommentId) {
-            throw "same_node_continuation_parent_id_mismatch"
-        }
-        if ($commentAuthor -notin $TrustedContinuationAuthors) {
-            throw "same_node_continuation_parent_untrusted"
-        }
-        if (-not [string]::Equals(
-            [string](Get-ObjectProperty -Object $comment -Name "issue_url"),
-            $expectedIssueUrl,
-            [System.StringComparison]::Ordinal
-        )) {
-            throw "same_node_continuation_parent_issue_url_mismatch"
-        }
-        $parent = ConvertFrom-FirstJsonObjectAfterMarker `
-            -Body ([string](Get-ObjectProperty -Object $comment -Name "body")) `
-            -Marker $RunnerResultMarker
-        if ([string](Get-ObjectProperty -Object $parent -Name "schema") -cne "lawb.runner_result.v1" -or
-            [string](Get-ObjectProperty -Object $parent -Name "repo") -cne $ControlRepository -or
-            [long](Get-ObjectProperty -Object $parent -Name "issue") -ne $IssueNumber -or
-            [long](Get-ObjectProperty -Object $parent -Name "selected_issue") -ne $IssueNumber -or
-            [string](Get-ObjectProperty -Object $parent -Name "action") -cne "run-reviewbundle" -or
-            [string](Get-ObjectProperty -Object $parent -Name "result") -cne "success" -or
-            [string](Get-ObjectProperty -Object $parent -Name "branch") -cne [string]$RepositoryEvidence.branch -or
-            [string](Get-ObjectProperty -Object $parent -Name "head") -cne [string]$RepositoryEvidence.head) {
-            throw "same_node_continuation_parent_identity_mismatch"
-        }
-        if ([string](Get-ObjectProperty -Object $parent -Name "candidate_acceptance") -cne "eligible" -or
-            [string](Get-ObjectProperty -Object $parent -Name "approval_token_semantics") -cne "candidate_review_snapshot_not_human_approval") {
-            throw "same_node_continuation_parent_acceptance_invalid"
-        }
+        $identity = Assert-ExactReviewCandidateIdentity `
+            -RepositoryRoot $RepositoryRoot `
+            -RepositoryEvidence $RepositoryEvidence `
+            -Comment $comment `
+            -ParentCommentId $parentCommentId `
+            -IssueNumber $IssueNumber `
+            -ExpectedManifestFingerprint $ExpectedManifestFingerprint
+        $parent = $identity.parent
+        $observedFingerprint = [string]$identity.candidate_manifest_fingerprint
 
         $continuation = Get-ObjectProperty -Object $parent -Name "same_node_continuation"
         $remainingValue = Get-ObjectProperty -Object $continuation -Name "remaining_budget"
@@ -1476,79 +1576,6 @@ function Test-SameNodeExactCandidateContinuation {
         }
         $remainingBudget = [long]$remainingValue
 
-        $binding = Get-ObjectProperty -Object $parent -Name "runtime_contract_binding"
-        $contract = Get-ObjectProperty -Object $binding -Name "runtime_contract"
-        if ([string](Get-ObjectProperty -Object $binding -Name "status") -cne "passed" -or
-            (Get-ObjectProperty -Object $binding -Name "contract_present") -ne $true -or
-            [string](Get-ObjectProperty -Object $contract -Name "repository") -cne $ControlRepository -or
-            [long](Get-ObjectProperty -Object $contract -Name "logical_issue") -ne $IssueNumber -or
-            [string](Get-ObjectProperty -Object $contract -Name "branch") -cne [string]$RepositoryEvidence.branch -or
-            [string](Get-ObjectProperty -Object $contract -Name "expected_head") -cne [string]$RepositoryEvidence.head) {
-            throw "same_node_continuation_runtime_contract_mismatch"
-        }
-
-        $manifest = Get-ObjectProperty -Object $parent -Name "candidate_evidence_manifest"
-        $entries = @(Get-ObjectProperty -Object $manifest -Name "entries")
-        $allowedFiles = @(Get-ObjectProperty -Object $contract -Name "allowed_files")
-        if ([string](Get-ObjectProperty -Object $manifest -Name "status") -cne "verified" -or
-            [string](Get-ObjectProperty -Object $manifest -Name "evidence_profile") -cne $CandidateEvidenceProfile -or
-            $entries.Count -eq 0 -or $entries.Count -ne $allowedFiles.Count) {
-            throw "same_node_continuation_parent_manifest_invalid"
-        }
-        $manifestLines = [System.Collections.Generic.List[string]]::new()
-        $manifestPaths = [System.Collections.Generic.List[string]]::new()
-        foreach ($entry in $entries) {
-            $path = [string](Get-ObjectProperty -Object $entry -Name "path")
-            $state = [string](Get-ObjectProperty -Object $entry -Name "state")
-            $expectedSha = [string](Get-ObjectProperty -Object $entry -Name "sha256")
-            $expectedLength = Get-ObjectProperty -Object $entry -Name "length"
-            if ($path -notmatch '^[A-Za-z0-9._/-]+$' -or
-                $path.StartsWith("/", [System.StringComparison]::Ordinal) -or
-                $path.Contains("\") -or $path.Contains("//") -or
-                @($path.Split("/") | Where-Object { $_ -in @("", ".", "..") }).Count -gt 0 -or
-                $state -cne "regular_file" -or
-                $expectedSha -cnotmatch '^[0-9a-f]{64}$' -or
-                -not ($expectedLength -is [int] -or $expectedLength -is [long]) -or
-                [long]$expectedLength -lt 0 -or $manifestPaths.Contains($path)) {
-                throw "same_node_continuation_parent_manifest_invalid"
-            }
-            $manifestPaths.Add($path)
-            $filePath = Join-Path $RepositoryRoot ($path -replace '/', '\')
-            if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
-                throw "same_node_continuation_candidate_manifest_mismatch"
-            }
-            $bytes = [System.IO.File]::ReadAllBytes($filePath)
-            $actualSha = Get-Sha256Hex -Bytes $bytes
-            if ($actualSha -cne $expectedSha -or $bytes.Length -ne [long]$expectedLength) {
-                throw "same_node_continuation_candidate_manifest_mismatch"
-            }
-            $manifestLines.Add("$path|regular_file|$actualSha|$($bytes.Length)")
-        }
-        $sortedManifestPaths = @($manifestPaths.ToArray() | Sort-Object -Unique)
-        $sortedAllowedFiles = @($allowedFiles | ForEach-Object { [string]$_ } | Sort-Object -Unique)
-        if ((@($sortedManifestPaths) -join "`n") -cne (@($sortedAllowedFiles) -join "`n") -or
-            (@($manifestPaths.ToArray()) -join "`n") -cne (@($sortedManifestPaths) -join "`n")) {
-            throw "same_node_continuation_parent_manifest_scope_mismatch"
-        }
-        $changedFiles = @(
-            Get-ObjectProperty -Object $parent -Name "changed_files" |
-                ForEach-Object { [string]$_ } | Sort-Object -Unique
-        )
-        if ((@($dirtyPaths) -join "`n") -cne (@($changedFiles) -join "`n")) {
-            throw "same_node_continuation_dirty_path_mismatch"
-        }
-        $payload = [string]::Join("`n", $manifestLines.ToArray())
-        $observedFingerprint = Get-Sha256Hex `
-            -Bytes ([System.Text.Encoding]::UTF8.GetBytes($payload))
-        if ([string](Get-ObjectProperty -Object $manifest -Name "payload") -cne $payload -or
-            [string](Get-ObjectProperty -Object $manifest -Name "fingerprint") -cne $observedFingerprint -or
-            $ExpectedManifestFingerprint -cne $observedFingerprint) {
-            throw "same_node_continuation_candidate_manifest_mismatch"
-        }
-        $assurance = Get-ObjectProperty -Object $parent -Name "execution_assurance"
-        if ([string](Get-ObjectProperty -Object $assurance -Name "candidate_manifest_fingerprint") -cne $observedFingerprint) {
-            throw "same_node_continuation_execution_assurance_mismatch"
-        }
     }
     catch {
         $reason = [string]$_.Exception.Message
@@ -1568,6 +1595,156 @@ function Test-SameNodeExactCandidateContinuation {
         remaining_budget_before = $remainingBudget
         is_human_approval = $false
         reasons = @($reasons.ToArray())
+    }
+}
+
+function Get-ReviewCandidateRecord {
+    param([Parameter(Mandatory = $true)][string]$StateDirectory)
+
+    $path = Join-Path $StateDirectory $ReviewCandidateFilename
+    if (-not (Test-Path -LiteralPath $path)) {
+        return [pscustomobject]@{ status = "not_present"; record = $null; reason = "" }
+    }
+    try {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "review_candidate_record_invalid"
+        }
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xef -and
+            $bytes[1] -eq 0xbb -and $bytes[2] -eq 0xbf) {
+            throw "review_candidate_record_invalid"
+        }
+        $utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+        $record = Get-JsonObject -JsonText $utf8.GetString($bytes)
+        $names = @($record.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
+        $commonNames = @(
+            "action", "branch", "candidate_manifest_fingerprint", "dispatch_request_id",
+            "expected_head", "protocol", "recorded_at_utc", "review_bundle_comment_id",
+            "schema_version", "target_issue", "target_repository", "terminal_result_comment_id"
+        )
+        $expectedNames = if ($record.schema_version -eq $ReviewCandidateSchemaVersion) {
+            @($commonNames) + @("target_repo_root")
+        }
+        else { @($commonNames) }
+        if ((@($names) -join "`n") -cne (@($expectedNames | Sort-Object) -join "`n") -or
+            [string]$record.protocol -cne $ReviewCandidateProtocol -or
+            $record.schema_version -notin @(
+                $LegacyReviewCandidateSchemaVersion,
+                $ReviewCandidateSchemaVersion
+            ) -or
+            [string]$record.target_repository -notmatch '^.+$' -or
+            -not ($record.target_issue -is [int] -or $record.target_issue -is [long]) -or
+            [long]$record.target_issue -le 0 -or
+            [string]$record.dispatch_request_id -notmatch '^[A-Za-z0-9][A-Za-z0-9._:\-]{2,127}$' -or
+            [string]$record.action -cne "run-reviewbundle" -or
+            [string]$record.branch -notmatch '^.+$' -or
+            [string]$record.expected_head -cnotmatch '^[0-9a-f]{40}$' -or
+            [string]$record.terminal_result_comment_id -cnotmatch '^[1-9][0-9]{0,18}$' -or
+            [string]$record.review_bundle_comment_id -cnotmatch '^[1-9][0-9]{0,18}$' -or
+            [string]$record.candidate_manifest_fingerprint -cnotmatch '^[0-9a-f]{64}$' -or
+            [string]$record.recorded_at_utc -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$') {
+            throw "review_candidate_record_invalid"
+        }
+        if ($record.schema_version -eq $ReviewCandidateSchemaVersion -and
+            -not (Test-FullyQualifiedLocalWindowsPath `
+                -Path ([string]$record.target_repo_root))) {
+            throw "review_candidate_record_invalid"
+        }
+        $parsedRecordedAt = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse(
+            [string]$record.recorded_at_utc,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AssumeUniversal,
+            [ref]$parsedRecordedAt
+        )) {
+            throw "review_candidate_record_invalid"
+        }
+        return [pscustomobject]@{ status = "present"; record = $record; reason = "" }
+    }
+    catch {
+        return [pscustomobject]@{
+            status = "invalid"; record = $null; reason = "review_candidate_record_invalid"
+        }
+    }
+}
+
+function Test-ReviewCandidateClassification {
+    param(
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][object]$RepositoryEvidence,
+        [Parameter(Mandatory = $true)][string]$GhPath,
+        [Parameter(Mandatory = $true)][int]$ProcessTimeoutSeconds
+    )
+
+    $parentCommentId = [string]$Record.review_bundle_comment_id
+    try {
+        if ([string]$Record.target_repository -cne $ControlRepository -or
+            [long]$Record.target_issue -le 0 -or
+            ($Record.schema_version -eq $ReviewCandidateSchemaVersion -and
+                -not [string]::Equals(
+                    [System.IO.Path]::GetFullPath([string]$Record.target_repo_root).TrimEnd("\"),
+                    $RepositoryRoot,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) -or
+            [string]$Record.branch -cne [string]$RepositoryEvidence.branch -or
+            [string]$Record.expected_head -cne [string]$RepositoryEvidence.head) {
+            throw "review_candidate_record_target_mismatch"
+        }
+        $terminal = Get-SameNodeContinuationComment `
+            -GhPath $GhPath `
+            -ParentCommentId ([string]$Record.terminal_result_comment_id) `
+            -WorkingDirectory $RepositoryRoot `
+            -ProcessTimeoutSeconds $ProcessTimeoutSeconds
+        $terminalId = [string](Get-ObjectProperty -Object $terminal -Name "id")
+        $terminalAuthor = [string](Get-ObjectProperty -Object (Get-ObjectProperty -Object $terminal -Name "user") -Name "login")
+        $expectedIssueUrl = "https://api.github.com/repos/$ControlRepository/issues/$($Record.target_issue)"
+        if ($terminalId -cne [string]$Record.terminal_result_comment_id -or
+            $terminalAuthor -notin $TrustedContinuationAuthors -or
+            -not [string]::Equals([string](Get-ObjectProperty -Object $terminal -Name "issue_url"), $expectedIssueUrl, [System.StringComparison]::Ordinal)) {
+            throw "review_candidate_terminal_identity_mismatch"
+        }
+        $terminalSummary = ConvertFrom-FirstJsonObjectAfterMarker `
+            -Body ([string](Get-ObjectProperty -Object $terminal -Name "body")) `
+            -Marker $RunnerResultMarker
+        $currentTerminalEligibilityInvalid = `
+            $Record.schema_version -eq $ReviewCandidateSchemaVersion -and (
+                [string](Get-ObjectProperty -Object $terminalSummary -Name "candidate_acceptance") -cne "eligible" -or
+                @(Get-ObjectProperty -Object $terminalSummary -Name "changed_files").Count -eq 0
+            )
+        if ([string](Get-ObjectProperty -Object $terminalSummary -Name "schema") -cne "lawb.runner_result.v1" -or
+            [string](Get-ObjectProperty -Object $terminalSummary -Name "request_id") -cne [string]$Record.dispatch_request_id -or
+            [string](Get-ObjectProperty -Object $terminalSummary -Name "action") -cne "run-reviewbundle" -or
+            [string](Get-ObjectProperty -Object $terminalSummary -Name "result") -cne "success" -or
+            [string](Get-ObjectProperty -Object $terminalSummary -Name "repo") -cne $ControlRepository -or
+            [long](Get-ObjectProperty -Object $terminalSummary -Name "issue") -ne [long]$Record.target_issue -or
+            [string](Get-ObjectProperty -Object $terminalSummary -Name "branch") -cne [string]$Record.branch -or
+            [string](Get-ObjectProperty -Object $terminalSummary -Name "head") -cne [string]$Record.expected_head -or
+            [string](Get-ObjectProperty -Object $terminalSummary -Name "review_bundle_comment_id") -cne $parentCommentId -or
+            [string](Get-ObjectProperty -Object $terminalSummary -Name "candidate_manifest_fingerprint") -cne [string]$Record.candidate_manifest_fingerprint -or
+            $currentTerminalEligibilityInvalid) {
+            throw "review_candidate_terminal_binding_mismatch"
+        }
+        $parent = Get-SameNodeContinuationComment `
+            -GhPath $GhPath -ParentCommentId $parentCommentId `
+            -WorkingDirectory $RepositoryRoot -ProcessTimeoutSeconds $ProcessTimeoutSeconds
+        [void](Assert-ExactReviewCandidateIdentity `
+            -RepositoryRoot $RepositoryRoot -RepositoryEvidence $RepositoryEvidence `
+            -Comment $parent -ParentCommentId $parentCommentId `
+            -IssueNumber ([long]$Record.target_issue) `
+            -ExpectedManifestFingerprint ([string]$Record.candidate_manifest_fingerprint))
+        return [pscustomobject]@{ status = "verified"; reason = ""; parent_comment_id = $parentCommentId }
+    }
+    catch {
+        $reason = [string]$_.Exception.Message
+        if ([string]::IsNullOrWhiteSpace($reason) -or $reason -notmatch '^[a-z0-9_]+$') {
+            $reason = "review_candidate_validation_failed"
+        }
+        $status = if ($reason -eq "same_node_continuation_parent_read_failed") {
+            "unavailable"
+        }
+        else { "invalid" }
+        return [pscustomobject]@{ status = $status; reason = $reason; parent_comment_id = "" }
     }
 }
 
@@ -1592,16 +1769,29 @@ function Get-LocalLawbRoutingConfiguration {
         [System.Collections.ArrayList]$Reasons
     )
 
+    $emptyResult = [pscustomobject]@{
+        present = $false
+        target_root = ""
+        expected_branch = ""
+        expected_head = ""
+        selection_id = ""
+    }
     if ([string]::IsNullOrWhiteSpace($StateDirectory)) {
-        return [pscustomobject]@{ present = $false; target_root = "" }
+        return $emptyResult
     }
     $routingPath = Join-Path $StateDirectory "repository_routing.json"
     if (-not (Test-Path -LiteralPath $routingPath)) {
-        return [pscustomobject]@{ present = $false; target_root = "" }
+        return $emptyResult
     }
     if (-not (Test-Path -LiteralPath $routingPath -PathType Leaf)) {
         Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_configuration_invalid"
-        return [pscustomobject]@{ present = $true; target_root = "" }
+        return [pscustomobject]@{
+            present = $true
+            target_root = ""
+            expected_branch = ""
+            expected_head = ""
+            selection_id = ""
+        }
     }
 
     try {
@@ -1611,20 +1801,9 @@ function Get-LocalLawbRoutingConfiguration {
         )
         $routing = Get-JsonObject -JsonText $routingText
         $propertyNames = @($routing.PSObject.Properties | ForEach-Object { $_.Name })
-        $expectedNames = @("protocol", "repository", "target_repo_root")
-        if ($propertyNames.Count -ne $expectedNames.Count -or
-            @($propertyNames | Where-Object { $_ -cnotin $expectedNames }).Count -gt 0) {
-            throw "unexpected_routing_properties"
-        }
         $protocol = Get-ObjectProperty -Object $routing -Name "protocol"
         $repositoryName = Get-ObjectProperty -Object $routing -Name "repository"
-        $configuredRoot = Get-ObjectProperty -Object $routing -Name "target_repo_root"
-        if ($protocol -isnot [string] -or
-            -not [string]::Equals(
-                $protocol,
-                "lawb.bridge_operator_local_routing.v1",
-                [System.StringComparison]::Ordinal
-            )) {
+        if ($protocol -isnot [string]) {
             throw "routing_protocol_invalid"
         }
         if ($repositoryName -isnot [string] -or
@@ -1635,14 +1814,103 @@ function Get-LocalLawbRoutingConfiguration {
             )) {
             Add-BlockedReason -Reasons $Reasons `
                 -Reason "lawb_routing_repository_mismatch"
-            return [pscustomobject]@{ present = $true; target_root = "" }
+            return [pscustomobject]@{
+                present = $true
+                target_root = ""
+                expected_branch = ""
+                expected_head = ""
+                selection_id = ""
+            }
         }
-        if (-not (Test-FullyQualifiedLocalWindowsPath -Path $configuredRoot)) {
-            Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_target_root_invalid"
-            return [pscustomobject]@{ present = $true; target_root = "" }
+
+        if ([string]::Equals(
+            $protocol,
+            "lawb.bridge_operator_local_routing.v1",
+            [System.StringComparison]::Ordinal
+        )) {
+            $expectedNames = @("protocol", "repository", "target_repo_root")
+            if ($propertyNames.Count -ne $expectedNames.Count -or
+                @($propertyNames | Where-Object { $_ -cnotin $expectedNames }).Count -gt 0) {
+                throw "unexpected_routing_properties"
+            }
+            $configuredRoot = Get-ObjectProperty -Object $routing -Name "target_repo_root"
+            if (-not (Test-FullyQualifiedLocalWindowsPath -Path $configuredRoot)) {
+                Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_target_root_invalid"
+                return [pscustomobject]@{
+                    present = $true
+                    target_root = ""
+                    expected_branch = ""
+                    expected_head = ""
+                    selection_id = ""
+                }
+            }
+            $resolvedRoot = [System.IO.Path]::GetFullPath($configuredRoot).TrimEnd("\")
+            return [pscustomobject]@{
+                present = $true
+                target_root = $resolvedRoot
+                expected_branch = ""
+                expected_head = ""
+                selection_id = ""
+            }
+        }
+
+        if (-not [string]::Equals(
+            $protocol,
+            "lawb.bridge_operator_local_routing.v2",
+            [System.StringComparison]::Ordinal
+        )) {
+            throw "routing_protocol_invalid"
+        }
+        $expectedNames = @("protocol", "repository", "selected_target")
+        if ($propertyNames.Count -ne $expectedNames.Count -or
+            @($propertyNames | Where-Object { $_ -cnotin $expectedNames }).Count -gt 0) {
+            throw "unexpected_routing_properties"
+        }
+        $selectedTarget = Get-ObjectProperty -Object $routing -Name "selected_target"
+        if ($null -eq $selectedTarget) {
+            Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_no_safe_target"
+            return [pscustomobject]@{
+                present = $true
+                target_root = ""
+                expected_branch = ""
+                expected_head = ""
+                selection_id = ""
+            }
+        }
+        $selectedPropertyNames = @($selectedTarget.PSObject.Properties | ForEach-Object { $_.Name })
+        $expectedSelectedNames = @("selection_id", "target_repo_root", "branch", "head")
+        if ($selectedPropertyNames.Count -ne $expectedSelectedNames.Count -or
+            @($selectedPropertyNames | Where-Object { $_ -cnotin $expectedSelectedNames }).Count -gt 0) {
+            throw "unexpected_selected_target_properties"
+        }
+        $selectionId = Get-ObjectProperty -Object $selectedTarget -Name "selection_id"
+        $configuredRoot = Get-ObjectProperty -Object $selectedTarget -Name "target_repo_root"
+        $expectedBranch = Get-ObjectProperty -Object $selectedTarget -Name "branch"
+        $expectedHead = Get-ObjectProperty -Object $selectedTarget -Name "head"
+        if ($selectionId -isnot [string] -or
+            $selectionId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or
+            -not (Test-FullyQualifiedLocalWindowsPath -Path $configuredRoot) -or
+            $expectedBranch -isnot [string] -or
+            $expectedBranch -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]*$' -or
+            $expectedHead -isnot [string] -or
+            $expectedHead -notmatch '^[0-9a-fA-F]{40}$') {
+            Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_target_selection_invalid"
+            return [pscustomobject]@{
+                present = $true
+                target_root = ""
+                expected_branch = ""
+                expected_head = ""
+                selection_id = ""
+            }
         }
         $resolvedRoot = [System.IO.Path]::GetFullPath($configuredRoot).TrimEnd("\")
-        return [pscustomobject]@{ present = $true; target_root = $resolvedRoot }
+        return [pscustomobject]@{
+            present = $true
+            target_root = $resolvedRoot
+            expected_branch = $expectedBranch
+            expected_head = $expectedHead.ToLowerInvariant()
+            selection_id = $selectionId
+        }
     }
     catch [System.Text.DecoderFallbackException] {
         Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_configuration_invalid"
@@ -1650,7 +1918,13 @@ function Get-LocalLawbRoutingConfiguration {
     catch {
         Add-BlockedReason -Reasons $Reasons -Reason "lawb_routing_configuration_invalid"
     }
-    return [pscustomobject]@{ present = $true; target_root = "" }
+    return [pscustomobject]@{
+        present = $true
+        target_root = ""
+        expected_branch = ""
+        expected_head = ""
+        selection_id = ""
+    }
 }
 
 function Test-TrueProperty {
@@ -2060,6 +2334,16 @@ $sameNodeContinuationAdmission = [pscustomobject]@{
     is_human_approval = $false
     reasons = @()
 }
+$reviewCandidateStatus = "not_present"
+$reviewCandidateReason = ""
+$reviewCandidateParentCommentId = ""
+$reviewCandidateRecord = $null
+$targetSelectionMode = if ($continuationAdmissionAttemptEnabled) {
+    "continuation_pending"
+}
+else {
+    "ordinary_routing"
+}
 if ($continuationBindingRequested -and -not $continuationBindingComplete) {
     Add-BlockedReason -Reasons $blockedReasons `
         -Reason "same_node_continuation_binding_incomplete"
@@ -2212,32 +2496,117 @@ if (-not ($Repository -in $SupportedRepositories)) {
 
 $ResolvedTargetRepoRoot = ""
 if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]::Ordinal)) {
-    $lawbRouting = Get-LocalLawbRoutingConfiguration `
-        -StateDirectory $ResolvedStateDir `
-        -Reasons $blockedReasons
-    if (-not [string]::IsNullOrWhiteSpace($TargetRepoRoot) -and $lawbRouting.present) {
-        Add-BlockedReason -Reasons $blockedReasons -Reason "lawb_target_repo_root_ambiguous"
+    $lawbRouting = [pscustomobject]@{
+        present = $false
+        target_root = ""
+        expected_branch = ""
+        expected_head = ""
+        selection_id = ""
     }
-    elseif (-not [string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
-        if (-not (Test-FullyQualifiedLocalWindowsPath -Path $TargetRepoRoot)) {
-            Add-BlockedReason -Reasons $blockedReasons -Reason "target_repo_root_invalid"
+    if ($targetSelectionMode -eq "continuation_pending") {
+        $reviewCandidateRecord = Get-ReviewCandidateRecord `
+            -StateDirectory $ResolvedStateDir
+        if ($reviewCandidateRecord.status -eq "invalid") {
+            $targetSelectionMode = "continuation_blocked"
+            Add-BlockedReason -Reasons $blockedReasons `
+                -Reason "review_candidate_continuation_record_invalid"
         }
-        else {
+        elseif ($reviewCandidateRecord.status -eq "present") {
             try {
-                $ResolvedTargetRepoRoot = [System.IO.Path]::GetFullPath(
-                    $TargetRepoRoot
-                ).TrimEnd("\")
+                $expectedParentCommentId = `
+                    Get-SameNodeContinuationParentCommentId `
+                        -ExpectedStateValue $ExpectedState
+                if ([string]$reviewCandidateRecord.record.target_repository -cne `
+                        $ControlRepository -or
+                    [long]$reviewCandidateRecord.record.target_issue -ne `
+                        $ContinuationIssueNumber -or
+                    [string]$reviewCandidateRecord.record.review_bundle_comment_id -cne `
+                        $expectedParentCommentId -or
+                    [string]$reviewCandidateRecord.record.candidate_manifest_fingerprint -cne `
+                        $ExpectedCandidateManifestFingerprint) {
+                    throw "review_candidate_continuation_binding_mismatch"
+                }
+                if ($reviewCandidateRecord.record.schema_version -eq `
+                    $ReviewCandidateSchemaVersion) {
+                    $ResolvedTargetRepoRoot = [System.IO.Path]::GetFullPath(
+                        [string]$reviewCandidateRecord.record.target_repo_root
+                    ).TrimEnd("\")
+                    $targetSelectionMode = "continuation_record"
+                }
+                else {
+                    $targetSelectionMode = "continuation_legacy_record_routing"
+                }
             }
             catch {
-                Add-BlockedReason -Reasons $blockedReasons -Reason "target_repo_root_invalid"
+                $ResolvedTargetRepoRoot = ""
+                $targetSelectionMode = "continuation_blocked"
+                Add-BlockedReason -Reasons $blockedReasons `
+                    -Reason "review_candidate_continuation_binding_mismatch"
+            }
+        }
+        else {
+            # Preserve the pre-v2 exact-candidate path when no local candidate
+            # record exists.  This is continuation resolution, not fallback
+            # from a failed record binding.
+            $targetSelectionMode = "continuation_legacy_routing"
+        }
+    }
+    if ($targetSelectionMode -in @(
+        "ordinary_routing",
+        "continuation_legacy_record_routing",
+        "continuation_legacy_routing"
+    )) {
+        $lawbRouting = Get-LocalLawbRoutingConfiguration `
+            -StateDirectory $ResolvedStateDir `
+            -Reasons $blockedReasons
+        if ($targetSelectionMode -eq "continuation_legacy_record_routing") {
+            if (-not [string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
+                $targetSelectionMode = "continuation_blocked"
+                Add-BlockedReason -Reasons $blockedReasons `
+                    -Reason "lawb_target_repo_root_ambiguous"
+            }
+            elseif (-not $lawbRouting.present) {
+                $targetSelectionMode = "continuation_blocked"
+                Add-BlockedReason -Reasons $blockedReasons `
+                    -Reason "review_candidate_continuation_routing_required"
+            }
+            elseif ([string]::IsNullOrWhiteSpace($lawbRouting.target_root)) {
+                $targetSelectionMode = "continuation_blocked"
+            }
+            else {
+                $ResolvedTargetRepoRoot = $lawbRouting.target_root
+            }
+        }
+        else {
+            if (-not [string]::IsNullOrWhiteSpace($TargetRepoRoot) -and $lawbRouting.present) {
+                Add-BlockedReason -Reasons $blockedReasons -Reason "lawb_target_repo_root_ambiguous"
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
+                if (-not (Test-FullyQualifiedLocalWindowsPath -Path $TargetRepoRoot)) {
+                    Add-BlockedReason -Reasons $blockedReasons -Reason "target_repo_root_invalid"
+                }
+                else {
+                    try {
+                        $ResolvedTargetRepoRoot = [System.IO.Path]::GetFullPath(
+                            $TargetRepoRoot
+                        ).TrimEnd("\")
+                    }
+                    catch {
+                        Add-BlockedReason -Reasons $blockedReasons -Reason "target_repo_root_invalid"
+                    }
+                }
+            }
+            elseif ($lawbRouting.present) {
+                $ResolvedTargetRepoRoot = $lawbRouting.target_root
+            }
+            else {
+                $ResolvedTargetRepoRoot = $ControlRepoRoot
             }
         }
     }
-    elseif ($lawbRouting.present) {
-        $ResolvedTargetRepoRoot = $lawbRouting.target_root
-    }
-    else {
-        $ResolvedTargetRepoRoot = $ControlRepoRoot
+    elseif ($targetSelectionMode -eq "continuation_record" -and
+        -not [string]::IsNullOrWhiteSpace($TargetRepoRoot)) {
+        Add-BlockedReason -Reasons $blockedReasons -Reason "lawb_target_repo_root_ambiguous"
     }
 
     if (-not [string]::IsNullOrWhiteSpace($ResolvedTargetRepoRoot) -and
@@ -2265,6 +2634,28 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
             -ReasonPrefix "target_repository" `
             -Reasons $blockedReasons `
             -DeferWorktreeDirty:$continuationAdmissionAttemptEnabled
+        if ($blockedReasons.Count -eq $targetReasonCountBefore -and
+            $targetSelectionMode -ne "continuation_record" -and
+            -not [string]::IsNullOrWhiteSpace($lawbRouting.expected_branch) -and
+            -not [string]::Equals(
+                $targetRepoEvidence.branch,
+                $lawbRouting.expected_branch,
+                [System.StringComparison]::Ordinal
+            )) {
+            Add-BlockedReason -Reasons $blockedReasons `
+                -Reason "lawb_routing_target_branch_mismatch"
+        }
+        if ($blockedReasons.Count -eq $targetReasonCountBefore -and
+            $targetSelectionMode -ne "continuation_record" -and
+            -not [string]::IsNullOrWhiteSpace($lawbRouting.expected_head) -and
+            -not [string]::Equals(
+                $targetRepoEvidence.head,
+                $lawbRouting.expected_head,
+                [System.StringComparison]::Ordinal
+            )) {
+            Add-BlockedReason -Reasons $blockedReasons `
+                -Reason "lawb_routing_target_head_mismatch"
+        }
         if ($continuationAdmissionAttemptEnabled -and
             $blockedReasons.Count -eq $targetReasonCountBefore) {
             if ([string]::IsNullOrWhiteSpace($reviewedGhPath)) {
@@ -2272,17 +2663,36 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
                     -Reason "same_node_continuation_reviewed_gh_unavailable"
             }
             else {
-                $sameNodeContinuationAdmission = `
-                    Test-SameNodeExactCandidateContinuation `
-                        -RepositoryRoot $ResolvedTargetRepoRoot `
-                        -RepositoryEvidence $targetRepoEvidence `
-                        -GhPath $reviewedGhPath `
-                        -IssueNumber $ContinuationIssueNumber `
-                        -ExpectedStateValue $ExpectedState `
-                        -ExpectedManifestFingerprint `
-                            $ExpectedCandidateManifestFingerprint `
-                        -ProcessTimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
-                if (-not $sameNodeContinuationAdmission.admitted) {
+                if ($targetSelectionMode -in @(
+                    "continuation_record",
+                    "continuation_legacy_record_routing"
+                )) {
+                    $reviewCandidateClassification = `
+                        Test-ReviewCandidateClassification `
+                            -Record $reviewCandidateRecord.record `
+                            -RepositoryRoot $ResolvedTargetRepoRoot `
+                            -RepositoryEvidence $targetRepoEvidence `
+                            -GhPath $reviewedGhPath `
+                            -ProcessTimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
+                    if ($reviewCandidateClassification.status -ne "verified") {
+                        Add-BlockedReason -Reasons $blockedReasons `
+                            -Reason ([string]$reviewCandidateClassification.reason)
+                    }
+                }
+                if ($blockedReasons.Count -eq $targetReasonCountBefore) {
+                    $sameNodeContinuationAdmission = `
+                        Test-SameNodeExactCandidateContinuation `
+                            -RepositoryRoot $ResolvedTargetRepoRoot `
+                            -RepositoryEvidence $targetRepoEvidence `
+                            -GhPath $reviewedGhPath `
+                            -IssueNumber $ContinuationIssueNumber `
+                            -ExpectedStateValue $ExpectedState `
+                            -ExpectedManifestFingerprint `
+                                $ExpectedCandidateManifestFingerprint `
+                            -ProcessTimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
+                }
+                if (-not $sameNodeContinuationAdmission.admitted -and
+                    $blockedReasons.Count -eq $targetReasonCountBefore) {
                     Add-BlockedReason -Reasons $blockedReasons `
                         -Reason "target_repository_worktree_dirty"
                     foreach ($admissionReason in @(
@@ -2298,6 +2708,40 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
             $sameNodeContinuationAdmission.admitted) {
             $statusBranch = $targetRepoEvidence.branch
             $statusHead = $targetRepoEvidence.head
+        }
+        # This is diagnostic only.  Test-ExactRepository has already retained
+        # the ordinary dirty-worktree blocked reason unless the independently
+        # requested same-node continuation path is active.
+        if (-not [string]::IsNullOrWhiteSpace([string]$targetRepoEvidence.status)) {
+            $reviewCandidateRecord = Get-ReviewCandidateRecord `
+                -StateDirectory $ResolvedStateDir
+            if ($reviewCandidateRecord.status -eq "present") {
+                if ([string]::IsNullOrWhiteSpace($reviewedGhPath)) {
+                    $reviewCandidateStatus = "unavailable"
+                    $reviewCandidateReason = "review_candidate_reviewed_gh_unavailable"
+                }
+                else {
+                    $reviewCandidateClassification = Test-ReviewCandidateClassification `
+                        -Record $reviewCandidateRecord.record `
+                        -RepositoryRoot $ResolvedTargetRepoRoot `
+                        -RepositoryEvidence $targetRepoEvidence `
+                        -GhPath $reviewedGhPath `
+                        -ProcessTimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
+                    $reviewCandidateStatus = [string]$reviewCandidateClassification.status
+                    $reviewCandidateReason = [string]$reviewCandidateClassification.reason
+                    if ($reviewCandidateStatus -eq "verified") {
+                        $reviewCandidateParentCommentId = [string]$reviewCandidateClassification.parent_comment_id
+                    }
+                }
+            }
+            elseif ($reviewCandidateRecord.status -eq "invalid") {
+                $reviewCandidateStatus = "invalid"
+                $reviewCandidateReason = [string]$reviewCandidateRecord.reason
+            }
+        }
+        if ($targetSelectionMode -eq "continuation_legacy_record_routing" -and
+            -not $sameNodeContinuationAdmission.admitted) {
+            $ResolvedTargetRepoRoot = ""
         }
     }
 }
@@ -2642,6 +3086,9 @@ $summary = [ordered]@{
     operator_stderr_summary = $operatorStderrSummary
     operator_summary = $operatorSummary
     same_node_candidate_continuation = $sameNodeContinuationAdmission
+    review_candidate_status = $reviewCandidateStatus
+    review_candidate_reason = $reviewCandidateReason
+    review_candidate_parent_comment_id = $reviewCandidateParentCommentId
     status_publication_requested = [bool]$PublishStatus
     status_publication_attempted = $statusPublicationAttempted
     status_comment_create_attempted = $statusCommentCreateAttempted
