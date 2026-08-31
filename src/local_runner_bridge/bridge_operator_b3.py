@@ -385,6 +385,13 @@ def run_bridge_operator_b3_dry_run_loop(
         _write_state(state_root, "running", summary, _now(now_utc))
         _write_log(state_root, "started", "dry_run_loop_started", summary)
 
+        if (
+            mode == B3C_MODE
+            and summary.get("requested_action") == B3C_ALLOWED_ACTION
+            and summary.get("target_result_verified")
+        ):
+            _report_request_status(summary, status_progress_reporter)
+
         if startup_recovery_non_success:
             reason = "restart_reconciled_terminal_non_success"
             _block(summary, reason)
@@ -437,7 +444,7 @@ def run_bridge_operator_b3_dry_run_loop(
                         mode == B3C_MODE
                         and b1_summary.get("requested_action") == B3C_ALLOWED_ACTION
                     ):
-                        _report_request_accepted_progress(
+                        _report_request_status(
                             summary, status_progress_reporter
                         )
                     if mode == B3A_MODE:
@@ -489,6 +496,15 @@ def run_bridge_operator_b3_dry_run_loop(
                                 submitter=notification_submitter,
                                 now_utc=now_utc,
                             )
+                            if (
+                                mode == B3C_MODE
+                                and summary.get("requested_action")
+                                == B3C_ALLOWED_ACTION
+                                and summary.get("target_result_verified")
+                            ):
+                                _report_request_status(
+                                    summary, status_progress_reporter
+                                )
                             if reason is not None:
                                 if reason in NONFATAL_REQUEST_REJECTION_REASONS:
                                     session_rejected_requests.add(request_key)
@@ -1952,6 +1968,11 @@ def _delegate_b3_request(
         summary["processed_request_written"] = True
         summary["durable_completion_reconciled"] = True
         summary["terminal_observed_at_utc"] = _format_time(now)
+        summary["target_result_comment_id"] = reconciliation.matched_evidence_ids[0]
+        summary["target_result_author"] = reconciliation.terminal_author
+        summary["target_result_verified"] = True
+        summary["dispatcher_result_writeback_reached"] = True
+        summary["dispatcher_result_writeback_verified"] = True
         if reconciliation.decision == ReconciliationDecision.SETTLED_NON_SUCCESS:
             summary["current_delegation_outcome"] = "durable_terminal_non_success_reconciled"
             _block(summary, "durable_terminal_non_success")
@@ -2641,10 +2662,10 @@ def _reset_request_execution_visibility(summary: dict[str, Any]) -> None:
     )
 
 
-def _report_request_accepted_progress(
+def _report_request_status(
     summary: dict[str, Any], reporter: Callable[[dict[str, Any]], None] | None
 ) -> None:
-    """Report only validated, request-bound non-terminal B3-C progress."""
+    """Report validated request-bound running or terminal lifecycle status."""
     if reporter is None:
         return
     try:
@@ -2783,6 +2804,7 @@ def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
             summary.get("durable_reconciliation_matched_evidence_ids", [])
         ),
         "durable_completion_reconciled": bool(summary.get("durable_completion_reconciled")),
+        "terminal_result": summary.get("terminal_result"),
         "current_failure_recorded": bool(summary.get("current_failure_recorded")),
         "current_failure_reason": summary.get("current_failure_reason"),
         "last_failure_json_applies_to_current_run": bool(

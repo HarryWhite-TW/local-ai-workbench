@@ -136,7 +136,7 @@ def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, 
     assert_safety(summary)
 
 
-def test_status_progress_reporter_writes_only_request_accepted_status(monkeypatch, tmp_path):
+def test_status_progress_reporter_writes_request_accepted_status(monkeypatch, tmp_path):
     gh = tmp_path / "gh.exe"
     gh.write_text("placeholder", encoding="utf-8")
     calls = []
@@ -182,6 +182,81 @@ def test_status_progress_reporter_writes_only_request_accepted_status(monkeypatc
     assert payload["result"] == "running"
     assert payload["request_id"] == "status-request-001"
     assert payload["current_run"]["lifecycle"]["stage"] == "REQUEST_ACCEPTED"
+
+
+@pytest.mark.parametrize(
+    ("terminal_result", "expected_result"),
+    [("success", "completed"), ("failure", "blocked"), ("blocked", "blocked")],
+)
+def test_status_progress_reporter_writes_verified_terminal_status(
+    monkeypatch, tmp_path, terminal_result, expected_result
+):
+    gh = tmp_path / "gh.exe"
+    gh.write_text("placeholder", encoding="utf-8")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return type("Completed", (), {"returncode": 0, "stdout": '{"id":45123}'})()
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    args = cli._parser().parse_args(
+        [
+            "--repo-root", "C:/repo",
+            "--max-cycles", "1",
+            "--poll-interval-seconds", "0",
+            "--mode", "b3c-run-reviewbundle",
+            "--operator-session-id", "a" * 32,
+            "--status-comment-id", "45123",
+            "--status-gh-path", str(gh),
+        ]
+    )
+
+    reporter = cli._status_progress_reporter(args)
+    reporter(
+        {
+            "request_id": "status-request-001",
+            "issue_number": 188,
+            "requested_action": "run-reviewbundle",
+            "terminal_result": terminal_result,
+            "lifecycle": {
+                "stage": "TERMINAL_RESULT_READY",
+                "certainty": "verified",
+                "basis": "trusted_terminal_result",
+            },
+        }
+    )
+
+    assert len(calls) == 1
+    body = json.loads(calls[0][1]["input"])["body"]
+    payload = json.loads(body.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
+    assert payload["result"] == expected_result
+
+
+def test_status_progress_reporter_rejects_unverified_terminal_result(tmp_path):
+    gh = tmp_path / "gh.exe"
+    gh.write_text("placeholder", encoding="utf-8")
+    args = cli._parser().parse_args(
+        [
+            "--repo-root", "C:/repo",
+            "--max-cycles", "1",
+            "--poll-interval-seconds", "0",
+            "--status-comment-id", "45123",
+            "--status-gh-path", str(gh),
+        ]
+    )
+
+    reporter = cli._status_progress_reporter(args)
+    with pytest.raises(ValueError, match="status_progress_terminal_result_invalid"):
+        reporter(
+            {
+                "request_id": "status-request-001",
+                "issue_number": 188,
+                "requested_action": "run-reviewbundle",
+                "terminal_result": None,
+                "lifecycle": {"stage": "TERMINAL_RESULT_READY"},
+            }
+        )
 
 
 def test_cli_accepts_b3c_run_reviewbundle_mode(monkeypatch, capsys):

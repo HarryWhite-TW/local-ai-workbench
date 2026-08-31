@@ -84,7 +84,21 @@ def _status_progress_reporter(args: argparse.Namespace):
 
     def report(current_run: dict) -> None:
         lifecycle = current_run.get("lifecycle") or {}
-        if lifecycle.get("stage") != "REQUEST_ACCEPTED":
+        lifecycle_stage = lifecycle.get("stage")
+        if lifecycle_stage == "REQUEST_ACCEPTED":
+            result = "running"
+            next_action = "review_operator_result"
+        elif lifecycle_stage == "TERMINAL_RESULT_READY":
+            terminal_result = current_run.get("terminal_result")
+            if terminal_result == "success":
+                result = "completed"
+                next_action = "review_completed_result"
+            elif terminal_result in {"failure", "blocked"}:
+                result = "blocked"
+                next_action = "review_blocked_result"
+            else:
+                raise ValueError("status_progress_terminal_result_invalid")
+        else:
             raise ValueError("status_progress_lifecycle_invalid")
         request_id = current_run.get("request_id")
         issue_number = current_run.get("issue_number")
@@ -99,13 +113,13 @@ def _status_progress_reporter(args: argparse.Namespace):
             "protocol": "lawb.bridge_status.v1",
             "run_id": args.operator_session_id,
             "stage": "operator",
-            "result": "running",
+            "result": result,
             "repository": args.repo,
             "request_id": request_id,
             "target_issue": issue_number,
             "requested_action": current_run["requested_action"],
             "current_run": current_run,
-            "next_action": "review_operator_result",
+            "next_action": next_action,
         }
         body = (
             "LAWBRIDGE-STATUS protocol=lawb.bridge_status.v1\n\n```json\n"

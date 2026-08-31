@@ -469,6 +469,7 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
         "durable_reconciliation_reason": "EXACTLY_ONE_TRUSTED_MATCH",
         "durable_reconciliation_matched_evidence_ids": ["20"],
         "durable_completion_reconciled": False,
+        "terminal_result": "success",
         "current_failure_recorded": False,
         "current_failure_reason": None,
         "last_failure_json_applies_to_current_run": False,
@@ -1050,7 +1051,7 @@ def test_b3c_publishes_request_bound_progress_before_dispatcher(tmp_path):
         status_progress_reporter=progress_reports.append,
     )
 
-    assert len(progress_reports) == 1
+    assert len(progress_reports) == 2
     progress = progress_reports[0]
     assert progress["request_id"] == "b3a-151-20260616T080000Z"
     assert progress["issue_number"] == 151
@@ -1061,13 +1062,67 @@ def test_b3c_publishes_request_bound_progress_before_dispatcher(tmp_path):
         "basis": "current_request_identity",
     }
     assert progress["dispatcher_invoked"] is False
+    terminal = progress_reports[1]
+    assert terminal["request_id"] == progress["request_id"]
+    assert terminal["lifecycle"] == {
+        "stage": "TERMINAL_RESULT_READY",
+        "certainty": "verified",
+        "basis": "trusted_terminal_result",
+    }
+    assert terminal["terminal_result"] == "success"
     assert summary["status_progress_publication"] == "reported"
+
+
+def test_b3c_publishes_verified_terminal_failure_as_blocked(tmp_path):
+    progress_reports = []
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            ),
+        ]
+    )
+
+    summary = run(
+        tmp_path,
+        client,
+        mode=B3C_MODE,
+        dispatcher_invoker=lambda **_: client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(action="run-reviewbundle", result="failure"),
+                author="HarryWhite-TW",
+            )
+        )
+        or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
+        timeout_seconds=180,
+        status_progress_reporter=progress_reports.append,
+    )
+
+    assert summary["result"] == "blocked"
+    assert summary["target_result_verified"] is True
+    assert len(progress_reports) == 2
+    assert progress_reports[1]["lifecycle"]["stage"] == "TERMINAL_RESULT_READY"
+    assert progress_reports[1]["terminal_result"] == "failure"
 
 
 def test_b3c_later_request_does_not_inherit_prior_result_visibility(tmp_path):
     client = FakeGitHub(
         target_comments=[
-            CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW"),
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            ),
         ]
     )
     calls = []
@@ -1710,6 +1765,62 @@ def test_b3b_untrusted_result_reaches_writeback_but_is_not_settled(tmp_path):
     assert summary["dispatcher_result_writeback_reached"] is True
     assert summary["dispatcher_result_writeback_verified"] is False
     assert summary["target_result_verified"] is False
+    failure = read_json(tmp_path / "last_failure.json")
+    assert failure["dispatcher_result_writeback_reached"] is True
+    assert failure["dispatcher_result_writeback_verified"] is False
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+    assert_high_risk_safety(summary)
+
+
+def test_b3c_untrusted_reviewbundle_result_reaches_writeback_but_is_not_settled(
+    tmp_path,
+):
+    progress_reports = []
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=[
+            CommentRecord(
+                id=10,
+                body=dispatch_marker(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            ),
+        ],
+    )
+
+    def invoker(**kwargs):
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(action="run-reviewbundle"),
+                author="other-user",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="ok", stderr="")
+
+    summary = run(
+        tmp_path,
+        client,
+        mode=B3C_MODE,
+        dispatcher_invoker=invoker,
+        timeout_seconds=180,
+        status_progress_reporter=progress_reports.append,
+    )
+
+    assert summary["blocked_reasons"] == ["untrusted_result_author"]
+    assert summary["dispatcher_invocation_count"] == 1
+    assert summary["requested_action"] == "run-reviewbundle"
+    assert summary["dispatcher_result_writeback_reached"] is True
+    assert summary["dispatcher_result_writeback_verified"] is False
+    assert summary["target_result_verified"] is False
+    assert [report["lifecycle"]["stage"] for report in progress_reports] == [
+        "REQUEST_ACCEPTED"
+    ]
     failure = read_json(tmp_path / "last_failure.json")
     assert failure["dispatcher_result_writeback_reached"] is True
     assert failure["dispatcher_result_writeback_verified"] is False
