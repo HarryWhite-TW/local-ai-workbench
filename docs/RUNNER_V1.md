@@ -17,9 +17,16 @@ Review-bundle mode does not approve, stage, commit, push, close issues, edit lab
 Use runner v1 review-bundle mode only when:
 
 - The repo is clean before starting.
-- The GitHub Issue explicitly says it is write-capable or review-bundle capable.
+- The target Issue body contains exactly one valid Task Packet v1.1 matching
+  the Issue, repository, branch, and HEAD.
 - You want Codex to prepare local changes for human review.
 - You want GitHub to receive a bounded review bundle with final status and diff summary.
+
+For the normal Dispatcher route, Runner additionally requires the validated
+Task Packet `packet_id` to equal the selected BRIDGE request `request_id`.
+Missing, malformed, ambiguous, stale, or mismatched packet contracts stop
+before Codex. The validated Task Packet is the task semantic input; unrelated
+natural language elsewhere in the Issue body is not executable task authority.
 
 Do not use runner v1 for read-only audits. Use runner v0 for those.
 
@@ -30,7 +37,7 @@ Open PowerShell at the repo root directory for this checkout.
 Run:
 
 ```powershell
-.\scripts\local_runner_v1.ps1 -IssueNumber <N>
+.\scripts\local_runner_v1.ps1 -IssueNumber <N> -ReviewedCodexPath <REVIEWED_CODEX_PATH>
 ```
 
 Replace `<N>` with the GitHub Issue number.
@@ -40,8 +47,13 @@ The script derives the repo root from its own location, so it does not require a
 `ReviewBundle` is the default mode. You can also run it explicitly:
 
 ```powershell
-.\scripts\local_runner_v1.ps1 -IssueNumber <N> -Mode ReviewBundle
+.\scripts\local_runner_v1.ps1 -IssueNumber <N> -Mode ReviewBundle -ReviewedCodexPath <REVIEWED_CODEX_PATH>
 ```
+
+This direct/manual form remains a recovery path and still requires the valid
+Task Packet v1.1 above. It has no selected BRIDGE request identity, so the
+Dispatcher-only `packet_id == request_id` check does not apply. Normal
+Dispatcher execution always supplies that identity and enforces the equality.
 
 ## Initial CommitApproved usage policy
 
@@ -89,6 +101,7 @@ Runner v1 review-bundle-only mode:
 
 - Requires a clean repo before Codex starts.
 - Stops before Codex if the repo is dirty.
+- Stops before Codex unless the Task Packet v1.1 runtime contract is valid.
 - Runs Codex with the `workspace-write` sandbox.
 - Leaves Codex changes unstaged for review.
 - Posts a GitHub Issue review bundle.
@@ -111,6 +124,6 @@ The GitHub comment includes:
 
 ## After it succeeds
 
-Review the GitHub Issue comment and the local unstaged diff before taking any manual follow-up action.
+Review the GitHub Issue comment and the local unstaged diff before taking any manual follow-up action. A successful normal `run-reviewbundle` is waiting for ChatGPT final technical review; it is not semantic completion.
 
 Do not commit until a separate approval step is implemented or manual commit instructions are given.

@@ -70,6 +70,15 @@ metadata, fields, and expiry before action execution. Normal operation does not 
 `LAWBRUNNER-RESULT`. Issue `#147` and direct `CHATGPT-DISPATCH` PollOnce remain
 legacy/manual recovery compatibility, not the default B3 route.
 
+For normal `run-reviewbundle`, the target Issue body is the sole Task Surface.
+It must contain exactly one valid Task Packet v1.1 whose repository, logical
+Issue, branch, and expected HEAD match the selected request. Dispatcher passes
+that selected request's `request_id` privately to Runner, and Runner requires
+the packet's `packet_id` to match it before Codex starts. Missing, malformed,
+ambiguous, stale, or mismatched packet contracts fail closed before Codex. The
+validated Task Packet, rather than unrelated Issue-body natural language, is
+the task semantic input.
+
 ## Canonical Repository Launcher
 
 Run the canonical launcher from the repository root for routine local use:
@@ -179,9 +188,13 @@ For preflight-only use, the launcher creates at most one final `ready` or
 `-StartForeground -PublishStatus`, a ready preflight creates one `running`
 comment. Only a successful create response containing a positive integer
 comment identity permits the operator to start. After the one foreground run,
-the launcher updates that same identity at most once with the final
-`completed` or `blocked` status. It never searches for or reuses an older
-status comment, creates a replacement comment, or retries create/update.
+the launcher updates that same identity at most once. A trusted successful
+`run-reviewbundle` is `waiting_review` with next action
+`chatgpt_final_review`; it is execution evidence ready for ChatGPT's final
+technical review, not semantic completion. `failure` and `blocked` remain
+`blocked`. Other supported action status semantics remain unchanged. The
+launcher never searches for or reuses an older status comment, creates a
+replacement comment, or retries create/update.
 
 If the reviewed `gh` is unavailable or unauthenticated, the launcher performs
 no publication and blocks locally with `status_publication_unavailable`. An

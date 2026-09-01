@@ -91,8 +91,8 @@ def _status_progress_reporter(args: argparse.Namespace):
         elif lifecycle_stage == "TERMINAL_RESULT_READY":
             terminal_result = current_run.get("terminal_result")
             if terminal_result == "success":
-                result = "completed"
-                next_action = "review_completed_result"
+                result = "waiting_review"
+                next_action = "chatgpt_final_review"
             elif terminal_result in {"failure", "blocked"}:
                 result = "blocked"
                 next_action = "review_blocked_result"

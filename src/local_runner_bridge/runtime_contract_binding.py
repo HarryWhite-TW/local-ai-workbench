@@ -175,6 +175,7 @@ def inspect_runtime_contract(
     )
     result["runtime_contract"] = deepcopy(contract)
     result["runtime_contract"]["allowed_files"] = allowed_files
+    result["task_packet_text"] = extracted["packet_text"]
     return result
 
 

@@ -101,6 +101,7 @@ def test_matching_contract_passes_pre_execution_binding():
     assert result["contract_present"] is True
     assert result["pre_execution"] == {"status": "passed", "reasons": []}
     assert result["allowed_files"] == ["src/example.py", "tests/test_example.py"]
+    assert result["task_packet_text"] == packet().rstrip()
 
 
 def test_valid_legacy_v1_is_not_runtime_contract_bound():

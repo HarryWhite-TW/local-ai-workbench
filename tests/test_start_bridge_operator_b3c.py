@@ -3033,6 +3033,8 @@ def test_foreground_publish_status_creates_then_updates_same_comment_once(
         "result": "success",
         "request_id": "status-request-001",
         "target_issue": 188,
+        "requested_action": "run-reviewbundle",
+        "terminal_result": "success",
         "dispatcher_invoked": True,
         "dispatcher_result_writeback_reached": True,
         "dispatcher_result_writeback_verified": True,
@@ -3047,7 +3049,7 @@ def test_foreground_publish_status_creates_then_updates_same_comment_once(
     operator_log = harness.operator_log.read_text(encoding="utf-8", errors="replace")
 
     assert result.returncode == 0
-    assert payload["result"] == "completed"
+    assert payload["result"] == "waiting_review"
     assert [call["method"] for call in calls] == ["POST", "PATCH"]
     assert calls[0]["endpoint"].endswith("/issues/279/comments")
     assert (
@@ -3060,7 +3062,8 @@ def test_foreground_publish_status_creates_then_updates_same_comment_once(
     assert create_payload["branch"] == update_payload["branch"]
     assert create_payload["head"] == update_payload["head"]
     assert update_payload["stage"] == "final"
-    assert update_payload["result"] == "completed"
+    assert update_payload["result"] == "waiting_review"
+    assert update_payload["next_action"] == "chatgpt_final_review"
     assert update_payload["operator_invoked"] is True
     assert update_payload["request_id"] == "status-request-001"
     assert update_payload["target_issue"] == 188
@@ -3071,6 +3074,69 @@ def test_foreground_publish_status_creates_then_updates_same_comment_once(
     assert payload["status_comment_create_succeeded"] is True
     assert payload["status_comment_update_succeeded"] is True
     assert payload["status_publication_result"] == "updated"
+
+
+@pytest.mark.parametrize(
+    ("requested_action", "expected_result", "expected_next_action"),
+    [
+        ("run-reviewbundle", "waiting_review", "chatgpt_final_review"),
+        ("maybe-status-check", "completed", "review_operator_result"),
+        ("read-final-audit", "completed", "review_operator_result"),
+    ],
+)
+def test_foreground_status_semantics_are_action_specific(
+    harness: LauncherHarness,
+    requested_action: str,
+    expected_result: str,
+    expected_next_action: str,
+):
+    harness.operator_json.write_text(
+        json.dumps(
+            {
+                "result": "success",
+                "request_id": "status-action-specific-001",
+                "target_issue": 188,
+                "requested_action": requested_action,
+                "terminal_result": "success",
+                "target_result_verified": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = harness.run("-StartForeground", "-PublishStatus")
+    update_payload = status_payload(read_gh_calls(harness)[1])
+
+    assert result.returncode == 0
+    assert payload["result"] == expected_result
+    assert update_payload["result"] == expected_result
+    assert update_payload["next_action"] == expected_next_action
+
+
+def test_foreground_run_reviewbundle_terminal_non_success_stays_blocked(
+    harness: LauncherHarness,
+):
+    harness.operator_json.write_text(
+        json.dumps(
+            {
+                "result": "success",
+                "request_id": "status-terminal-failure-001",
+                "target_issue": 188,
+                "requested_action": "run-reviewbundle",
+                "terminal_result": "failure",
+                "target_result_verified": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result, payload = harness.run("-StartForeground", "-PublishStatus")
+    update_payload = status_payload(read_gh_calls(harness)[1])
+
+    assert result.returncode == 2
+    assert payload["result"] == "blocked"
+    assert update_payload["result"] == "blocked"
+    assert update_payload["next_action"] == "review_blocked_reasons"
 
 
 @pytest.mark.parametrize(

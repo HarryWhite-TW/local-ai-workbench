@@ -1607,11 +1607,19 @@ function Invoke-ReviewBundle {
     $runnerScript = Get-RunnerScriptPath
     $codexPathBinding = Resolve-ReviewBundleCodexPathBinding
     $powerShellHost = Resolve-CurrentPowerShellHostPath
+    $dispatchRequestId = ""
+    $selectedProperty = $Selection.PSObject.Properties["Selected"]
+    if ($null -ne $selectedProperty -and $null -ne $selectedProperty.Value) {
+        $fieldsProperty = $selectedProperty.Value.PSObject.Properties["Fields"]
+        if ($null -ne $fieldsProperty -and $null -ne $fieldsProperty.Value) {
+            $dispatchRequestId = [string]$fieldsProperty.Value["request_id"]
+        }
+    }
 
     $script:RunnerMayHaveStarted = $true
     $runnerResult = Invoke-WriteCommand `
         -FilePath $powerShellHost `
-        -Arguments (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding) + $(if (-not [string]::IsNullOrWhiteSpace($continuationParentCommentId)) { @("-TrustedCandidateContinuationCommentId", $continuationParentCommentId) } else { @() }) + $(if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal) -or -not [string]::Equals((ConvertTo-NormalizedProviderPath -Path $TargetRepoRoot), (ConvertTo-NormalizedProviderPath -Path $RepoRoot), [System.StringComparison]::OrdinalIgnoreCase)) { @("-Repo", $Repo, "-RepoPath", $TargetRepoRoot) } else { @() })) `
+        -Arguments (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $runnerScript, "-IssueNumber", "$Issue", "-Mode", "ReviewBundle", "-ReviewedCodexPath", $codexPathBinding, "-DispatchRequestId", $dispatchRequestId) + $(if (-not [string]::IsNullOrWhiteSpace($continuationParentCommentId)) { @("-TrustedCandidateContinuationCommentId", $continuationParentCommentId) } else { @() }) + $(if (-not [string]::Equals($Repo, $ExpectedDispatchRepo, [System.StringComparison]::Ordinal) -or -not [string]::Equals((ConvertTo-NormalizedProviderPath -Path $TargetRepoRoot), (ConvertTo-NormalizedProviderPath -Path $RepoRoot), [System.StringComparison]::OrdinalIgnoreCase)) { @("-Repo", $Repo, "-RepoPath", $TargetRepoRoot) } else { @() })) `
         -Action "local_runner_v1.ps1 ReviewBundle"
 
     $result = if ($runnerResult.ExitCode -eq 0) { "success" } else { "failure" }
