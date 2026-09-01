@@ -185,11 +185,15 @@ def test_status_progress_reporter_writes_request_accepted_status(monkeypatch, tm
 
 
 @pytest.mark.parametrize(
-    ("terminal_result", "expected_result"),
-    [("success", "completed"), ("failure", "blocked"), ("blocked", "blocked")],
+    ("terminal_result", "expected_result", "expected_next_action"),
+    [
+        ("success", "waiting_review", "chatgpt_final_review"),
+        ("failure", "blocked", "review_blocked_result"),
+        ("blocked", "blocked", "review_blocked_result"),
+    ],
 )
 def test_status_progress_reporter_writes_verified_terminal_status(
-    monkeypatch, tmp_path, terminal_result, expected_result
+    monkeypatch, tmp_path, terminal_result, expected_result, expected_next_action
 ):
     gh = tmp_path / "gh.exe"
     gh.write_text("placeholder", encoding="utf-8")
@@ -231,6 +235,7 @@ def test_status_progress_reporter_writes_verified_terminal_status(
     body = json.loads(calls[0][1]["input"])["body"]
     payload = json.loads(body.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
     assert payload["result"] == expected_result
+    assert payload["next_action"] == expected_next_action
 
 
 def test_status_progress_reporter_rejects_unverified_terminal_result(tmp_path):
@@ -254,6 +259,35 @@ def test_status_progress_reporter_rejects_unverified_terminal_result(tmp_path):
                 "issue_number": 188,
                 "requested_action": "run-reviewbundle",
                 "terminal_result": None,
+                "lifecycle": {"stage": "TERMINAL_RESULT_READY"},
+            }
+        )
+
+
+@pytest.mark.parametrize("requested_action", ["maybe-status-check", "read-final-audit"])
+def test_status_progress_reporter_does_not_publish_other_actions(
+    tmp_path, requested_action
+):
+    gh = tmp_path / "gh.exe"
+    gh.write_text("placeholder", encoding="utf-8")
+    args = cli._parser().parse_args(
+        [
+            "--repo-root", "C:/repo",
+            "--max-cycles", "1",
+            "--poll-interval-seconds", "0",
+            "--status-comment-id", "45123",
+            "--status-gh-path", str(gh),
+        ]
+    )
+
+    reporter = cli._status_progress_reporter(args)
+    with pytest.raises(ValueError, match="status_progress_request_identity_invalid"):
+        reporter(
+            {
+                "request_id": "status-request-001",
+                "issue_number": 188,
+                "requested_action": requested_action,
+                "terminal_result": "success",
                 "lifecycle": {"stage": "TERMINAL_RESULT_READY"},
             }
         )

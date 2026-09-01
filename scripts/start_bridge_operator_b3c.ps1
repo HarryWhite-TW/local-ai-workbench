@@ -1995,7 +1995,7 @@ function New-StatusPayload {
         [ValidateSet("preflight", "operator", "final")]
         [string]$Stage,
         [Parameter(Mandatory = $true)]
-        [ValidateSet("ready", "running", "completed", "blocked")]
+        [ValidateSet("ready", "running", "waiting_review", "completed", "blocked")]
         [string]$Result,
         [Parameter(Mandatory = $true)][string]$Repository,
         [AllowEmptyString()][string]$Branch,
@@ -2010,7 +2010,8 @@ function New-StatusPayload {
         [ValidateSet(
             "start_foreground",
             "review_blocked_reasons",
-            "review_operator_result"
+            "review_operator_result",
+            "chatgpt_final_review"
         )]
         [string]$NextAction
     )
@@ -2975,8 +2976,26 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
     }
 }
 
+$normalRunReviewBundleSucceeded = (
+    ($null -ne $operatorSummary) -and
+    (([string]$operatorSummary.requested_action) -ceq "run-reviewbundle") -and
+    (([string]$operatorSummary.terminal_result) -ceq "success") -and
+    ($operatorSummary.target_result_verified -eq $true)
+)
+$normalRunReviewBundleTerminalNonSuccess = (
+    ($null -ne $operatorSummary) -and
+    (([string]$operatorSummary.requested_action) -ceq "run-reviewbundle") -and
+    (([string]$operatorSummary.terminal_result) -cin @("failure", "blocked")) -and
+    ($operatorSummary.target_result_verified -eq $true)
+)
 $resultBeforeStatusUpdate = if ($blockedReasons.Count -gt 0) {
     "blocked"
+}
+elseif ($normalRunReviewBundleTerminalNonSuccess) {
+    "blocked"
+}
+elseif ($normalRunReviewBundleSucceeded) {
+    "waiting_review"
 }
 elseif ($StartForeground) {
     "completed"
@@ -2986,7 +3005,10 @@ else {
 }
 if ($PublishStatus -and $statusCommentNeedsUpdate -and
     $statusCommentCreateSucceeded -and $null -ne $statusCommentId) {
-    $updateNextAction = if ($resultBeforeStatusUpdate -eq "completed") {
+    $updateNextAction = if ($resultBeforeStatusUpdate -eq "waiting_review") {
+        "chatgpt_final_review"
+    }
+    elseif ($resultBeforeStatusUpdate -eq "completed") {
         "review_operator_result"
     }
     else {
@@ -3047,6 +3069,12 @@ if ($PublishStatus -and $statusCommentNeedsUpdate -and
 $result = if ($blockedReasons.Count -gt 0) {
     "blocked"
 }
+elseif ($normalRunReviewBundleTerminalNonSuccess) {
+    "blocked"
+}
+elseif ($normalRunReviewBundleSucceeded) {
+    "waiting_review"
+}
 elseif ($StartForeground) {
     "completed"
 }
@@ -3059,6 +3087,9 @@ $nextAction = if ($result -eq "ready") {
 }
 elseif ($result -eq "completed") {
     "Review the retained Bridge Operator child summary."
+}
+elseif ($result -eq "waiting_review") {
+    "ChatGPT final review is required before semantic completion."
 }
 else {
     "Review blocked_reasons and repair manually outside this launcher before retrying."

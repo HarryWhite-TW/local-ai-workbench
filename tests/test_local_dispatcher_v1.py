@@ -621,6 +621,8 @@ def test_valid_run_reviewbundle_delegates_to_runner_v1_reviewbundle(tmp_path):
         "ReviewBundle",
         "-ReviewedCodexPath",
         r"C:\Tools\codex.cmd",
+        "-DispatchRequestId",
+        "req-rb-83",
     ]
     assert "runner v1 review bundle ok" in result.stdout
 
@@ -1217,6 +1219,35 @@ def test_run_reviewbundle_fails_closed_when_repo_is_dirty_before_runner(tmp_path
     assert "run-reviewbundle requires a clean repo before dispatch" in result.stdout
     assert "POST_CALLS=0" in result.stdout
     assert "RUNNER_CALLS=0" in result.stdout
+
+
+def test_run_reviewbundle_passes_selected_bridge_request_id_to_runner(tmp_path):
+    result = run_dispatcher_script(
+        tmp_path,
+        """
+        function Invoke-WriteCommand {
+            param([string]$FilePath, [string[]]$Arguments, [string]$Action)
+            $script:RunnerCalls += 1
+            $script:RunnerArguments = @($Arguments)
+            return [pscustomobject]@{ ExitCode = 0; Stdout = "runner ok"; Stderr = "" }
+        }
+        function Get-GitStatusShort { return "" }
+        function Get-RunnerScriptPath { return (Join-Path $PSScriptRoot "local_runner_v1.ps1") }
+        function Resolve-ReviewBundleCodexPathBinding { return "C:\\Tools\\codex.cmd" }
+        $selection = [pscustomobject]@{
+            Selected = [pscustomobject]@{ Fields = @{ request_id = "bridge-request-83" } }
+        }
+        $result = Invoke-ReviewBundle -Selection $selection -Issue 83
+        $index = [array]::IndexOf($script:RunnerArguments, "-DispatchRequestId")
+        if ($index -lt 0 -or $script:RunnerArguments[$index + 1] -ne "bridge-request-83") {
+            throw "selected bridge request id was not passed to Runner"
+        }
+        "ok"
+        """,
+    )
+
+    assert_success(result)
+    assert "ok" in result.stdout
 
 
 def test_run_reviewbundle_dirty_continuation_passes_only_named_trusted_parent_to_runner(tmp_path):

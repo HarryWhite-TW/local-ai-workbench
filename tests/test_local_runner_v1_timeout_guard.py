@@ -3785,7 +3785,7 @@ def test_parent_controlled_enforcement_fails_closed_on_scope_violations(
     assert payload["approval_allowed"] is False
 
 
-def test_parent_controlled_enforcement_preserves_legacy_reporting_but_suppresses_eligibility(tmp_path):
+def test_missing_runtime_contract_cannot_become_success_from_codex_exit_zero(tmp_path):
     result = run_timeout_guard_script(
         tmp_path,
         """
@@ -3808,7 +3808,7 @@ def test_parent_controlled_enforcement_preserves_legacy_reporting_but_suppresses
     assert payload["binding"]["post_execution"]["status"] == "not_present"
     assert payload["binding"]["actual_changed_files"] == ["legacy.py"]
     assert payload["approval_allowed"] is False
-    assert payload["overall"] == "success"
+    assert payload["overall"] == "failure"
 
 
 def test_runner_result_explicitly_reports_legacy_runtime_contract_not_present(tmp_path):
@@ -3993,7 +3993,7 @@ def test_pre_execution_contract_violation_blocks_before_fake_codex(tmp_path):
         """,
     )
     assert_success(result)
-    assert "Runtime contract violation blocks Codex execution" in result.stdout
+    assert "Runtime contract must pass before Codex execution" in result.stdout
     assert "CODEX_CALLS=0" in result.stdout
 
 
@@ -4010,6 +4010,31 @@ def test_codex_exit_zero_cannot_override_runtime_contract_violation(tmp_path):
     )
     assert_success(result)
     assert "OVERALL=failure" in result.stdout
+
+
+def test_packet_request_binding_and_packet_only_prompt_precede_codex_invocation():
+    source = RUNNER.read_text(encoding="utf-8")
+    preflight_index = source.index("$runtimeContractPreflightReasons")
+    blocked_exit_index = source.index("exit 2", preflight_index)
+    codex_index = source.index('-Action "codex ReviewBundle candidate generation"')
+
+    assert preflight_index < blocked_exit_index < codex_index
+    assert "task_packet_id_request_id_mismatch" in source
+    assert "validated_task_packet_text_missing" in source
+    assert "$issueBodyForPrompt" not in source
+    assert "Validated Task Packet v1.1:" in source
+    assert "sole task instruction and authority" in source
+
+
+def test_manual_reviewbundle_keeps_valid_packet_path_without_dispatch_identity():
+    source = RUNNER.read_text(encoding="utf-8")
+    preflight_start = source.index("$runtimeContractPreflightReasons")
+    preflight = source[
+        preflight_start : source.index("$preExecutionScopeReasons", preflight_start)
+    ]
+
+    assert "dispatch_request_id_missing" not in preflight
+    assert "-not [string]::IsNullOrWhiteSpace($DispatchRequestId) -and" in preflight
 
 
 def test_codex_exit_zero_with_passed_runtime_contract_may_succeed(tmp_path):
