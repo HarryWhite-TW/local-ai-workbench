@@ -41,6 +41,9 @@ integrity incident task must also read and follow
 - `請開始` requests a concise, human-readable Execution Card; it does not
   approve execution. `批准` approves the currently presented card and activates
   that bounded task only when it explicitly refers to the card.
+- Execution Cards must expose the semantic choices `批准執行`、`拒絕`、`調整` as
+  ChatGPT-surface text decisions; they do not imply native UI buttons or create
+  any execution authority without an explicit approval.
 - Before execution, ChatGPT presents the outcome, expected result, rough flow,
   main risks, included and excluded authority, success criteria, stop
   conditions, and expected user intervention in plain language. The card is the

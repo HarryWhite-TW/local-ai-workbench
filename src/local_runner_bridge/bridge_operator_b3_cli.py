@@ -82,12 +82,61 @@ def _status_progress_reporter(args: argparse.Namespace):
     if not gh_path.is_file():
         raise ValueError("status_progress_gh_path_invalid")
 
+    def human_view(
+        lifecycle_stage: str, terminal_result: object
+    ) -> str:
+        """Render only lifecycle facts already established by machine evidence."""
+        views = {
+            "REQUEST_ACCEPTED": (
+                "狀態：執行中\n"
+                "目前階段：任務已接受\n"
+                "現在需要你：不需要"
+            ),
+            "DISPATCHER_REACHED": (
+                "狀態：執行中\n"
+                "目前階段：已派工（Dispatcher 已到達）\n"
+                "現在需要你：不需要"
+            ),
+            "RUNNER_OR_CODEX_REACH_UNCERTAIN": (
+                "狀態：執行中\n"
+                "目前階段：Runner／Codex 是否已到達尚未確認\n"
+                "現在需要你：不需要"
+            ),
+            "BLOCKED_OR_FAILED": (
+                "狀態：已阻塞\n"
+                "下一步：由 ChatGPT 判讀結果"
+            ),
+        }
+        if lifecycle_stage == "TERMINAL_RESULT_READY":
+            if terminal_result == "success":
+                return (
+                    "狀態：等待 ChatGPT 審核\n"
+                    "目前階段：執行結果已就緒\n"
+                    "現在需要你：不需要\n"
+                    "下一步：等待 ChatGPT 最終審核"
+                )
+            return (
+                "狀態：已阻塞\n"
+                "目前階段：執行結果已就緒\n"
+                "下一步：由 ChatGPT 判讀結果"
+            )
+        return views[lifecycle_stage]
+
     def report(current_run: dict) -> None:
         lifecycle = current_run.get("lifecycle") or {}
         lifecycle_stage = lifecycle.get("stage")
         if lifecycle_stage == "REQUEST_ACCEPTED":
             result = "running"
             next_action = "review_operator_result"
+        elif lifecycle_stage in {
+            "DISPATCHER_REACHED",
+            "RUNNER_OR_CODEX_REACH_UNCERTAIN",
+        }:
+            result = "running"
+            next_action = "review_operator_result"
+        elif lifecycle_stage == "BLOCKED_OR_FAILED":
+            result = "blocked"
+            next_action = "review_blocked_result"
         elif lifecycle_stage == "TERMINAL_RESULT_READY":
             terminal_result = current_run.get("terminal_result")
             if terminal_result == "success":
@@ -124,7 +173,8 @@ def _status_progress_reporter(args: argparse.Namespace):
         body = (
             "LAWBRIDGE-STATUS protocol=lawb.bridge_status.v1\n\n```json\n"
             + json.dumps(payload, separators=(",", ":"), sort_keys=True)
-            + "\n```"
+            + "\n```\n\n## 人類可讀狀態\n\n"
+            + human_view(lifecycle_stage, terminal_result if lifecycle_stage == "TERMINAL_RESULT_READY" else None)
         )
         completed = subprocess.run(
             [
