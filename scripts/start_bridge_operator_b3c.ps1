@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Runs the canonical Bridge Operator B3-C preflight and, only when explicitly
 requested, starts one bounded foreground B3-C process.
@@ -1272,6 +1272,12 @@ function Get-ObjectProperty {
     if ($null -eq $Object) {
         return $null
     }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) {
+            return $Object[$Name]
+        }
+        return $null
+    }
     $property = $Object.PSObject.Properties[$Name]
     if ($null -eq $property) {
         return $null
@@ -2073,6 +2079,22 @@ function New-StatusPayload {
 function New-StatusComment {
     param([Parameter(Mandatory = $true)][object]$Payload)
     $json = $Payload | ConvertTo-Json -Depth 20 -Compress
+    $statusResult = [string](Get-ObjectProperty -Object $Payload -Name "result")
+    $humanView = if ($statusResult -eq "ready") {
+        "狀態：等待／準備中`n目前階段：啟動前檢查已完成`n現在需要你：不需要"
+    }
+    elseif ($statusResult -eq "running") {
+        "狀態：執行中`n目前階段：準備／執行中`n現在需要你：不需要"
+    }
+    elseif ($statusResult -eq "waiting_review") {
+        "狀態：等待 ChatGPT 審核`n目前階段：執行結果已就緒`n現在需要你：不需要`n下一步：等待 ChatGPT 最終審核"
+    }
+    elseif ($statusResult -eq "completed") {
+        "狀態：已完成`n目前階段：本次操作結果已就緒`n下一步：由 ChatGPT 判讀結果"
+    }
+    else {
+        "狀態：已阻塞`n下一步：由 ChatGPT 判讀結果"
+    }
     return (
         "$StatusMarker protocol=$StatusProtocol" +
         [Environment]::NewLine +
@@ -2081,7 +2103,13 @@ function New-StatusComment {
         [Environment]::NewLine +
         $json +
         [Environment]::NewLine +
-        '```'
+        '```' +
+        [Environment]::NewLine +
+        [Environment]::NewLine +
+        '## 人類可讀狀態' +
+        [Environment]::NewLine +
+        [Environment]::NewLine +
+        $humanView
     )
 }
 
@@ -2978,15 +3006,15 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
 
 $normalRunReviewBundleSucceeded = (
     ($null -ne $operatorSummary) -and
-    (([string]$operatorSummary.requested_action) -ceq "run-reviewbundle") -and
-    (([string]$operatorSummary.terminal_result) -ceq "success") -and
-    ($operatorSummary.target_result_verified -eq $true)
+    (([string](Get-ObjectProperty -Object $operatorSummary -Name "requested_action")) -ceq "run-reviewbundle") -and
+    (([string](Get-ObjectProperty -Object $operatorSummary -Name "terminal_result")) -ceq "success") -and
+    ((Get-ObjectProperty -Object $operatorSummary -Name "target_result_verified") -eq $true)
 )
 $normalRunReviewBundleTerminalNonSuccess = (
     ($null -ne $operatorSummary) -and
-    (([string]$operatorSummary.requested_action) -ceq "run-reviewbundle") -and
-    (([string]$operatorSummary.terminal_result) -cin @("failure", "blocked")) -and
-    ($operatorSummary.target_result_verified -eq $true)
+    (([string](Get-ObjectProperty -Object $operatorSummary -Name "requested_action")) -ceq "run-reviewbundle") -and
+    (([string](Get-ObjectProperty -Object $operatorSummary -Name "terminal_result")) -cin @("failure", "blocked")) -and
+    ((Get-ObjectProperty -Object $operatorSummary -Name "target_result_verified") -eq $true)
 )
 $resultBeforeStatusUpdate = if ($blockedReasons.Count -gt 0) {
     "blocked"

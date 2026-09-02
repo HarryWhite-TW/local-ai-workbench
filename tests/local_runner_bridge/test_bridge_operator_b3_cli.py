@@ -182,6 +182,11 @@ def test_status_progress_reporter_writes_request_accepted_status(monkeypatch, tm
     assert payload["result"] == "running"
     assert payload["request_id"] == "status-request-001"
     assert payload["current_run"]["lifecycle"]["stage"] == "REQUEST_ACCEPTED"
+    assert "狀態：執行中" in body
+    assert "目前階段：任務已接受" in body
+    assert "Codex 執行中" not in body
+    assert "%" not in body
+    assert "ETA" not in body
 
 
 @pytest.mark.parametrize(
@@ -236,6 +241,45 @@ def test_status_progress_reporter_writes_verified_terminal_status(
     payload = json.loads(body.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
     assert payload["result"] == expected_result
     assert payload["next_action"] == expected_next_action
+    if terminal_result == "success":
+        assert "狀態：等待 ChatGPT 審核" in body
+        assert "狀態：已完成" not in body
+    else:
+        assert "狀態：已阻塞" in body
+        assert "下一步：由 ChatGPT 判讀結果" in body
+
+
+def test_status_progress_reporter_keeps_uncertain_runner_or_codex_reach_explicit(
+    monkeypatch, tmp_path
+):
+    gh = tmp_path / "gh.exe"
+    gh.write_text("placeholder", encoding="utf-8")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return type("Completed", (), {"returncode": 0, "stdout": '{"id":45123}'})()
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    args = cli._parser().parse_args(
+        [
+            "--repo-root", "C:/repo", "--max-cycles", "1",
+            "--poll-interval-seconds", "0", "--status-comment-id", "45123",
+            "--status-gh-path", str(gh),
+        ]
+    )
+    reporter = cli._status_progress_reporter(args)
+    reporter(
+        {
+            "request_id": "status-request-001", "issue_number": 188,
+            "requested_action": "run-reviewbundle", "dispatcher_invoked": True,
+            "lifecycle": {"stage": "RUNNER_OR_CODEX_REACH_UNCERTAIN"},
+        }
+    )
+
+    body = json.loads(calls[0][1]["input"])["body"]
+    assert "Runner／Codex 是否已到達尚未確認" in body
+    assert "Codex 執行中" not in body
 
 
 def test_status_progress_reporter_rejects_unverified_terminal_result(tmp_path):

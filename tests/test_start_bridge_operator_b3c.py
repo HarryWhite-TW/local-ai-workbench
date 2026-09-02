@@ -1004,8 +1004,8 @@ def status_payload(call: dict) -> dict:
     assert comment_body.startswith(
         "LAWBRIDGE-STATUS protocol=lawb.bridge_status.v1\n\n```json\n"
     )
-    assert comment_body.endswith("\n```")
-    return json.loads(comment_body.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
+    json_block, human_view = comment_body.split("\n```\n\n## 人類可讀狀態\n\n", 1)
+    return json.loads(json_block.split("```json\n", 1)[1])
 
 
 @pytest.fixture
@@ -3019,6 +3019,11 @@ def test_ready_preflight_publish_status_creates_one_fixed_comment(
     assert remote["branch"] == control_branch
     assert remote["head"] == control_head
     assert remote["next_action"] == "start_foreground"
+    create_body = json.loads(calls[0]["request_body"])["body"]
+    assert "狀態：等待／準備中" in create_body
+    assert "目前階段：啟動前檢查已完成" in create_body
+    assert "%" not in create_body
+    assert "ETA" not in create_body
     assert payload["status_comment_create_succeeded"] is True
     assert payload["status_comment_update_attempted"] is False
     assert payload["status_comment_id"] == 45123
@@ -3068,6 +3073,10 @@ def test_foreground_publish_status_creates_then_updates_same_comment_once(
     assert update_payload["request_id"] == "status-request-001"
     assert update_payload["target_issue"] == 188
     assert update_payload["dispatcher_invoked"] is True
+    update_body = json.loads(calls[1]["request_body"])["body"]
+    assert "狀態：等待 ChatGPT 審核" in update_body
+    assert "狀態：已完成" not in update_body
+    assert "等待 ChatGPT 最終審核" in update_body
     assert operator_log.count("INVOCATION") == 1
     assert "--status-comment-id 45123" in operator_log
     assert "--status-gh-path" in operator_log
@@ -3111,6 +3120,12 @@ def test_foreground_status_semantics_are_action_specific(
     assert payload["result"] == expected_result
     assert update_payload["result"] == expected_result
     assert update_payload["next_action"] == expected_next_action
+    update_body = json.loads(read_gh_calls(harness)[1]["request_body"])["body"]
+    if requested_action == "run-reviewbundle":
+        assert "狀態：等待 ChatGPT 審核" in update_body
+        assert "狀態：已完成" not in update_body
+    else:
+        assert "狀態：已完成" in update_body
 
 
 def test_foreground_run_reviewbundle_terminal_non_success_stays_blocked(
