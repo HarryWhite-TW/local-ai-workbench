@@ -3,6 +3,7 @@ import base64
 import re
 import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -337,7 +338,9 @@ def run_dispatcher_script(tmp_path: Path, body: str) -> subprocess.CompletedProc
     )
 
 
-def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
+def run_dispatcher_core_script(
+    tmp_path: Path, body: str, *, powershell_path: str | None = None
+) -> subprocess.CompletedProcess:
     script = tmp_path / "dispatcher_v1_core_test.ps1"
     script.write_text(
         _dispatcher_core()
@@ -361,7 +364,14 @@ def run_dispatcher_core_script(tmp_path: Path, body: str) -> subprocess.Complete
         encoding="utf-8-sig",
     )
     return _run_powershell(
-        [_powershell(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
+        [
+            powershell_path or _powershell(),
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+        ]
     )
 
 
@@ -1490,6 +1500,75 @@ def test_publish_runner_result_comment_uses_body_file_for_multiline_body(tmp_pat
     assert posted_summary["validations"]["git_diff_check"]["summary"] == (
         "Dispatcher action 'maybe-status-check' did not independently run git diff --check."
     )
+
+
+def test_github_json_capture_is_utf8_safe_under_windows_code_page_950(tmp_path):
+    windows_powershell = shutil.which("powershell")
+    if windows_powershell is None:
+        pytest.skip("Windows PowerShell is required for the code-page regression")
+
+    emitter = tmp_path / "emit_github_json.py"
+    emitter.write_text(
+        textwrap.dedent(
+            """
+            import json
+            import sys
+
+            if sys.argv[1] == "valid":
+                payload = {
+                    "number": 83,
+                    "title": "中文標題",
+                    "state": "OPEN",
+                    "comments": [],
+                }
+                output = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            else:
+                output = b'{"number": 83, invalid json}'
+            sys.stdout.buffer.write(output)
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+
+    result = run_dispatcher_core_script(
+        tmp_path,
+        f"""
+        $previousEncoding = [Console]::OutputEncoding
+        try {{
+            [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(950)
+            $validResult = Invoke-Utf8ReadOnlyCommand `
+                -FilePath {Path(sys.executable).as_posix()!r} `
+                -Arguments @({emitter.as_posix()!r}, "valid") `
+                -Action "gh issue view"
+            $validJson = $validResult.Stdout | ConvertFrom-Json -ErrorAction Stop
+            Write-Host "VALID_EXIT=$($validResult.ExitCode)"
+            Write-Host "TITLE_PRESERVED=$([string]::Equals($validJson.title, '中文標題', [System.StringComparison]::Ordinal))"
+            Write-Host "CALLER_CODE_PAGE=$([Console]::OutputEncoding.CodePage)"
+
+            $invalidResult = Invoke-Utf8ReadOnlyCommand `
+                -FilePath {Path(sys.executable).as_posix()!r} `
+                -Arguments @({emitter.as_posix()!r}, "invalid") `
+                -Action "gh issue view"
+            try {{
+                $null = $invalidResult.Stdout | ConvertFrom-Json -ErrorAction Stop
+                Write-Host "INVALID_JSON_REJECTED=False"
+            }}
+            catch {{
+                Write-Host "INVALID_JSON_REJECTED=True"
+            }}
+        }}
+        finally {{
+            [Console]::OutputEncoding = $previousEncoding
+        }}
+        """,
+        powershell_path=windows_powershell,
+    )
+
+    assert_success(result)
+    assert "VALID_EXIT=0" in result.stdout
+    assert "TITLE_PRESERVED=True" in result.stdout
+    assert "CALLER_CODE_PAGE=950" in result.stdout
+    assert "INVALID_JSON_REJECTED=True" in result.stdout
 
 
 def test_resolve_gh_path_prefers_path_command_before_fallback(tmp_path):

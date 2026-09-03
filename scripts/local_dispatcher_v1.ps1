@@ -174,6 +174,26 @@ function Invoke-ReadOnlyCommand {
     }
 }
 
+function Invoke-Utf8ReadOnlyCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [string]$Action
+    )
+
+    $previousConsoleOutputEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false, $true)
+        return Invoke-ReadOnlyCommand -FilePath $FilePath -Arguments $Arguments -Action $Action
+    }
+    finally {
+        [Console]::OutputEncoding = $previousConsoleOutputEncoding
+    }
+}
+
 function Invoke-WriteCommand {
     param(
         [Parameter(Mandatory = $true)]
@@ -400,7 +420,7 @@ function Get-ExactControlRelayRestComment {
 
     $ghPath = Resolve-GhPath
     $endpoint = "repos/$ControlRelayRepository/issues/comments/$RelayCommentId"
-    $result = Invoke-ReadOnlyCommand `
+    $result = Invoke-Utf8ReadOnlyCommand `
         -FilePath $ghPath `
         -Arguments @("api", $endpoint) `
         -Action "gh api control relay comment"
@@ -463,7 +483,7 @@ function Assert-SameNodeContinuationParentPresent {
 
     $ghPath = Resolve-GhPath
     $endpoint = "repos/$Repo/issues/comments/$ParentCommentId"
-    $result = Invoke-ReadOnlyCommand `
+    $result = Invoke-Utf8ReadOnlyCommand `
         -FilePath $ghPath `
         -Arguments @("api", $endpoint) `
         -Action "gh api same-node continuation parent comment"
@@ -1127,7 +1147,7 @@ function Get-IssueDispatchMarkerReadResult {
         "--json",
         "number,title,state,comments"
     )
-    $result = Invoke-ReadOnlyCommand -FilePath $ghPath -Arguments $ghArgs -Action "gh issue view"
+    $result = Invoke-Utf8ReadOnlyCommand -FilePath $ghPath -Arguments $ghArgs -Action "gh issue view"
     Require-Success -Result $result -Action "gh issue view"
 
     if ([string]::IsNullOrWhiteSpace($result.Stdout)) {
@@ -1135,7 +1155,7 @@ function Get-IssueDispatchMarkerReadResult {
     }
 
     try {
-        $issueDetails = $result.Stdout | ConvertFrom-Json
+        $issueDetails = $result.Stdout | ConvertFrom-Json -ErrorAction Stop
     }
     catch {
         throw "gh issue view returned invalid JSON: $($_.Exception.Message)"
