@@ -123,15 +123,25 @@ def run_bridge_operator_b1_dry_run(
 
     current_markers = []
     for marker in markers:
-        if marker["author"] not in TRUSTED_ACTORS:
-            _block(summary, "untrusted_inbox_author")
-            return summary
         request = parse_bridge_inbox_request(marker["line"])
         if request["result"] != "success":
             _block(summary, "malformed_marker")
             summary["parse_errors"] = request["errors"]
             return summary
         fields = request["fields"]
+        expires = _parse_utc_basic(str(fields["expires"]))
+        if expires is None:
+            _block(summary, "invalid_expiry")
+            return summary
+        if marker["author"] not in TRUSTED_ACTORS:
+            # A strictly parsed marker with a definitely expired lifetime can
+            # never acquire current dispatch authority. Ignore that historical
+            # noise, but keep malformed, invalid-expiry, and current untrusted
+            # markers fail closed before target reads or delegation.
+            if expires <= now_utc:
+                continue
+            _block(summary, "untrusted_inbox_author")
+            return summary
         _validate_request_fields(
             fields,
             summary,
@@ -141,14 +151,10 @@ def run_bridge_operator_b1_dry_run(
         )
         if summary["blocked_reasons"]:
             return summary
-        expires = _parse_utc_basic(str(fields["expires"]))
-        if expires is None:
-            _block(summary, "invalid_expiry")
-            return summary
         # The fixed Inbox is shared by the exact supported repositories. Every
-        # marker receives the global safety checks above, including expiry
-        # format validation, but only markers for the configured target
-        # participate in its lifecycle and selection.
+        # trusted marker receives the global safety checks above, but only
+        # markers for the configured target participate in its lifecycle and
+        # selection.
         if fields["repo"] != summary["target_repository"]:
             continue
         request_id = str(fields["request_id"])

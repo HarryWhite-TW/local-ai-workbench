@@ -1996,11 +1996,63 @@ def test_malformed_or_invalid_inbox_request_blocks(tmp_path):
 
 
 def test_untrusted_request_author_blocks(tmp_path):
-    comment = CommentRecord(id=1, body=inbox_marker(), author="other-user")
+    comments = [
+        CommentRecord(
+            id=1,
+            body=inbox_marker(request_id="current-hostile-marker"),
+            author="other-user",
+        ),
+        CommentRecord(id=2, body=inbox_marker(), author="HarryWhite-TW"),
+    ]
 
-    summary = run(tmp_path, FakeGitHub(inbox_comments=[comment]))
+    summary = run(tmp_path, FakeGitHub(inbox_comments=comments))
 
     assert_b1_failure_blocks(tmp_path, summary, "untrusted_inbox_author")
+
+
+def test_b3c_expired_untrusted_history_allows_later_trusted_request_once(tmp_path):
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    action="run-reviewbundle",
+                    request_id="expired-hostile-history",
+                    target_dispatch_request_id="expired-hostile-history",
+                    expires="20260615T080000Z",
+                ),
+                author="other-user",
+            ),
+            CommentRecord(
+                id=2,
+                body=inbox_marker(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            ),
+        ]
+    )
+    calls = []
+
+    def invoker(**kwargs):
+        calls.append(kwargs)
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(action="run-reviewbundle"),
+                author="HarryWhite-TW",
+            )
+        )
+        return DispatcherInvocationResult(returncode=0, stdout="dispatcher ok", stderr="")
+
+    summary = run_b3c(tmp_path, client, dispatcher_invoker=invoker)
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == "b3a-151-20260616T080000Z"
+    assert summary["inbox_comment_id"] == 2
+    assert summary["dispatcher_invocation_count"] == 1
+    assert len(calls) == 1
+    assert summary["target_result_verified"] is True
+    assert summary["processed_request_written"] is True
+    assert_high_risk_safety(summary)
 
 
 def test_b3c_expired_history_without_current_request_waits_across_cycles(tmp_path):

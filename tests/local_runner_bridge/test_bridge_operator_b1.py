@@ -556,6 +556,50 @@ def test_expired_valid_marker_plus_current_marker_succeeds():
     assert_no_side_effects(summary)
 
 
+def test_expired_untrusted_marker_does_not_block_later_trusted_current_request():
+    comments = [
+        CommentRecord(
+            id=1,
+            body=marker(request_id="expired-hostile-history", expires="20260614T010000Z"),
+            author="other-user",
+        ),
+        CommentRecord(id=2, body=marker(), author="HarryWhite-TW"),
+    ]
+
+    summary = run(FakeGitHub(comments=comments))
+
+    assert summary["result"] == "success"
+    assert summary["request_id"] == "b1-137-20260615T010000Z"
+    assert summary["inbox_comment_id"] == 2
+    assert summary["request_lifecycle"] == [
+        {
+            "inbox_comment_id": 2,
+            "request_id": "b1-137-20260615T010000Z",
+            "expires": "20260616T010000Z",
+            "lifecycle_state": "CURRENT",
+        }
+    ]
+    assert_no_side_effects(summary)
+
+
+def test_current_untrusted_marker_still_blocks_later_trusted_current_request():
+    comments = [
+        CommentRecord(
+            id=1,
+            body=marker(request_id="current-hostile-marker"),
+            author="other-user",
+        ),
+        CommentRecord(id=2, body=marker(), author="HarryWhite-TW"),
+    ]
+
+    summary = run(FakeGitHub(comments=comments))
+
+    assert summary["result"] == "blocked"
+    assert summary["blocked_reasons"] == ["untrusted_inbox_author"]
+    assert summary["target_issue_read_performed"] is False
+    assert_no_side_effects(summary)
+
+
 def test_expired_unsupported_third_repo_fails_closed_before_ignore():
     comments = [
         CommentRecord(
