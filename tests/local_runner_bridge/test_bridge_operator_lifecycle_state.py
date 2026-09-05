@@ -45,6 +45,15 @@ def process_identity() -> dict:
     }
 
 
+def dispatcher_process_identity() -> dict:
+    return {
+        "platform": "windows",
+        "pid": 5678,
+        "start_token": "windows-filetime:987654321",
+        "started_at_utc": "2026-08-05T04:00:01Z",
+    }
+
+
 def lock_payload() -> dict:
     return create_lock_payload(
         operator_session_id=SESSION,
@@ -221,6 +230,7 @@ def test_in_flight_stage_shapes_are_strict_and_terminal_non_success_is_preserved
         dispatcher_invoked=True,
         terminal_evidence=None,
         updated_at=NOW,
+        dispatcher_process_identity=dispatcher_process_identity(),
     )
     terminal = {
         "evidence_id": "20",
@@ -247,6 +257,8 @@ def test_in_flight_stage_shapes_are_strict_and_terminal_non_success_is_preserved
     )
 
     assert dispatched["stage"] == DISPATCHED_NOT_LOCALLY_SETTLED
+    assert dispatched["schema_version"] == 2
+    assert dispatched["dispatcher_process_identity"] == dispatcher_process_identity()
     assert rejected["stage"] == REJECTED_BEFORE_RUNNER
     assert processed["terminal_evidence"]["result"] == "failure"
     with pytest.raises(LifecycleEvidenceError, match="in_flight_invalid"):
@@ -257,6 +269,28 @@ def test_in_flight_stage_shapes_are_strict_and_terminal_non_success_is_preserved
             terminal_evidence=None,
             updated_at=NOW,
         )
+
+
+def test_legacy_in_flight_is_readable_and_upgrades_on_transition(tmp_path):
+    path = tmp_path / "in_flight.json"
+    legacy = in_flight_payload()
+    legacy["schema_version"] = 1
+    legacy.pop("dispatcher_process_identity")
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    loaded = load_in_flight(path)
+    upgraded = updated_in_flight_payload(
+        loaded,
+        stage=DISPATCHED_NOT_LOCALLY_SETTLED,
+        dispatcher_invoked=True,
+        terminal_evidence=None,
+        updated_at=NOW,
+        dispatcher_process_identity=dispatcher_process_identity(),
+    )
+
+    assert loaded == legacy
+    assert upgraded["schema_version"] == 2
+    assert upgraded["dispatcher_process_identity"] == dispatcher_process_identity()
 
 
 @pytest.mark.parametrize(
