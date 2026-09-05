@@ -459,6 +459,10 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
         "operator_dispatcher_invocation_performed": True,
         "dispatcher_invoked": True,
         "dispatcher_execution_reach": None,
+        "dispatcher_process_identity": None,
+        "dispatcher_process_status": "not_observed",
+        "dispatcher_descendant_status": "not_observed",
+        "dispatcher_descendant_pids": [],
         "runner_reached": None,
         "codex_reached": None,
         "operator_direct_runner_invoked": False,
@@ -470,6 +474,7 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
         "durable_reconciliation_matched_evidence_ids": ["20"],
         "durable_completion_reconciled": False,
         "terminal_result": "success",
+        "unresolved_reason": None,
         "current_failure_recorded": False,
         "current_failure_reason": None,
         "last_failure_json_applies_to_current_run": False,
@@ -1472,9 +1477,6 @@ def test_b3b_unsupported_action_and_duplicate_request_fail_before_dispatcher(tmp
 def test_b3b_dispatcher_failures_do_not_write_processed_request(tmp_path):
     cases = [
         ("dispatcher_missing", lambda **_: (_ for _ in ()).throw(FileNotFoundError("missing"))),
-        ("dispatcher_nonzero_exit", lambda **_: DispatcherInvocationResult(returncode=2, stderr="bad")),
-        ("dispatcher_timeout", lambda **_: DispatcherInvocationResult(returncode=1, timed_out=True)),
-        ("dispatcher_nonzero_exit", lambda **_: (_ for _ in ()).throw(RuntimeError("boom"))),
     ]
 
     for index, (reason, invoker) in enumerate(cases):
@@ -1503,9 +1505,6 @@ def test_b3b_dispatcher_failures_do_not_write_processed_request(tmp_path):
 def test_b3c_dispatcher_failures_do_not_write_processed_request(tmp_path):
     cases = [
         ("dispatcher_missing", lambda **_: (_ for _ in ()).throw(FileNotFoundError("missing"))),
-        ("dispatcher_nonzero_exit", lambda **_: DispatcherInvocationResult(returncode=2, stderr="bad")),
-        ("dispatcher_timeout", lambda **_: DispatcherInvocationResult(returncode=1, timed_out=True)),
-        ("dispatcher_nonzero_exit", lambda **_: (_ for _ in ()).throw(RuntimeError("boom"))),
     ]
 
     for index, (reason, invoker) in enumerate(cases):
@@ -1521,6 +1520,212 @@ def test_b3c_dispatcher_failures_do_not_write_processed_request(tmp_path):
         assert failure["dispatcher_result_writeback_verified"] is False
         assert not (case_dir / "processed_requests.jsonl").exists()
         assert_high_risk_safety(summary)
+
+
+@pytest.mark.parametrize("runner", [run_b3b, run_b3c])
+@pytest.mark.parametrize(
+    ("invocation", "reason"),
+    [
+        (DispatcherInvocationResult(returncode=1, timed_out=True), "dispatcher_timeout"),
+        (DispatcherInvocationResult(returncode=2, stderr="unknown"), "dispatcher_nonzero_exit"),
+        (
+            DispatcherInvocationResult(
+                returncode=DISPATCHER_RUNNER_REACH_UNCERTAIN_EXIT_CODE,
+                execution_reach=DISPATCHER_RUNNER_MAY_HAVE_STARTED,
+            ),
+            "dispatcher_nonzero_exit",
+        ),
+    ],
+)
+def test_dispatcher_uncertain_completion_is_nonterminal_and_durable(
+    tmp_path, runner, invocation, reason
+):
+    summary = runner(
+        tmp_path,
+        dispatcher_invoker=lambda **_: invocation,
+    )
+
+    assert summary["result"] == "unresolved"
+    assert summary["phase"] == "awaiting_reconciliation"
+    assert summary["unresolved_reason"] == reason
+    assert summary["blocked_reasons"] == []
+    assert summary["current_failure_recorded"] is False
+    assert summary["current_run"]["lifecycle"]["stage"] == (
+        "RUNNER_OR_CODEX_REACH_UNCERTAIN"
+    )
+    assert summary["current_run"]["lifecycle"]["certainty"] == "unknown"
+    assert read_json(tmp_path / "in_flight.json")["stage"] == (
+        DISPATCHED_NOT_LOCALLY_SETTLED
+    )
+    assert (tmp_path / "operator.lock").exists()
+    assert not (tmp_path / "last_failure.json").exists()
+    assert not (tmp_path / "processed_requests.jsonl").exists()
+
+
+def test_restart_observes_exact_live_dispatcher_without_redispatch(tmp_path):
+    dispatcher_identity = fake_process_identity(
+        pid=5100,
+        token="windows-filetime:51000000",
+    )
+    first = run_b3b(
+        tmp_path,
+        dispatcher_invoker=lambda **_: DispatcherInvocationResult(
+            returncode=1,
+            timed_out=True,
+            execution_reach=DISPATCHER_RUNNER_MAY_HAVE_STARTED,
+            process_identity=dispatcher_identity,
+        ),
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+    )
+    persisted = read_json(tmp_path / "in_flight.json")
+    second_calls = []
+
+    def probe(identity):
+        if identity == dispatcher_identity:
+            return process_observation("live", "present")
+        return process_observation("dead")
+
+    second = run_b3b(
+        tmp_path,
+        dispatcher_invoker=lambda **kwargs: second_calls.append(kwargs),
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=probe,
+    )
+
+    assert first["result"] == "unresolved"
+    assert persisted["dispatcher_process_identity"] == dispatcher_identity
+    assert second["result"] == "unresolved"
+    assert second["dispatcher_process_identity"] == dispatcher_identity
+    assert second["dispatcher_process_status"] == "live"
+    assert second["dispatcher_descendant_status"] == "present"
+    assert second["dispatcher_descendant_pids"] == [9001]
+    assert second_calls == []
+
+
+@pytest.mark.parametrize(
+    ("terminal_result", "expected_result", "expected_settlement"),
+    [
+        ("success", "success", "settled_success"),
+        ("failure", "blocked", "settled_non_success"),
+    ],
+)
+def test_timeout_late_trusted_terminal_reconciles_once_without_redispatch(
+    tmp_path, terminal_result, expected_result, expected_settlement
+):
+    client = FakeGitHub()
+    first = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **_: DispatcherInvocationResult(
+            returncode=1,
+            timed_out=True,
+        ),
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+    )
+    client.target_comments.append(
+        CommentRecord(
+            id=20,
+            body=result_comment(result=terminal_result),
+            author="HarryWhite-TW",
+        )
+    )
+    later_calls = []
+    second = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: later_calls.append(kwargs),
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=lambda _: process_observation("dead"),
+    )
+
+    assert first["result"] == "unresolved"
+    assert first["terminal_result"] is None
+    assert second["result"] == expected_result
+    assert second["target_result_verified"] is True
+    assert second["terminal_result"] == terminal_result
+    assert second["terminal_settlement"] == expected_settlement
+    assert second["durable_completion_reconciled"] is True
+    assert later_calls == []
+    assert not (tmp_path / "in_flight.json").exists()
+    records = read_processed_request_records(tmp_path / "processed_requests.jsonl")
+    assert list(records) == ["b3a-151-20260616T080000Z"]
+    assert records["b3a-151-20260616T080000Z"]["terminal_result"] == terminal_result
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_reason"),
+    [
+        ("untrusted", "UNTRUSTED_AUTHOR"),
+        ("identity_mismatch", "HEAD_MISMATCH"),
+        ("duplicate", "MULTIPLE_MATCHING_COMPLETIONS"),
+    ],
+)
+def test_timeout_late_incompatible_evidence_stays_unresolved_without_redispatch(
+    tmp_path, case, expected_reason
+):
+    client = FakeGitHub()
+    first = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **_: DispatcherInvocationResult(
+            returncode=1,
+            timed_out=True,
+        ),
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+    )
+    if case == "untrusted":
+        client.target_comments.append(
+            CommentRecord(id=20, body=result_comment(), author="outsider")
+        )
+    elif case == "identity_mismatch":
+        client.target_comments.append(
+            CommentRecord(
+                id=20,
+                body=result_comment(head="1" * 40),
+                author="HarryWhite-TW",
+            )
+        )
+    else:
+        client.target_comments.extend(
+            [
+                CommentRecord(id=20, body=result_comment(), author="HarryWhite-TW"),
+                CommentRecord(id=21, body=result_comment(), author="HarryWhite-TW"),
+            ]
+        )
+    in_flight_before = (tmp_path / "in_flight.json").read_bytes()
+    later_calls = []
+
+    second = run_b3b(
+        tmp_path,
+        client,
+        dispatcher_invoker=lambda **kwargs: later_calls.append(kwargs),
+        operator_session_id=SESSION_B,
+        process_identity=fake_process_identity(
+            pid=4102,
+            token="windows-filetime:41020000",
+        ),
+        process_probe=lambda _: process_observation("dead"),
+    )
+
+    assert first["result"] == "unresolved"
+    assert second["result"] == "unresolved"
+    assert second["terminal_result"] is None
+    assert second["durable_reconciliation_reason"] == expected_reason
+    assert second["target_result_verified"] is False
+    assert later_calls == []
+    assert (tmp_path / "in_flight.json").read_bytes() == in_flight_before
+    assert not (tmp_path / "processed_requests.jsonl").exists()
 
 
 def test_b3c_structured_pre_runner_rejection_is_settled_without_redispatch(tmp_path):
@@ -1616,7 +1821,7 @@ def test_b3c_transient_pre_runner_failure_allows_later_independent_retry(tmp_pat
     assert len(second_calls) == 1
 
 
-def test_b3c_uncertain_dispatcher_reach_remains_fail_closed(tmp_path):
+def test_b3c_uncertain_dispatcher_reach_remains_nonterminal_and_fail_closed(tmp_path):
     calls = []
     summary = run_b3c(
         tmp_path,
@@ -1627,7 +1832,9 @@ def test_b3c_uncertain_dispatcher_reach_remains_fail_closed(tmp_path):
         ),
     )
 
-    assert summary["blocked_reasons"] == ["dispatcher_nonzero_exit"]
+    assert summary["result"] == "unresolved"
+    assert summary["blocked_reasons"] == []
+    assert summary["unresolved_reason"] == "dispatcher_nonzero_exit"
     assert summary["dispatcher_execution_reach"] == DISPATCHER_RUNNER_MAY_HAVE_STARTED
     assert summary["runner_reached"] is None
     assert summary["codex_reached"] is None
@@ -1638,7 +1845,7 @@ def test_b3c_uncertain_dispatcher_reach_remains_fail_closed(tmp_path):
     assert len(calls) == 1
 
 
-def test_b3b_dispatcher_success_without_verifiable_result_fails_closed(tmp_path):
+def test_b3b_dispatcher_success_without_verifiable_result_is_unresolved(tmp_path):
     missing = run_b3b(
         tmp_path,
         FakeGitHub(target_comments=[CommentRecord(id=10, body=dispatch_marker(), author="HarryWhite-TW")]),
@@ -1654,20 +1861,18 @@ def test_b3b_dispatcher_success_without_verifiable_result_fails_closed(tmp_path)
     )
 
     for summary, case_dir in ((missing, tmp_path), (mismatched, tmp_path / "mismatched")):
-        assert summary["result"] == "blocked"
-        assert summary["blocked_reasons"] == ["target_result_missing"]
+        assert summary["result"] == "unresolved"
+        assert summary["blocked_reasons"] == []
+        assert summary["unresolved_reason"] == "target_result_missing"
         assert summary["dispatcher_invocation_count"] == 1
         assert summary["dispatcher_result_writeback_reached"] is False
         assert summary["dispatcher_result_writeback_verified"] is False
-        failure = read_json(case_dir / "last_failure.json")
-        assert failure["dispatcher_reached"] is True
-        assert failure["dispatcher_result_writeback_reached"] is False
-        assert failure["dispatcher_result_writeback_verified"] is False
+        assert not (case_dir / "last_failure.json").exists()
         assert_high_risk_safety(summary)
     assert not (tmp_path / "processed_requests.jsonl").exists()
 
 
-def test_b3c_dispatcher_success_without_verifiable_result_fails_closed(tmp_path):
+def test_b3c_dispatcher_success_without_verifiable_result_is_unresolved(tmp_path):
     missing = run_b3c(
         tmp_path,
         FakeGitHub(
@@ -1713,12 +1918,13 @@ def test_b3c_dispatcher_success_without_verifiable_result_fails_closed(tmp_path)
     )
 
     for summary, case_dir in ((missing, tmp_path), (mismatched, tmp_path / "mismatched")):
-        assert summary["result"] == "blocked"
-        assert summary["blocked_reasons"] == ["target_result_missing"]
+        assert summary["result"] == "unresolved"
+        assert summary["blocked_reasons"] == []
+        assert summary["unresolved_reason"] == "target_result_missing"
         assert summary["dispatcher_invocation_count"] == 1
         assert summary["dispatcher_result_writeback_reached"] is False
         assert summary["dispatcher_result_writeback_verified"] is False
-        assert read_json(case_dir / "last_failure.json")["dispatcher_reached"] is True
+        assert not (case_dir / "last_failure.json").exists()
         assert not (case_dir / "processed_requests.jsonl").exists()
         assert_high_risk_safety(summary)
 
@@ -1760,14 +1966,14 @@ def test_b3b_untrusted_result_reaches_writeback_but_is_not_settled(tmp_path):
         or DispatcherInvocationResult(returncode=0, stdout="ok", stderr=""),
     )
 
-    assert summary["blocked_reasons"] == ["untrusted_result_author"]
+    assert summary["result"] == "unresolved"
+    assert summary["blocked_reasons"] == []
+    assert summary["unresolved_reason"] == "untrusted_result_author"
     assert summary["dispatcher_invocation_count"] == 1
     assert summary["dispatcher_result_writeback_reached"] is True
     assert summary["dispatcher_result_writeback_verified"] is False
     assert summary["target_result_verified"] is False
-    failure = read_json(tmp_path / "last_failure.json")
-    assert failure["dispatcher_result_writeback_reached"] is True
-    assert failure["dispatcher_result_writeback_verified"] is False
+    assert not (tmp_path / "last_failure.json").exists()
     assert not (tmp_path / "processed_requests.jsonl").exists()
     assert_high_risk_safety(summary)
 
@@ -1812,18 +2018,19 @@ def test_b3c_untrusted_reviewbundle_result_reaches_writeback_but_is_not_settled(
         status_progress_reporter=progress_reports.append,
     )
 
-    assert summary["blocked_reasons"] == ["untrusted_result_author"]
+    assert summary["result"] == "unresolved"
+    assert summary["blocked_reasons"] == []
+    assert summary["unresolved_reason"] == "untrusted_result_author"
     assert summary["dispatcher_invocation_count"] == 1
     assert summary["requested_action"] == "run-reviewbundle"
     assert summary["dispatcher_result_writeback_reached"] is True
     assert summary["dispatcher_result_writeback_verified"] is False
     assert summary["target_result_verified"] is False
     assert [report["lifecycle"]["stage"] for report in progress_reports] == [
-        "REQUEST_ACCEPTED"
+        "REQUEST_ACCEPTED",
+        "RUNNER_OR_CODEX_REACH_UNCERTAIN",
     ]
-    failure = read_json(tmp_path / "last_failure.json")
-    assert failure["dispatcher_result_writeback_reached"] is True
-    assert failure["dispatcher_result_writeback_verified"] is False
+    assert not (tmp_path / "last_failure.json").exists()
     assert not (tmp_path / "processed_requests.jsonl").exists()
     assert_high_risk_safety(summary)
 
@@ -4281,7 +4488,11 @@ def test_dispatched_restart_uncertain_evidence_never_redispatches(
         ),
     )
 
-    assert second["blocked_reasons"] == ["dispatched_in_flight_uncertain"]
+    assert second["result"] == "unresolved"
+    assert second["phase"] == "awaiting_reconciliation"
+    assert second["blocked_reasons"] == []
+    assert second["unresolved_reason"] == "dispatched_in_flight_uncertain"
+    assert second["current_failure_recorded"] is False
     assert second["durable_reconciliation_reason"] == expected_reason
     assert second["dispatcher_invoked"] is False
     assert second_calls == []

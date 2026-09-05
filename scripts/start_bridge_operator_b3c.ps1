@@ -1976,6 +1976,24 @@ function Get-OperatorStatusBlockedReasonValues {
     return @($value)
 }
 
+function Test-OperatorSummaryUnresolved {
+    param([AllowNull()][object]$OperatorSummary)
+    if ($null -eq $OperatorSummary) { return $false }
+    return (
+        [string](Get-ObjectProperty -Object $OperatorSummary -Name "result") -ceq
+            "unresolved" -and
+        [string](Get-ObjectProperty -Object $OperatorSummary -Name "phase") -ceq
+            "awaiting_reconciliation" -and
+        (Get-ObjectProperty -Object $OperatorSummary -Name "in_flight_present") -eq
+            $true -and
+        [string](Get-ObjectProperty -Object $OperatorSummary -Name "in_flight_stage") -ceq
+            "DISPATCHED_NOT_LOCALLY_SETTLED" -and
+        $null -eq (Get-ObjectProperty -Object $OperatorSummary -Name "terminal_result") -and
+        (Get-ObjectProperty -Object $OperatorSummary -Name "target_result_verified") -ne
+            $true
+    )
+}
+
 function Get-ValidStatusRequestId {
     param([AllowNull()][object]$OperatorSummary)
     $value = [string](Get-ObjectProperty -Object $OperatorSummary -Name "request_id")
@@ -2017,7 +2035,8 @@ function New-StatusPayload {
             "start_foreground",
             "review_blocked_reasons",
             "review_operator_result",
-            "chatgpt_final_review"
+            "chatgpt_final_review",
+            "reconcile_unresolved_execution"
         )]
         [string]$NextAction
     )
@@ -2968,7 +2987,11 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
                 Add-BlockedReason -Reasons $blockedReasons -Reason "operator_json_invalid_or_missing"
             }
         }
-        if ($operatorResult.exit_code -ne 0) {
+        $operatorReportedUnresolved = Test-OperatorSummaryUnresolved `
+            -OperatorSummary $operatorSummary
+        if ($operatorResult.exit_code -ne 0 -and -not (
+            $operatorResult.exit_code -eq 3 -and $operatorReportedUnresolved
+        )) {
             Add-BlockedReason -Reasons $blockedReasons -Reason "operator_process_failed"
         }
         if ($null -ne $operatorSummary -and
@@ -2976,7 +2999,7 @@ if ($StartForeground -and $blockedReasons.Count -eq 0) {
                 [string](Get-ObjectProperty -Object $operatorSummary -Name "result"),
                 "success",
                 [System.StringComparison]::Ordinal
-            )) {
+            ) -and -not $operatorReportedUnresolved) {
             Add-BlockedReason -Reasons $blockedReasons -Reason "operator_reported_blocked"
         }
     }
@@ -3016,6 +3039,8 @@ $normalRunReviewBundleTerminalNonSuccess = (
     (([string](Get-ObjectProperty -Object $operatorSummary -Name "terminal_result")) -cin @("failure", "blocked")) -and
     ((Get-ObjectProperty -Object $operatorSummary -Name "target_result_verified") -eq $true)
 )
+$operatorReportedUnresolved = Test-OperatorSummaryUnresolved `
+    -OperatorSummary $operatorSummary
 $resultBeforeStatusUpdate = if ($blockedReasons.Count -gt 0) {
     "blocked"
 }
@@ -3024,6 +3049,9 @@ elseif ($normalRunReviewBundleTerminalNonSuccess) {
 }
 elseif ($normalRunReviewBundleSucceeded) {
     "waiting_review"
+}
+elseif ($operatorReportedUnresolved) {
+    "running"
 }
 elseif ($StartForeground) {
     "completed"
@@ -3038,6 +3066,9 @@ if ($PublishStatus -and $statusCommentNeedsUpdate -and
     }
     elseif ($resultBeforeStatusUpdate -eq "completed") {
         "review_operator_result"
+    }
+    elseif ($resultBeforeStatusUpdate -eq "running") {
+        "reconcile_unresolved_execution"
     }
     else {
         "review_blocked_reasons"
@@ -3103,6 +3134,9 @@ elseif ($normalRunReviewBundleTerminalNonSuccess) {
 elseif ($normalRunReviewBundleSucceeded) {
     "waiting_review"
 }
+elseif ($operatorReportedUnresolved) {
+    "running"
+}
 elseif ($StartForeground) {
     "completed"
 }
@@ -3118,6 +3152,9 @@ elseif ($result -eq "completed") {
 }
 elseif ($result -eq "waiting_review") {
     "ChatGPT final review is required before semantic completion."
+}
+elseif ($result -eq "running") {
+    "Execution remains unresolved; reconcile exact durable result evidence without redispatch."
 }
 else {
     "Review blocked_reasons and repair manually outside this launcher before retrying."

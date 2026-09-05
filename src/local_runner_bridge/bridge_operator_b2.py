@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any, Mapping
@@ -20,6 +21,10 @@ from local_runner_bridge.bridge_operator_b1 import (
     GitHubApiClient,
     LocalReadiness,
     run_bridge_operator_b1_dry_run,
+)
+from local_runner_bridge.bridge_operator_lifecycle_state import (
+    LifecycleEvidenceError,
+    capture_process_identity,
 )
 
 SUMMARY_PROTOCOL = "lawb.bridge_operator_b2_delegation_summary.v1"
@@ -43,6 +48,7 @@ class DispatcherInvocationResult:
     stderr: str = ""
     timed_out: bool = False
     execution_reach: str | None = None
+    process_identity: dict[str, Any] | None = None
 
 
 def run_bridge_operator_b2_once(
@@ -185,8 +191,8 @@ def run_bridge_operator_b2_once(
     summary["dispatcher_execution_reach"] = invocation.execution_reach
 
     if invocation.timed_out:
-        _failure(summary, "dispatcher_timeout")
-        summary["delegation_result"] = "failure"
+        _unresolved(summary, "dispatcher_timeout")
+        summary["delegation_result"] = "unresolved"
         return summary
     if invocation.returncode != 0:
         _failure(summary, "dispatcher_nonzero_exit")
@@ -353,31 +359,44 @@ def default_dispatcher_invoker(
             if key.casefold() == "psmodulepath":
                 del child_environment[key]
 
-    try:
-        completed = subprocess.run(
+    with tempfile.TemporaryFile(mode="w+b") as stdout_file, tempfile.TemporaryFile(
+        mode="w+b"
+    ) as stderr_file:
+        process = subprocess.Popen(
             args,
             cwd=cwd,
             env=child_environment,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            check=False,
-            timeout=timeout_seconds,
+            stdout=stdout_file,
+            stderr=stderr_file,
         )
-    except subprocess.TimeoutExpired as error:
-        return DispatcherInvocationResult(
-            returncode=1,
-            stdout=error.stdout or "",
-            stderr=error.stderr or "",
-            timed_out=True,
-        )
+        try:
+            process_identity = capture_process_identity(process.pid)
+        except LifecycleEvidenceError:
+            process_identity = None
+        try:
+            returncode = process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            # The dispatcher synchronously owns Runner/Codex. Killing only this
+            # immediate process would orphan work and manufacture a terminal
+            # timeout. Leave the owned chain running and let B3 reconcile its
+            # exact durable result instead.
+            return DispatcherInvocationResult(
+                returncode=1,
+                timed_out=True,
+                execution_reach=DISPATCHER_RUNNER_MAY_HAVE_STARTED,
+                process_identity=process_identity,
+            )
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read().decode("utf-8", errors="replace")
+        stderr = stderr_file.read().decode("utf-8", errors="replace")
     return DispatcherInvocationResult(
-        returncode=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
         timed_out=False,
-        execution_reach=_dispatcher_execution_reach(completed.returncode),
+        execution_reach=_dispatcher_execution_reach(returncode),
+        process_identity=process_identity,
     )
 
 
@@ -685,6 +704,7 @@ def _base_summary(
         "target_result_comment_id": None,
         "target_result_author": None,
         "delegation_result": "blocked",
+        "unresolved_reason": None,
         "blocked_reasons": [],
         "next_recommended_action": "chatgpt_review",
         "broad_issue_scan_performed": False,
@@ -751,3 +771,10 @@ def _failure(summary: dict[str, Any], reason: str) -> None:
         summary["blocked_reasons"].append(reason)
     summary["result"] = "failure"
     summary["phase"] = "failed"
+
+
+def _unresolved(summary: dict[str, Any], reason: str) -> None:
+    summary["result"] = "unresolved"
+    summary["phase"] = "awaiting_reconciliation"
+    summary["unresolved_reason"] = reason
+    summary["next_recommended_action"] = "reconcile_exact_durable_result"

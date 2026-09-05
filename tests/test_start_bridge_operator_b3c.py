@@ -2924,6 +2924,83 @@ def test_fake_operator_blocked_is_retained_without_retry(harness: LauncherHarnes
     assert log.count("INVOCATION") == 1
 
 
+def test_fake_operator_unresolved_is_running_not_terminal_failure(
+    harness: LauncherHarness,
+):
+    child = {
+        "protocol": "lawb.bridge_operator_b3_dry_run_loop_summary.v1",
+        "result": "unresolved",
+        "phase": "awaiting_reconciliation",
+        "unresolved_reason": "dispatcher_timeout",
+        "in_flight_present": True,
+        "in_flight_stage": "DISPATCHED_NOT_LOCALLY_SETTLED",
+        "terminal_result": None,
+    }
+    harness.operator_json.write_text(json.dumps(child), encoding="utf-8")
+
+    result, payload = harness.run(
+        "-StartForeground", env=harness.env(B3C_TEST_OPERATOR_EXIT="3")
+    )
+
+    assert result.returncode == 0
+    assert payload["result"] == "running"
+    assert payload["operator_exit_code"] == 3
+    assert payload["operator_summary"] == child
+    assert payload["blocked_reasons"] == []
+    assert "unresolved" in payload["next_recommended_action"].lower()
+
+
+def test_fake_operator_unresolved_exit_requires_coherent_durable_shape(
+    harness: LauncherHarness,
+):
+    child = {
+        "result": "unresolved",
+        "phase": "awaiting_reconciliation",
+        "in_flight_present": True,
+        "in_flight_stage": "DISPATCHED_NOT_LOCALLY_SETTLED",
+        "terminal_result": "failure",
+    }
+    harness.operator_json.write_text(json.dumps(child), encoding="utf-8")
+
+    result, payload = harness.run(
+        "-StartForeground", env=harness.env(B3C_TEST_OPERATOR_EXIT="3")
+    )
+
+    assert result.returncode == 2
+    assert payload["result"] == "blocked"
+    assert "operator_process_failed" in payload["blocked_reasons"]
+    assert "operator_reported_blocked" in payload["blocked_reasons"]
+
+
+def test_status_publication_keeps_unresolved_execution_running(
+    harness: LauncherHarness,
+):
+    child = {
+        "result": "unresolved",
+        "phase": "awaiting_reconciliation",
+        "unresolved_reason": "dispatcher_timeout",
+        "in_flight_present": True,
+        "in_flight_stage": "DISPATCHED_NOT_LOCALLY_SETTLED",
+        "terminal_result": None,
+        "target_result_verified": False,
+    }
+    harness.operator_json.write_text(json.dumps(child), encoding="utf-8")
+
+    result, payload = harness.run(
+        "-StartForeground",
+        "-PublishStatus",
+        env=harness.env(B3C_TEST_OPERATOR_EXIT="3"),
+    )
+    calls = read_gh_calls(harness)
+    remote = status_payload(calls[-1])
+
+    assert result.returncode == 0
+    assert payload["result"] == "running"
+    assert len(calls) == 2
+    assert remote["result"] == "running"
+    assert remote["next_action"] == "reconcile_unresolved_execution"
+
+
 def test_operator_invalid_json_is_blocked(harness: LauncherHarness):
     harness.operator_json.write_text("not-json", encoding="utf-8")
 

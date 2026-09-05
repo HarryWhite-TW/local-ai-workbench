@@ -1,6 +1,7 @@
 import os
 import shutil
 import sys
+import time
 import base64
 import json
 from datetime import datetime, timezone
@@ -565,7 +566,7 @@ def test_multiple_matching_results_fail_closed_after_dispatch():
     assert_safety(summary)
 
 
-def test_dispatcher_nonzero_timeout_and_missing_result_are_failures():
+def test_dispatcher_nonzero_and_missing_result_fail_but_timeout_is_unresolved():
     nonzero = run(
         FakeGitHub(),
         lambda **_: DispatcherInvocationResult(returncode=7, stderr="no"),
@@ -579,7 +580,10 @@ def test_dispatcher_nonzero_timeout_and_missing_result_are_failures():
     )
 
     assert nonzero["blocked_reasons"] == ["dispatcher_nonzero_exit"]
-    assert timeout["blocked_reasons"] == ["dispatcher_timeout"]
+    assert timeout["result"] == "unresolved"
+    assert timeout["phase"] == "awaiting_reconciliation"
+    assert timeout["unresolved_reason"] == "dispatcher_timeout"
+    assert timeout["blocked_reasons"] == []
     assert missing["blocked_reasons"] == ["target_result_missing"]
     assert nonzero["dispatcher_invocation_count"] == 1
     assert timeout["dispatcher_invocation_count"] == 1
@@ -639,14 +643,27 @@ def test_parse_result_requires_marker_protocol_and_json_schema():
     assert nearby["result"] == "not_result"
 
 
-def test_default_invoker_uses_utf8_replacement_decoding(monkeypatch):
+def patch_invoker_process(monkeypatch, *, returncode=0, stdout="", stderr=""):
     calls = []
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return b2.subprocess.CompletedProcess(command, 0, stdout="中文", stderr="")
+    class FakeProcess:
+        pid = os.getpid()
 
-    monkeypatch.setattr(b2.subprocess, "run", fake_run)
+        def __init__(self, command, **kwargs):
+            calls.append((command, kwargs, self))
+            kwargs["stdout"].write(stdout.encode("utf-8"))
+            kwargs["stderr"].write(stderr.encode("utf-8"))
+
+        def wait(self, *, timeout):
+            self.timeout = timeout
+            return returncode
+
+    monkeypatch.setattr(b2.subprocess, "Popen", FakeProcess)
+    return calls
+
+
+def test_default_invoker_uses_utf8_replacement_decoding(monkeypatch):
+    calls = patch_invoker_process(monkeypatch, stdout="中文")
 
     result = b2.default_dispatcher_invoker(
         args=["powershell.exe", "-File", "script.ps1"],
@@ -656,9 +673,7 @@ def test_default_invoker_uses_utf8_replacement_decoding(monkeypatch):
 
     assert result.returncode == 0
     assert result.stdout == "中文"
-    assert calls[0][1]["encoding"] == "utf-8"
-    assert calls[0][1]["errors"] == "replace"
-    assert calls[0][1]["timeout"] == 12
+    assert calls[0][2].timeout == 12
 
 
 @pytest.mark.parametrize(
@@ -682,13 +697,7 @@ def test_default_invoker_uses_utf8_replacement_decoding(monkeypatch):
 def test_default_invoker_maps_only_typed_process_exits_to_execution_reach(
     monkeypatch, returncode, expected_reach
 ):
-    monkeypatch.setattr(
-        b2.subprocess,
-        "run",
-        lambda command, **kwargs: b2.subprocess.CompletedProcess(
-            command, returncode, stdout="", stderr=""
-        ),
-    )
+    patch_invoker_process(monkeypatch, returncode=returncode)
 
     result = b2.default_dispatcher_invoker(
         args=["powershell.exe", "-File", "script.ps1"],
@@ -704,11 +713,7 @@ def test_default_invoker_removes_powershell_module_path_from_child_only(monkeypa
     monkeypatch.setenv("PSModulePath", "inherited-powershell-7-modules")
     monkeypatch.setenv("BRIDGE_ENV_SENTINEL", "preserved")
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return b2.subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
-
-    monkeypatch.setattr(b2.subprocess, "run", fake_run)
+    calls = patch_invoker_process(monkeypatch, stdout="ok")
 
     result = b2.default_dispatcher_invoker(
         args=[
@@ -735,11 +740,7 @@ def test_default_invoker_preserves_module_path_for_other_executables(
     calls = []
     monkeypatch.setenv("PSModulePath", "parent-module-path")
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return b2.subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
-
-    monkeypatch.setattr(b2.subprocess, "run", fake_run)
+    calls = patch_invoker_process(monkeypatch, stdout="ok")
 
     result = b2.default_dispatcher_invoker(
         args=[executable, "--version"],
@@ -805,4 +806,31 @@ finally {
     assert result.returncode == 0, result.stdout + result.stderr
     assert "WINDOWS_POWERSHELL_TEMPFILE_OK" in result.stdout
     assert os.environ["PSModulePath"] == str(incompatible_modules)
+
+
+def test_default_invoker_timeout_returns_without_killing_continuing_child(tmp_path):
+    sentinel = tmp_path / "late-child-finished.txt"
+    started = time.monotonic()
+
+    result = b2.default_dispatcher_invoker(
+        args=[
+            sys.executable,
+            "-c",
+            (
+                "import pathlib,time; time.sleep(0.6); "
+                f"pathlib.Path({str(sentinel)!r}).write_text('finished', encoding='utf-8')"
+            ),
+        ],
+        cwd=str(tmp_path),
+        timeout_seconds=0.1,
+    )
+
+    assert time.monotonic() - started < 0.5
+    assert result.timed_out is True
+    assert result.execution_reach == b2.DISPATCHER_RUNNER_MAY_HAVE_STARTED
+    assert result.process_identity is not None
+    deadline = time.monotonic() + 3
+    while not sentinel.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert sentinel.read_text(encoding="utf-8") == "finished"
 

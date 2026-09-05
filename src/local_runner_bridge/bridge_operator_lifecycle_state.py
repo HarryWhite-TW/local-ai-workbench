@@ -19,7 +19,8 @@ from typing import Any, Callable
 LOCK_PROTOCOL = "lawb.bridge_operator_b3_lock.v2"
 LOCK_SCHEMA_VERSION = 2
 IN_FLIGHT_PROTOCOL = "lawb.bridge_operator_b3_in_flight.v1"
-IN_FLIGHT_SCHEMA_VERSION = 1
+IN_FLIGHT_SCHEMA_VERSION = 2
+LEGACY_IN_FLIGHT_SCHEMA_VERSION = 1
 REVIEW_CANDIDATE_PROTOCOL = "lawb.bridge_operator_review_candidate.v1"
 REVIEW_CANDIDATE_SCHEMA_VERSION = 2
 LEGACY_REVIEW_CANDIDATE_SCHEMA_VERSION = 1
@@ -82,7 +83,14 @@ def validate_session_id(value: Any) -> str:
 
 
 def capture_current_process_identity() -> dict[str, Any]:
-    status, identity = _query_process_identity(os.getpid())
+    return capture_process_identity(os.getpid())
+
+
+def capture_process_identity(pid: int) -> dict[str, Any]:
+    """Capture one exact live process identity for durable ownership evidence."""
+    if type(pid) is not int or pid <= 0:
+        raise LifecycleEvidenceError("process_identity_unavailable")
+    status, identity = _query_process_identity(pid)
     if status != "live" or identity is None:
         raise LifecycleEvidenceError("process_identity_unavailable")
     return identity
@@ -620,6 +628,7 @@ def new_in_flight_payload(
         "expected_head": expected_head,
         "operator_session_id": operator_session_id,
         "process_identity": process_identity,
+        "dispatcher_process_identity": None,
         "prepared_at_utc": timestamp,
         "updated_at_utc": timestamp,
         "stage": PREPARED,
@@ -637,14 +646,17 @@ def updated_in_flight_payload(
     dispatcher_invoked: bool,
     terminal_evidence: dict[str, Any] | None,
     updated_at: datetime,
+    dispatcher_process_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     updated = dict(payload)
     updated.update(
         {
+            "schema_version": IN_FLIGHT_SCHEMA_VERSION,
             "stage": stage,
             "dispatcher_invoked": dispatcher_invoked,
             "terminal_evidence": terminal_evidence,
             "updated_at_utc": format_utc(updated_at),
+            "dispatcher_process_identity": dispatcher_process_identity,
         }
     )
     validate_in_flight_payload(updated)
@@ -652,7 +664,7 @@ def updated_in_flight_payload(
 
 
 def validate_in_flight_payload(value: Any) -> dict[str, Any]:
-    expected_keys = {
+    common_keys = {
         "protocol",
         "schema_version",
         "request_id",
@@ -670,11 +682,18 @@ def validate_in_flight_payload(value: Any) -> dict[str, Any]:
         "dispatcher_invoked",
         "terminal_evidence",
     }
+    schema_version = value.get("schema_version") if isinstance(value, dict) else None
+    expected_keys = (
+        common_keys | {"dispatcher_process_identity"}
+        if schema_version == IN_FLIGHT_SCHEMA_VERSION
+        else common_keys
+    )
     invalid = (
         not isinstance(value, dict)
         or set(value) != expected_keys
         or value.get("protocol") != IN_FLIGHT_PROTOCOL
-        or value.get("schema_version") != IN_FLIGHT_SCHEMA_VERSION
+        or schema_version
+        not in {LEGACY_IN_FLIGHT_SCHEMA_VERSION, IN_FLIGHT_SCHEMA_VERSION}
         or not isinstance(value.get("request_id"), str)
         or _REQUEST_ID.fullmatch(value.get("request_id", "")) is None
         or not isinstance(value.get("target_repository"), str)
@@ -698,13 +717,20 @@ def validate_in_flight_payload(value: Any) -> dict[str, Any]:
         raise LifecycleEvidenceError("in_flight_invalid")
     validate_session_id(value.get("operator_session_id"))
     validate_process_identity(value.get("process_identity"))
+    dispatcher_identity = value.get("dispatcher_process_identity")
+    if dispatcher_identity is not None:
+        validate_process_identity(dispatcher_identity)
     prepared = parse_utc(value["prepared_at_utc"])
     updated = parse_utc(value["updated_at_utc"])
     if prepared is None or updated is None or updated < prepared:
         raise LifecycleEvidenceError("in_flight_invalid")
     stage = value["stage"]
     terminal = value["terminal_evidence"]
-    if stage == PREPARED and (value["dispatcher_invoked"] or terminal is not None):
+    if stage == PREPARED and (
+        value["dispatcher_invoked"]
+        or terminal is not None
+        or dispatcher_identity is not None
+    ):
         raise LifecycleEvidenceError("in_flight_invalid")
     if stage == DISPATCHED_NOT_LOCALLY_SETTLED and (
         not value["dispatcher_invoked"] or terminal is not None

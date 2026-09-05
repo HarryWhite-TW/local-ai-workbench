@@ -251,7 +251,11 @@ def main(argv: list[str] | None = None) -> int:
         status_progress_reporter=status_progress_reporter,
     )
     print(json.dumps(summary, sort_keys=True))
-    return 0 if summary.get("result") == "success" else 1
+    if summary.get("result") == "success":
+        return 0
+    if summary.get("result") == "unresolved":
+        return 3
+    return 1
 
 
 if __name__ == "__main__":

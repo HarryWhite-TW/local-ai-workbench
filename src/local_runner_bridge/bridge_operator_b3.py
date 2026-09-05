@@ -99,6 +99,7 @@ DEFAULT_READ_RETRY_COUNT = 2
 HEALTH_PROBE_REQUEST_EXPIRY_SECONDS = 300
 HEALTH_PROBE_RESULT_TIMEOUT_SECONDS = 120
 HEALTH_PROBE_TO_REAL_TASK_SECONDS = 60
+DISPATCH_COMPLETION_UNRESOLVED = "dispatcher_completion_unresolved"
 NONFATAL_REQUEST_REJECTION_REASONS = frozenset(
     {
         "health_probe_expiry_invalid",
@@ -297,6 +298,7 @@ def run_bridge_operator_b3_dry_run_loop(
                 repository=repository,
                 client=target_client,
                 provider=durable_evidence_provider,
+                process_probe=probe,
                 cycle=0,
                 now=_now(now_utc),
                 summary=summary,
@@ -311,6 +313,12 @@ def run_bridge_operator_b3_dry_run_loop(
             )
             if recovery["reason"] is not None:
                 reason = str(recovery["reason"])
+                if recovery["unresolved"]:
+                    _unresolved(summary, reason)
+                    _write_log(state_root, "unresolved", reason, summary)
+                    _write_state(state_root, summary["phase"], summary, _now(now_utc))
+                    _write_heartbeat(state_root, summary["phase"], 0, summary, _now(now_utc))
+                    return _finalize_summary(summary)
                 _block(summary, reason)
                 _record_failure(state_root, summary, reason, _now(now_utc))
                 _write_log(state_root, "blocked", reason, summary)
@@ -500,12 +508,23 @@ def run_bridge_operator_b3_dry_run_loop(
                                 mode == B3C_MODE
                                 and summary.get("requested_action")
                                 == B3C_ALLOWED_ACTION
-                                and summary.get("target_result_verified")
+                                and (
+                                    summary.get("target_result_verified")
+                                    or summary.get("result") == "unresolved"
+                                )
                             ):
                                 _report_request_status(
                                     summary, status_progress_reporter
                                 )
                             if reason is not None:
+                                if reason == DISPATCH_COMPLETION_UNRESOLVED:
+                                    _write_log(
+                                        state_root,
+                                        "unresolved",
+                                        str(summary.get("unresolved_reason") or reason),
+                                        summary,
+                                    )
+                                    break
                                 if reason in NONFATAL_REQUEST_REJECTION_REASONS:
                                     session_rejected_requests.add(request_key)
                                     summary["nonfatal_request_rejection_count"] += 1
@@ -740,6 +759,7 @@ def _base_summary(
         "terminal_result": None,
         "terminal_settlement": None,
         "terminal_observed_at_utc": None,
+        "unresolved_reason": None,
         "request_id": None,
         "inbox_comment_id": None,
         "target_issue": None,
@@ -762,6 +782,10 @@ def _base_summary(
         "dispatcher_stdout": "",
         "dispatcher_stderr": "",
         "dispatcher_execution_reach": None,
+        "dispatcher_process_identity": None,
+        "dispatcher_process_status": "not_observed",
+        "dispatcher_descendant_status": "not_observed",
+        "dispatcher_descendant_pids": [],
         "dispatcher_result_writeback_reached": False,
         "dispatcher_result_writeback_verified": False,
         "runner_reached": None,
@@ -1555,11 +1579,16 @@ def _recover_existing_in_flight(
     repository: str,
     client: Any,
     provider: Any | None,
+    process_probe: Callable[[dict[str, Any]], dict[str, Any]],
     cycle: int,
     now: datetime,
     summary: dict[str, Any],
 ) -> dict[str, Any]:
-    outcome = {"reason": None, "settled_non_success": False}
+    outcome = {
+        "reason": None,
+        "settled_non_success": False,
+        "unresolved": False,
+    }
     summary["restart_reconciliation_performed"] = True
     summary["in_flight_stage"] = in_flight["stage"]
     summary["in_flight_operator_session_id"] = in_flight[
@@ -1574,6 +1603,26 @@ def _recover_existing_in_flight(
     summary["requested_action"] = in_flight["action"]
     summary["expected_branch"] = in_flight["branch"]
     summary["expected_head"] = in_flight["expected_head"]
+    dispatcher_identity = in_flight.get("dispatcher_process_identity")
+    summary["dispatcher_process_identity"] = dispatcher_identity
+    if dispatcher_identity is not None:
+        try:
+            dispatcher_observation = process_probe(dispatcher_identity)
+        except Exception:
+            dispatcher_observation = {
+                "process_status": "uncertain",
+                "descendant_status": "uncertain",
+                "descendant_pids": [],
+            }
+        summary["dispatcher_process_status"] = dispatcher_observation.get(
+            "process_status", "uncertain"
+        )
+        summary["dispatcher_descendant_status"] = dispatcher_observation.get(
+            "descendant_status", "uncertain"
+        )
+        summary["dispatcher_descendant_pids"] = list(
+            dispatcher_observation.get("descendant_pids") or []
+        )
     if in_flight["target_repository"] != repository:
         outcome["reason"] = "in_flight_target_repository_mismatch"
         return outcome
@@ -1693,6 +1742,7 @@ def _recover_existing_in_flight(
         ReconciliationDecision.SETTLED_NON_SUCCESS,
     }:
         outcome["reason"] = "dispatched_in_flight_uncertain"
+        outcome["unresolved"] = True
         return outcome
 
     review_candidate_error = _persist_review_candidate_if_available(
@@ -2054,6 +2104,27 @@ def _delegate_b3_request(
     summary["dispatcher_invoked"] = True
     summary["dispatcher_invocation_count"] += 1
 
+    # Commit dispatch ownership before process creation. If the Operator dies
+    # after this point, restart reconciles this request and never redispatches
+    # it merely because local completion was not observed.
+    in_flight = updated_in_flight_payload(
+        in_flight,
+        stage=DISPATCHED_NOT_LOCALLY_SETTLED,
+        dispatcher_invoked=True,
+        terminal_evidence=None,
+        updated_at=now,
+    )
+    try:
+        write_durable_json(
+            in_flight_path,
+            in_flight,
+            operator_session_id=operator_session_id,
+        )
+    except (OSError, LifecycleEvidenceError):
+        _block(summary, "in_flight_dispatch_transition_failed")
+        return "in_flight_dispatch_transition_failed"
+    summary["in_flight_stage"] = DISPATCHED_NOT_LOCALLY_SETTLED
+
     try:
         invocation = invoker(
             args=args,
@@ -2072,7 +2143,29 @@ def _delegate_b3_request(
     summary["dispatcher_timed_out"] = bool(invocation.timed_out)
     summary["dispatcher_stdout"] = invocation.stdout
     summary["dispatcher_stderr"] = invocation.stderr
-    summary["dispatcher_execution_reach"] = invocation.execution_reach
+    summary["dispatcher_execution_reach"] = (
+        invocation.execution_reach
+        or (DISPATCHER_RUNNER_MAY_HAVE_STARTED if invocation.timed_out else None)
+    )
+    summary["dispatcher_process_identity"] = invocation.process_identity
+    if invocation.process_identity is not None:
+        in_flight = updated_in_flight_payload(
+            in_flight,
+            stage=DISPATCHED_NOT_LOCALLY_SETTLED,
+            dispatcher_invoked=True,
+            terminal_evidence=None,
+            updated_at=now,
+            dispatcher_process_identity=invocation.process_identity,
+        )
+        try:
+            write_durable_json(
+                in_flight_path,
+                in_flight,
+                operator_session_id=operator_session_id,
+            )
+        except (OSError, LifecycleEvidenceError):
+            _unresolved(summary, "dispatcher_identity_persistence_failed")
+            return DISPATCH_COMPLETION_UNRESOLVED
 
     confirmed_pre_runner_rejection = (
         not summary.get("dispatcher_missing")
@@ -2172,38 +2265,19 @@ def _delegate_b3_request(
         _block(summary, "dispatcher_pre_runner_transient_failure")
         return "dispatcher_pre_runner_transient_failure"
 
-    if invocation.execution_reach == DISPATCHER_RUNNER_MAY_HAVE_STARTED:
+    if summary["dispatcher_execution_reach"] == DISPATCHER_RUNNER_MAY_HAVE_STARTED:
         summary["runner_reached"] = None
         summary["codex_reached"] = None
-
-    if not summary.get("dispatcher_missing"):
-        in_flight = updated_in_flight_payload(
-            in_flight,
-            stage=DISPATCHED_NOT_LOCALLY_SETTLED,
-            dispatcher_invoked=True,
-            terminal_evidence=None,
-            updated_at=now,
-        )
-        try:
-            write_durable_json(
-                in_flight_path,
-                in_flight,
-                operator_session_id=operator_session_id,
-            )
-        except (OSError, LifecycleEvidenceError):
-            _block(summary, "in_flight_dispatch_transition_failed")
-            return "in_flight_dispatch_transition_failed"
-        summary["in_flight_stage"] = DISPATCHED_NOT_LOCALLY_SETTLED
 
     if summary.get("dispatcher_missing"):
         _block(summary, "dispatcher_missing")
         return "dispatcher_missing"
     if invocation.timed_out:
-        _block(summary, "dispatcher_timeout")
-        return "dispatcher_timeout"
+        _unresolved(summary, "dispatcher_timeout")
+        return DISPATCH_COMPLETION_UNRESOLVED
     if invocation.returncode != 0:
-        _block(summary, "dispatcher_nonzero_exit")
-        return "dispatcher_nonzero_exit"
+        _unresolved(summary, "dispatcher_nonzero_exit")
+        return DISPATCH_COMPLETION_UNRESOLVED
 
     fault_reason = _invoke_lifecycle_fault(
         lifecycle_fault_injector,
@@ -2220,17 +2294,17 @@ def _delegate_b3_request(
     )
     _copy_reconciliation_result(summary, reconciliation)
     if reconciliation.decision == ReconciliationDecision.NOT_FOUND:
-        _block(summary, "target_result_missing")
-        return "target_result_missing"
+        _unresolved(summary, "target_result_missing")
+        return DISPATCH_COMPLETION_UNRESOLVED
     if reconciliation.decision == ReconciliationDecision.ERROR:
-        _block(summary, "github_read_unavailable")
-        return "github_read_unavailable"
+        _unresolved(summary, "github_read_unavailable")
+        return DISPATCH_COMPLETION_UNRESOLVED
     if reconciliation.decision == ReconciliationDecision.BLOCKED:
         reason = _post_dispatch_reconciliation_reason(reconciliation)
         if reconciliation.matched_evidence_ids:
             summary["dispatcher_result_writeback_reached"] = True
-        _block(summary, reason)
-        return reason
+        _unresolved(summary, reason)
+        return DISPATCH_COMPLETION_UNRESOLVED
     if reconciliation.decision not in {
         ReconciliationDecision.COMPLETED,
         ReconciliationDecision.SETTLED_NON_SUCCESS,
@@ -2637,6 +2711,7 @@ def _reset_request_execution_visibility(summary: dict[str, Any]) -> None:
             "terminal_result": None,
             "terminal_settlement": None,
             "terminal_observed_at_utc": None,
+            "unresolved_reason": None,
             "effective_dispatcher_timeout_seconds": None,
             "dispatcher_invocation_args": [],
             "dispatcher_exit_code": None,
@@ -2645,6 +2720,10 @@ def _reset_request_execution_visibility(summary: dict[str, Any]) -> None:
             "dispatcher_stdout": "",
             "dispatcher_stderr": "",
             "dispatcher_execution_reach": None,
+            "dispatcher_process_identity": None,
+            "dispatcher_process_status": "not_observed",
+            "dispatcher_descendant_status": "not_observed",
+            "dispatcher_descendant_pids": [],
             "dispatcher_result_writeback_reached": False,
             "dispatcher_result_writeback_verified": False,
             "target_result_verified": False,
@@ -2731,6 +2810,15 @@ def _request_lifecycle_visibility(summary: dict[str, Any]) -> dict[str, str]:
             "certainty": "verified",
             "basis": "trusted_terminal_result",
         }
+    if summary.get("result") == "unresolved":
+        return {
+            "stage": "RUNNER_OR_CODEX_REACH_UNCERTAIN",
+            "certainty": "unknown",
+            "basis": str(
+                summary.get("unresolved_reason")
+                or "dispatcher_completion_unresolved"
+            ),
+        }
     if summary.get("current_failure_recorded"):
         return {
             "stage": "BLOCKED_OR_FAILED",
@@ -2787,6 +2875,12 @@ def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
         ),
         "dispatcher_invoked": bool(summary.get("dispatcher_invoked")),
         "dispatcher_execution_reach": summary.get("dispatcher_execution_reach"),
+        "dispatcher_process_identity": summary.get("dispatcher_process_identity"),
+        "dispatcher_process_status": summary.get("dispatcher_process_status"),
+        "dispatcher_descendant_status": summary.get("dispatcher_descendant_status"),
+        "dispatcher_descendant_pids": list(
+            summary.get("dispatcher_descendant_pids", [])
+        ),
         "runner_reached": summary.get("runner_reached"),
         "codex_reached": summary.get("codex_reached"),
         "operator_direct_runner_invoked": bool(summary.get("runner_invoked")),
@@ -2805,6 +2899,7 @@ def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
         ),
         "durable_completion_reconciled": bool(summary.get("durable_completion_reconciled")),
         "terminal_result": summary.get("terminal_result"),
+        "unresolved_reason": summary.get("unresolved_reason"),
         "current_failure_recorded": bool(summary.get("current_failure_recorded")),
         "current_failure_reason": summary.get("current_failure_reason"),
         "last_failure_json_applies_to_current_run": bool(
@@ -3020,6 +3115,14 @@ def _block(summary: dict[str, Any], reason: str) -> None:
         summary["blocked_reasons"].append(reason)
     summary["result"] = "blocked"
     summary["phase"] = "blocked"
+
+
+def _unresolved(summary: dict[str, Any], reason: str) -> None:
+    """Expose a non-terminal state without manufacturing failure evidence."""
+    summary["result"] = "unresolved"
+    summary["phase"] = "awaiting_reconciliation"
+    summary["current_delegation_outcome"] = DISPATCH_COMPLETION_UNRESOLVED
+    summary["unresolved_reason"] = reason
 
 
 def _now(value: Callable[[], datetime] | datetime | None) -> datetime:

@@ -42,6 +42,37 @@ def test_cli_requires_arguments_and_prints_blocked_json(capsys):
     assert_safety(summary)
 
 
+def test_cli_uses_distinct_exit_for_unresolved_execution(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "GitHubApiClient", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        cli,
+        "run_bridge_operator_b3_dry_run_loop",
+        lambda **kwargs: {
+            "protocol": "lawb.bridge_operator_b3_dry_run_loop_summary.v1",
+            "result": "unresolved",
+            "phase": "awaiting_reconciliation",
+            "unresolved_reason": "dispatcher_timeout",
+            "terminal_result": None,
+        },
+    )
+
+    result = cli.main(
+        [
+            "--repo-root",
+            "C:/repo",
+            "--max-cycles",
+            "1",
+            "--poll-interval-seconds",
+            "0",
+        ]
+    )
+    summary = read_json(capsys)
+
+    assert result == 3
+    assert summary["result"] == "unresolved"
+    assert summary["terminal_result"] is None
+
+
 def test_cli_routes_fixed_inbox_to_b3_without_printing_credentials(monkeypatch, capsys):
     calls = []
 
