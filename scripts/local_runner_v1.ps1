@@ -30,6 +30,7 @@ param(
     [string]$DisplayPilotRequestId = "",
     [switch]$SuppressReviewBundleComment,
     [string]$DispatchRequestId = "",
+    [string]$ObservabilityEventStorePath = "",
     [string]$TrustedCandidateContinuationCommentId = "",
     [string]$ReadFinalAuditRequestId = ""
 )
@@ -50,6 +51,10 @@ if ($null -eq $reviewedGhPathVariable) {
 $displayPilotRequestIdVariable = Get-Variable -Name DisplayPilotRequestId -ErrorAction SilentlyContinue
 if ($null -eq $displayPilotRequestIdVariable) {
     $DisplayPilotRequestId = ""
+}
+$observabilityEventStorePathVariable = Get-Variable -Name ObservabilityEventStorePath -ErrorAction SilentlyContinue
+if ($null -eq $observabilityEventStorePathVariable) {
+    $ObservabilityEventStorePath = ""
 }
 $ErrorActionPreference = "Stop"
 
@@ -89,6 +94,8 @@ $FinalReviewEvidenceChunkBytes = 36000
 $FinalReviewEvidenceMaxChunks = 7
 $TrustedRunnerResultAuthors = @("HarryWhite-TW")
 $LocalIsolationProvider = "codex_cli_workspace_write"
+$WorkflowObservationProtocol = "lawb.workflow_observation_stream.v1"
+$WorkflowObservationScriptRelativePath = "src\local_runner_bridge\workflow_observability.py"
 $script:CommitApprovedLocalCommitCreated = "unknown"
 $script:CommitApprovedCommitSha = ""
 
@@ -2389,6 +2396,316 @@ function Stop-ProcessTree {
     return $stopped
 }
 
+function Test-WorkflowObservationPathWithinRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Root
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd("\", "/")
+    return [string]::Equals($fullPath, $fullRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $fullPath.StartsWith($fullRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function New-WorkflowObservationResult {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("ok", "degraded", "not_configured")]
+        [string]$Status,
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Reasons,
+        [AllowEmptyString()]
+        [string]$RequestId = "",
+        [AllowEmptyString()]
+        [string]$RunId = "",
+        [int]$EventsWritten = 0,
+        [AllowNull()]
+        [object]$LastSequence = $null,
+        [bool]$CompletionObserved = $false
+    )
+
+    return [pscustomobject][ordered]@{
+        protocol = $WorkflowObservationProtocol
+        ownership = "observability_only"
+        lifecycle_authority = "none"
+        status = $Status
+        reasons = @($Reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        request_id = if ([string]::IsNullOrWhiteSpace($RequestId)) { $null } else { $RequestId }
+        run_id = if ([string]::IsNullOrWhiteSpace($RunId)) { $null } else { $RunId }
+        events_written = $EventsWritten
+        last_sequence = $LastSequence
+        completion_observed = $CompletionObserved
+    }
+}
+
+function New-WorkflowObservationConfig {
+    param(
+        [AllowEmptyString()]
+        [string]$StorePath = "",
+        [AllowEmptyString()]
+        [string]$RequestId = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RequestId)) {
+        return [pscustomobject]@{
+            Enabled = $false
+            Result = New-WorkflowObservationResult -Status "not_configured" -Reasons @("request_identity_unavailable")
+        }
+    }
+    if ($RequestId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$') {
+        return [pscustomobject]@{
+            Enabled = $false
+            Result = New-WorkflowObservationResult -Status "degraded" -Reasons @("request_identity_invalid") -RequestId $RequestId
+        }
+    }
+
+    $selectedStorePath = $StorePath
+    if ([string]::IsNullOrWhiteSpace($selectedStorePath)) {
+        if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+            return [pscustomobject]@{
+                Enabled = $false
+                Result = New-WorkflowObservationResult -Status "degraded" -Reasons @("local_state_root_unavailable") -RequestId $RequestId
+            }
+        }
+        $selectedStorePath = Join-Path $env:LOCALAPPDATA "LocalAIWorkbench\BridgeOperator\observability\events.jsonl"
+    }
+
+    try {
+        if ($selectedStorePath -cnotmatch '^[A-Za-z]:[\\/]') {
+            throw "not_local_drive_qualified"
+        }
+        $fullStorePath = [System.IO.Path]::GetFullPath($selectedStorePath)
+        if ((Test-WorkflowObservationPathWithinRoot -Path $fullStorePath -Root $RepoPath) -or
+            (Test-WorkflowObservationPathWithinRoot -Path $fullStorePath -Root $ControlRepoRoot)) {
+            throw "store_inside_repository"
+        }
+        $observerScript = Join-Path $ControlRepoRoot $WorkflowObservationScriptRelativePath
+        if (-not (Test-Path -LiteralPath $observerScript -PathType Leaf)) {
+            throw "observer_script_missing"
+        }
+        $pythonPath = Resolve-PythonRuntimeCommand
+    }
+    catch {
+        return [pscustomobject]@{
+            Enabled = $false
+            Result = New-WorkflowObservationResult -Status "degraded" -Reasons @("observation_configuration_unavailable") -RequestId $RequestId
+        }
+    }
+
+    $runId = [guid]::NewGuid().ToString("D")
+    return [pscustomobject]@{
+        Enabled = $true
+        StorePath = $fullStorePath
+        RequestId = $RequestId
+        RunId = $runId
+        ObserverScript = $observerScript
+        PythonPath = $pythonPath
+        Result = New-WorkflowObservationResult -Status "degraded" -Reasons @("observation_not_started") -RequestId $RequestId -RunId $runId
+    }
+}
+
+function Start-WorkflowObservationSink {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Config,
+        [Parameter(Mandatory = $true)]
+        [int]$ObservedProcessId,
+        [Parameter(Mandatory = $true)]
+        [DateTimeOffset]$StartedAt
+    )
+
+    $context = [pscustomobject]@{
+        Active = $false
+        Process = $null
+        StdoutTask = $null
+        StderrTask = $null
+        WriteFailed = $false
+        Config = $Config
+        StartedAt = $StartedAt
+        Result = $Config.Result
+    }
+    if (-not [bool]$Config.Enabled) {
+        return $context
+    }
+
+    try {
+        $arguments = @(
+            [string]$Config.ObserverScript,
+            "ingest",
+            "--store", [string]$Config.StorePath,
+            "--request-id", [string]$Config.RequestId,
+            "--run-id", [string]$Config.RunId,
+            "--process-id", [string]$ObservedProcessId,
+            "--started-at-utc", $StartedAt.ToString("o")
+        )
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = [string]$Config.PythonPath
+        $startInfo.Arguments = ConvertTo-NativeArgumentString -Arguments $arguments
+        $startInfo.WorkingDirectory = $ControlRepoRoot
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardInput = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+        try {
+            $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
+        }
+        catch {
+            # Best effort only. Windows PowerShell 5.1 can expose an unusable
+            # EnvironmentVariables collection when its own stdio is redirected.
+        }
+        if ($null -ne $startInfo.PSObject.Properties["StandardInputEncoding"]) {
+            $startInfo.StandardInputEncoding = $utf8
+        }
+        $startInfo.StandardOutputEncoding = $utf8
+        $startInfo.StandardErrorEncoding = $utf8
+        $sinkProcess = New-Object System.Diagnostics.Process
+        $sinkProcess.StartInfo = $startInfo
+        $null = $sinkProcess.Start()
+        $context.Process = $sinkProcess
+        $context.StdoutTask = $sinkProcess.StandardOutput.ReadToEndAsync()
+        $context.StderrTask = $sinkProcess.StandardError.ReadToEndAsync()
+        $context.Active = $true
+    }
+    catch {
+        $context.Result = New-WorkflowObservationResult `
+            -Status "degraded" `
+            -Reasons @("observation_sink_start_failed") `
+            -RequestId ([string]$Config.RequestId) `
+            -RunId ([string]$Config.RunId)
+    }
+    return $context
+}
+
+function Write-WorkflowObservationCodexLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Context,
+        [AllowEmptyString()]
+        [string]$Line
+    )
+
+    if (-not [bool]$Context.Active) {
+        return
+    }
+    try {
+        $Context.Process.StandardInput.WriteLine("codex`t$Line")
+        $Context.Process.StandardInput.Flush()
+    }
+    catch {
+        $Context.Active = $false
+        $Context.WriteFailed = $true
+    }
+}
+
+function Complete-WorkflowObservationSink {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Context,
+        [Parameter(Mandatory = $true)]
+        [int]$ExitCode,
+        [Parameter(Mandatory = $true)]
+        [bool]$TimedOut,
+        [Parameter(Mandatory = $true)]
+        [DateTimeOffset]$CompletedAt
+    )
+
+    $config = $Context.Config
+    if (-not [bool]$config.Enabled) {
+        return $Context.Result
+    }
+    $reasons = [System.Collections.Generic.List[string]]::new()
+    if ([bool]$Context.WriteFailed) {
+        $reasons.Add("observation_sink_write_failed")
+    }
+    if ($null -eq $Context.Process) {
+        $reasons.Add("observation_sink_unavailable")
+        return New-WorkflowObservationResult `
+            -Status "degraded" `
+            -Reasons $reasons.ToArray() `
+            -RequestId ([string]$config.RequestId) `
+            -RunId ([string]$config.RunId)
+    }
+
+    try {
+        if ([bool]$Context.Active) {
+            $duration = [Math]::Max(0, [int][Math]::Round(($CompletedAt - $Context.StartedAt).TotalMilliseconds))
+            $completion = [ordered]@{
+                type = "process.completed"
+                observed_at_utc = $CompletedAt.ToString("o")
+                exit_code = $ExitCode
+                timed_out = $TimedOut
+                duration_ms = $duration
+            } | ConvertTo-Json -Compress
+            $Context.Process.StandardInput.WriteLine("runner`t$completion")
+            $Context.Process.StandardInput.Flush()
+        }
+        $Context.Process.StandardInput.Close()
+    }
+    catch {
+        $reasons.Add("observation_sink_completion_write_failed")
+    }
+
+    try {
+        $sinkExited = $Context.Process.WaitForExit(10000)
+        if (-not $sinkExited) {
+            $reasons.Add("observation_sink_timeout")
+            Stop-Process -Id $Context.Process.Id -Force -ErrorAction SilentlyContinue
+            $null = $Context.Process.WaitForExit(2000)
+        }
+        $sinkStdout = if ($null -eq $Context.StdoutTask) { "" } else { $Context.StdoutTask.GetAwaiter().GetResult() }
+        $null = if ($null -eq $Context.StderrTask) { "" } else { $Context.StderrTask.GetAwaiter().GetResult() }
+        if (-not $sinkExited -or $Context.Process.ExitCode -ne 0) {
+            $reasons.Add("observation_sink_nonzero_exit")
+        }
+        if (-not [string]::IsNullOrWhiteSpace($sinkStdout)) {
+            try {
+                $summary = $sinkStdout.Trim() | ConvertFrom-Json -ErrorAction Stop
+                if (-not [string]::Equals([string]$summary.protocol, $WorkflowObservationProtocol, [System.StringComparison]::Ordinal) -or
+                    -not [string]::Equals([string]$summary.request_id, [string]$config.RequestId, [System.StringComparison]::Ordinal) -or
+                    -not [string]::Equals([string]$summary.run_id, [string]$config.RunId, [System.StringComparison]::Ordinal) -or
+                    [string]$summary.status -notin @("ok", "degraded")) {
+                    throw "summary_identity_invalid"
+                }
+                foreach ($reason in @($summary.reasons)) {
+                    if (-not [string]::IsNullOrWhiteSpace([string]$reason)) {
+                        $reasons.Add([string]$reason)
+                    }
+                }
+                $status = if ($reasons.Count -eq 0 -and [string]$summary.status -eq "ok") { "ok" } else { "degraded" }
+                return New-WorkflowObservationResult `
+                    -Status $status `
+                    -Reasons $reasons.ToArray() `
+                    -RequestId ([string]$config.RequestId) `
+                    -RunId ([string]$config.RunId) `
+                    -EventsWritten ([int]$summary.events_written) `
+                    -LastSequence $summary.last_sequence `
+                    -CompletionObserved ([bool]$summary.completion_observed)
+            }
+            catch {
+                $reasons.Add("observation_sink_summary_invalid")
+            }
+        }
+        else {
+            $reasons.Add("observation_sink_summary_missing")
+        }
+    }
+    catch {
+        $reasons.Add("observation_sink_close_failed")
+    }
+
+    return New-WorkflowObservationResult `
+        -Status "degraded" `
+        -Reasons $reasons.ToArray() `
+        -RequestId ([string]$config.RequestId) `
+        -RunId ([string]$config.RunId)
+}
+
 function Invoke-CapturedNativeProcess {
     param(
         [Parameter(Mandatory = $true)]
@@ -2410,7 +2727,9 @@ function Invoke-CapturedNativeProcess {
         [ValidateRange(1, [int]::MaxValue)]
         [int]$TimeoutSeconds,
         [Parameter(Mandatory = $true)]
-        [string]$Action
+        [string]$Action,
+        [AllowNull()]
+        [object]$WorkflowObservation = $null
     )
 
     $process = $null
@@ -2423,6 +2742,9 @@ function Invoke-CapturedNativeProcess {
     $stderrTask = $null
     $stdout = ""
     $stderr = ""
+    $observationContext = $null
+    $observationResult = if ($null -eq $WorkflowObservation) { $null } else { $WorkflowObservation.Result }
+    $observeStructuredStdout = $null -ne $WorkflowObservation -and [bool]$WorkflowObservation.Enabled
 
     try {
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -2434,7 +2756,12 @@ function Invoke-CapturedNativeProcess {
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
         $startInfo.CreateNoWindow = $true
-        $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
+        try {
+            $startInfo.EnvironmentVariables["PYTHONDONTWRITEBYTECODE"] = "1"
+        }
+        catch {
+            # Bytecode suppression must not prevent the native child from starting.
+        }
         $startInfo.StandardOutputEncoding = $StandardOutputEncoding
         $startInfo.StandardErrorEncoding = $StandardErrorEncoding
 
@@ -2442,9 +2769,18 @@ function Invoke-CapturedNativeProcess {
         $process.StartInfo = $startInfo
 
         $hasStandardInput = -not [string]::IsNullOrEmpty($StandardInput)
+        $startedAt = [DateTimeOffset]::UtcNow
         $null = $process.Start()
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
+        if ($observeStructuredStdout) {
+            $observationContext = Start-WorkflowObservationSink `
+                -Config $WorkflowObservation `
+                -ObservedProcessId ([int]$process.Id) `
+                -StartedAt $startedAt
+        }
+        else {
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        }
         if ($hasStandardInput) {
             $inputBytes = $StandardInputEncoding.GetBytes($StandardInput)
             $process.StandardInput.BaseStream.Write($inputBytes, 0, $inputBytes.Length)
@@ -2452,22 +2788,96 @@ function Invoke-CapturedNativeProcess {
         }
         $process.StandardInput.Close()
 
-        $completed = $process.WaitForExit($TimeoutSeconds * 1000)
-        if (-not $completed) {
-            $timedOut = $true
-            $stopAttempted = $true
-            $stoppedProcessIds = @(Stop-ProcessTree -ProcessId ([int]$process.Id))
-            $null = $process.WaitForExit(5000)
-            $exitCode = 124
+        if ($observeStructuredStdout) {
+            $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+            $drainDeadline = $null
+            $lineTask = $process.StandardOutput.ReadLineAsync()
+            $stdoutEnded = $false
+            while (-not $stdoutEnded) {
+                $lineReady = $lineTask.Wait(50)
+                if ($lineReady) {
+                    $line = $lineTask.GetAwaiter().GetResult()
+                    if ($null -eq $line) {
+                        $stdoutEnded = $true
+                    }
+                    else {
+                        Write-WorkflowObservationCodexLine -Context $observationContext -Line $line
+                        $lineTask = $process.StandardOutput.ReadLineAsync()
+                    }
+                }
+
+                if (-not $process.HasExited -and -not $timedOut -and [DateTimeOffset]::UtcNow -ge $deadline) {
+                    $timedOut = $true
+                    $stopAttempted = $true
+                    $stoppedProcessIds = @(Stop-ProcessTree -ProcessId ([int]$process.Id))
+                    $null = $process.WaitForExit(5000)
+                    $exitCode = 124
+                    $drainDeadline = [DateTimeOffset]::UtcNow.AddSeconds(5)
+                }
+                elseif ($process.HasExited -and $null -eq $drainDeadline) {
+                    $drainDeadline = [DateTimeOffset]::UtcNow.AddSeconds(5)
+                }
+                if ($null -ne $drainDeadline -and [DateTimeOffset]::UtcNow -ge $drainDeadline) {
+                    break
+                }
+                if ($stdoutEnded) {
+                    break
+                }
+            }
+
+            if (-not $timedOut) {
+                $remainingMilliseconds = [Math]::Max(0, [int][Math]::Floor(($deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds))
+                $completed = if ($process.HasExited) { $true } else { $process.WaitForExit($remainingMilliseconds) }
+                if (-not $completed) {
+                    $timedOut = $true
+                    $stopAttempted = $true
+                    $stoppedProcessIds = @(Stop-ProcessTree -ProcessId ([int]$process.Id))
+                    $null = $process.WaitForExit(5000)
+                    $exitCode = 124
+                }
+                else {
+                    $process.WaitForExit()
+                    $exitCode = [int]$process.ExitCode
+                }
+            }
+            $completedAt = [DateTimeOffset]::UtcNow
+            $observationResult = Complete-WorkflowObservationSink `
+                -Context $observationContext `
+                -ExitCode $exitCode `
+                -TimedOut $timedOut `
+                -CompletedAt $completedAt
         }
         else {
-            $process.WaitForExit()
-            $exitCode = [int]$process.ExitCode
+            $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+            if (-not $completed) {
+                $timedOut = $true
+                $stopAttempted = $true
+                $stoppedProcessIds = @(Stop-ProcessTree -ProcessId ([int]$process.Id))
+                $null = $process.WaitForExit(5000)
+                $exitCode = 124
+            }
+            else {
+                $process.WaitForExit()
+                $exitCode = [int]$process.ExitCode
+            }
+            $stdout = if ($null -eq $stdoutTask) { "" } else { $stdoutTask.GetAwaiter().GetResult() }
         }
-        $stdout = if ($null -eq $stdoutTask) { "" } else { $stdoutTask.GetAwaiter().GetResult() }
         $stderr = if ($null -eq $stderrTask) { "" } else { $stderrTask.GetAwaiter().GetResult() }
     }
     catch {
+        if ($null -ne $observationContext -and $null -ne $observationContext.Process) {
+            try {
+                $observationContext.Process.StandardInput.Close()
+                $null = $observationContext.Process.WaitForExit(2000)
+            }
+            catch {
+            }
+            $observationResult = New-WorkflowObservationResult `
+                -Status "degraded" `
+                -Reasons @("observation_capture_interrupted") `
+                -RequestId ([string]$WorkflowObservation.RequestId) `
+                -RunId ([string]$WorkflowObservation.RunId)
+        }
         $stderr = "$Action failed: $($_.Exception.Message)"
         $failureExitCode = if ($timedOut) { 124 } else { 1 }
         return [pscustomobject]@{
@@ -2484,6 +2894,7 @@ function Invoke-CapturedNativeProcess {
             ProcessId = if ($null -eq $process) { $null } else { $process.Id }
             StopAttempted = $stopAttempted
             StoppedProcessIds = @($stoppedProcessIds)
+            Observability = $observationResult
         }
     }
 
@@ -2501,6 +2912,7 @@ function Invoke-CapturedNativeProcess {
         ProcessId = if ($null -eq $process) { $null } else { $process.Id }
         StopAttempted = $stopAttempted
         StoppedProcessIds = @($stoppedProcessIds)
+        Observability = $observationResult
     }
 }
 
@@ -4591,6 +5003,10 @@ function Set-ExecutionRouteInvocationEvidence {
     # Codex exec does not emit a machine-readable effective model identity.
     $ExecutionRouteEvidence["executed_route"] = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
     $ExecutionRouteEvidence["observed_route"] = [ordered]@{ model = "UNKNOWN"; reasoning_effort = "UNKNOWN" }
+    $observabilityProperty = $Result.PSObject.Properties["Observability"]
+    if ($null -ne $observabilityProperty -and $null -ne $observabilityProperty.Value) {
+        $ExecutionRouteEvidence["observability"] = $observabilityProperty.Value
+    }
 }
 $initialModifiedFiles = Get-ModifiedFilesFromStatus -Status $initialStatus
 $initialChangedFiles = @(Convert-FileTextToArray -Text $initialModifiedFiles)
@@ -4836,13 +5252,27 @@ if ($executionRouteEvidence.status -eq "unavailable") {
     throw "Execution route is unavailable: $($executionRouteEvidence.reason)"
 }
 $codexUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+$workflowObservation = New-WorkflowObservationConfig `
+    -StorePath $ObservabilityEventStorePath `
+    -RequestId $DispatchRequestId
+$codexFinalMessageFile = $null
+$structuredOutputArguments = @()
+if ([bool]$workflowObservation.Enabled) {
+    $codexFinalMessageFile = New-RunnerTemporaryFile
+    $structuredOutputArguments = @(
+        "--json",
+        "--output-last-message",
+        $codexFinalMessageFile.FullName
+    )
+}
 $codexArguments = @(
     "--ask-for-approval",
     "never"
 ) + @($executionRouteEvidence.bound_cli_arguments) + @(
     "exec",
     "--sandbox",
-    "workspace-write",
+    "workspace-write"
+) + @($structuredOutputArguments) + @(
     "-C",
     $RepoPath,
     "-"
@@ -4869,16 +5299,32 @@ $taskPacketForPrompt
 
 $preExecutionObservation = Get-ReviewBundleGitObservation
 $preExecutionManifest = Get-BoundedCandidateManifest -AllowedFiles @($runtimeContractBinding.allowed_files)
-$codexResult = Invoke-CapturedNativeProcess `
-    -FilePath $codexCommand.FilePath `
-    -Arguments (@($codexCommand.ArgumentPrefix) + $codexArguments) `
-    -WorkingDirectory $RepoPath `
-    -StandardInput $prompt `
-    -StandardInputEncoding $codexUtf8 `
-    -StandardOutputEncoding $codexUtf8 `
-    -StandardErrorEncoding $codexUtf8 `
-    -TimeoutSeconds $ReviewBundleCodexTimeoutSeconds `
-    -Action "codex ReviewBundle candidate generation"
+$codexFinalMessage = ""
+try {
+    $codexResult = Invoke-CapturedNativeProcess `
+        -FilePath $codexCommand.FilePath `
+        -Arguments (@($codexCommand.ArgumentPrefix) + $codexArguments) `
+        -WorkingDirectory $RepoPath `
+        -StandardInput $prompt `
+        -StandardInputEncoding $codexUtf8 `
+        -StandardOutputEncoding $codexUtf8 `
+        -StandardErrorEncoding $codexUtf8 `
+        -TimeoutSeconds $ReviewBundleCodexTimeoutSeconds `
+        -Action "codex ReviewBundle candidate generation" `
+        -WorkflowObservation $workflowObservation
+    if ($null -ne $codexFinalMessageFile -and (Test-Path -LiteralPath $codexFinalMessageFile.FullName -PathType Leaf)) {
+        $codexFinalMessage = [System.IO.File]::ReadAllText($codexFinalMessageFile.FullName, $codexUtf8)
+    }
+}
+finally {
+    if ($null -ne $codexFinalMessageFile) {
+        Remove-Item -LiteralPath $codexFinalMessageFile.FullName -Force -ErrorAction SilentlyContinue
+    }
+}
+if ([bool]$workflowObservation.Enabled) {
+    $codexResult.Stdout = $codexFinalMessage.TrimEnd()
+    $codexResult.LastStdoutLine = Get-LastNonEmptyLine -Text $codexResult.Stdout
+}
 Set-ExecutionRouteInvocationEvidence -ExecutionRouteEvidence $executionRouteEvidence -Result $codexResult
 
 $postExecutionObservation = Get-ReviewBundleGitObservation
