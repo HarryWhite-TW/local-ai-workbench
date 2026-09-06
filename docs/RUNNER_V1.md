@@ -12,6 +12,21 @@ Current limit: this version does not push, close issues, edit labels, create PRs
 
 Review-bundle mode does not approve, stage, commit, push, close issues, edit labels, create pull requests, or consume approval tokens.
 
+Normal Dispatcher-bound ReviewBundle execution also captures the supported
+`codex exec --json` JSONL stream while Codex is running. The Runner projects
+only bounded, allow-listed observed facts into the append-only local store at:
+
+```text
+%LOCALAPPDATA%\LocalAIWorkbench\BridgeOperator\observability\events.jsonl
+```
+
+The event contract is `lawb.workflow_observation.v1`. Global `sequence`, exact
+request and run identity, and observation time provide deterministic replay.
+Command arguments, command output, prompts, agent message text, reasoning
+content, credentials, and environment data are not persisted. Unknown,
+malformed, sensitive, or oversized source events become bounded observation
+warnings rather than execution or lifecycle truth.
+
 ## When to use it
 
 Use runner v1 review-bundle mode only when:
@@ -107,6 +122,29 @@ Runner v1 review-bundle-only mode:
 - Posts a GitHub Issue review bundle.
 - Does not stage, commit, push, merge, close issues, edit labels, create PRs, or consume approval tokens.
 - Does not implement Level 3B push or close issue.
+- Treats event capture as observability only. Observation degradation does not
+  change Codex exit status, Runner result, timeout behavior, or durable
+  lifecycle settlement.
+
+## Read-only local event stream
+
+Start the event stream only when a local reader such as a future Workflow
+Panel needs it:
+
+```powershell
+python .\src\local_runner_bridge\workflow_observability.py serve `
+  --store "$env:LOCALAPPDATA\LocalAIWorkbench\BridgeOperator\observability\events.jsonl" `
+  --host 127.0.0.1 `
+  --port 8765
+```
+
+`GET /events?after=<sequence>&follow=1` replays later records and follows new
+appends as `text/event-stream`. `Last-Event-ID` is also accepted for reconnect.
+`GET /health` reports the read-only mode and supported single-writer,
+multiple-reader concurrency. The server binds only to `127.0.0.1`; write,
+approve, dispatch, cancel, kill, result-settlement, and lifecycle-management
+methods do not exist. This is an on-demand foreground surface, not a service or
+second Workflow controller.
 
 ## Review bundle contents
 
