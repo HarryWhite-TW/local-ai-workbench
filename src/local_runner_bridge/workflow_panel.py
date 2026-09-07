@@ -190,7 +190,7 @@ def _record_time(record: dict[str, Any]) -> datetime | None:
 
 
 def _latest_terminal_record(
-    records: dict[str, dict[str, Any]], *, preferred_request_id: str | None
+    records: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
     candidates = [
         record
@@ -198,12 +198,12 @@ def _latest_terminal_record(
         if record.get("terminal_result") in {"success", "failure", "blocked"}
         and _record_time(record) is not None
     ]
-    if preferred_request_id is not None:
-        return next(
-            (record for record in candidates if record["request_id"] == preferred_request_id),
-            None,
-        )
-    return max(candidates, key=lambda record: _record_time(record) or datetime.min.replace(tzinfo=timezone.utc), default=None)
+    return max(
+        candidates,
+        key=lambda record: _record_time(record)
+        or datetime.min.replace(tzinfo=timezone.utc),
+        default=None,
+    )
 
 
 def _processed_lifecycle(record: dict[str, Any]) -> dict[str, str]:
@@ -418,11 +418,7 @@ def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any
     events, event_diagnostics = store.read(limit=MAX_REPLAY_EVENTS)
     diagnostics.extend(f"observation_store:{item}" for item in event_diagnostics)
 
-    preferred_request_id = _safe_request_id(state.get("last_request_id")) if state else None
-    processed_record = _latest_terminal_record(
-        processed_records,
-        preferred_request_id=preferred_request_id,
-    )
+    processed_record = _latest_terminal_record(processed_records)
 
     request_id: str | None = None
     issue_number: int | None = None

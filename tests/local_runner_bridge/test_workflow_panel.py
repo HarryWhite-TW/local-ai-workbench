@@ -90,7 +90,10 @@ def operator_state(
 
 
 def operator_heartbeat(
-    *, status: str = "polling", request_id: str | None = None
+    *,
+    status: str = "polling",
+    request_id: str | None = None,
+    target_issue: int = 308,
 ) -> dict:
     return {
         "protocol": "lawb.bridge_operator_b3_heartbeat.v1",
@@ -98,7 +101,7 @@ def operator_heartbeat(
         "mode": "b3c-run-reviewbundle",
         "cycle": 2,
         "request_id": request_id,
-        "target_issue": 308 if request_id else None,
+        "target_issue": target_issue if request_id else None,
         "updated_at_utc": "2026-09-06T12:08:03Z",
     }
 
@@ -110,6 +113,7 @@ def processed_record(
     result: str = "success",
     observed_at: str = "2026-09-06T12:08:10Z",
     result_comment_id: str | None = "5559170694",
+    target_issue: int = 308,
 ) -> dict:
     return {
         "protocol": "lawb.bridge_operator_b3_processed_request.v1",
@@ -117,7 +121,7 @@ def processed_record(
         "cycle": 2,
         "request_id": request_id,
         "target_repository": "HarryWhite-TW/local-ai-workbench",
-        "target_issue": 308,
+        "target_issue": target_issue,
         "target_dispatch_request_id": f"{request_id}-dispatch",
         "requested_action": action,
         "expected_branch": "master",
@@ -314,6 +318,116 @@ def test_processed_terminal_truth_projects_review_completed_and_blocked(
     assert snapshot["current_task"]["lifecycle"]["certainty"] == "verified"
     assert snapshot["current_task"]["lifecycle"]["basis"] == f"processed_request:{result}"
     assert snapshot["current_task"]["terminal_result"] == result
+
+
+@pytest.mark.parametrize(
+    ("new_action", "new_result", "expected_stage"),
+    [
+        ("run-reviewbundle", "success", "WAITING_FOR_CHATGPT_REVIEW"),
+        ("read-final-audit", "failure", "BLOCKED_OR_FAILED"),
+    ],
+)
+def test_newest_terminal_truth_outranks_stale_state_and_review_candidate(
+    tmp_path, new_action, new_result, expected_stage
+):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    old_request = "minimal-workflow-panel-v1-308-old"
+    new_request = "minimal-workflow-panel-live-smoke-310-new"
+    write_json(
+        state_dir / "state.json",
+        operator_state(status="running", last_request_id=old_request),
+    )
+    write_json(
+        state_dir / "heartbeat.json",
+        operator_heartbeat(
+            status="polling", request_id=new_request, target_issue=310
+        ),
+    )
+    old_record = processed_record(
+        request_id=old_request,
+        observed_at="2026-09-06T12:08:10Z",
+        result_comment_id="5559170694",
+        target_issue=308,
+    )
+    new_record = processed_record(
+        request_id=new_request,
+        action=new_action,
+        result=new_result,
+        observed_at="2026-09-07T11:54:17Z",
+        result_comment_id="5570230576",
+        target_issue=310,
+    )
+    append_processed(state_dir, old_record)
+    append_processed(state_dir, new_record)
+    write_json(
+        state_dir / "review_candidate.json",
+        new_review_candidate_payload(
+            target_repository=old_record["target_repository"],
+            target_issue=old_record["target_issue"],
+            dispatch_request_id=old_record["target_dispatch_request_id"],
+            action=old_record["requested_action"],
+            branch=old_record["expected_branch"],
+            expected_head=old_record["expected_head"],
+            terminal_result_comment_id="5559170694",
+            review_bundle_comment_id="5559170528",
+            candidate_manifest_fingerprint="0" * 64,
+            target_repo_root=str(tmp_path.resolve()),
+            recorded_at=datetime(2026, 9, 6, 12, 8, tzinfo=timezone.utc),
+        ),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir, EventStore((tmp_path / "events.jsonl").resolve())
+    )
+
+    assert snapshot["current_task"] == {
+        "request_id": new_request,
+        "issue_number": 310,
+        "lifecycle": {
+            "stage": expected_stage,
+            "certainty": "verified",
+            "basis": f"processed_request:{new_result}",
+        },
+        "updated_at_utc": "2026-09-07T11:54:17Z",
+        "terminal_result": new_result,
+    }
+    assert snapshot["review"]["evidence"] == {
+        "status": "available",
+        "pointer": "issue_comment:5570230576",
+        "summary": "Trusted terminal result",
+    }
+    assert snapshot["source_status"]["review_candidate"] == (
+        "historical_or_unmatched"
+    )
+
+
+def test_current_in_flight_outranks_newer_processed_terminal(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    write_json(
+        state_dir / "state.json", operator_state(last_request_id="old-request")
+    )
+    append_processed(
+        state_dir,
+        processed_record(
+            request_id="newer-terminal-request",
+            observed_at="2026-09-07T11:54:17Z",
+            target_issue=310,
+        ),
+    )
+    write_json(state_dir / "in_flight.json", in_flight_payload())
+
+    snapshot = build_workflow_snapshot(
+        state_dir, EventStore((tmp_path / "events.jsonl").resolve())
+    )
+
+    assert snapshot["current_task"]["request_id"] == REQUEST_ID
+    assert snapshot["current_task"]["lifecycle"] == {
+        "stage": "RUNNING",
+        "certainty": "verified",
+        "basis": "in_flight:PREPARED",
+    }
 
 
 def test_current_failure_outranks_in_flight_and_observation_activity(tmp_path):
