@@ -627,12 +627,16 @@ class ObservationHTTPServer(ThreadingHTTPServer):
         *,
         poll_interval: float = 0.1,
         heartbeat_interval: float = 10.0,
+        handler_class: type[BaseHTTPRequestHandler] | None = None,
     ) -> None:
         self.store = store
         self.poll_interval = poll_interval
         self.heartbeat_interval = heartbeat_interval
         self.stop_event = threading.Event()
-        super().__init__(server_address, ObservationRequestHandler)
+        super().__init__(
+            server_address,
+            handler_class or ObservationRequestHandler,
+        )
 
     def shutdown(self) -> None:
         self.stop_event.set()
