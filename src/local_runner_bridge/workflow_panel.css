@@ -1,0 +1,143 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0a0d12;
+  color: #edf2f7;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(72, 187, 120, 0.12), transparent 32rem),
+    #0a0d12;
+}
+
+main {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0 72px;
+}
+
+.masthead, .section-heading, .state-grid, .columns {
+  display: flex;
+  gap: 24px;
+}
+
+.masthead, .section-heading { align-items: center; justify-content: space-between; }
+.masthead { margin-bottom: 28px; }
+
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 8px; font-size: clamp(2rem, 5vw, 3.5rem); letter-spacing: -0.045em; }
+h2 { margin-bottom: 0; font-size: 1.15rem; }
+
+.eyebrow {
+  margin-bottom: 8px;
+  color: #78d8a0;
+  font: 700 0.72rem/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.subtitle, .basis, .truth-note { color: #94a3b8; }
+.subtitle { margin-bottom: 0; }
+
+.connection {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 13px;
+  border: 1px solid #273140;
+  border-radius: 999px;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; }
+.dot[data-tone="live"] { background: #48bb78; box-shadow: 0 0 0 4px rgba(72, 187, 120, 0.12); }
+.dot[data-tone="degraded"] { background: #f6ad55; }
+
+.card {
+  padding: 24px;
+  border: 1px solid #202936;
+  border-radius: 16px;
+  background: rgba(16, 21, 29, 0.92);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+}
+
+.current-card, .evidence-card { margin-bottom: 18px; }
+.section-heading { margin-bottom: 24px; }
+
+button {
+  padding: 9px 13px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #17202c;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+button:hover { border-color: #48bb78; }
+button:disabled { opacity: 0.55; cursor: wait; }
+
+.state-grid { align-items: flex-start; }
+.state-primary { flex: 1 1 48%; }
+.stage {
+  display: inline-block;
+  padding: 8px 10px;
+  border: 1px solid #315644;
+  border-radius: 8px;
+  background: #14251d;
+  color: #8ee3af;
+  font: 700 0.9rem/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.stage[data-certainty="unknown"], .stage[data-certainty="historical_or_current_unknown"] {
+  border-color: #5d4934;
+  background: #251d14;
+  color: #f6c47b;
+}
+.basis { margin: 13px 0 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.82rem; }
+
+dl { flex: 1 1 52%; margin: 0; }
+dl div { display: flex; justify-content: space-between; gap: 20px; padding: 8px 0; border-bottom: 1px solid #202936; }
+dt { color: #7f8da0; }
+dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+
+.truth-note { margin: 20px 0 0; padding-top: 16px; border-top: 1px solid #202936; font-size: 0.82rem; }
+.columns { align-items: stretch; }
+.columns > .card:first-child { flex: 0 0 38%; }
+.activity-card { flex: 1; min-width: 0; }
+.compact-list { margin-top: 20px; }
+.evidence-list { width: 100%; }
+.evidence-list dt { flex: 0 0 32%; }
+.evidence-list dd { max-width: 68%; }
+
+.diagnostics {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #67462a;
+  border-radius: 8px;
+  background: #281d13;
+  color: #f6c47b;
+  font-size: 0.8rem;
+}
+
+.counter { color: #7f8da0; font: 0.75rem ui-monospace, SFMono-Regular, Consolas, monospace; }
+.activity-list { max-height: 420px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.activity-list li { display: grid; grid-template-columns: 150px 1fr; gap: 14px; padding: 13px 0; border-top: 1px solid #202936; }
+.activity-list time, .activity-list small { color: #718096; font: 0.72rem ui-monospace, SFMono-Regular, Consolas, monospace; }
+.activity-list strong, .activity-list small { display: block; overflow-wrap: anywhere; }
+.activity-list strong { margin-bottom: 5px; font-size: 0.85rem; font-weight: 600; }
+.activity-list .empty { display: block; color: #7f8da0; }
+
+@media (max-width: 760px) {
+  main { width: min(100% - 20px, 680px); padding-top: 26px; }
+  .masthead, .state-grid, .columns { flex-direction: column; }
+  .masthead { align-items: flex-start; }
+  .columns > .card:first-child { flex-basis: auto; width: 100%; }
+  .activity-card { width: 100%; }
+  .activity-list li { grid-template-columns: 1fr; gap: 5px; }
+}

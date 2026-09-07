@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workflow Panel</title>
+  <link rel="stylesheet" href="/workflow_panel.css">
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">Local AI Workbench</p>
+        <h1>Workflow Panel</h1>
+        <p class="subtitle">Read-only local lifecycle evidence and bounded live activity.</p>
+      </div>
+      <div class="connection" aria-live="polite">
+        <span id="connection-dot" class="dot"></span>
+        <span id="connection-status">Connecting</span>
+      </div>
+    </header>
+
+    <section class="card current-card" aria-labelledby="current-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Current task evidence</p>
+          <h2 id="current-heading">Workflow state</h2>
+        </div>
+        <button id="refresh" type="button">Refresh snapshot</button>
+      </div>
+      <div class="state-grid">
+        <div class="state-primary">
+          <span id="stage" class="stage">UNKNOWN</span>
+          <p id="basis" class="basis">No current request evidence loaded.</p>
+        </div>
+        <dl>
+          <div><dt>Request</dt><dd id="request-id">—</dd></div>
+          <div><dt>Issue</dt><dd id="issue-number">—</dd></div>
+          <div><dt>Certainty</dt><dd id="certainty">unknown</dd></div>
+          <div><dt>Evidence time</dt><dd id="evidence-time">—</dd></div>
+        </dl>
+      </div>
+      <p class="truth-note">A process exit or Codex turn completion is activity evidence, not semantic Workflow acceptance.</p>
+    </section>
+
+    <section class="card evidence-card" aria-labelledby="evidence-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Trusted local evidence only</p>
+          <h2 id="evidence-heading">Review evidence</h2>
+        </div>
+      </div>
+      <dl class="evidence-list">
+        <div><dt>Current / last warning or error</dt><dd id="warning-or-error">Unavailable</dd></div>
+        <div><dt>Changed files</dt><dd id="changed-files">Unavailable</dd></div>
+        <div><dt>Test summary</dt><dd id="test-summary">Unavailable</dd></div>
+        <div><dt>Evidence</dt><dd id="evidence-summary">Unavailable</dd></div>
+      </dl>
+      <p class="truth-note">Unavailable means the current trusted local lifecycle sources do not support that claim.</p>
+    </section>
+
+    <div class="columns">
+      <section class="card" aria-labelledby="operator-heading">
+        <p class="eyebrow">Bridge Operator</p>
+        <h2 id="operator-heading">Local status</h2>
+        <dl class="compact-list">
+          <div><dt>State</dt><dd id="operator-status">Unavailable</dd></div>
+          <div><dt>Heartbeat</dt><dd id="heartbeat-status">Unavailable</dd></div>
+          <div><dt>Mode</dt><dd id="operator-mode">—</dd></div>
+          <div><dt>Sources</dt><dd id="source-status">—</dd></div>
+        </dl>
+        <div id="diagnostics" class="diagnostics" hidden></div>
+      </section>
+
+      <section class="card activity-card" aria-labelledby="activity-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Observability Spine</p>
+            <h2 id="activity-heading">Live activity</h2>
+          </div>
+          <span id="event-count" class="counter">0 events</span>
+        </div>
+        <ol id="activity" class="activity-list" aria-live="polite">
+          <li class="empty">Waiting for bounded observation events.</li>
+        </ol>
+      </section>
+    </div>
+  </main>
+  <script src="/workflow_panel.js" defer></script>
+</body>
+</html>
