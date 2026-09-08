@@ -351,12 +351,16 @@ def test_consumed_unexpired_marker_plus_new_current_marker_selects_new_marker():
         {
             "inbox_comment_id": 1,
             "request_id": "old-137",
+            "target_issue": 137,
+            "requested_action": "run-reviewbundle",
             "expires": "20260616T010000Z",
             "lifecycle_state": "CONSUMED",
         },
         {
             "inbox_comment_id": 2,
             "request_id": "b1-137-20260615T010000Z",
+            "target_issue": 137,
+            "requested_action": "run-reviewbundle",
             "expires": "20260616T010000Z",
             "lifecycle_state": "CURRENT",
         },
@@ -490,6 +494,8 @@ def test_lifecycle_telemetry_includes_safe_request_fields_and_evaluation_time():
         {
             "inbox_comment_id": 7,
             "request_id": "b1-137-20260615T010000Z",
+            "target_issue": 137,
+            "requested_action": "run-reviewbundle",
             "expires": "20260616T010000Z",
             "lifecycle_state": "CURRENT",
         }
@@ -575,6 +581,8 @@ def test_expired_untrusted_marker_does_not_block_later_trusted_current_request()
         {
             "inbox_comment_id": 2,
             "request_id": "b1-137-20260615T010000Z",
+            "target_issue": 137,
+            "requested_action": "run-reviewbundle",
             "expires": "20260616T010000Z",
             "lifecycle_state": "CURRENT",
         }

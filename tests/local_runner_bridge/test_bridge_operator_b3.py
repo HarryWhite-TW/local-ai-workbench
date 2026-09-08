@@ -2184,6 +2184,7 @@ def test_b3c_lock_pause_and_stop_block_before_delegation(tmp_path):
 
 def test_no_current_request_is_safe_wait_condition(tmp_path):
     summary = run(tmp_path, FakeGitHub(inbox_comments=[]))
+    heartbeat = read_json(tmp_path / "heartbeat.json")
 
     assert summary["result"] == "success"
     assert summary["last_b1_blocked_reasons"] == ["missing_request"]
@@ -2191,6 +2192,12 @@ def test_no_current_request_is_safe_wait_condition(tmp_path):
     assert not (tmp_path / "last_failure.json").exists()
     assert not (tmp_path / "dry_run_observations.jsonl").exists()
     assert not (tmp_path / "processed_requests.jsonl").exists()
+    assert heartbeat["last_inbox_scan_at_utc"] == "2026-06-16T08:00:00Z"
+    assert heartbeat["last_inbox_scan_cycle"] == 1
+    assert heartbeat["last_inbox_scan_result"] == "no_eligible_request"
+    assert heartbeat["last_inbox_scan_reason"] == "missing_request"
+    assert heartbeat["eligible_request_count"] == 0
+    assert heartbeat["last_inbox_request"] is None
     assert_safety(summary)
 
 
@@ -2301,6 +2308,19 @@ def test_b3c_expired_history_without_current_request_waits_across_cycles(tmp_pat
     assert not (tmp_path / "in_flight.json").exists()
     assert not (tmp_path / "last_failure.json").exists()
     assert not (tmp_path / "processed_requests.jsonl").exists()
+    heartbeat = read_json(tmp_path / "heartbeat.json")
+    assert heartbeat["last_inbox_scan_result"] == "expired_request_observed"
+    assert heartbeat["last_inbox_scan_reason"] == "request_expired"
+    assert heartbeat["eligible_request_count"] == 0
+    assert heartbeat["last_inbox_request"] == {
+        "request_id": "b3c-expired-history-002",
+        "target_issue": 151,
+        "requested_action": "run-reviewbundle",
+        "expires": "20260615T080100Z",
+        "observed_at_utc": "2026-06-16T08:00:00Z",
+        "pickup_decision": "expired",
+        "reason": "request_expired",
+    }
     assert_high_risk_safety(summary)
 
 
@@ -3506,6 +3526,20 @@ def test_heartbeat_writes_expected_fields(tmp_path):
     assert heartbeat["repo"] == "HarryWhite-TW/local-ai-workbench"
     assert heartbeat["inbox_issue"] == DEFAULT_INBOX_ISSUE
     assert heartbeat["request_id"] == "b3a-151-20260616T080000Z"
+    assert heartbeat["last_inbox_scan_at_utc"] == "2026-06-16T08:00:00Z"
+    assert heartbeat["last_inbox_scan_cycle"] == 1
+    assert heartbeat["last_inbox_scan_result"] == "eligible_request_detected"
+    assert heartbeat["last_inbox_scan_reason"] == "ready_for_pickup"
+    assert heartbeat["eligible_request_count"] == 1
+    assert heartbeat["last_inbox_request"] == {
+        "request_id": "b3a-151-20260616T080000Z",
+        "target_issue": 151,
+        "requested_action": "maybe-status-check",
+        "expires": "20260616T080500Z",
+        "observed_at_utc": "2026-06-16T08:00:00Z",
+        "pickup_decision": "ready_for_pickup",
+        "reason": "ready_for_pickup",
+    }
     assert summary["result"] == "success"
     assert_safety(summary)
 

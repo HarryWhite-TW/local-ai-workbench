@@ -13,8 +13,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
 from local_runner_bridge.bridge_operator_lifecycle_state import (
+    DISPATCHED_NOT_LOCALLY_SETTLED,
     new_in_flight_payload,
     new_review_candidate_payload,
+    updated_in_flight_payload,
 )
 from local_runner_bridge.workflow_observability import (
     EventStore,
@@ -31,6 +33,7 @@ from local_runner_bridge.workflow_panel import (
 
 REQUEST_ID = "workflow-panel-request-308"
 RUN_ID = "workflow-panel-run-308"
+NOW = datetime(2026, 9, 6, 12, 8, 30, tzinfo=timezone.utc)
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -94,15 +97,53 @@ def operator_heartbeat(
     status: str = "polling",
     request_id: str | None = None,
     target_issue: int = 308,
+    updated_at: str = "2026-09-06T12:08:03Z",
+    scan_result: str | None = None,
+    scan_reason: str = "no_eligible_request",
+    scan_request: dict | None = None,
 ) -> dict:
-    return {
+    value = {
         "protocol": "lawb.bridge_operator_b3_heartbeat.v1",
         "status": status,
         "mode": "b3c-run-reviewbundle",
         "cycle": 2,
         "request_id": request_id,
         "target_issue": target_issue if request_id else None,
-        "updated_at_utc": "2026-09-06T12:08:03Z",
+        "updated_at_utc": updated_at,
+        "configured_poll_interval_seconds": 30.0,
+        "configured_timeout_seconds": 600,
+    }
+    if scan_result is not None:
+        value.update(
+            {
+                "last_inbox_scan_at_utc": updated_at,
+                "last_inbox_scan_cycle": 2,
+                "last_inbox_scan_result": scan_result,
+                "last_inbox_scan_reason": scan_reason,
+                "eligible_request_count": 1
+                if scan_result == "eligible_request_detected"
+                else 0,
+                "last_inbox_request": scan_request,
+            }
+        )
+    return value
+
+
+def observed_request(
+    *,
+    request_id: str = REQUEST_ID,
+    decision: str = "ready_for_pickup",
+    reason: str = "ready_for_pickup",
+    expires: str = "20260906T121800Z",
+) -> dict:
+    return {
+        "request_id": request_id,
+        "target_issue": 308,
+        "requested_action": "run-reviewbundle",
+        "expires": expires,
+        "observed_at_utc": "2026-09-06T12:08:20Z",
+        "pickup_decision": decision,
+        "reason": reason,
     }
 
 
@@ -212,8 +253,13 @@ def test_snapshot_combines_validated_lifecycle_and_matching_observation(tmp_path
     assert snapshot["current_task"] == {
         "request_id": REQUEST_ID,
         "issue_number": 308,
+        "action": "run-reviewbundle",
+        "detected_at_utc": "2026-09-06T12:08:00Z",
+        "expires_at_utc": None,
+        "pickup_decision": "picked_up",
+        "pickup_reason": None,
         "lifecycle": {
-            "stage": "RUNNING",
+            "stage": "DISPATCHING",
             "certainty": "verified",
             "basis": "in_flight:PREPARED",
         },
@@ -384,6 +430,11 @@ def test_newest_terminal_truth_outranks_stale_state_and_review_candidate(
     assert snapshot["current_task"] == {
         "request_id": new_request,
         "issue_number": 310,
+        "action": new_action,
+        "detected_at_utc": "2026-09-07T11:54:17Z",
+        "expires_at_utc": None,
+        "pickup_decision": "completed",
+        "pickup_reason": None,
         "lifecycle": {
             "stage": expected_stage,
             "certainty": "verified",
@@ -424,10 +475,38 @@ def test_current_in_flight_outranks_newer_processed_terminal(tmp_path):
 
     assert snapshot["current_task"]["request_id"] == REQUEST_ID
     assert snapshot["current_task"]["lifecycle"] == {
-        "stage": "RUNNING",
+        "stage": "DISPATCHING",
         "certainty": "verified",
         "basis": "in_flight:PREPARED",
     }
+
+
+def test_dispatched_in_flight_projects_running_request(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    payload = updated_in_flight_payload(
+        in_flight_payload(),
+        stage=DISPATCHED_NOT_LOCALLY_SETTLED,
+        dispatcher_invoked=True,
+        terminal_evidence=None,
+        updated_at=datetime(2026, 9, 6, 12, 8, 5, tzinfo=timezone.utc),
+        dispatcher_process_identity={
+            "platform": "windows",
+            "pid": 4321,
+            "start_token": "windows-filetime:12345679",
+            "started_at_utc": "2026-09-06T12:08:05Z",
+        },
+    )
+    write_json(state_dir / "in_flight.json", payload)
+
+    snapshot = build_workflow_snapshot(
+        state_dir, EventStore((tmp_path / "events.jsonl").resolve()), now=NOW
+    )
+
+    assert snapshot["current_task"]["lifecycle"]["stage"] == "RUNNING"
+    assert snapshot["system"]["next_action"] == (
+        "Task is running. You do not need to do anything."
+    )
 
 
 def test_current_failure_outranks_in_flight_and_observation_activity(tmp_path):
@@ -459,7 +538,7 @@ def test_current_failure_outranks_in_flight_and_observation_activity(tmp_path):
     }
 
 
-def test_idle_requires_operator_evidence_and_no_in_flight(tmp_path):
+def test_missing_scan_observation_does_not_claim_no_request(tmp_path):
     state_dir = (tmp_path / "state").resolve()
     state_dir.mkdir()
     write_json(state_dir / "state.json", operator_state())
@@ -470,11 +549,233 @@ def test_idle_requires_operator_evidence_and_no_in_flight(tmp_path):
     )
 
     assert snapshot["current_task"]["request_id"] is None
-    assert snapshot["current_task"]["lifecycle"] == {
-        "stage": "IDLE",
-        "certainty": "verified",
-        "basis": "operator_evidence:no_in_flight",
+    assert snapshot["current_task"]["lifecycle"]["stage"] == "UNKNOWN"
+    assert snapshot["operator"]["activity"]["observation_status"] == "missing"
+
+
+def test_recent_polling_and_empty_scan_projects_ready_no_request(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    write_json(state_dir / "state.json", operator_state())
+    write_json(
+        state_dir / "heartbeat.json",
+        operator_heartbeat(
+            status="waiting",
+            updated_at="2026-09-06T12:08:20Z",
+            scan_result="no_eligible_request",
+        ),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir,
+        EventStore((tmp_path / "events.jsonl").resolve()),
+        now=NOW,
+    )
+
+    assert snapshot["system"] == {
+        "readiness": "ready",
+        "workflow": "ready",
+        "operator": "online",
+        "panel": "online",
+        "next_action": (
+            "Everything is ready. The last check found no request, so you do not "
+            "need to do anything."
+        ),
     }
+    assert snapshot["current_task"]["lifecycle"]["stage"] == "NO_REQUEST_DETECTED"
+    assert snapshot["operator"]["activity"] == {
+        "health": "online",
+        "heartbeat_at_utc": "2026-09-06T12:08:20Z",
+        "heartbeat_age_seconds": 10.0,
+        "stale_after_seconds": 90.0,
+        "last_check_at_utc": "2026-09-06T12:08:20Z",
+        "last_check_age_seconds": 10.0,
+        "poll_interval_seconds": 30.0,
+        "cycle": 2,
+        "scan_result": "no_eligible_request",
+        "scan_reason": "no_eligible_request",
+        "eligible_request_count": 0,
+        "observation_status": "available",
+    }
+
+
+def test_stale_heartbeat_makes_operator_effectively_unavailable(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    write_json(state_dir / "state.json", operator_state())
+    write_json(
+        state_dir / "heartbeat.json",
+        operator_heartbeat(
+            status="waiting",
+            updated_at="2026-09-06T12:06:00Z",
+            scan_result="no_eligible_request",
+        ),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir,
+        EventStore((tmp_path / "events.jsonl").resolve()),
+        now=NOW,
+    )
+
+    assert snapshot["system"]["readiness"] == "unavailable"
+    assert snapshot["system"]["operator"] == "stale"
+    assert snapshot["system"]["next_action"] == (
+        "Operator has not checked for work recently."
+    )
+    assert snapshot["current_task"]["lifecycle"]["stage"] == "UNKNOWN"
+
+
+def test_detected_request_waiting_for_pickup_exposes_only_safe_identity(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    write_json(state_dir / "state.json", operator_state())
+    write_json(
+        state_dir / "heartbeat.json",
+        operator_heartbeat(
+            status="request_detected",
+            updated_at="2026-09-06T12:08:20Z",
+            scan_result="eligible_request_detected",
+            scan_reason="ready_for_pickup",
+            scan_request=observed_request(),
+        ),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir,
+        EventStore((tmp_path / "events.jsonl").resolve()),
+        now=NOW,
+    )
+
+    assert snapshot["current_task"]["lifecycle"]["stage"] == "REQUEST_DETECTED"
+    assert snapshot["current_task"]["request_id"] == REQUEST_ID
+    assert snapshot["current_task"]["issue_number"] == 308
+    assert snapshot["current_task"]["action"] == "run-reviewbundle"
+    assert snapshot["current_task"]["detected_at_utc"] == "2026-09-06T12:08:20Z"
+    assert snapshot["current_task"]["expires_at_utc"] == "2026-09-06T12:18:00Z"
+    assert snapshot["system"]["next_action"] == (
+        "A request was detected and is waiting to start."
+    )
+
+
+def test_expired_request_observation_is_explicit(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    write_json(state_dir / "state.json", operator_state())
+    write_json(
+        state_dir / "heartbeat.json",
+        operator_heartbeat(
+            status="waiting",
+            updated_at="2026-09-06T12:08:20Z",
+            scan_result="expired_request_observed",
+            scan_reason="request_expired",
+            scan_request=observed_request(
+                decision="expired",
+                reason="request_expired",
+                expires="2026-09-06T12:07:00Z",
+            ),
+        ),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir,
+        EventStore((tmp_path / "events.jsonl").resolve()),
+        now=NOW,
+    )
+
+    assert snapshot["current_task"]["lifecycle"]["stage"] == "EXPIRED"
+    assert snapshot["current_task"]["pickup_decision"] == "expired"
+    assert snapshot["system"]["next_action"] == (
+        "The observed request expired and will not start."
+    )
+
+
+def test_malformed_scan_observation_degrades_to_unknown(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    heartbeat = operator_heartbeat(status="waiting", updated_at="2026-09-06T12:08:20Z")
+    heartbeat["last_inbox_scan_result"] = "eligible_request_detected"
+    write_json(state_dir / "heartbeat.json", heartbeat)
+
+    snapshot = build_workflow_snapshot(
+        state_dir,
+        EventStore((tmp_path / "events.jsonl").resolve()),
+        now=NOW,
+    )
+
+    assert snapshot["current_task"]["lifecycle"]["stage"] == "UNKNOWN"
+    assert snapshot["operator"]["activity"]["observation_status"] == "invalid"
+    assert "inbox_scan_observation_invalid" in snapshot["diagnostics"]
+
+
+def test_scan_projection_omits_sensitive_and_arbitrary_fields(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    request = observed_request()
+    request.update(
+        {
+            "prompt": "do not expose prompt text",
+            "command": "do not expose command body",
+            "token": "do not expose credentials",
+        }
+    )
+    heartbeat = operator_heartbeat(
+        status="request_detected",
+        updated_at="2026-09-06T12:08:20Z",
+        scan_result="eligible_request_detected",
+        scan_reason="ready_for_pickup",
+        scan_request=request,
+    )
+    heartbeat["environment"] = {"SECRET": "do not expose environment"}
+    write_json(state_dir / "heartbeat.json", heartbeat)
+
+    snapshot = build_workflow_snapshot(
+        state_dir,
+        EventStore((tmp_path / "events.jsonl").resolve()),
+        now=NOW,
+    )
+    serialized = json.dumps(snapshot)
+
+    assert snapshot["current_task"]["request_id"] == REQUEST_ID
+    for secret in (
+        "do not expose prompt text",
+        "do not expose command body",
+        "do not expose credentials",
+        "do not expose environment",
+    ):
+        assert secret not in serialized
+
+
+def test_trusted_terminal_truth_outranks_same_request_scan_activity(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    append_processed(state_dir, processed_record())
+    write_json(
+        state_dir / "heartbeat.json",
+        operator_heartbeat(
+            status="request_detected",
+            updated_at="2026-09-06T12:08:20Z",
+            scan_result="eligible_request_detected",
+            scan_reason="ready_for_pickup",
+            scan_request=observed_request(),
+        ),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir,
+        EventStore((tmp_path / "events.jsonl").resolve()),
+        now=NOW,
+    )
+
+    assert snapshot["current_task"]["lifecycle"]["stage"] == (
+        "WAITING_FOR_CHATGPT_REVIEW"
+    )
+    assert snapshot["current_task"]["lifecycle"]["basis"] == (
+        "processed_request:success"
+    )
+    assert snapshot["current_task"]["detected_at_utc"] == "2026-09-06T12:08:20Z"
+    assert snapshot["current_task"]["expires_at_utc"] == "2026-09-06T12:18:00Z"
+    assert snapshot["current_task"]["pickup_reason"] == "ready_for_pickup"
 
 
 def test_stale_failure_and_review_candidate_do_not_become_current(tmp_path):
@@ -610,6 +911,12 @@ def test_temporary_fixture_panel_http_static_snapshot_sse_and_read_only_methods(
             assert response.headers["Content-Security-Policy"].startswith("default-src 'self'")
         assert "Workflow Panel" in html
         assert "approval" not in html.lower()
+        assert 'id="readiness"' in html
+        assert 'id="operator-health"' in html
+        assert 'id="last-check-time"' in html
+        assert 'id="poll-cadence"' in html
+        assert 'id="request-action"' in html
+        assert 'id="pickup-decision"' in html
         assert 'id="warning-or-error"' in html
         assert 'id="changed-files"' in html
         assert 'id="test-summary"' in html
@@ -682,9 +989,15 @@ process.stdout.write(JSON.stringify({
   sequences: state.events.map((event) => event.sequence),
   cursor: state.lastSequence,
   reconnectUrl: panel.streamUrlWithCursor('/events?follow=1', state.lastSequence),
-  lifecycleLabels: ['IDLE', 'RUNNING', 'BLOCKED_OR_FAILED', 'WAITING_FOR_CHATGPT_REVIEW', 'COMPLETED_OR_LAST_COMPLETED', 'UNKNOWN'].map(panel.lifecycleLabel),
+  lifecycleLabels: ['IDLE', 'CHECKING_FOR_WORK', 'NO_REQUEST_DETECTED', 'REQUEST_DETECTED', 'DISPATCHING', 'RUNNING', 'BLOCKED_OR_FAILED', 'WAITING_FOR_CHATGPT_REVIEW', 'COMPLETED_OR_LAST_COMPLETED', 'EXPIRED', 'UNKNOWN'].map(panel.lifecycleLabel),
   knownLabel: panel.eventLabel('process.completed'),
   unknownLabel: panel.eventLabel('future.kind'),
+  ages: [panel.relativeAge(3), panel.relativeAge(18), panel.relativeAge(120)],
+  relativeTimes: [
+    panel.relativeTimeFrom('2026-09-06T12:08:12Z', Date.parse('2026-09-06T12:08:30Z')),
+    panel.relativeTimeFrom('2026-09-06T12:18:30Z', Date.parse('2026-09-06T12:08:30Z')),
+  ],
+  cadence: panel.cadenceLabel(30),
 }));
 """
     completed = subprocess.run(
@@ -704,15 +1017,23 @@ process.stdout.write(JSON.stringify({
         "cursor": 12,
         "reconnectUrl": "/events?follow=1&after=12",
         "lifecycleLabels": [
-            "Idle",
+            "No request detected",
+            "Checking for work",
+            "No request detected",
+            "Request detected / waiting for pickup",
+            "Dispatching",
             "Running",
             "Blocked / failed",
             "Waiting for ChatGPT review",
             "Completed / last completed",
+            "Expired",
             "Unknown",
         ],
         "knownLabel": "Codex process exited (activity only)",
         "unknownLabel": "Observed structured activity",
+        "ages": ["just now", "18 seconds ago", "2 minutes ago"],
+        "relativeTimes": ["18 seconds ago", "in 10 minutes"],
+        "cadence": "Checks for work about every 30 seconds",
     }
 
 
@@ -753,7 +1074,7 @@ def test_real_sse_replay_and_follow_delivers_new_request_without_rebinding(tmp_p
         with urlopen(f"{base}/api/state", timeout=2) as snapshot_response:
             snapshot = json.loads(snapshot_response.read())
         assert snapshot["current_task"]["request_id"] == new_request_id
-        assert snapshot["current_task"]["lifecycle"]["stage"] == "RUNNING"
+        assert snapshot["current_task"]["lifecycle"]["stage"] == "DISPATCHING"
         assert snapshot["observability"]["stream_url"] == "/events?follow=1"
     finally:
         if response is not None:

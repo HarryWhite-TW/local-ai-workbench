@@ -446,6 +446,20 @@ def run_bridge_operator_b3_dry_run_loop(
                 summary["last_b1_result"] = b1_summary.get("result")
                 summary["last_b1_blocked_reasons"] = list(b1_summary.get("blocked_reasons", []))
                 _copy_b1_identity(summary, b1_summary)
+                scan_observed_at = _now(now_utc)
+                scan_status = _capture_inbox_scan_observation(
+                    summary,
+                    b1_summary,
+                    cycle=cycle,
+                    observed_at=scan_observed_at,
+                )
+                _write_heartbeat(
+                    state_root,
+                    scan_status,
+                    cycle,
+                    summary,
+                    scan_observed_at,
+                )
                 if b1_summary.get("result") == "success":
                     summary["eligible_request_observed"] = True
                     if (
@@ -773,6 +787,12 @@ def _base_summary(
         "consumed_request_count": 0,
         "expired_request_count": 0,
         "selected_request_state": None,
+        "last_inbox_scan_at_utc": None,
+        "last_inbox_scan_cycle": None,
+        "last_inbox_scan_result": None,
+        "last_inbox_scan_reason": None,
+        "eligible_request_count": None,
+        "last_inbox_request": None,
         "last_b1_result": None,
         "last_b1_blocked_reasons": [],
         "dispatcher_exit_code": None,
@@ -2802,6 +2822,88 @@ def _copy_b1_identity(summary: dict[str, Any], b1_summary: dict[str, Any]) -> No
             summary[key] = b1_summary.get(key)
 
 
+def _capture_inbox_scan_observation(
+    summary: dict[str, Any],
+    b1_summary: dict[str, Any],
+    *,
+    cycle: int,
+    observed_at: datetime,
+) -> str:
+    """Retain a bounded, non-authoritative projection of the latest Inbox scan."""
+
+    reasons = [
+        str(reason)
+        for reason in b1_summary.get("blocked_reasons", [])
+        if isinstance(reason, str)
+    ]
+    if b1_summary.get("result") == "success":
+        scan_result = "eligible_request_detected"
+        scan_reason = "ready_for_pickup"
+        pickup_decision = "ready_for_pickup"
+        heartbeat_status = "request_detected"
+        eligible_count = 1
+    elif (
+        b1_summary.get("expired_request_count", 0) > 0
+        and set(reasons) <= SAFE_WAIT_B1_REASONS
+    ):
+        scan_result = "expired_request_observed"
+        scan_reason = "request_expired"
+        pickup_decision = "expired"
+        heartbeat_status = "waiting"
+        eligible_count = 0
+    elif _is_safe_wait_b1_result(b1_summary):
+        scan_result = "no_eligible_request"
+        scan_reason = reasons[0] if reasons else "no_eligible_request"
+        pickup_decision = "not_eligible"
+        heartbeat_status = "waiting"
+        eligible_count = 0
+    else:
+        scan_result = "scan_blocked"
+        scan_reason = reasons[0] if reasons else "scan_failed"
+        pickup_decision = "blocked"
+        heartbeat_status = "blocked"
+        eligible_count = 0
+
+    scan_time = b1_summary.get("evaluated_at_utc") or _format_time(observed_at)
+    request: dict[str, Any] | None = None
+    request_id = b1_summary.get("request_id")
+    if isinstance(request_id, str):
+        request = {
+            "request_id": request_id,
+            "target_issue": b1_summary.get("target_issue"),
+            "requested_action": b1_summary.get("requested_action"),
+            "expires": b1_summary.get("expires"),
+            "observed_at_utc": scan_time,
+            "pickup_decision": pickup_decision,
+            "reason": scan_reason,
+        }
+    elif scan_result == "expired_request_observed":
+        expired = [
+            item
+            for item in b1_summary.get("request_lifecycle", [])
+            if isinstance(item, dict) and item.get("lifecycle_state") == "EXPIRED"
+        ]
+        if expired:
+            latest = expired[-1]
+            request = {
+                "request_id": latest.get("request_id"),
+                "target_issue": latest.get("target_issue"),
+                "requested_action": latest.get("requested_action"),
+                "expires": latest.get("expires"),
+                "observed_at_utc": scan_time,
+                "pickup_decision": pickup_decision,
+                "reason": scan_reason,
+            }
+
+    summary["last_inbox_scan_at_utc"] = scan_time
+    summary["last_inbox_scan_cycle"] = cycle
+    summary["last_inbox_scan_result"] = scan_result
+    summary["last_inbox_scan_reason"] = scan_reason
+    summary["eligible_request_count"] = eligible_count
+    summary["last_inbox_request"] = request
+    return heartbeat_status
+
+
 def _request_lifecycle_visibility(summary: dict[str, Any]) -> dict[str, str]:
     """Derive only request-local stages that existing evidence can establish."""
     if summary.get("target_result_verified"):
@@ -2974,6 +3076,12 @@ def _write_heartbeat(
         "configured_timeout_seconds": summary.get(
             "configured_timeout_seconds"
         ),
+        "last_inbox_scan_at_utc": summary.get("last_inbox_scan_at_utc"),
+        "last_inbox_scan_cycle": summary.get("last_inbox_scan_cycle"),
+        "last_inbox_scan_result": summary.get("last_inbox_scan_result"),
+        "last_inbox_scan_reason": summary.get("last_inbox_scan_reason"),
+        "eligible_request_count": summary.get("eligible_request_count"),
+        "last_inbox_request": summary.get("last_inbox_request"),
         "next_task_availability": summary.get("next_task_availability"),
         "next_task_availability_reason": summary.get("next_task_availability_reason"),
     }

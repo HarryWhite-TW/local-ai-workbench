@@ -172,6 +172,8 @@ def run_bridge_operator_b1_dry_run(
             {
                 "inbox_comment_id": marker["comment_id"],
                 "request_id": request_id,
+                "target_issue": fields["target_issue"],
+                "requested_action": fields["action"],
                 "expires": fields["expires"],
                 "lifecycle_state": lifecycle_state,
             }

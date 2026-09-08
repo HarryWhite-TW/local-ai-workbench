@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,17 @@ STATE_PROTOCOL = "lawb.bridge_operator_b3_state.v1"
 HEARTBEAT_PROTOCOL = "lawb.bridge_operator_b3_heartbeat.v1"
 MAX_STATE_FILE_BYTES = 1_048_576
 MAX_PROCESSED_HISTORY_BYTES = 8_388_608
+DEFAULT_HEARTBEAT_STALE_SECONDS = 90.0
+
+_SAFE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+_SCAN_RESULTS = {
+    "eligible_request_detected",
+    "expired_request_observed",
+    "no_eligible_request",
+    "scan_blocked",
+}
+_PICKUP_DECISIONS = {"ready_for_pickup", "not_eligible", "expired", "blocked"}
+_OBSERVABLE_ACTIONS = {"maybe-status-check", "run-reviewbundle", "read-final-audit"}
 
 _ASSET_ROUTES = {
     "/": ("workflow_panel.html", "text/html; charset=utf-8"),
@@ -94,11 +106,159 @@ def _safe_positive_integer(value: Any) -> int | None:
     return value
 
 
+def _safe_nonnegative_number(value: Any, *, maximum: float) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if 0 <= number <= maximum else None
+
+
 def _safe_request_id(value: Any) -> str | None:
     try:
         return validate_request_id(value)
     except ObservationError:
         return None
+
+
+def _safe_code(value: Any) -> str | None:
+    return value if isinstance(value, str) and _SAFE_CODE_PATTERN.fullmatch(value) else None
+
+
+def _parse_observed_time(value: Any) -> datetime | None:
+    parsed = parse_utc(value)
+    if parsed is not None:
+        return parsed
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _inbox_scan_observation(
+    heartbeat: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any] | None]:
+    if heartbeat is None:
+        return "missing", None
+    keys = {
+        "last_inbox_scan_at_utc",
+        "last_inbox_scan_cycle",
+        "last_inbox_scan_result",
+        "last_inbox_scan_reason",
+        "eligible_request_count",
+        "last_inbox_request",
+    }
+    present = {key for key in keys if heartbeat.get(key) is not None}
+    if not present:
+        return "missing", None
+    if present != keys - {"last_inbox_request"} and present != keys:
+        return "invalid", None
+
+    observed_at = _safe_text(heartbeat.get("last_inbox_scan_at_utc"), limit=64)
+    cycle = _safe_positive_integer(heartbeat.get("last_inbox_scan_cycle"))
+    result = heartbeat.get("last_inbox_scan_result")
+    reason = _safe_code(heartbeat.get("last_inbox_scan_reason"))
+    eligible_count = heartbeat.get("eligible_request_count")
+    if (
+        observed_at is None
+        or parse_utc(observed_at) is None
+        or cycle is None
+        or result not in _SCAN_RESULTS
+        or reason is None
+        or isinstance(eligible_count, bool)
+        or not isinstance(eligible_count, int)
+        or not 0 <= eligible_count <= 1
+    ):
+        return "invalid", None
+
+    request_value = heartbeat.get("last_inbox_request")
+    request = None
+    if request_value is not None:
+        if not isinstance(request_value, dict):
+            return "invalid", None
+        request_id = _safe_request_id(request_value.get("request_id"))
+        target_issue = _safe_positive_integer(request_value.get("target_issue"))
+        action = request_value.get("requested_action")
+        expires = _safe_text(request_value.get("expires"), limit=64)
+        request_observed_at = _safe_text(
+            request_value.get("observed_at_utc"), limit=64
+        )
+        decision = request_value.get("pickup_decision")
+        request_reason = _safe_code(request_value.get("reason"))
+        expires_time = _parse_observed_time(expires)
+        if (
+            request_id is None
+            or target_issue is None
+            or action not in _OBSERVABLE_ACTIONS
+            or expires is None
+            or expires_time is None
+            or request_observed_at is None
+            or parse_utc(request_observed_at) is None
+            or decision not in _PICKUP_DECISIONS
+            or request_reason is None
+        ):
+            return "invalid", None
+        request = {
+            "request_id": request_id,
+            "issue_number": target_issue,
+            "action": action,
+            "observed_at_utc": request_observed_at,
+            "expires_at_utc": expires_time.isoformat().replace("+00:00", "Z"),
+            "pickup_decision": decision,
+            "reason": request_reason,
+        }
+    if result in {"eligible_request_detected", "expired_request_observed"} and request is None:
+        return "invalid", None
+    if result == "eligible_request_detected" and eligible_count != 1:
+        return "invalid", None
+    if result != "eligible_request_detected" and eligible_count != 0:
+        return "invalid", None
+    return "available", {
+        "observed_at_utc": observed_at,
+        "cycle": cycle,
+        "result": result,
+        "reason": reason,
+        "eligible_request_count": eligible_count,
+        "request": request,
+    }
+
+
+def _age_seconds(value: Any, *, now: datetime) -> float | None:
+    parsed = parse_utc(value)
+    if parsed is None:
+        return None
+    return max(0.0, (now - parsed).total_seconds())
+
+
+def _operator_health(
+    heartbeat: dict[str, Any] | None,
+    *,
+    heartbeat_status: str,
+    in_flight: dict[str, Any] | None,
+    now: datetime,
+) -> tuple[str, float | None, float]:
+    if heartbeat is None:
+        return ("offline" if heartbeat_status == "missing" else "unknown", None, DEFAULT_HEARTBEAT_STALE_SECONDS)
+    age = _age_seconds(heartbeat.get("updated_at_utc"), now=now)
+    interval = _safe_nonnegative_number(
+        heartbeat.get("configured_poll_interval_seconds"), maximum=3600.0
+    )
+    stale_after = max(DEFAULT_HEARTBEAT_STALE_SECONDS, (interval or 30.0) * 3)
+    if in_flight is not None:
+        timeout = _safe_nonnegative_number(
+            heartbeat.get("configured_timeout_seconds"), maximum=86_400.0
+        )
+        if timeout is not None:
+            stale_after = max(stale_after, timeout + (interval or 30.0))
+    status = _safe_text(heartbeat.get("status"))
+    if status in {"stopped", "max_cycles_completed"}:
+        return "offline", age, stale_after
+    if age is None:
+        return "unknown", None, stale_after
+    if age > stale_after:
+        return "stale", age, stale_after
+    return "online", age, stale_after
 
 
 def _valid_operator_source(value: dict[str, Any] | None, *, heartbeat: bool) -> bool:
@@ -144,6 +304,12 @@ def _heartbeat_state(value: dict[str, Any] | None) -> dict[str, Any] | None:
         and value["cycle"] >= 0
         else None,
         "updated_at_utc": _safe_text(value.get("updated_at_utc")),
+        "configured_poll_interval_seconds": _safe_nonnegative_number(
+            value.get("configured_poll_interval_seconds"), maximum=3600.0
+        ),
+        "configured_timeout_seconds": _safe_nonnegative_number(
+            value.get("configured_timeout_seconds"), maximum=86_400.0
+        ),
     }
 
 
@@ -159,6 +325,8 @@ def _in_flight_lifecycle(in_flight: dict[str, Any]) -> dict[str, str]:
             if in_flight.get("action") == "run-reviewbundle"
             else "COMPLETED_OR_LAST_COMPLETED"
         )
+    elif stage == PREPARED:
+        visible_stage = "DISPATCHING"
     else:
         visible_stage = "RUNNING"
     return {
@@ -359,9 +527,82 @@ def _review_projection(
     }
 
 
-def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any]:
+def _scan_lifecycle(scan: dict[str, Any]) -> dict[str, str]:
+    stages = {
+        "eligible_request_detected": "REQUEST_DETECTED",
+        "expired_request_observed": "EXPIRED",
+        "no_eligible_request": "NO_REQUEST_DETECTED",
+        "scan_blocked": "BLOCKED_OR_FAILED",
+    }
+    return {
+        "stage": stages[scan["result"]],
+        "certainty": "observed",
+        "basis": f"inbox_scan:{scan['result']}",
+    }
+
+
+def _next_action(stage: str, operator_health: str) -> str:
+    if stage == "RUNNING":
+        return "Task is running. You do not need to do anything."
+    if stage == "DISPATCHING":
+        return "The request is starting now. You do not need to do anything."
+    if operator_health == "stale":
+        return "Operator has not checked for work recently."
+    if operator_health in {"offline", "unknown"}:
+        return "Operator is not available, so new work will not start automatically."
+    if stage == "WAITING_FOR_CHATGPT_REVIEW":
+        return "Task finished and is waiting for ChatGPT review."
+    if stage == "COMPLETED_OR_LAST_COMPLETED":
+        return "Task completed. No action is required unless ChatGPT asks for a decision."
+    if stage == "BLOCKED_OR_FAILED":
+        return "The workflow is blocked or failed. Review the warning below."
+    if stage == "REQUEST_DETECTED":
+        return "A request was detected and is waiting to start."
+    if stage == "EXPIRED":
+        return "The observed request expired and will not start."
+    if stage == "NO_REQUEST_DETECTED":
+        return "Everything is ready. The last check found no request, so you do not need to do anything."
+    if stage == "CHECKING_FOR_WORK":
+        return "The Operator is checking for work now."
+    return "The current request state is unknown. Wait for the next check or review the warning below."
+
+
+def _system_projection(
+    *,
+    operator_health: str,
+    lifecycle_stage: str,
+    diagnostics: list[str],
+    state: dict[str, Any] | None,
+) -> dict[str, str]:
+    operator_status = _safe_text((state or {}).get("status"))
+    if operator_health in {"offline", "stale", "unknown"}:
+        readiness = "unavailable"
+    elif diagnostics or operator_status in {"blocked", "failed"}:
+        readiness = "degraded"
+    else:
+        readiness = "ready"
+    return {
+        "readiness": readiness,
+        "workflow": readiness,
+        "operator": operator_health,
+        "panel": "online",
+        "next_action": _next_action(lifecycle_stage, operator_health),
+    }
+
+
+def build_workflow_snapshot(
+    state_dir: Path,
+    store: EventStore,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Build a bounded projection without treating missing evidence as completion."""
 
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
     diagnostics: list[str] = []
     state_status, state = _read_source(state_dir / "state.json", protocol=STATE_PROTOCOL)
     heartbeat_status, heartbeat = _read_source(
@@ -376,6 +617,9 @@ def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any
     for name, status in (("state", state_status), ("heartbeat", heartbeat_status)):
         if status == "invalid":
             diagnostics.append(f"{name}_evidence_invalid")
+    scan_status, inbox_scan = _inbox_scan_observation(heartbeat)
+    if scan_status == "invalid":
+        diagnostics.append("inbox_scan_observation_invalid")
 
     repository = (
         _safe_text(state.get("repo")) if state is not None else None
@@ -420,11 +664,53 @@ def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any
 
     processed_record = _latest_terminal_record(processed_records)
 
+    operator_health, heartbeat_age_seconds, heartbeat_stale_after_seconds = (
+        _operator_health(
+            heartbeat,
+            heartbeat_status=heartbeat_status,
+            in_flight=in_flight,
+            now=now,
+        )
+    )
+    scan_age_seconds = (
+        _age_seconds(inbox_scan.get("observed_at_utc"), now=now)
+        if inbox_scan is not None
+        else None
+    )
+    scan_is_recent = (
+        inbox_scan is not None
+        and operator_health == "online"
+        and scan_age_seconds is not None
+        and scan_age_seconds <= heartbeat_stale_after_seconds
+    )
+    observed_request = inbox_scan.get("request") if inbox_scan is not None else None
+    processed_time = _record_time(processed_record) if processed_record is not None else None
+    scan_time = (
+        parse_utc(inbox_scan.get("observed_at_utc"))
+        if inbox_scan is not None
+        else None
+    )
+    observed_request_is_current = bool(
+        scan_is_recent
+        and observed_request is not None
+        and (
+            processed_record is None
+            or (
+                observed_request["request_id"] != processed_record.get("request_id")
+                and scan_time is not None
+                and (processed_time is None or scan_time >= processed_time)
+            )
+        )
+    )
+
     request_id: str | None = None
     issue_number: int | None = None
     if in_flight is not None:
         request_id = in_flight["request_id"]
         issue_number = in_flight["target_issue"]
+    elif observed_request_is_current:
+        request_id = observed_request["request_id"]
+        issue_number = observed_request["issue_number"]
     elif processed_record is not None:
         request_id = processed_record["request_id"]
         issue_number = _safe_positive_integer(processed_record.get("target_issue"))
@@ -463,10 +749,18 @@ def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any
         updated_at_utc = in_flight["updated_at_utc"]
         terminal = in_flight.get("terminal_evidence")
         terminal_result = terminal.get("result") if isinstance(terminal, dict) else None
+    elif observed_request_is_current:
+        lifecycle = _scan_lifecycle(inbox_scan)
+        updated_at_utc = observed_request["observed_at_utc"]
+        terminal_result = None
     elif processed_record is not None:
         lifecycle = _processed_lifecycle(processed_record)
         updated_at_utc = _safe_text(processed_record.get("terminal_observed_at_utc"))
         terminal_result = processed_record["terminal_result"]
+    elif scan_is_recent:
+        lifecycle = _scan_lifecycle(inbox_scan)
+        updated_at_utc = inbox_scan["observed_at_utc"]
+        terminal_result = None
     elif "blocked" in {
         _safe_text(source.get("status"))
         for source in (state, heartbeat)
@@ -482,17 +776,11 @@ def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any
             or (state or {}).get("updated_at_utc")
         )
         terminal_result = None
-    elif {"running", "polling"}.intersection(
-        {
-            _safe_text(source.get("status"))
-            for source in (state, heartbeat)
-            if source is not None
-        }
-    ):
+    elif operator_health == "online" and _safe_text((heartbeat or {}).get("status")) == "polling":
         lifecycle = {
-            "stage": "IDLE",
-            "certainty": "verified",
-            "basis": "operator_evidence:no_in_flight",
+            "stage": "CHECKING_FOR_WORK",
+            "certainty": "observed",
+            "basis": "heartbeat:polling",
         }
         updated_at_utc = _safe_text(
             (heartbeat or {}).get("updated_at_utc")
@@ -507,6 +795,61 @@ def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any
         }
         updated_at_utc = None
         terminal_result = None
+
+    action = None
+    detected_at_utc = None
+    expires_at_utc = None
+    pickup_decision = None
+    pickup_reason = None
+    matching_observed_request = (
+        observed_request
+        if observed_request is not None
+        and request_id is not None
+        and observed_request["request_id"] == request_id
+        else None
+    )
+    if in_flight is not None:
+        action = _safe_text(in_flight.get("action"))
+        detected_at_utc = (
+            matching_observed_request["observed_at_utc"]
+            if matching_observed_request is not None
+            else _safe_text(in_flight.get("prepared_at_utc"))
+        )
+        expires_at_utc = (
+            matching_observed_request["expires_at_utc"]
+            if matching_observed_request is not None
+            else None
+        )
+        pickup_decision = "picked_up"
+        pickup_reason = (
+            matching_observed_request["reason"]
+            if matching_observed_request is not None
+            else None
+        )
+    elif observed_request_is_current:
+        action = observed_request["action"]
+        detected_at_utc = observed_request["observed_at_utc"]
+        expires_at_utc = observed_request["expires_at_utc"]
+        pickup_decision = observed_request["pickup_decision"]
+        pickup_reason = observed_request["reason"]
+    elif processed_record is not None:
+        action = _safe_text(processed_record.get("requested_action"))
+        detected_at_utc = (
+            matching_observed_request["observed_at_utc"]
+            if matching_observed_request is not None
+            else _safe_text(processed_record.get("processed_at_utc"))
+        )
+        expires_at_utc = (
+            matching_observed_request["expires_at_utc"]
+            if matching_observed_request is not None
+            else None
+        )
+        pickup_decision = "completed"
+        pickup_reason = (
+            matching_observed_request["reason"]
+            if matching_observed_request is not None
+            else None
+        )
 
     if failure_status == "available" and applicable_failure is None:
         failure_status = "historical_not_current"
@@ -524,15 +867,27 @@ def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any
     warning = _warning_projection(applicable_failure, request_events)
     review = _review_projection(processed_record, review_candidate, warning)
     global_latest_event = events[-1] if events else None
+    system = _system_projection(
+        operator_health=operator_health,
+        lifecycle_stage=lifecycle["stage"],
+        diagnostics=diagnostics,
+        state=state,
+    )
 
     return {
         "protocol": PANEL_PROTOCOL,
         "mode": "read_only",
         "bind": "loopback",
-        "observed_at_utc": utc_now(),
+        "observed_at_utc": now.isoformat().replace("+00:00", "Z"),
+        "system": system,
         "current_task": {
             "request_id": request_id,
             "issue_number": issue_number,
+            "action": action,
+            "detected_at_utc": detected_at_utc,
+            "expires_at_utc": expires_at_utc,
+            "pickup_decision": pickup_decision,
+            "pickup_reason": pickup_reason,
             "lifecycle": lifecycle,
             "updated_at_utc": updated_at_utc,
             "terminal_result": terminal_result,
@@ -540,6 +895,37 @@ def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any
         "operator": {
             "state": _operator_state(state),
             "heartbeat": _heartbeat_state(heartbeat),
+            "activity": {
+                "health": operator_health,
+                "heartbeat_at_utc": _safe_text((heartbeat or {}).get("updated_at_utc")),
+                "heartbeat_age_seconds": round(heartbeat_age_seconds, 1)
+                if heartbeat_age_seconds is not None
+                else None,
+                "stale_after_seconds": round(heartbeat_stale_after_seconds, 1),
+                "last_check_at_utc": inbox_scan.get("observed_at_utc")
+                if inbox_scan is not None
+                else None,
+                "last_check_age_seconds": round(scan_age_seconds, 1)
+                if scan_age_seconds is not None
+                else None,
+                "poll_interval_seconds": _safe_nonnegative_number(
+                    (heartbeat or {}).get("configured_poll_interval_seconds"),
+                    maximum=3600.0,
+                ),
+                "cycle": (heartbeat or {}).get("cycle")
+                if heartbeat is not None
+                else None,
+                "scan_result": inbox_scan.get("result")
+                if inbox_scan is not None
+                else None,
+                "scan_reason": inbox_scan.get("reason")
+                if inbox_scan is not None
+                else None,
+                "eligible_request_count": inbox_scan.get("eligible_request_count")
+                if inbox_scan is not None
+                else None,
+                "observation_status": scan_status,
+            },
         },
         "observability": {
             "protocol": EVENT_PROTOCOL,
@@ -553,6 +939,7 @@ def build_workflow_snapshot(state_dir: Path, store: EventStore) -> dict[str, Any
         "source_status": {
             "state": state_status,
             "heartbeat": heartbeat_status,
+            "inbox_scan_observation": scan_status,
             "in_flight": in_flight_status,
             "processed_requests": processed_status,
             "last_failure": failure_status,
