@@ -6,12 +6,46 @@ const MAX_RENDERED_EVENTS = 80;
 const SNAPSHOT_POLL_MS = 2000;
 
 const LIFECYCLE_LABELS = Object.freeze({
-  IDLE: "Idle",
+  IDLE: "No request detected",
+  CHECKING_FOR_WORK: "Checking for work",
+  NO_REQUEST_DETECTED: "No request detected",
+  REQUEST_DETECTED: "Request detected / waiting for pickup",
+  DISPATCHING: "Dispatching",
   RUNNING: "Running",
   BLOCKED_OR_FAILED: "Blocked / failed",
   WAITING_FOR_CHATGPT_REVIEW: "Waiting for ChatGPT review",
   COMPLETED_OR_LAST_COMPLETED: "Completed / last completed",
+  EXPIRED: "Expired",
   UNKNOWN: "Unknown",
+});
+
+const READINESS_LABELS = Object.freeze({
+  ready: "Workflow ready",
+  degraded: "Workflow degraded",
+  unavailable: "Workflow unavailable",
+});
+
+const HEALTH_LABELS = Object.freeze({
+  online: "Operator online",
+  offline: "Operator offline",
+  stale: "Operator stale",
+  unknown: "Operator status unknown",
+});
+
+const SCAN_LABELS = Object.freeze({
+  eligible_request_detected: "Request detected",
+  expired_request_observed: "Expired request observed",
+  no_eligible_request: "No eligible request found",
+  scan_blocked: "Inbox check blocked",
+});
+
+const PICKUP_LABELS = Object.freeze({
+  ready_for_pickup: "Ready for pickup",
+  not_eligible: "No eligible request",
+  expired: "Expired; not picked up",
+  blocked: "Blocked before pickup",
+  picked_up: "Picked up",
+  completed: "Completed",
 });
 
 const EVENT_LABELS = Object.freeze({
@@ -97,6 +131,50 @@ function warningLabel(code) {
   return WARNING_LABELS[code] || "Workflow warning or error";
 }
 
+function relativeAge(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "time unknown";
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${Math.floor(seconds)} seconds ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+  return `${Math.floor(seconds / 86400)} days ago`;
+}
+
+function relativeTimeFrom(value, nowMilliseconds = Date.now()) {
+  if (typeof value !== "string" || !Number.isFinite(nowMilliseconds)) return "time unknown";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "time unknown";
+  const delta = (nowMilliseconds - timestamp) / 1000;
+  if (Math.abs(delta) < 5) return "just now";
+  if (delta >= 0) return relativeAge(delta);
+  const future = relativeAge(Math.abs(delta)).replace(/ ago$/, "");
+  return `in ${future}`;
+}
+
+function localTimestamp(value) {
+  if (typeof value !== "string") return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString();
+}
+
+function timestampWithAge(value, ageSeconds) {
+  const local = localTimestamp(value);
+  return local === "—" ? local : `${local} · ${relativeAge(ageSeconds)}`;
+}
+
+function timestampWithRelative(value) {
+  const local = localTimestamp(value);
+  return local === "—" ? local : `${local} · ${relativeTimeFrom(value)}`;
+}
+
+function cadenceLabel(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "Unknown";
+  if (seconds < 60) return `Checks for work about every ${seconds} seconds`;
+  const minutes = seconds / 60;
+  return `Checks for work about every ${Number.isInteger(minutes) ? minutes : minutes.toFixed(1)} minutes`;
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     eventLabel,
@@ -105,6 +183,9 @@ if (typeof module !== "undefined" && module.exports) {
     streamUrlWithCursor,
     validEvent,
     warningLabel,
+    relativeAge,
+    relativeTimeFrom,
+    cadenceLabel,
   };
 } else {
   startPanel();
@@ -112,16 +193,27 @@ if (typeof module !== "undefined" && module.exports) {
 
 function startPanel() {
   const elements = {
+    readiness: document.querySelector("#readiness"),
+    workflowReadiness: document.querySelector("#workflow-readiness"),
+    operatorHealth: document.querySelector("#operator-health"),
+    panelHealth: document.querySelector("#panel-health"),
+    nextAction: document.querySelector("#next-action"),
     stage: document.querySelector("#stage"),
-    basis: document.querySelector("#basis"),
+    requestSummary: document.querySelector("#request-summary"),
     requestId: document.querySelector("#request-id"),
     issueNumber: document.querySelector("#issue-number"),
-    certainty: document.querySelector("#certainty"),
+    requestAction: document.querySelector("#request-action"),
+    detectedTime: document.querySelector("#detected-time"),
+    expiryTime: document.querySelector("#expiry-time"),
+    pickupDecision: document.querySelector("#pickup-decision"),
     evidenceTime: document.querySelector("#evidence-time"),
-    operatorStatus: document.querySelector("#operator-status"),
-    heartbeatStatus: document.querySelector("#heartbeat-status"),
-    operatorMode: document.querySelector("#operator-mode"),
-    sourceStatus: document.querySelector("#source-status"),
+    operatorHealthDetail: document.querySelector("#operator-health-detail"),
+    heartbeatTime: document.querySelector("#heartbeat-time"),
+    heartbeatAge: document.querySelector("#heartbeat-age"),
+    lastCheckTime: document.querySelector("#last-check-time"),
+    pollCadence: document.querySelector("#poll-cadence"),
+    scanResult: document.querySelector("#scan-result"),
+    operatorCycle: document.querySelector("#operator-cycle"),
     diagnostics: document.querySelector("#diagnostics"),
     warning: document.querySelector("#warning-or-error"),
     changedFiles: document.querySelector("#changed-files"),
@@ -182,30 +274,50 @@ function startPanel() {
   }
 
   function renderSnapshot(snapshot) {
+    const system = snapshot.system;
     const task = snapshot.current_task;
     const lifecycle = task.lifecycle;
+    const readiness = system.readiness || "unavailable";
+    elements.readiness.textContent = READINESS_LABELS[readiness] || "Workflow unavailable";
+    elements.readiness.dataset.readiness = readiness;
+    elements.workflowReadiness.textContent = READINESS_LABELS[system.workflow] || "Workflow unavailable";
+    elements.operatorHealth.textContent = HEALTH_LABELS[system.operator] || "Operator status unknown";
+    elements.panelHealth.textContent = system.panel === "online" ? "Panel online" : "Panel unavailable";
+    elements.nextAction.textContent = shown(system.next_action, "Current status is unknown.");
+
     elements.stage.textContent = lifecycleLabel(lifecycle.stage);
     elements.stage.dataset.stage = lifecycle.stage;
     elements.stage.dataset.certainty = lifecycle.certainty;
-    elements.basis.textContent = lifecycle.basis;
+    elements.requestSummary.textContent = shown(system.next_action, "Current request state is unknown.");
     elements.requestId.textContent = shown(task.request_id, "—");
     elements.issueNumber.textContent = task.issue_number ? `#${task.issue_number}` : "—";
-    elements.certainty.textContent = lifecycle.certainty;
-    elements.evidenceTime.textContent = shown(task.updated_at_utc, "—");
+    elements.requestAction.textContent = shown(task.action, "—");
+    elements.detectedTime.textContent = timestampWithRelative(task.detected_at_utc);
+    elements.expiryTime.textContent = timestampWithRelative(task.expires_at_utc);
+    elements.pickupDecision.textContent = PICKUP_LABELS[task.pickup_decision] || "—";
+    elements.evidenceTime.textContent = timestampWithRelative(task.updated_at_utc);
 
-    const state = snapshot.operator.state;
-    const heartbeat = snapshot.operator.heartbeat;
-    elements.operatorStatus.textContent = state ? shown(state.status) : "Unavailable";
-    elements.heartbeatStatus.textContent = heartbeat ? shown(heartbeat.status) : "Unavailable";
-    elements.operatorMode.textContent = shown((heartbeat && heartbeat.mode) || (state && state.mode));
-    elements.sourceStatus.textContent = Object.entries(snapshot.source_status)
-      .map(([name, status]) => `${name}: ${status}`)
-      .join(" · ");
+    const activity = snapshot.operator.activity;
+    elements.operatorHealthDetail.textContent = HEALTH_LABELS[activity.health] || "Operator status unknown";
+    elements.heartbeatTime.textContent = timestampWithAge(
+      activity.heartbeat_at_utc,
+      activity.heartbeat_age_seconds,
+    );
+    elements.heartbeatAge.textContent = relativeAge(activity.heartbeat_age_seconds);
+    elements.lastCheckTime.textContent = timestampWithAge(
+      activity.last_check_at_utc,
+      activity.last_check_age_seconds,
+    );
+    elements.pollCadence.textContent = cadenceLabel(activity.poll_interval_seconds);
+    elements.scanResult.textContent = SCAN_LABELS[activity.scan_result] || "Unknown";
+    elements.operatorCycle.textContent = Number.isSafeInteger(activity.cycle)
+      ? `Check ${activity.cycle}`
+      : "—";
 
     renderReview(snapshot.review);
     if (snapshot.diagnostics.length) {
       elements.diagnostics.hidden = false;
-      elements.diagnostics.textContent = `Degraded evidence: ${snapshot.diagnostics.join(", ")}`;
+      elements.diagnostics.textContent = "Some local evidence is missing or malformed. Status has been degraded safely.";
     } else {
       elements.diagnostics.hidden = true;
       elements.diagnostics.textContent = "";
@@ -216,7 +328,7 @@ function startPanel() {
   function renderReview(review) {
     const warning = review.warning_or_error;
     elements.warning.textContent = warning.status === "available"
-      ? `${warningLabel(warning.code)} (${warning.code}) · ${shown(warning.observed_at_utc, "time unknown")}`
+      ? `${warningLabel(warning.code)} · ${localTimestamp(warning.observed_at_utc)}`
       : "Unavailable";
     elements.changedFiles.textContent = review.changed_files.status === "available"
       ? review.changed_files.items.join(", ")
@@ -264,7 +376,7 @@ function startPanel() {
         const identity = document.createElement("small");
         time.textContent = event.observed_at_utc;
         kind.textContent = eventSummary(event);
-        identity.textContent = `${event.kind} · sequence ${event.sequence} · ${shown(event.source, "source unknown")}`;
+        identity.textContent = `Activity event ${event.sequence}`;
         content.append(kind, identity);
         item.append(time, content);
         elements.activity.append(item);
@@ -317,6 +429,9 @@ function startPanel() {
       renderSnapshot(await response.json());
     } catch (_error) {
       setConnection("Snapshot unavailable", "degraded");
+      elements.panelHealth.textContent = "Panel unavailable";
+      elements.readiness.textContent = "Workflow unavailable";
+      elements.readiness.dataset.readiness = "unavailable";
     } finally {
       if (manual) elements.refresh.disabled = false;
     }

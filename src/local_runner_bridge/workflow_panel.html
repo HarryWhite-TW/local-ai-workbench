@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">Local AI Workbench</p>
         <h1>Workflow Panel</h1>
-        <p class="subtitle">Read-only local lifecycle evidence and bounded live activity.</p>
+        <p class="subtitle">A plain-language view of whether Workflow can pick up and run work.</p>
       </div>
       <div class="connection" aria-live="polite">
         <span id="connection-dot" class="dot"></span>
@@ -20,24 +20,47 @@
       </div>
     </header>
 
+    <section class="card readiness-card" aria-labelledby="readiness-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">System readiness</p>
+          <h2 id="readiness-heading">Can Workflow pick up work?</h2>
+        </div>
+        <button id="refresh" type="button">Check now</button>
+      </div>
+      <div class="readiness-layout">
+        <div>
+          <span id="readiness" class="stage">UNKNOWN</span>
+          <p id="next-action" class="next-action">Checking local Workflow status…</p>
+        </div>
+        <dl class="status-list">
+          <div><dt>Workflow</dt><dd id="workflow-readiness">Unknown</dd></div>
+          <div><dt>Operator</dt><dd id="operator-health">Unknown</dd></div>
+          <div><dt>Panel</dt><dd id="panel-health">Online</dd></div>
+        </dl>
+      </div>
+    </section>
+
     <section class="card current-card" aria-labelledby="current-heading">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Current task evidence</p>
-          <h2 id="current-heading">Workflow state</h2>
+          <p class="eyebrow">Request state</p>
+          <h2 id="current-heading">What is happening now?</h2>
         </div>
-        <button id="refresh" type="button">Refresh snapshot</button>
       </div>
       <div class="state-grid">
         <div class="state-primary">
           <span id="stage" class="stage">UNKNOWN</span>
-          <p id="basis" class="basis">No current request evidence loaded.</p>
+          <p id="request-summary" class="basis">No current request evidence loaded.</p>
         </div>
         <dl>
           <div><dt>Request</dt><dd id="request-id">—</dd></div>
-          <div><dt>Issue</dt><dd id="issue-number">—</dd></div>
-          <div><dt>Certainty</dt><dd id="certainty">unknown</dd></div>
-          <div><dt>Evidence time</dt><dd id="evidence-time">—</dd></div>
+          <div><dt>Target Issue</dt><dd id="issue-number">—</dd></div>
+          <div><dt>Action</dt><dd id="request-action">—</dd></div>
+          <div><dt>Detected</dt><dd id="detected-time">—</dd></div>
+          <div><dt>Expires</dt><dd id="expiry-time">—</dd></div>
+          <div><dt>Pickup decision</dt><dd id="pickup-decision">—</dd></div>
+          <div><dt>Last update</dt><dd id="evidence-time">—</dd></div>
         </dl>
       </div>
       <p class="truth-note">A process exit or Codex turn completion is activity evidence, not semantic Workflow acceptance.</p>
@@ -62,12 +85,15 @@
     <div class="columns">
       <section class="card" aria-labelledby="operator-heading">
         <p class="eyebrow">Bridge Operator</p>
-        <h2 id="operator-heading">Local status</h2>
+        <h2 id="operator-heading">Polling activity</h2>
         <dl class="compact-list">
-          <div><dt>State</dt><dd id="operator-status">Unavailable</dd></div>
-          <div><dt>Heartbeat</dt><dd id="heartbeat-status">Unavailable</dd></div>
-          <div><dt>Mode</dt><dd id="operator-mode">—</dd></div>
-          <div><dt>Sources</dt><dd id="source-status">—</dd></div>
+          <div><dt>Health</dt><dd id="operator-health-detail">Unknown</dd></div>
+          <div><dt>Last heartbeat</dt><dd id="heartbeat-time">—</dd></div>
+          <div><dt>Heartbeat age</dt><dd id="heartbeat-age">—</dd></div>
+          <div><dt>Last inbox check</dt><dd id="last-check-time">—</dd></div>
+          <div><dt>Check cadence</dt><dd id="poll-cadence">—</dd></div>
+          <div><dt>Latest check</dt><dd id="scan-result">Unknown</dd></div>
+          <div><dt>Cycle</dt><dd id="operator-cycle">—</dd></div>
         </dl>
         <div id="diagnostics" class="diagnostics" hidden></div>
       </section>
