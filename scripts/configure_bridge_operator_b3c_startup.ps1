@@ -1,11 +1,12 @@
 <#
 .SYNOPSIS
-Manages the current user's visible Bridge Operator B3-C Startup-folder entry.
+Manages the current user's hidden Workflow runtime Startup-folder entry.
 
 .DESCRIPTION
 Exactly one of -Enable, -Status, or -Disable is required. The adapter owns one
 deterministic file and refuses to replace or remove content it does not exactly
-recognize. It never starts the Bridge Operator itself.
+recognize. It safely migrates only the exact previously managed v1 content and
+never starts the Workflow runtime itself.
 #>
 
 [CmdletBinding()]
@@ -19,12 +20,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$Protocol = "lawb.bridge_operator_b3c_startup.v1"
+$Protocol = "lawb.workflow_runtime_startup.v2"
 $ManagedFileName = "LocalAIWorkbench-BridgeOperator-B3C.cmd"
-$OwnershipMarker = "LAWBRIDGE-B3C-STARTUP-MANAGED protocol=lawb.bridge_operator_b3c_startup.v1"
+$OwnershipMarker = "LAWB-WORKFLOW-RUNTIME-STARTUP-MANAGED protocol=lawb.workflow_runtime_startup.v2"
+$LegacyProtocol = "lawb.bridge_operator_b3c_startup.v1"
+$LegacyOwnershipMarker = "LAWBRIDGE-B3C-STARTUP-MANAGED protocol=$LegacyProtocol"
 $MaxCycles = 960
 $PollIntervalSeconds = 30
 $TimeoutSeconds = 600
+$PanelPort = 8765
 
 function Write-Summary {
     param(
@@ -47,6 +51,7 @@ function Write-Summary {
         max_cycles = $MaxCycles
         poll_interval_seconds = $PollIntervalSeconds
         timeout_seconds = $TimeoutSeconds
+        panel_port = $PanelPort
     }
     $json = $summary | ConvertTo-Json -Compress
     $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes(
@@ -64,14 +69,32 @@ function ConvertTo-CmdQuotedLiteral {
 }
 
 function Get-ManagedBytes {
-    param([Parameter(Mandatory = $true)][string]$LauncherPath)
+    param([Parameter(Mandatory = $true)][string]$RuntimeLauncherPath)
     $powerShellPath = Join-Path $env:SystemRoot `
         "System32\WindowsPowerShell\v1.0\powershell.exe"
-    $launcher = ConvertTo-CmdQuotedLiteral -Value $LauncherPath
+    $launcher = ConvertTo-CmdQuotedLiteral -Value $RuntimeLauncherPath
     $powershell = ConvertTo-CmdQuotedLiteral -Value $powerShellPath
     $lines = @(
         "@echo off",
         "REM $OwnershipMarker",
+        "REM managed-file-name=$ManagedFileName",
+        "start `"`" /b $powershell -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File $launcher -MaxCycles $MaxCycles -PollIntervalSeconds $PollIntervalSeconds -TimeoutSeconds $TimeoutSeconds -PanelPort $PanelPort -StateDir `"%LOCALAPPDATA%\LocalAIWorkbench\BridgeOperator`"",
+        ""
+    )
+    return (New-Object System.Text.UTF8Encoding($false)).GetBytes(
+        ($lines -join "`r`n")
+    )
+}
+
+function Get-LegacyManagedBytes {
+    param([Parameter(Mandatory = $true)][string]$OperatorLauncherPath)
+    $powerShellPath = Join-Path $env:SystemRoot `
+        "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $launcher = ConvertTo-CmdQuotedLiteral -Value $OperatorLauncherPath
+    $powershell = ConvertTo-CmdQuotedLiteral -Value $powerShellPath
+    $lines = @(
+        "@echo off",
+        "REM $LegacyOwnershipMarker",
         "REM managed-file-name=$ManagedFileName",
         "start `"Local AI Workbench Bridge Operator`" $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcher -StartForeground -PublishStatus -MaxCycles $MaxCycles -PollIntervalSeconds $PollIntervalSeconds -TimeoutSeconds $TimeoutSeconds -StateDir `"%LOCALAPPDATA%\LocalAIWorkbench\BridgeOperator`"",
         ""
@@ -135,11 +158,15 @@ $managedPath = Join-Path $startupDirectory $ManagedFileName
 $repoRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "..")
 ).TrimEnd("\")
-$launcherPath = [System.IO.Path]::GetFullPath(
+$operatorLauncherPath = [System.IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "start_bridge_operator_b3c.ps1")
 )
+$runtimeLauncherPath = [System.IO.Path]::GetFullPath(
+    (Join-Path $PSScriptRoot "start_workflow_runtime.ps1")
+)
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot ".git")) -or
-    -not (Test-Path -LiteralPath $launcherPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $operatorLauncherPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $runtimeLauncherPath -PathType Leaf) -or
     -not [string]::Equals(
         [System.IO.Path]::GetFullPath($PSScriptRoot),
         [System.IO.Path]::GetFullPath((Join-Path $repoRoot "scripts")),
@@ -151,7 +178,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $repoRoot ".git")) -or
 }
 
 try {
-    $expectedBytes = Get-ManagedBytes -LauncherPath $launcherPath
+    $expectedBytes = Get-ManagedBytes -RuntimeLauncherPath $runtimeLauncherPath
+    $legacyBytes = Get-LegacyManagedBytes `
+        -OperatorLauncherPath $operatorLauncherPath
     if (-not (Test-Path -LiteralPath $managedPath)) {
         $observedState = "absent"
     }
@@ -163,11 +192,17 @@ try {
         if (Test-ExactBytes -Left $actualBytes -Right $expectedBytes) {
             $observedState = "exact_enabled"
         }
+        elseif (Test-ExactBytes -Left $actualBytes -Right $legacyBytes) {
+            $observedState = "legacy_v1"
+        }
         else {
             $actualText = (New-Object System.Text.UTF8Encoding($false, $true)).GetString(
                 $actualBytes
             )
-            $observedState = if ($actualText.Contains($OwnershipMarker)) {
+            $observedState = if (
+                $actualText.Contains($OwnershipMarker) -or
+                $actualText.Contains($LegacyOwnershipMarker)
+            ) {
                 "drifted_invalid"
             } else {
                 "unrecognized"
@@ -187,7 +222,7 @@ try {
                 -Changed $false -Reason "already_enabled" -ManagedPath $managedPath
             exit 0
         }
-        if ($observedState -ne "absent") {
+        if ($observedState -notin @("absent", "legacy_v1")) {
             Write-Summary -Operation $operation -State $observedState `
                 -Changed $false -Reason "existing_file_not_exact" `
                 -ManagedPath $managedPath
@@ -205,8 +240,14 @@ try {
                 -Reason "exact_readback_failed" -ManagedPath $managedPath
             exit 2
         }
+        $reason = if ($observedState -eq "legacy_v1") {
+            "migrated_v1_to_v2"
+        }
+        else {
+            "enabled"
+        }
         Write-Summary -Operation $operation -State "exact_enabled" -Changed $true `
-            -Reason "enabled" -ManagedPath $managedPath
+            -Reason $reason -ManagedPath $managedPath
         exit 0
     }
 
@@ -215,7 +256,7 @@ try {
             -Reason "already_absent" -ManagedPath $managedPath
         exit 0
     }
-    if ($observedState -ne "exact_enabled") {
+    if ($observedState -notin @("exact_enabled", "legacy_v1")) {
         Write-Summary -Operation $operation -State $observedState `
             -Changed $false -Reason "existing_file_not_exact" `
             -ManagedPath $managedPath

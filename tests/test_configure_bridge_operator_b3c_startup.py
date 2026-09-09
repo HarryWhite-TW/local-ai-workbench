@@ -15,6 +15,34 @@ SCRIPT = ROOT / "scripts" / "configure_bridge_operator_b3c_startup.ps1"
 MANAGED_NAME = "LocalAIWorkbench-BridgeOperator-B3C.cmd"
 
 
+def legacy_v1_bytes() -> bytes:
+    powershell_path = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    launcher = ROOT / "scripts" / "start_bridge_operator_b3c.ps1"
+    lines = [
+        "@echo off",
+        (
+            "REM LAWBRIDGE-B3C-STARTUP-MANAGED "
+            "protocol=lawb.bridge_operator_b3c_startup.v1"
+        ),
+        f"REM managed-file-name={MANAGED_NAME}",
+        (
+            'start "Local AI Workbench Bridge Operator" '
+            f'"{powershell_path}" -NoLogo -NoProfile -ExecutionPolicy Bypass '
+            f'-File "{launcher}" -StartForeground -PublishStatus -MaxCycles 960 '
+            '-PollIntervalSeconds 30 -TimeoutSeconds 600 '
+            '-StateDir "%LOCALAPPDATA%\\LocalAIWorkbench\\BridgeOperator"'
+        ),
+        "",
+    ]
+    return "\r\n".join(lines).encode()
+
+
 def powershell() -> str:
     found = shutil.which("powershell.exe") or shutil.which("powershell")
     if not found:
@@ -96,17 +124,53 @@ def test_enable_is_deterministic_bomless_exact_and_idempotent(tmp_path):
     assert managed.read_bytes() == first_bytes
     assert not first_bytes.startswith(b"\xef\xbb\xbf")
     text = first_bytes.decode("utf-8")
-    assert "LAWBRIDGE-B3C-STARTUP-MANAGED" in text
-    assert f'-File "{ROOT}\\scripts\\start_bridge_operator_b3c.ps1"' in text
-    assert (
-        "-StartForeground -PublishStatus -MaxCycles 960 "
-        "-PollIntervalSeconds 30"
-    ) in text
+    assert "LAWB-WORKFLOW-RUNTIME-STARTUP-MANAGED" in text
+    assert f'-File "{ROOT}\\scripts\\start_workflow_runtime.ps1"' in text
+    assert "-WindowStyle Hidden" in text
+    assert 'start "" /b ' in text
+    assert "-MaxCycles 960 -PollIntervalSeconds 30" in text
     assert re.search(r"(?<!\d)-MaxCycles 1(?!\d)", text) is None
     assert "-TimeoutSeconds 600" in text
+    assert "-PanelPort 8765" in text
     assert '-StateDir "%LOCALAPPDATA%\\LocalAIWorkbench\\BridgeOperator"' in text
-    assert "start \"Local AI Workbench Bridge Operator\"" in text
     assert "WindowsPowerShell\\v1.0\\powershell.exe" in text
+
+
+def test_exact_v1_content_is_safely_migrated_and_then_idempotent(tmp_path):
+    startup = tmp_path / "startup"
+    startup.mkdir()
+    managed = startup / MANAGED_NAME
+    original = legacy_v1_bytes()
+    managed.write_bytes(original)
+
+    status, status_summary = run_adapter(startup, "-Status")
+    migrated, migrated_summary = run_adapter(startup, "-Enable")
+    repeated, repeated_summary = run_adapter(startup, "-Enable")
+
+    assert status.returncode == migrated.returncode == repeated.returncode == 0
+    assert status_summary["state"] == "legacy_v1"
+    assert status_summary["changed"] is False
+    assert migrated_summary["state"] == "exact_enabled"
+    assert migrated_summary["changed"] is True
+    assert migrated_summary["reason"] == "migrated_v1_to_v2"
+    assert repeated_summary["changed"] is False
+    assert repeated_summary["reason"] == "already_enabled"
+    assert managed.read_bytes() != original
+    assert b"LAWB-WORKFLOW-RUNTIME-STARTUP-MANAGED" in managed.read_bytes()
+
+
+def test_exact_v1_content_is_recognized_for_safe_disable(tmp_path):
+    startup = tmp_path / "startup"
+    startup.mkdir()
+    managed = startup / MANAGED_NAME
+    managed.write_bytes(legacy_v1_bytes())
+
+    disabled, summary = run_adapter(startup, "-Disable")
+
+    assert disabled.returncode == 0
+    assert summary["state"] == "absent"
+    assert summary["changed"] is True
+    assert not managed.exists()
 
 
 def test_exact_status_and_exact_only_disable_are_idempotent(tmp_path):
@@ -179,7 +243,10 @@ def test_test_override_is_rejected_without_explicit_test_environment(tmp_path):
 
 
 def test_source_contains_no_alternate_persistence_or_sensitive_behavior():
-    text = SCRIPT.read_text(encoding="utf-8")
+    runtime_script = ROOT / "scripts" / "start_workflow_runtime.ps1"
+    text = SCRIPT.read_text(encoding="utf-8") + runtime_script.read_text(
+        encoding="utf-8"
+    )
     lowered = text.lower()
     for forbidden in (
         "scheduledtasks",
@@ -191,6 +258,8 @@ def test_source_contains_no_alternate_persistence_or_sensitive_behavior():
         "github_token",
         "openai_api_key",
         "get-childitem env:",
+        "stop-process",
+        "taskkill",
     ):
         assert forbidden not in lowered
 
