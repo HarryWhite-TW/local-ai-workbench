@@ -673,16 +673,19 @@ function Stop-OwnedPanelRuntime {
                 -ExpectedObservationStore $ExpectedObservationStore)) {
             [System.Diagnostics.Process]::GetProcessById($listenerProcessId).Kill()
         }
-        if (-not $LauncherProcess.HasExited) {
+        $launcherExited = $LauncherProcess.HasExited
+        if (-not $launcherExited) {
             $LauncherProcess.Kill()
+            $launcherExited = $LauncherProcess.WaitForExit(2000)
         }
-        [void]$LauncherProcess.WaitForExit(2000)
         Start-Sleep -Milliseconds 100
         $remainingListeners = @(
             Get-NetTCPConnection -LocalPort $PanelPort -State Listen `
                 -ErrorAction SilentlyContinue
         )
-        if ($remainingListeners.Count -eq 0) { return "stopped" }
+        if ($launcherExited -and $remainingListeners.Count -eq 0) {
+            return "stopped"
+        }
     }
     catch {}
     return "residual_unverified"
@@ -880,22 +883,19 @@ try {
         " -TimeoutSeconds " + $TimeoutSeconds +
         " -StateDir " + (ConvertTo-QuotedArgument -Value $ResolvedStateDir)
     )
-    $operatorAction = "launching"
-    $operatorCapture = Start-HiddenPowerShellCaptured `
-        -LauncherPath $OperatorLauncher -Arguments $operatorArguments
+    try {
+        $operatorCapture = Start-HiddenPowerShellCaptured `
+            -LauncherPath $OperatorLauncher -Arguments $operatorArguments
+    }
+    catch {
+        $operatorAction = "launch_failed"
+        throw "operator_launch_failed"
+    }
     $operatorProcess = $operatorCapture.process
     $operatorProcessId = $operatorProcess.Id
     $operatorAction = "started"
     $processesStarted = $true
-    $exitedQuickly = $operatorProcess.WaitForExit(500)
-    if (-not $exitedQuickly) {
-        Write-Summary -Result "started" -Reason "operator_running" `
-            -PanelAction $panelAction -OperatorAction "started" `
-            -ProcessesStarted $processesStarted -TargetRepoRoot $targetRoot `
-            -PanelOwnership $panelOwnership -PanelProcessId $panelProcessId `
-            -PanelCleanup $panelCleanup -OperatorProcessId $operatorProcessId
-        $operatorProcess.WaitForExit()
-    }
+    $operatorProcess.WaitForExit()
     try {
         $operatorStandardOutput = [string]$operatorCapture.stdout_task.Result
         [void]$operatorCapture.stderr_task.Result

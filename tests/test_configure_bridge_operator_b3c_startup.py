@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -10,7 +11,7 @@ from pathlib import Path
 import pytest
 
 
-pytestmark = pytest.mark.skipif(
+requires_windows = pytest.mark.skipif(
     os.name != "nt", reason="Windows Startup adapter tests require Windows"
 )
 
@@ -81,6 +82,7 @@ def run_adapter(startup: Path, *args: str):
     return result, json.loads(result.stdout)
 
 
+@requires_windows
 def test_operations_are_mutually_exclusive_and_no_operation_is_blocked(tmp_path):
     startup = tmp_path / "startup"
     startup.mkdir()
@@ -92,6 +94,7 @@ def test_operations_are_mutually_exclusive_and_no_operation_is_blocked(tmp_path)
         assert not (startup / MANAGED_NAME).exists()
 
 
+@requires_windows
 def test_absent_status_is_read_only(tmp_path):
     startup = tmp_path / "startup"
     startup.mkdir()
@@ -103,6 +106,7 @@ def test_absent_status_is_read_only(tmp_path):
     assert set(startup.iterdir()) == before
 
 
+@requires_windows
 def test_enable_is_deterministic_bomless_exact_and_idempotent(tmp_path):
     startup = tmp_path / "startup with spaces"
     startup.mkdir()
@@ -141,6 +145,7 @@ def test_enable_is_deterministic_bomless_exact_and_idempotent(tmp_path):
     assert "WindowsPowerShell\\v1.0\\powershell.exe" in text
 
 
+@requires_windows
 def test_exact_v1_content_is_safely_migrated_and_then_idempotent(tmp_path):
     startup = tmp_path / "startup"
     startup.mkdir()
@@ -164,6 +169,7 @@ def test_exact_v1_content_is_safely_migrated_and_then_idempotent(tmp_path):
     assert b"LAWB-WORKFLOW-RUNTIME-STARTUP-MANAGED" in managed.read_bytes()
 
 
+@requires_windows
 def test_exact_v1_content_is_recognized_for_safe_disable(tmp_path):
     startup = tmp_path / "startup"
     startup.mkdir()
@@ -178,6 +184,7 @@ def test_exact_v1_content_is_recognized_for_safe_disable(tmp_path):
     assert not managed.exists()
 
 
+@requires_windows
 def test_exact_status_and_exact_only_disable_are_idempotent(tmp_path):
     startup = tmp_path / "startup"
     startup.mkdir()
@@ -193,6 +200,7 @@ def test_exact_status_and_exact_only_disable_are_idempotent(tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["unrecognized", "drifted"])
+@requires_windows
 def test_unrecognized_or_drifted_file_reports_and_blocks_enable_disable(
     tmp_path, kind
 ):
@@ -217,6 +225,7 @@ def test_unrecognized_or_drifted_file_reports_and_blocks_enable_disable(
         assert managed.read_bytes() == original
 
 
+@requires_windows
 def test_test_override_is_rejected_without_explicit_test_environment(tmp_path):
     startup = tmp_path / "startup"
     startup.mkdir()
@@ -271,6 +280,20 @@ def test_source_contains_no_alternate_persistence_or_sensitive_behavior():
 
 def test_tests_use_only_the_temporary_startup_seam():
     source = Path(__file__).read_text(encoding="utf-8")
+    assert re.search(r"(?m)^pytestmark\s*=", source) is None
+    module = ast.parse(source)
+    windows_only = {
+        node.name
+        for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(
+            isinstance(decorator, ast.Name) and decorator.id == "requires_windows"
+            for decorator in node.decorator_list
+        )
+    }
+    assert "test_operations_are_mutually_exclusive_and_no_operation_is_blocked" in windows_only
+    assert "test_source_contains_no_alternate_persistence_or_sensitive_behavior" not in windows_only
+    assert "test_tests_use_only_the_temporary_startup_seam" not in windows_only
     assert "LAWB_STARTUP_ADAPTER_TEST_ONLY" in source
     assert "-TestOnlyStartupDirectory" in source
     assert "run_adapter(startup" in source

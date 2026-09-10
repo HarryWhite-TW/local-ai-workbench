@@ -353,6 +353,7 @@ def test_test_only_plan_requires_explicit_environment_guard():
                 "operator_action": "launch_failed",
                 "panel_ownership": "owned",
                 "panel_cleanup": "stopped",
+                "operator_process_id": 0,
                 "processes_started": True,
             },
         ),
@@ -363,6 +364,7 @@ def test_test_only_plan_requires_explicit_environment_guard():
                 "operator_action": "launch_failed",
                 "panel_ownership": "reused",
                 "panel_cleanup": "not_owned",
+                "operator_process_id": 0,
                 "processes_started": False,
             },
         ),
@@ -431,6 +433,7 @@ def test_runtime_preserves_canonical_operator_semantic_result(
     assert summary["panel_action"] == "reused"
     assert summary["panel_ownership"] == "reused"
     assert summary["panel_cleanup"] == "not_owned"
+    assert len(result.stdout.splitlines()) == 1
 
 
 def test_source_preserves_single_authority_and_hidden_loopback_contract():
@@ -459,8 +462,13 @@ def test_source_preserves_single_authority_and_hidden_loopback_contract():
     assert "lawb.bridge_operator_b3c_launcher.v1" in text
     assert "Get-CanonicalOperatorSummary" in text
     assert "$operatorProcess.WaitForExit()" in text
+    assert 'Write-Summary -Result "started"' not in text
+    assert '$operatorAction = "launching"' not in text
+    assert '$operatorAction = "launch_failed"' in text
     assert "Stop-OwnedPanelRuntime" in text
     assert "Test-ProcessDescendsFrom" in text
+    assert "$launcherExited = $LauncherProcess.WaitForExit(2000)" in text
+    assert "$launcherExited -and $remainingListeners.Count -eq 0" in text
     assert "$remainingListeners.Count -eq 0" in text
     assert "terminate only a" in lowered
     assert "never terminates a reused or unknown process" in lowered
