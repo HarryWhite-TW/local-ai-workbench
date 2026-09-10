@@ -26,8 +26,17 @@ param(
     [ValidateSet("", "free", "workflow_panel", "unknown")]
     [string]$TestOnlyPortState = "",
     [string]$TestOnlyTargetRepoRoot = "",
+    [string]$TestOnlyControlRepoRoot = "",
     [string]$TestOnlyPanelCommandLine = "",
-    [string]$TestOnlyPanelLineagePath = ""
+    [string]$TestOnlyPanelLineagePath = "",
+    [ValidateSet(
+        "",
+        "panel_verification_failed",
+        "operator_launch_failed_owned",
+        "operator_launch_failed_reused",
+        "owned_lifecycle_complete"
+    )]
+    [string]$TestOnlyScenario = ""
 )
 
 Set-StrictMode -Version Latest
@@ -35,10 +44,16 @@ $ErrorActionPreference = "Stop"
 
 $Protocol = "lawb.workflow_runtime_startup.v1"
 $Repository = "HarryWhite-TW/local-ai-workbench"
-$RoutingProtocol = "lawb.bridge_operator_local_routing.v2"
-$ControlRepoRoot = [System.IO.Path]::GetFullPath(
-    (Join-Path -Path $PSScriptRoot -ChildPath "..")
-).TrimEnd("\")
+$RoutingProtocolV1 = "lawb.bridge_operator_local_routing.v1"
+$RoutingProtocolV2 = "lawb.bridge_operator_local_routing.v2"
+$ControlRepoRoot = if ([string]::IsNullOrWhiteSpace($TestOnlyControlRepoRoot)) {
+    [System.IO.Path]::GetFullPath(
+        (Join-Path -Path $PSScriptRoot -ChildPath "..")
+    ).TrimEnd("\")
+}
+else {
+    [System.IO.Path]::GetFullPath($TestOnlyControlRepoRoot).TrimEnd("\")
+}
 $OperatorLauncher = [System.IO.Path]::GetFullPath(
     (Join-Path -Path $PSScriptRoot -ChildPath "start_bridge_operator_b3c.ps1")
 )
@@ -92,7 +107,13 @@ function Write-Summary {
         [Parameter(Mandatory = $true)][string]$PanelAction,
         [Parameter(Mandatory = $true)][string]$OperatorAction,
         [Parameter(Mandatory = $true)][bool]$ProcessesStarted,
-        [AllowEmptyString()][string]$TargetRepoRoot = ""
+        [AllowEmptyString()][string]$TargetRepoRoot = "",
+        [ValidateSet("none", "owned", "reused")]
+        [string]$PanelOwnership = "none",
+        [int]$PanelProcessId = 0,
+        [ValidateSet("not_needed", "scheduled", "stopped", "residual_unverified", "not_owned")]
+        [string]$PanelCleanup = "not_needed",
+        [int]$OperatorProcessId = 0
     )
     $summary = [ordered]@{
         protocol = $Protocol
@@ -104,6 +125,10 @@ function Write-Summary {
         repository = $Repository
         control_repo_root = $ControlRepoRoot
         target_repo_root = $TargetRepoRoot
+        panel_ownership = $PanelOwnership
+        panel_process_id = $PanelProcessId
+        panel_cleanup = $PanelCleanup
+        operator_process_id = $OperatorProcessId
         panel_host = "127.0.0.1"
         panel_port = $PanelPort
         max_cycles = $MaxCycles
@@ -139,46 +164,115 @@ function Get-ExactPropertyNames {
     return @($Value.PSObject.Properties.Name | Sort-Object)
 }
 
+function Test-FullyQualifiedLocalWindowsPath {
+    param([AllowNull()][object]$Path)
+    if ($Path -isnot [string] -or [string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+    return [System.Text.RegularExpressions.Regex]::IsMatch(
+        $Path,
+        "\A[A-Za-z]:[\\/]"
+    )
+}
+
 function Resolve-TargetRuntime {
     if (-not [string]::IsNullOrWhiteSpace($TestOnlyTargetRepoRoot)) {
         return [System.IO.Path]::GetFullPath($TestOnlyTargetRepoRoot).TrimEnd("\")
     }
 
     $routingPath = Join-Path -Path $ResolvedStateDir -ChildPath "repository_routing.json"
+    if (-not (Test-Path -LiteralPath $routingPath)) {
+        return Test-TargetRuntime `
+            -TargetRoot $ControlRepoRoot -ExpectedBranch "" -ExpectedHead ""
+    }
     if (-not (Test-Path -LiteralPath $routingPath -PathType Leaf)) {
-        throw "repository_routing_missing"
+        throw "repository_routing_invalid"
     }
     try {
-        $routing = Get-Content -LiteralPath $routingPath -Raw | ConvertFrom-Json
+        $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+        $routingText = $strictUtf8.GetString(
+            [System.IO.File]::ReadAllBytes($routingPath)
+        )
+        $routing = $routingText | ConvertFrom-Json
     }
     catch {
         throw "repository_routing_invalid"
     }
     $rootNames = @(Get-ExactPropertyNames -Value $routing)
-    $selected = $routing.selected_target
-    if ($null -eq $selected) {
+    if (-not [string]::Equals(
+        [string]$routing.repository,
+        $Repository,
+        [System.StringComparison]::Ordinal
+    )) {
+        throw "repository_routing_repository_mismatch"
+    }
+    if ([string]::Equals(
+        [string]$routing.protocol,
+        $RoutingProtocolV1,
+        [System.StringComparison]::Ordinal
+    )) {
+        if (($rootNames -join ",") -ne "protocol,repository,target_repo_root" -or
+            [string]::IsNullOrWhiteSpace([string]$routing.target_repo_root)) {
+            throw "repository_routing_invalid"
+        }
+        return Test-TargetRuntime `
+            -TargetRoot ([string]$routing.target_repo_root) `
+            -ExpectedBranch "" -ExpectedHead ""
+    }
+    if (-not [string]::Equals(
+            [string]$routing.protocol,
+            $RoutingProtocolV2,
+            [System.StringComparison]::Ordinal
+        ) -or
+        ($rootNames -join ",") -ne "protocol,repository,selected_target") {
         throw "repository_routing_invalid"
     }
+    $selected = $routing.selected_target
+    if ($null -eq $selected) { throw "repository_routing_no_safe_target" }
     $selectedNames = @(Get-ExactPropertyNames -Value $selected)
-    if (($rootNames -join ",") -ne "protocol,repository,selected_target" -or
-        ($selectedNames -join ",") -ne "branch,head,selection_id,target_repo_root" -or
-        $routing.protocol -ne $RoutingProtocol -or
-        $routing.repository -ne $Repository -or
-        $selected.branch -ne "master" -or
-        [string]::IsNullOrWhiteSpace([string]$selected.head) -or
-        [string]::IsNullOrWhiteSpace([string]$selected.selection_id) -or
+    if (($selectedNames -join ",") -ne "branch,head,selection_id,target_repo_root" -or
+        [string]$selected.selection_id -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or
+        [string]$selected.branch -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]*$' -or
+        [string]$selected.head -notmatch '^[0-9a-fA-F]{40}$' -or
         [string]::IsNullOrWhiteSpace([string]$selected.target_repo_root)) {
         throw "repository_routing_invalid"
     }
+    return Test-TargetRuntime `
+        -TargetRoot ([string]$selected.target_repo_root) `
+        -ExpectedBranch ([string]$selected.branch) `
+        -ExpectedHead ([string]$selected.head).ToLowerInvariant()
+}
 
-    $targetRoot = [System.IO.Path]::GetFullPath(
-        [string]$selected.target_repo_root
-    ).TrimEnd("\")
+function Test-TargetRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$TargetRoot,
+        [AllowEmptyString()][string]$ExpectedBranch,
+        [AllowEmptyString()][string]$ExpectedHead
+    )
+    try {
+        if (-not (Test-FullyQualifiedLocalWindowsPath -Path $TargetRoot)) {
+            throw "target_runtime_path_invalid"
+        }
+        $targetRoot = [System.IO.Path]::GetFullPath($TargetRoot).TrimEnd("\")
+    }
+    catch {
+        throw "target_runtime_path_invalid"
+    }
     if (-not (Test-Path -LiteralPath (Join-Path $targetRoot ".git"))) {
         throw "target_runtime_not_git_repository"
     }
     $head = (& git -C $targetRoot rev-parse HEAD 2>$null | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $head -ne [string]$selected.head) {
+    if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "target_runtime_head_unavailable"
+    }
+    $branch = (& git -C $targetRoot branch --show-current 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "target_runtime_branch_unavailable" }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedBranch) -and
+        $branch -cne $ExpectedBranch) {
+        throw "target_runtime_branch_mismatch"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedHead) -and
+        $head -cne $ExpectedHead) {
         throw "target_runtime_head_mismatch"
     }
     $status = @(& git -C $targetRoot status --porcelain=v1 --untracked-files=all 2>$null)
@@ -431,11 +525,76 @@ function Start-HiddenPowerShell {
         -ArgumentList $argumentLine -WindowStyle Hidden -PassThru
 }
 
+function Get-LoopbackPanelListenerProcessId {
+    $listeners = @(
+        Get-NetTCPConnection -LocalPort $PanelPort -State Listen `
+            -ErrorAction SilentlyContinue
+    )
+    if ($listeners.Count -ne 1 -or $listeners[0].LocalAddress -ne "127.0.0.1") {
+        return 0
+    }
+    return [int]$listeners[0].OwningProcess
+}
+
+function Test-ProcessDescendsFrom {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][int]$ExpectedAncestorProcessId
+    )
+    $currentId = $ProcessId
+    for ($depth = 0; $depth -lt 8 -and $currentId -gt 0; $depth++) {
+        if ($currentId -eq $ExpectedAncestorProcessId) { return $true }
+        $current = Get-CimInstance Win32_Process -Filter "ProcessId=$currentId" `
+            -ErrorAction SilentlyContinue
+        if ($null -eq $current) { return $false }
+        $currentId = [int]$current.ParentProcessId
+    }
+    return $false
+}
+
+function Stop-OwnedPanelRuntime {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Diagnostics.Process]$LauncherProcess,
+        [Parameter(Mandatory = $true)][string]$TargetRepoRoot,
+        [Parameter(Mandatory = $true)][string]$ExpectedStateDir,
+        [Parameter(Mandatory = $true)][string]$ExpectedObservationStore
+    )
+    try {
+        $listenerProcessId = Get-LoopbackPanelListenerProcessId
+        if ($listenerProcessId -gt 0 -and
+            (Test-ProcessDescendsFrom `
+                -ProcessId $listenerProcessId `
+                -ExpectedAncestorProcessId $LauncherProcess.Id) -and
+            (Test-CanonicalPanelProcess `
+                -ProcessId $listenerProcessId `
+                -TargetRepoRoot $TargetRepoRoot `
+                -ExpectedStateDir $ExpectedStateDir `
+                -ExpectedObservationStore $ExpectedObservationStore)) {
+            [System.Diagnostics.Process]::GetProcessById($listenerProcessId).Kill()
+        }
+        if (-not $LauncherProcess.HasExited) {
+            $LauncherProcess.Kill()
+        }
+        [void]$LauncherProcess.WaitForExit(2000)
+        Start-Sleep -Milliseconds 100
+        $remainingListeners = @(
+            Get-NetTCPConnection -LocalPort $PanelPort -State Listen `
+                -ErrorAction SilentlyContinue
+        )
+        if ($remainingListeners.Count -eq 0) { return "stopped" }
+    }
+    catch {}
+    return "residual_unverified"
+}
+
 $testOverrideRequested = (
     -not [string]::IsNullOrWhiteSpace($TestOnlyPortState) -or
     -not [string]::IsNullOrWhiteSpace($TestOnlyTargetRepoRoot) -or
+    -not [string]::IsNullOrWhiteSpace($TestOnlyControlRepoRoot) -or
     -not [string]::IsNullOrWhiteSpace($TestOnlyPanelCommandLine) -or
-    -not [string]::IsNullOrWhiteSpace($TestOnlyPanelLineagePath)
+    -not [string]::IsNullOrWhiteSpace($TestOnlyPanelLineagePath) -or
+    -not [string]::IsNullOrWhiteSpace($TestOnlyScenario)
 )
 if ($testOverrideRequested -and
     [Environment]::GetEnvironmentVariable("LAWB_WORKFLOW_RUNTIME_TEST_ONLY") -ne "1") {
@@ -444,6 +603,16 @@ if ($testOverrideRequested -and
         -ProcessesStarted $false
     exit 2
 }
+
+$targetRoot = ""
+$panelAction = "not_started"
+$operatorAction = "not_started"
+$processesStarted = $false
+$panelOwnership = "none"
+$panelProcessId = 0
+$operatorProcessId = 0
+$panelCleanup = "not_needed"
+$panelLauncherProcess = $null
 
 try {
     if ([string]::IsNullOrWhiteSpace($StateDir)) {
@@ -467,13 +636,46 @@ try {
         throw "canonical_panel_launcher_invalid"
     }
     $storePath = Join-Path $ResolvedStateDir "observability\events.jsonl"
+    if (-not [string]::IsNullOrWhiteSpace($TestOnlyScenario)) {
+        if ($TestOnlyScenario -eq "panel_verification_failed") {
+            Write-Summary -Result "blocked" `
+                -Reason "workflow_panel_start_not_verified" `
+                -PanelAction "started_unverified" -OperatorAction "not_started" `
+                -ProcessesStarted $true -TargetRepoRoot $targetRoot `
+                -PanelOwnership "owned" -PanelProcessId 41001 `
+                -PanelCleanup "residual_unverified"
+            exit 2
+        }
+        if ($TestOnlyScenario -eq "operator_launch_failed_owned") {
+            Write-Summary -Result "blocked" -Reason "operator_launch_failed" `
+                -PanelAction "started" -OperatorAction "launch_failed" `
+                -ProcessesStarted $true -TargetRepoRoot $targetRoot `
+                -PanelOwnership "owned" -PanelProcessId 41001 `
+                -PanelCleanup "stopped"
+            exit 2
+        }
+        if ($TestOnlyScenario -eq "operator_launch_failed_reused") {
+            Write-Summary -Result "blocked" -Reason "operator_launch_failed" `
+                -PanelAction "reused" -OperatorAction "launch_failed" `
+                -ProcessesStarted $false -TargetRepoRoot $targetRoot `
+                -PanelOwnership "reused" -PanelProcessId 41002 `
+                -PanelCleanup "not_owned"
+            exit 2
+        }
+        Write-Summary -Result "completed" -Reason "operator_exited" `
+            -PanelAction "started" -OperatorAction "completed" `
+            -ProcessesStarted $true -TargetRepoRoot $targetRoot `
+            -PanelOwnership "owned" -PanelProcessId 41001 `
+            -PanelCleanup "stopped" -OperatorProcessId 41003
+        exit 0
+    }
     $portState = Get-PanelPortState `
         -TargetRepoRoot $targetRoot `
         -ExpectedStateDir $ResolvedStateDir `
         -ExpectedObservationStore $storePath
     if ($portState -eq "unknown") {
         Write-Summary -Result "blocked" -Reason "panel_port_occupied_unknown" `
-            -PanelAction "blocked" -OperatorAction "blocked" `
+            -PanelAction "blocked" -OperatorAction "not_started" `
             -ProcessesStarted $false -TargetRepoRoot $targetRoot
         exit 2
     }
@@ -487,15 +689,20 @@ try {
     }
 
     $panelAction = "reused"
+    $panelOwnership = "reused"
+    $panelCleanup = "not_owned"
     if ($portState -eq "free") {
         $panelArguments = (
             "-StateDir " + (ConvertTo-QuotedArgument -Value $ResolvedStateDir) +
             " -ObservationStore " + (ConvertTo-QuotedArgument -Value $storePath) +
             " -Port " + $PanelPort
         )
-        [void](Start-HiddenPowerShell `
-            -LauncherPath $panelLauncher -Arguments $panelArguments)
-        $panelAction = "started"
+        $panelLauncherProcess = Start-HiddenPowerShell `
+            -LauncherPath $panelLauncher -Arguments $panelArguments
+        $processesStarted = $true
+        $panelOwnership = "owned"
+        $panelCleanup = "scheduled"
+        $panelAction = "started_unverified"
         $verified = $false
         for ($attempt = 0; $attempt -lt 50; $attempt++) {
             Start-Sleep -Milliseconds 200
@@ -510,6 +717,17 @@ try {
         if (-not $verified) {
             throw "workflow_panel_start_not_verified"
         }
+        $panelProcessId = Get-LoopbackPanelListenerProcessId
+        if ($panelProcessId -le 0 -or
+            -not (Test-ProcessDescendsFrom `
+                -ProcessId $panelProcessId `
+                -ExpectedAncestorProcessId $panelLauncherProcess.Id)) {
+            throw "workflow_panel_ownership_not_verified"
+        }
+        $panelAction = "started"
+    }
+    else {
+        $panelProcessId = Get-LoopbackPanelListenerProcessId
     }
 
     $operatorArguments = (
@@ -519,16 +737,58 @@ try {
         " -TimeoutSeconds " + $TimeoutSeconds +
         " -StateDir " + (ConvertTo-QuotedArgument -Value $ResolvedStateDir)
     )
-    [void](Start-HiddenPowerShell `
-        -LauncherPath $OperatorLauncher -Arguments $operatorArguments)
+    $operatorAction = "launching"
+    $operatorProcess = Start-HiddenPowerShell `
+        -LauncherPath $OperatorLauncher -Arguments $operatorArguments
+    $operatorProcessId = $operatorProcess.Id
+    $operatorAction = "started"
+    $processesStarted = $true
+    if ($operatorProcess.WaitForExit(500) -and $operatorProcess.ExitCode -ne 0) {
+        $operatorAction = "launch_failed"
+        throw "operator_launcher_failed_exit_code_$($operatorProcess.ExitCode)"
+    }
     Write-Summary -Result "started" -Reason "none" `
         -PanelAction $panelAction -OperatorAction "started" `
-        -ProcessesStarted $true -TargetRepoRoot $targetRoot
-    exit 0
+        -ProcessesStarted $processesStarted -TargetRepoRoot $targetRoot `
+        -PanelOwnership $panelOwnership -PanelProcessId $panelProcessId `
+        -PanelCleanup $panelCleanup -OperatorProcessId $operatorProcessId
+    if (-not $operatorProcess.HasExited) { $operatorProcess.WaitForExit() }
+    if ($panelOwnership -eq "owned") {
+        $panelCleanup = Stop-OwnedPanelRuntime `
+            -LauncherProcess $panelLauncherProcess `
+            -TargetRepoRoot $targetRoot `
+            -ExpectedStateDir $ResolvedStateDir `
+            -ExpectedObservationStore $storePath
+    }
+    $finalResult = "completed"
+    $finalReason = "operator_exited"
+    $operatorAction = "completed"
+    $finalExitCode = 0
+    if ($operatorProcess.ExitCode -ne 0) {
+        $finalResult = "blocked"
+        $finalReason = "operator_launcher_failed_exit_code_$($operatorProcess.ExitCode)"
+        $operatorAction = "failed"
+        $finalExitCode = 2
+    }
+    Write-Summary -Result $finalResult -Reason $finalReason `
+        -PanelAction $panelAction -OperatorAction $operatorAction `
+        -ProcessesStarted $processesStarted -TargetRepoRoot $targetRoot `
+        -PanelOwnership $panelOwnership -PanelProcessId $panelProcessId `
+        -PanelCleanup $panelCleanup -OperatorProcessId $operatorProcessId
+    exit $finalExitCode
 }
 catch {
+    if ($panelOwnership -eq "owned" -and $null -ne $panelLauncherProcess) {
+        $panelCleanup = Stop-OwnedPanelRuntime `
+            -LauncherProcess $panelLauncherProcess `
+            -TargetRepoRoot $targetRoot `
+            -ExpectedStateDir $ResolvedStateDir `
+            -ExpectedObservationStore $storePath
+    }
     Write-Summary -Result "blocked" -Reason $_.Exception.Message `
-        -PanelAction "blocked" -OperatorAction "blocked" `
-        -ProcessesStarted $false
+        -PanelAction $panelAction -OperatorAction $operatorAction `
+        -ProcessesStarted $processesStarted -TargetRepoRoot $targetRoot `
+        -PanelOwnership $panelOwnership -PanelProcessId $panelProcessId `
+        -PanelCleanup $panelCleanup -OperatorProcessId $operatorProcessId
     exit 2
 }

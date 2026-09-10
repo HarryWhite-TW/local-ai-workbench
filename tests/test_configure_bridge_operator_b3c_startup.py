@@ -10,6 +10,11 @@ from pathlib import Path
 import pytest
 
 
+pytestmark = pytest.mark.skipif(
+    os.name != "nt", reason="Windows Startup adapter tests require Windows"
+)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "configure_bridge_operator_b3c_startup.ps1"
 MANAGED_NAME = "LocalAIWorkbench-BridgeOperator-B3C.cmd"
