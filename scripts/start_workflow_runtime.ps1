@@ -9,7 +9,9 @@ Bridge Operator launcher. The existing Operator lock and lifecycle contracts
 remain the sole authority for whether one effective Operator may run.
 
 This helper does not create persistence, change routing, modify lifecycle
-files, kill processes, select another port, or invoke GitHub directly.
+files, select another port, or invoke GitHub directly. It may terminate only a
+Panel that this invocation started and then positively re-verifies as owned;
+it never terminates a reused or unknown process.
 #>
 
 [CmdletBinding()]
@@ -34,7 +36,13 @@ param(
         "panel_verification_failed",
         "operator_launch_failed_owned",
         "operator_launch_failed_reused",
-        "owned_lifecycle_complete"
+        "owned_lifecycle_complete",
+        "owned_lifecycle_residual",
+        "panel_launch_failed",
+        "operator_waiting_review",
+        "operator_running",
+        "operator_completed",
+        "operator_blocked"
     )]
     [string]$TestOnlyScenario = ""
 )
@@ -175,6 +183,19 @@ function Test-FullyQualifiedLocalWindowsPath {
     )
 }
 
+function ConvertTo-NormalizedRepository {
+    param([AllowNull()][string]$Origin)
+    if ([string]::IsNullOrWhiteSpace($Origin)) { return "" }
+    $value = $Origin.Trim()
+    if ($value -match '^(?i)https://github\.com/([^/]+/[^/]+?)(?:\.git)?/?$') {
+        return $Matches[1]
+    }
+    if ($value -match '^(?i)(?:ssh://)?git@github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$') {
+        return $Matches[1]
+    }
+    return ""
+}
+
 function Resolve-TargetRuntime {
     if (-not [string]::IsNullOrWhiteSpace($TestOnlyTargetRepoRoot)) {
         return [System.IO.Path]::GetFullPath($TestOnlyTargetRepoRoot).TrimEnd("\")
@@ -260,6 +281,20 @@ function Test-TargetRuntime {
     }
     if (-not (Test-Path -LiteralPath (Join-Path $targetRoot ".git"))) {
         throw "target_runtime_not_git_repository"
+    }
+    $observedRoot = (& git -C $targetRoot rev-parse --show-toplevel 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or
+        -not (Test-ExactWindowsPath -Observed $observedRoot -Expected $targetRoot)) {
+        throw "target_runtime_git_root_mismatch"
+    }
+    $origin = (& git -C $targetRoot remote get-url origin 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or
+        -not [string]::Equals(
+            (ConvertTo-NormalizedRepository -Origin $origin),
+            $Repository,
+            [System.StringComparison]::Ordinal
+        )) {
+        throw "target_runtime_origin_mismatch"
     }
     $head = (& git -C $targetRoot rev-parse HEAD 2>$null | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-fA-F]{40}$') {
@@ -525,6 +560,71 @@ function Start-HiddenPowerShell {
         -ArgumentList $argumentLine -WindowStyle Hidden -PassThru
 }
 
+function Start-HiddenPowerShellCaptured {
+    param(
+        [Parameter(Mandatory = $true)][string]$LauncherPath,
+        [Parameter(Mandatory = $true)][string]$Arguments
+    )
+    $powerShellPath = Join-Path $env:SystemRoot `
+        "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $powerShellPath
+    $startInfo.Arguments = (
+        "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden " +
+        "-ExecutionPolicy Bypass -File " +
+        (ConvertTo-QuotedArgument -Value $LauncherPath) + " " +
+        $Arguments
+    )
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    $startInfo.StandardOutputEncoding = $strictUtf8
+    $startInfo.StandardErrorEncoding = $strictUtf8
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) { throw "operator_launcher_process_not_started" }
+    return [pscustomobject]@{
+        process = $process
+        stdout_task = $process.StandardOutput.ReadToEndAsync()
+        stderr_task = $process.StandardError.ReadToEndAsync()
+    }
+}
+
+function Get-CanonicalOperatorSummary {
+    param(
+        [Parameter(Mandatory = $true)][string]$StandardOutput,
+        [Parameter(Mandatory = $true)][string]$ExpectedStateDir,
+        [Parameter(Mandatory = $true)][string]$ExpectedTargetRepoRoot
+    )
+    try {
+        $lines = @($StandardOutput -split "`r?`n" | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        })
+        if ($lines.Count -ne 1) { throw "operator_summary_line_count_invalid" }
+        $summary = $lines[0] | ConvertFrom-Json
+    }
+    catch {
+        throw "operator_summary_invalid"
+    }
+    $allowedResults = @("running", "waiting_review", "completed", "blocked")
+    if ($summary.protocol -cne "lawb.bridge_operator_b3c_launcher.v1" -or
+        $summary.repository -cne $Repository -or
+        $summary.launch_requested -ne $true -or
+        [string]$summary.result -cnotin $allowedResults -or
+        -not (Test-ExactWindowsPath `
+            -Observed ([string]$summary.state_dir) `
+            -Expected $ExpectedStateDir) -or
+        -not (Test-ExactWindowsPath `
+            -Observed ([string]$summary.target_repo_root) `
+            -Expected $ExpectedTargetRepoRoot)) {
+        throw "operator_summary_invalid"
+    }
+    return $summary
+}
+
 function Get-LoopbackPanelListenerProcessId {
     $listeners = @(
         Get-NetTCPConnection -LocalPort $PanelPort -State Listen `
@@ -637,6 +737,13 @@ try {
     }
     $storePath = Join-Path $ResolvedStateDir "observability\events.jsonl"
     if (-not [string]::IsNullOrWhiteSpace($TestOnlyScenario)) {
+        if ($TestOnlyScenario -eq "panel_launch_failed") {
+            Write-Summary -Result "blocked" -Reason "panel_launch_failed" `
+                -PanelAction "starting" -OperatorAction "not_started" `
+                -ProcessesStarted $false -TargetRepoRoot $targetRoot `
+                -PanelOwnership "none" -PanelCleanup "not_needed"
+            exit 2
+        }
         if ($TestOnlyScenario -eq "panel_verification_failed") {
             Write-Summary -Result "blocked" `
                 -Reason "workflow_panel_start_not_verified" `
@@ -662,11 +769,44 @@ try {
                 -PanelCleanup "not_owned"
             exit 2
         }
-        Write-Summary -Result "completed" -Reason "operator_exited" `
-            -PanelAction "started" -OperatorAction "completed" `
+        if ($TestOnlyScenario -eq "owned_lifecycle_residual") {
+            Write-Summary -Result "blocked" `
+                -Reason "owned_panel_cleanup_residual_unverified" `
+                -PanelAction "started" -OperatorAction "completed" `
+                -ProcessesStarted $true -TargetRepoRoot $targetRoot `
+                -PanelOwnership "owned" -PanelProcessId 41001 `
+                -PanelCleanup "residual_unverified" -OperatorProcessId 41003
+            exit 2
+        }
+        if ($TestOnlyScenario -eq "owned_lifecycle_complete") {
+            Write-Summary -Result "completed" -Reason "canonical_operator_result" `
+                -PanelAction "started" -OperatorAction "completed" `
+                -ProcessesStarted $true -TargetRepoRoot $targetRoot `
+                -PanelOwnership "owned" -PanelProcessId 41001 `
+                -PanelCleanup "stopped" -OperatorProcessId 41003
+            exit 0
+        }
+        $testOperatorResult = $TestOnlyScenario.Substring("operator_".Length)
+        $testOperatorJson = [ordered]@{
+            protocol = "lawb.bridge_operator_b3c_launcher.v1"
+            result = $testOperatorResult
+            repository = $Repository
+            launch_requested = $true
+            state_dir = $ResolvedStateDir
+            target_repo_root = $targetRoot
+        } | ConvertTo-Json -Compress
+        $testOperatorSummary = Get-CanonicalOperatorSummary `
+            -StandardOutput $testOperatorJson `
+            -ExpectedStateDir $ResolvedStateDir `
+            -ExpectedTargetRepoRoot $targetRoot
+        Write-Summary -Result ([string]$testOperatorSummary.result) `
+            -Reason "canonical_operator_result" `
+            -PanelAction "reused" `
+            -OperatorAction ([string]$testOperatorSummary.result) `
             -ProcessesStarted $true -TargetRepoRoot $targetRoot `
-            -PanelOwnership "owned" -PanelProcessId 41001 `
-            -PanelCleanup "stopped" -OperatorProcessId 41003
+            -PanelOwnership "reused" -PanelProcessId 41002 `
+            -PanelCleanup "not_owned" -OperatorProcessId 41003
+        if ($testOperatorSummary.result -eq "blocked") { exit 2 }
         exit 0
     }
     $portState = Get-PanelPortState `
@@ -688,10 +828,10 @@ try {
         exit 0
     }
 
-    $panelAction = "reused"
-    $panelOwnership = "reused"
-    $panelCleanup = "not_owned"
     if ($portState -eq "free") {
+        $panelAction = "starting"
+        $panelOwnership = "none"
+        $panelCleanup = "not_needed"
         $panelArguments = (
             "-StateDir " + (ConvertTo-QuotedArgument -Value $ResolvedStateDir) +
             " -ObservationStore " + (ConvertTo-QuotedArgument -Value $storePath) +
@@ -727,6 +867,9 @@ try {
         $panelAction = "started"
     }
     else {
+        $panelAction = "reused"
+        $panelOwnership = "reused"
+        $panelCleanup = "not_owned"
         $panelProcessId = Get-LoopbackPanelListenerProcessId
     }
 
@@ -738,21 +881,32 @@ try {
         " -StateDir " + (ConvertTo-QuotedArgument -Value $ResolvedStateDir)
     )
     $operatorAction = "launching"
-    $operatorProcess = Start-HiddenPowerShell `
+    $operatorCapture = Start-HiddenPowerShellCaptured `
         -LauncherPath $OperatorLauncher -Arguments $operatorArguments
+    $operatorProcess = $operatorCapture.process
     $operatorProcessId = $operatorProcess.Id
     $operatorAction = "started"
     $processesStarted = $true
-    if ($operatorProcess.WaitForExit(500) -and $operatorProcess.ExitCode -ne 0) {
-        $operatorAction = "launch_failed"
-        throw "operator_launcher_failed_exit_code_$($operatorProcess.ExitCode)"
+    $exitedQuickly = $operatorProcess.WaitForExit(500)
+    if (-not $exitedQuickly) {
+        Write-Summary -Result "started" -Reason "operator_running" `
+            -PanelAction $panelAction -OperatorAction "started" `
+            -ProcessesStarted $processesStarted -TargetRepoRoot $targetRoot `
+            -PanelOwnership $panelOwnership -PanelProcessId $panelProcessId `
+            -PanelCleanup $panelCleanup -OperatorProcessId $operatorProcessId
+        $operatorProcess.WaitForExit()
     }
-    Write-Summary -Result "started" -Reason "none" `
-        -PanelAction $panelAction -OperatorAction "started" `
-        -ProcessesStarted $processesStarted -TargetRepoRoot $targetRoot `
-        -PanelOwnership $panelOwnership -PanelProcessId $panelProcessId `
-        -PanelCleanup $panelCleanup -OperatorProcessId $operatorProcessId
-    if (-not $operatorProcess.HasExited) { $operatorProcess.WaitForExit() }
+    try {
+        $operatorStandardOutput = [string]$operatorCapture.stdout_task.Result
+        [void]$operatorCapture.stderr_task.Result
+    }
+    catch {
+        throw "operator_summary_output_undecodable"
+    }
+    $canonicalOperatorSummary = Get-CanonicalOperatorSummary `
+        -StandardOutput $operatorStandardOutput `
+        -ExpectedStateDir $ResolvedStateDir `
+        -ExpectedTargetRepoRoot $targetRoot
     if ($panelOwnership -eq "owned") {
         $panelCleanup = Stop-OwnedPanelRuntime `
             -LauncherProcess $panelLauncherProcess `
@@ -760,14 +914,19 @@ try {
             -ExpectedStateDir $ResolvedStateDir `
             -ExpectedObservationStore $storePath
     }
-    $finalResult = "completed"
-    $finalReason = "operator_exited"
-    $operatorAction = "completed"
-    $finalExitCode = 0
-    if ($operatorProcess.ExitCode -ne 0) {
+    $finalResult = [string]$canonicalOperatorSummary.result
+    $finalReason = "canonical_operator_result"
+    $operatorAction = $finalResult
+    $finalExitCode = if ($finalResult -eq "blocked") { 2 } else { 0 }
+    if (($operatorProcess.ExitCode -eq 0) -ne ($finalResult -ne "blocked")) {
         $finalResult = "blocked"
-        $finalReason = "operator_launcher_failed_exit_code_$($operatorProcess.ExitCode)"
-        $operatorAction = "failed"
+        $finalReason = "operator_exit_summary_mismatch"
+        $operatorAction = "blocked"
+        $finalExitCode = 2
+    }
+    if ($panelCleanup -eq "residual_unverified") {
+        $finalResult = "blocked"
+        $finalReason = "owned_panel_cleanup_residual_unverified"
         $finalExitCode = 2
     }
     Write-Summary -Result $finalResult -Reason $finalReason `

@@ -104,7 +104,12 @@ def run_plan(
     return result, json.loads(result.stdout)
 
 
-def init_runtime_repo(path: Path, *, branch: str) -> str:
+def init_runtime_repo(
+    path: Path,
+    *,
+    branch: str,
+    origin: str = "https://github.com/HarryWhite-TW/local-ai-workbench.git",
+) -> str:
     path.mkdir(parents=True)
     scripts = path / "scripts"
     scripts.mkdir()
@@ -119,6 +124,7 @@ def init_runtime_repo(path: Path, *, branch: str) -> str:
         check=True,
     )
     subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=path, check=True)
+    subprocess.run(["git", "remote", "add", "origin", origin], cwd=path, check=True)
     subprocess.run(["git", "add", "--", "scripts/start_workflow_panel.ps1"], cwd=path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=path, check=True)
     return subprocess.run(
@@ -220,6 +226,33 @@ def test_supported_routing_schemas_accept_non_ascii_target_and_non_master_branch
     assert result.returncode == 0
     assert summary["result"] == "ready"
     assert Path(summary["target_repo_root"]) == target_root
+
+
+def test_routing_v1_rejects_clean_git_repo_with_wrong_origin_before_launch(tmp_path):
+    target_root = tmp_path / "untrusted-runtime"
+    init_runtime_repo(
+        target_root,
+        branch="codex/routed-runtime",
+        origin="https://github.com/example/not-the-canonical-repository.git",
+    )
+    state_dir = tmp_path / "state"
+    write_routing(
+        state_dir,
+        {
+            "protocol": "lawb.bridge_operator_local_routing.v1",
+            "repository": "HarryWhite-TW/local-ai-workbench",
+            "target_repo_root": str(target_root),
+        },
+    )
+
+    result, summary = run_plan("free", state_dir=state_dir, target_repo_root=None)
+
+    assert result.returncode == 2
+    assert summary["result"] == "blocked"
+    assert summary["reason"] == "target_runtime_origin_mismatch"
+    assert summary["panel_action"] == "not_started"
+    assert summary["operator_action"] == "not_started"
+    assert summary["processes_started"] is False
 
 
 @pytest.mark.parametrize(
@@ -343,6 +376,30 @@ def test_test_only_plan_requires_explicit_environment_guard():
                 "processes_started": True,
             },
         ),
+        (
+            "owned_lifecycle_residual",
+            {
+                "result": "blocked",
+                "reason": "owned_panel_cleanup_residual_unverified",
+                "panel_action": "started",
+                "operator_action": "completed",
+                "panel_ownership": "owned",
+                "panel_cleanup": "residual_unverified",
+                "processes_started": True,
+            },
+        ),
+        (
+            "panel_launch_failed",
+            {
+                "result": "blocked",
+                "reason": "panel_launch_failed",
+                "panel_action": "starting",
+                "operator_action": "not_started",
+                "panel_ownership": "none",
+                "panel_cleanup": "not_needed",
+                "processes_started": False,
+            },
+        ),
     ],
 )
 def test_partial_start_and_panel_ownership_summaries_are_truthful(scenario, expected):
@@ -351,6 +408,29 @@ def test_partial_start_and_panel_ownership_summaries_are_truthful(scenario, expe
     assert result.returncode == (0 if scenario == "owned_lifecycle_complete" else 2)
     for key, value in expected.items():
         assert summary[key] == value
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_result", "expected_returncode"),
+    [
+        ("operator_waiting_review", "waiting_review", 0),
+        ("operator_running", "running", 0),
+        ("operator_completed", "completed", 0),
+        ("operator_blocked", "blocked", 2),
+    ],
+)
+def test_runtime_preserves_canonical_operator_semantic_result(
+    scenario, expected_result, expected_returncode
+):
+    result, summary = run_plan("workflow_panel", scenario=scenario)
+
+    assert result.returncode == expected_returncode
+    assert summary["result"] == expected_result
+    assert summary["reason"] == "canonical_operator_result"
+    assert summary["operator_action"] == expected_result
+    assert summary["panel_action"] == "reused"
+    assert summary["panel_ownership"] == "reused"
+    assert summary["panel_cleanup"] == "not_owned"
 
 
 def test_source_preserves_single_authority_and_hidden_loopback_contract():
@@ -373,11 +453,17 @@ def test_source_preserves_single_authority_and_hidden_loopback_contract():
     assert "Start-Process" in text
     assert "-StartForeground -PublishStatus" in text
     assert "target_runtime_head_mismatch" in text
+    assert "target_runtime_git_root_mismatch" in text
+    assert "target_runtime_origin_mismatch" in text
     assert "target_runtime_not_clean" in text
+    assert "lawb.bridge_operator_b3c_launcher.v1" in text
+    assert "Get-CanonicalOperatorSummary" in text
     assert "$operatorProcess.WaitForExit()" in text
     assert "Stop-OwnedPanelRuntime" in text
     assert "Test-ProcessDescendsFrom" in text
     assert "$remainingListeners.Count -eq 0" in text
+    assert "terminate only a" in lowered
+    assert "never terminates a reused or unknown process" in lowered
     for forbidden in (
         "stop-process",
         "taskkill",
