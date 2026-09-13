@@ -95,6 +95,7 @@ def run_runtime(
     state_dir: Path | None = None,
     panel_command: str | None = None,
     panel_lineage: Path | None = None,
+    operator_arguments: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     env = os.environ.copy()
     if enable_guard:
@@ -115,6 +116,7 @@ def run_runtime(
         "-TestOnlyPortState",
         port_state,
     ]
+    arguments.extend(operator_arguments or [])
     if post_launch_state:
         arguments.extend(["-TestOnlyPostLaunchState", post_launch_state])
         if panel_command is None:
@@ -152,6 +154,7 @@ def test_clean_canonical_control_checkout_proceeds(tmp_path: Path):
     assert summary["panel_host"] == "127.0.0.1"
     assert summary["panel_port"] == 8765
     assert summary["panel_lifetime_seconds"] == 43200
+    assert summary["operator_session_window_seconds"] == 28800
 
 
 @pytest.mark.parametrize("pollution", ["dirty", "staged", "untracked"])
@@ -196,6 +199,46 @@ def test_non_root_control_checkout_blocks_before_panel_execution(tmp_path: Path)
     assert summary["reason"] == "control_repository_root_mismatch"
     assert summary["panel_action"] == "not_started"
     assert summary["operator_action"] == "not_started"
+
+
+def test_detached_control_checkout_blocks_before_panel_execution(tmp_path: Path):
+    script, repository = make_control_repo(tmp_path)
+    git(repository, "checkout", "--detach")
+    result, summary = run_runtime(script, tmp_path)
+
+    assert result.returncode == 2
+    assert summary["reason"] == "control_repository_branch_unreadable"
+    assert summary["panel_action"] == "not_started"
+    assert summary["operator_action"] == "not_started"
+    assert summary["processes_started"] is False
+
+
+@pytest.mark.parametrize(
+    ("max_cycles", "expected_window"),
+    [(12, 43200), (13, 46800)],
+)
+def test_panel_lifetime_must_exceed_canonical_operator_session_window(
+    tmp_path: Path, max_cycles: int, expected_window: int
+):
+    script, _ = make_control_repo(tmp_path)
+    result, summary = run_runtime(
+        script,
+        tmp_path,
+        operator_arguments=[
+            "-MaxCycles",
+            str(max_cycles),
+            "-PollIntervalSeconds",
+            "3600",
+        ],
+    )
+
+    assert result.returncode == 2
+    assert summary["reason"] == "panel_lifetime_shorter_than_operator_session"
+    assert summary["operator_session_window_seconds"] == expected_window
+    assert summary["panel_lifetime_seconds"] == 43200
+    assert summary["panel_action"] == "not_started"
+    assert summary["operator_action"] == "not_started"
+    assert summary["processes_started"] is False
 
 
 def test_occupied_port_always_blocks_without_panel_reuse(tmp_path: Path):
@@ -339,6 +382,7 @@ def test_test_only_plan_requires_explicit_environment_guard(tmp_path: Path):
 def test_source_has_one_routing_authority_and_no_panel_reuse_or_supervisor():
     text = SOURCE_SCRIPT.read_text(encoding="utf-8")
     body = text.split("#>", 1)[1]
+    parameter_block = body.split("Set-StrictMode", 1)[0]
     main = body.split('$resolvedStateDir = ""', 1)[1]
     operator = OPERATOR_LAUNCHER.read_text(encoding="utf-8")
     lowered = body.lower()
@@ -358,6 +402,10 @@ def test_source_has_one_routing_authority_and_no_panel_reuse_or_supervisor():
     assert " -TargetRepoRoot " not in body
     assert "repository_routing.json" in operator
     assert "--lifetime-seconds" in body
+    assert "PanelLifetimeSeconds" not in parameter_block
+    assert "$PanelLifetimeSeconds = 43200" in body
+    assert "$OperatorSessionWindowSeconds = [Math]::Max(" in body
+    assert "$OperatorSessionWindowSeconds -ge $PanelLifetimeSeconds" in main
     assert "$observedLifetime -ne $PanelLifetimeSeconds" in body
     assert "Test-ProcessDescendsFrom" in body
     assert body.count("-WindowStyle Hidden") >= 2
@@ -367,7 +415,7 @@ def test_source_has_one_routing_authority_and_no_panel_reuse_or_supervisor():
     assert '"status", "--porcelain=v1", "--untracked-files=all"' in body
     assert '"remote", "get-url", "origin"' in body
     assert '"rev-parse", "HEAD"' in body
-    assert '"branch"' not in body
+    assert '"branch", "--show-current"' in body
     assert '"fetch"' not in body
     for lifecycle_result in ("waiting_review", "completed"):
         assert lifecycle_result not in body

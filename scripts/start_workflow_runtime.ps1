@@ -25,8 +25,6 @@ param(
     [int]$TimeoutSeconds = 600,
     [ValidateRange(1, 65535)]
     [int]$PanelPort = 8765,
-    [ValidateRange(60, 86400)]
-    [int]$PanelLifetimeSeconds = 43200,
     [ValidateSet("", "free", "occupied")]
     [string]$TestOnlyPortState = "",
     [ValidateSet("", "owned", "competing")]
@@ -40,6 +38,11 @@ $ErrorActionPreference = "Stop"
 
 $Protocol = "lawb.workflow_runtime_startup.v1"
 $Repository = "HarryWhite-TW/local-ai-workbench"
+$PanelLifetimeSeconds = 43200
+$OperatorSessionWindowSeconds = [Math]::Max(
+    [double]$TimeoutSeconds,
+    [double]$MaxCycles * [double]$PollIntervalSeconds
+)
 $ControlRepoRoot = [System.IO.Path]::GetFullPath(
     (Join-Path -Path $PSScriptRoot -ChildPath "..")
 ).TrimEnd("\")
@@ -117,6 +120,7 @@ function Write-Summary {
         panel_host = "127.0.0.1"
         panel_port = $PanelPort
         panel_lifetime_seconds = $PanelLifetimeSeconds
+        operator_session_window_seconds = $OperatorSessionWindowSeconds
         max_cycles = $MaxCycles
         poll_interval_seconds = $PollIntervalSeconds
         timeout_seconds = $TimeoutSeconds
@@ -219,6 +223,13 @@ function Assert-ControlRuntimeIntegrity {
             [System.StringComparison]::Ordinal
         )) {
         throw "control_repository_origin_mismatch"
+    }
+
+    $branchResult = Invoke-ControlGitRead -GitPath $gitCommand.Source `
+        -Arguments @("branch", "--show-current")
+    if ($branchResult.exit_code -ne 0 -or
+        [string]::IsNullOrWhiteSpace($branchResult.stdout)) {
+        throw "control_repository_branch_unreadable"
     }
 
     $headResult = Invoke-ControlGitRead -GitPath $gitCommand.Source `
@@ -501,6 +512,9 @@ try {
         (Join-Path $resolvedStateDir "observability\events.jsonl")
     )
     Assert-ControlRuntimeIntegrity
+    if ($OperatorSessionWindowSeconds -ge $PanelLifetimeSeconds) {
+        throw "panel_lifetime_shorter_than_operator_session"
+    }
     if (-not (Test-SafeArgument -Value $resolvedStateDir) -or
         -not (Test-SafeArgument -Value $storePath) -or
         -not (Test-Path -LiteralPath $PanelLauncher -PathType Leaf) -or
