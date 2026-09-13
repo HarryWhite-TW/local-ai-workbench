@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -1100,10 +1101,46 @@ def test_panel_rejects_non_loopback_relative_paths_and_missing_assets(tmp_path):
 def test_launcher_is_foreground_loopback_only_and_does_not_invoke_workflow_authority():
     script = (ROOT / "scripts" / "start_workflow_panel.ps1").read_text(encoding="utf-8")
 
-    assert "-m local_runner_bridge.workflow_panel" in script
-    assert "--host 127.0.0.1" in script
+    assert '"-m", "local_runner_bridge.workflow_panel"' in script
+    assert '"--host", "127.0.0.1"' in script
     assert '"observability\\events.jsonl"' in script
+    assert '"--lifetime-seconds"' in script
+    assert "$LifetimeSeconds -gt 0" in script
     assert "Start-Process" not in script
     assert "local_runner.ps1" not in script
     assert "local_runner_v1.ps1" not in script
     assert "start_bridge_operator_b3c.ps1" not in script
+
+
+def test_cli_panel_stops_itself_after_bounded_lifetime(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    store_path = (tmp_path / "events.jsonl").resolve()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "local_runner_bridge.workflow_panel",
+            "--state-dir",
+            str(state_dir),
+            "--store",
+            str(store_path),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "0",
+            "--lifetime-seconds",
+            "0.1",
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=5,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    ready = json.loads(result.stdout.strip())
+    assert ready["protocol"] == PANEL_PROTOCOL
+    assert ready["status"] == "ready"
