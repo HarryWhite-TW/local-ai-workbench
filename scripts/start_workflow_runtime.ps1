@@ -400,8 +400,10 @@ function Test-PanelPortFree {
     }
     try {
         $listeners = @(
-            Get-NetTCPConnection -LocalPort $PanelPort -State Listen `
-                -ErrorAction Stop
+            Get-NetTCPConnection -ErrorAction Stop |
+                Where-Object {
+                    $_.LocalPort -eq $PanelPort -and $_.State -eq "Listen"
+                }
         )
     }
     catch {

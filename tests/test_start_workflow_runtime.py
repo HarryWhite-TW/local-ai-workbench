@@ -139,6 +139,47 @@ def run_runtime(
     return result, json.loads(result.stdout)
 
 
+def run_panel_port_probe(*, simulate_failure: bool = False):
+    env = os.environ.copy()
+    env["LAWB_TEST_WORKFLOW_RUNTIME_SCRIPT"] = str(SOURCE_SCRIPT)
+    mock = ""
+    if simulate_failure:
+        mock = "function global:Get-NetTCPConnection { throw 'simulated_failure' }"
+    command = rf"""
+$tokens = $null
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $env:LAWB_TEST_WORKFLOW_RUNTIME_SCRIPT, [ref]$tokens, [ref]$parseErrors
+)
+$functionAst = $ast.Find({{
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq "Test-PanelPortFree"
+}}, $true)
+if ($null -eq $functionAst -or $parseErrors.Count -ne 0) {{ exit 90 }}
+Invoke-Expression $functionAst.Extent.Text
+$PanelPort = 0
+$TestOnlyPortState = ""
+{mock}
+try {{
+    [Console]::WriteLine((Test-PanelPortFree).ToString().ToLowerInvariant())
+    exit 0
+}}
+catch {{
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 2
+}}
+"""
+    return subprocess.run(
+        [powershell(), "-NoProfile", "-Command", command],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8-sig",
+        check=False,
+    )
+
+
 def test_clean_canonical_control_checkout_proceeds(tmp_path: Path):
     script, repository = make_control_repo(tmp_path)
     result, summary = run_runtime(script, tmp_path)
@@ -256,6 +297,20 @@ def test_occupied_port_always_blocks_without_panel_reuse(tmp_path: Path):
     assert summary["panel_action"] == "blocked"
     assert summary["operator_action"] == "not_started"
     assert summary["processes_started"] is False
+
+
+def test_real_windows_empty_port_query_is_free():
+    result = run_panel_port_probe()
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "true"
+
+
+def test_real_port_inspection_failure_remains_fail_closed():
+    result = run_panel_port_probe(simulate_failure=True)
+
+    assert result.returncode == 2
+    assert result.stderr.strip() == "tcp_listener_inspection_failed"
 
 
 def test_free_port_verifies_this_invocations_bounded_panel(tmp_path: Path):
@@ -386,6 +441,9 @@ def test_source_has_one_routing_authority_and_no_panel_reuse_or_supervisor():
     main = body.split('$resolvedStateDir = ""', 1)[1]
     operator = OPERATOR_LAUNCHER.read_text(encoding="utf-8")
     lowered = body.lower()
+    port_free_function = body.split("function Test-PanelPortFree", 1)[1].split(
+        "function Test-OwnedPanelListener", 1
+    )[0]
 
     assert "repository_routing.json" not in body
     assert "RoutingProtocol" not in body
@@ -410,6 +468,10 @@ def test_source_has_one_routing_authority_and_no_panel_reuse_or_supervisor():
     assert "Test-ProcessDescendsFrom" in body
     assert body.count("-WindowStyle Hidden") >= 2
     assert "Get-NetTCPConnection" in body
+    assert (
+        "Get-NetTCPConnection -LocalPort $PanelPort -State Listen"
+        not in port_free_function
+    )
     assert "CommandLineToArgvW" in body
     assert main.index("Assert-ControlRuntimeIntegrity") < main.index("Test-PanelPortFree")
     assert '"status", "--porcelain=v1", "--untracked-files=all"' in body
