@@ -5,13 +5,13 @@ consoles.
 
 .DESCRIPTION
 This login helper is deliberately not a routing or lifecycle authority. It
-starts or reuses the read-only Workflow Panel from this trusted control
-checkout, then starts the canonical Bridge Operator launcher. Only the Operator
-launcher may interpret repository_routing.json or choose an execution target.
+verifies its trusted control checkout, starts a new read-only Workflow Panel,
+then starts the canonical Bridge Operator launcher. Only the Operator launcher
+may interpret repository_routing.json or choose an execution target.
 
 The Panel receives a finite lifetime and stops itself. This helper never waits
-for, supervises, or terminates Panel or Operator processes. An unknown listener
-on the fixed Panel port fails closed before the Operator is started.
+for, supervises, or terminates Panel or Operator processes. Any listener on the
+fixed Panel port fails closed before the Operator is started.
 #>
 
 [CmdletBinding()]
@@ -27,8 +27,10 @@ param(
     [int]$PanelPort = 8765,
     [ValidateRange(60, 86400)]
     [int]$PanelLifetimeSeconds = 43200,
-    [ValidateSet("", "free", "workflow_panel", "unknown")]
+    [ValidateSet("", "free", "occupied")]
     [string]$TestOnlyPortState = "",
+    [ValidateSet("", "owned", "competing")]
+    [string]$TestOnlyPostLaunchState = "",
     [string]$TestOnlyPanelCommandLine = "",
     [string]$TestOnlyPanelLineagePath = ""
 )
@@ -166,6 +168,76 @@ function Test-ExactWindowsPath {
     }
 }
 
+function ConvertTo-NormalizedRepository {
+    param([AllowNull()][string]$Origin)
+    if ([string]::IsNullOrWhiteSpace($Origin)) { return "" }
+    $value = $Origin.Trim()
+    if ($value -match '^(?i)https://github\.com/([^/]+/[^/]+?)(?:\.git)?/?$') {
+        return $Matches[1]
+    }
+    if ($value -match '^(?i)(?:ssh://)?git@github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$') {
+        return $Matches[1]
+    }
+    return ""
+}
+
+function Invoke-ControlGitRead {
+    param(
+        [Parameter(Mandatory = $true)][string]$GitPath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+    $output = @(& $GitPath -C $ControlRepoRoot @Arguments 2>$null)
+    return [pscustomobject]@{
+        exit_code = $LASTEXITCODE
+        stdout = ($output -join [Environment]::NewLine)
+    }
+}
+
+function Assert-ControlRuntimeIntegrity {
+    $gitCommand = Get-Command git.exe -CommandType Application `
+        -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $gitCommand) {
+        throw "control_repository_git_unavailable"
+    }
+
+    $rootResult = Invoke-ControlGitRead -GitPath $gitCommand.Source `
+        -Arguments @("rev-parse", "--show-toplevel")
+    if ($rootResult.exit_code -ne 0) {
+        throw "control_repository_root_unreadable"
+    }
+    if (-not (Test-ExactWindowsPath `
+        -Observed $rootResult.stdout.Trim() -Expected $ControlRepoRoot)) {
+        throw "control_repository_root_mismatch"
+    }
+
+    $originResult = Invoke-ControlGitRead -GitPath $gitCommand.Source `
+        -Arguments @("remote", "get-url", "origin")
+    if ($originResult.exit_code -ne 0 -or
+        -not [string]::Equals(
+            (ConvertTo-NormalizedRepository -Origin $originResult.stdout),
+            $Repository,
+            [System.StringComparison]::Ordinal
+        )) {
+        throw "control_repository_origin_mismatch"
+    }
+
+    $headResult = Invoke-ControlGitRead -GitPath $gitCommand.Source `
+        -Arguments @("rev-parse", "HEAD")
+    if ($headResult.exit_code -ne 0 -or
+        $headResult.stdout.Trim() -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "control_repository_head_unreadable"
+    }
+
+    $statusResult = Invoke-ControlGitRead -GitPath $gitCommand.Source `
+        -Arguments @("status", "--porcelain=v1", "--untracked-files=all")
+    if ($statusResult.exit_code -ne 0) {
+        throw "control_repository_status_unreadable"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($statusResult.stdout)) {
+        throw "control_repository_worktree_dirty"
+    }
+}
+
 function Get-UniqueOptionValue {
     param(
         [Parameter(Mandatory = $true)][string[]]$Arguments,
@@ -236,7 +308,7 @@ function Test-CanonicalPanelCommandLine {
             [System.Globalization.CultureInfo]::InvariantCulture,
             [ref]$observedLifetime
         ) -or
-        $observedLifetime -lt 60 -or $observedLifetime -gt 86400 -or
+        $observedLifetime -ne $PanelLifetimeSeconds -or
         -not (Test-ExactWindowsPath `
             -Observed $stateValue -Expected $ExpectedStateDir) -or
         -not (Test-ExactWindowsPath `
@@ -271,6 +343,22 @@ function Test-PanelLauncherLineage {
     return $false
 }
 
+function Test-ProcessDescendsFrom {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][int]$AncestorProcessId
+    )
+    $currentId = $ProcessId
+    for ($depth = 0; $depth -lt 6 -and $currentId -gt 0; $depth++) {
+        if ($currentId -eq $AncestorProcessId) { return $true }
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$currentId" `
+            -ErrorAction SilentlyContinue
+        if ($null -eq $process) { return $false }
+        $currentId = [int]$process.ParentProcessId
+    }
+    return $false
+}
+
 function Test-CanonicalPanelProcess {
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
@@ -292,15 +380,33 @@ function Test-CanonicalPanelProcess {
     )
 }
 
-function Get-PanelPortState {
+function Test-PanelPortFree {
+    if (-not [string]::IsNullOrWhiteSpace($TestOnlyPortState)) {
+        return $TestOnlyPortState -eq "free"
+    }
+    if ($null -eq (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) {
+        throw "tcp_listener_inspection_unavailable"
+    }
+    try {
+        $listeners = @(
+            Get-NetTCPConnection -LocalPort $PanelPort -State Listen `
+                -ErrorAction Stop
+        )
+    }
+    catch {
+        throw "tcp_listener_inspection_failed"
+    }
+    return $listeners.Count -eq 0
+}
+
+function Test-OwnedPanelListener {
     param(
+        [Parameter(Mandatory = $true)][int]$LaunchProcessId,
         [Parameter(Mandatory = $true)][string]$ExpectedStateDir,
         [Parameter(Mandatory = $true)][string]$ExpectedObservationStore
     )
-    if (-not [string]::IsNullOrWhiteSpace($TestOnlyPortState)) {
-        if ($TestOnlyPortState -ne "workflow_panel") {
-            return $TestOnlyPortState
-        }
+    if (-not [string]::IsNullOrWhiteSpace($TestOnlyPostLaunchState)) {
+        if ($TestOnlyPostLaunchState -ne "owned") { return $false }
         if (-not (Test-ExactWindowsPath `
                 -Observed $TestOnlyPanelLineagePath `
                 -Expected $PanelLauncher) -or
@@ -308,20 +414,16 @@ function Get-PanelPortState {
                 -CommandLine $TestOnlyPanelCommandLine `
                 -ExpectedStateDir $ExpectedStateDir `
                 -ExpectedObservationStore $ExpectedObservationStore)) {
-            return "unknown"
+            return $false
         }
-        return "workflow_panel"
-    }
-    if ($null -eq (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) {
-        throw "tcp_listener_inspection_unavailable"
+        return $true
     }
     $listeners = @(
         Get-NetTCPConnection -LocalPort $PanelPort -State Listen `
             -ErrorAction SilentlyContinue
     )
-    if ($listeners.Count -eq 0) { return "free" }
     if ($listeners.Count -ne 1 -or $listeners[0].LocalAddress -ne "127.0.0.1") {
-        return "unknown"
+        return $false
     }
     try {
         $response = Invoke-WebRequest `
@@ -330,20 +432,24 @@ function Get-PanelPortState {
         $health = $response.Content | ConvertFrom-Json
     }
     catch {
-        return "unknown"
+        return $false
     }
+    $listenerProcessId = [int]$listeners[0].OwningProcess
     if ([int]$response.StatusCode -ne 200 -or
         $health.protocol -ne "lawb.workflow_panel.v1" -or
         $health.status -ne "ready" -or
         $health.mode -ne "read_only" -or
         $health.bind -ne "loopback" -or
         -not (Test-CanonicalPanelProcess `
-            -ProcessId ([int]$listeners[0].OwningProcess) `
+            -ProcessId $listenerProcessId `
             -ExpectedStateDir $ExpectedStateDir `
-            -ExpectedObservationStore $ExpectedObservationStore)) {
-        return "unknown"
+            -ExpectedObservationStore $ExpectedObservationStore) -or
+        -not (Test-ProcessDescendsFrom `
+            -ProcessId $listenerProcessId `
+            -AncestorProcessId $LaunchProcessId)) {
+        return $false
     }
-    return "workflow_panel"
+    return $true
 }
 
 function Start-HiddenPowerShell {
@@ -365,6 +471,7 @@ function Start-HiddenPowerShell {
 
 $testOverrideRequested = (
     -not [string]::IsNullOrWhiteSpace($TestOnlyPortState) -or
+    -not [string]::IsNullOrWhiteSpace($TestOnlyPostLaunchState) -or
     -not [string]::IsNullOrWhiteSpace($TestOnlyPanelCommandLine) -or
     -not [string]::IsNullOrWhiteSpace($TestOnlyPanelLineagePath)
 )
@@ -393,65 +500,74 @@ try {
     $storePath = [System.IO.Path]::GetFullPath(
         (Join-Path $resolvedStateDir "observability\events.jsonl")
     )
+    Assert-ControlRuntimeIntegrity
     if (-not (Test-SafeArgument -Value $resolvedStateDir) -or
         -not (Test-SafeArgument -Value $storePath) -or
-        -not (Test-Path -LiteralPath (Join-Path $ControlRepoRoot ".git")) -or
         -not (Test-Path -LiteralPath $PanelLauncher -PathType Leaf) -or
         -not (Test-Path -LiteralPath $OperatorLauncher -PathType Leaf)) {
         throw "canonical_control_runtime_invalid"
     }
 
-    $portState = Get-PanelPortState `
-        -ExpectedStateDir $resolvedStateDir `
-        -ExpectedObservationStore $storePath
-    if ($portState -eq "unknown") {
+    if (-not (Test-PanelPortFree)) {
         $panelAction = "blocked"
-        Write-Summary -Result "blocked" -Reason "panel_port_occupied_unknown" `
+        Write-Summary -Result "blocked" -Reason "panel_port_occupied" `
             -PanelAction $panelAction -OperatorAction $operatorAction `
             -ProcessesStarted $false -ResolvedStateDir $resolvedStateDir `
             -ObservationStore $storePath
         exit 2
     }
 
-    if ($testOverrideRequested) {
-        $panelPlan = if ($portState -eq "free") { "would_start" } else { "would_reuse" }
+    if ($testOverrideRequested -and
+        [string]::IsNullOrWhiteSpace($TestOnlyPostLaunchState)) {
         Write-Summary -Result "ready" -Reason "test_plan_only" `
-            -PanelAction $panelPlan -OperatorAction "would_start" `
+            -PanelAction "would_start" -OperatorAction "would_start" `
             -ProcessesStarted $false -ResolvedStateDir $resolvedStateDir `
             -ObservationStore $storePath
         exit 0
     }
 
-    if ($portState -eq "free") {
-        $panelAction = "starting"
-        $panelArguments = (
-            "-StateDir " + (ConvertTo-QuotedArgument -Value $resolvedStateDir) +
-            " -ObservationStore " + (ConvertTo-QuotedArgument -Value $storePath) +
-            " -Port " + $PanelPort +
-            " -LifetimeSeconds " + $PanelLifetimeSeconds
-        )
-        [void](Start-HiddenPowerShell `
-            -LauncherPath $PanelLauncher -Arguments $panelArguments)
-        $processesStarted = $true
-        $panelAction = "started_unverified"
-        $verified = $false
-        for ($attempt = 0; $attempt -lt 50; $attempt++) {
-            Start-Sleep -Milliseconds 200
-            if ((Get-PanelPortState `
-                -ExpectedStateDir $resolvedStateDir `
-                -ExpectedObservationStore $storePath) -eq "workflow_panel") {
-                $verified = $true
-                break
-            }
-        }
-        if (-not $verified) {
-            throw "workflow_panel_start_not_verified"
-        }
-        $panelAction = "started"
+    $panelAction = if ($testOverrideRequested) { "would_start" } else { "starting" }
+    $panelArguments = (
+        "-StateDir " + (ConvertTo-QuotedArgument -Value $resolvedStateDir) +
+        " -ObservationStore " + (ConvertTo-QuotedArgument -Value $storePath) +
+        " -Port " + $PanelPort +
+        " -LifetimeSeconds " + $PanelLifetimeSeconds
+    )
+    if ($testOverrideRequested) {
+        $panelLaunchProcess = [pscustomobject]@{ Id = 41001 }
+        $panelAction = "would_start_unverified"
     }
     else {
-        $panelAction = "reused"
+        $panelLaunchProcess = Start-HiddenPowerShell `
+            -LauncherPath $PanelLauncher -Arguments $panelArguments
+        $processesStarted = $true
+        $panelAction = "started_unverified"
     }
+    $verified = $false
+    $verificationAttempts = if ($testOverrideRequested) { 1 } else { 50 }
+    for ($attempt = 0; $attempt -lt $verificationAttempts; $attempt++) {
+        if (-not $testOverrideRequested) {
+            Start-Sleep -Milliseconds 200
+        }
+        if (Test-OwnedPanelListener `
+            -LaunchProcessId ([int]$panelLaunchProcess.Id) `
+            -ExpectedStateDir $resolvedStateDir `
+            -ExpectedObservationStore $storePath) {
+            $verified = $true
+            break
+        }
+    }
+    if (-not $verified) {
+        throw "workflow_panel_start_not_verified"
+    }
+    if ($testOverrideRequested) {
+        Write-Summary -Result "ready" -Reason "test_plan_only" `
+            -PanelAction "would_start_verified" -OperatorAction "would_start" `
+            -ProcessesStarted $false -ResolvedStateDir $resolvedStateDir `
+            -ObservationStore $storePath
+        exit 0
+    }
+    $panelAction = "started"
 
     $operatorArguments = (
         "-StartForeground -PublishStatus" +
