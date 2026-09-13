@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1100,11 +1101,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--store", required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--lifetime-seconds", type=float)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.lifetime_seconds is not None and not 0 < args.lifetime_seconds <= 86_400:
+        parser.error("--lifetime-seconds must be greater than 0 and at most 86400")
     server = create_workflow_panel_server(
         args.state_dir,
         args.store,
@@ -1119,11 +1124,18 @@ def main(argv: list[str] | None = None) -> int:
         "bind": "loopback",
     }
     print(json.dumps(ready, separators=(",", ":")), flush=True)
+    lifetime_timer = None
+    if args.lifetime_seconds is not None:
+        lifetime_timer = threading.Timer(args.lifetime_seconds, server.shutdown)
+        lifetime_timer.daemon = True
+        lifetime_timer.start()
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
         pass
     finally:
+        if lifetime_timer is not None:
+            lifetime_timer.cancel()
         server.server_close()
     return 0
 

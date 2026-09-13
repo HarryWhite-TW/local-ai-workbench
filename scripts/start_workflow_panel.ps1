@@ -19,7 +19,9 @@ param(
     [string]$StateDir = "",
     [string]$ObservationStore = "",
     [ValidateRange(0, 65535)]
-    [int]$Port = 8765
+    [int]$Port = 8765,
+    [ValidateRange(0, 86400)]
+    [int]$LifetimeSeconds = 0
 )
 
 Set-StrictMode -Version Latest
@@ -61,11 +63,17 @@ try {
     else {
         "$SourcePath;$PreviousPythonPath"
     }
-    & $ReviewedPython -m local_runner_bridge.workflow_panel `
-        --state-dir $ResolvedStateDir `
-        --store $ResolvedObservationStore `
-        --host 127.0.0.1 `
-        --port $Port
+    $PanelArguments = @(
+        "-m", "local_runner_bridge.workflow_panel",
+        "--state-dir", $ResolvedStateDir,
+        "--store", $ResolvedObservationStore,
+        "--host", "127.0.0.1",
+        "--port", [string]$Port
+    )
+    if ($LifetimeSeconds -gt 0) {
+        $PanelArguments += @("--lifetime-seconds", [string]$LifetimeSeconds)
+    }
+    & $ReviewedPython @PanelArguments
     $PanelExitCode = $LASTEXITCODE
 }
 finally {
