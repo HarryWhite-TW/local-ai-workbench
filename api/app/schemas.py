@@ -121,11 +121,32 @@ class SummaryArtifactResponse(BaseModel):
     created_at: str
 
 
+class DecisionItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision_text: str
+    evidence_quote: str
+    source_line_start: int
+    source_line_end: int
+
+
+class DecisionArtifactResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    document_id: str
+    method: Literal["explicit_decision_v1"]
+    source_content_hash: str
+    decisions: list[DecisionItemResponse]
+    created_at: str
+
+
 class ObsidianExportPreviewResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     document_id: str
     has_summary: bool
+    has_decisions: bool
     markdown: str
 
 
@@ -139,6 +160,7 @@ class ObsidianExportWriteResponse(BaseModel):
 
     document_id: str
     has_summary: bool
+    has_decisions: bool
     export_path: str
     filename: str
     bytes_written: int

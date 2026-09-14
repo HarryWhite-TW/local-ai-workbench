@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from api.app.services.audit import create_audit_event, list_audit_events
+from api.app.services.decisions import DecisionArtifactNotFoundError, get_latest_decision_artifact
 from api.app.services.documents import get_document
 from api.app.services.summary import SummaryArtifactNotFoundError, get_latest_summary_artifact
 
@@ -180,9 +181,11 @@ def build_frontmatter(
     document: Mapping[str, Any],
     summary_artifact: Mapping[str, Any] | None,
     *,
+    decision_artifact: Mapping[str, Any] | None = None,
     exported_at: str,
 ) -> str:
     summary = summary_artifact or {}
+    decision = decision_artifact or {}
     source_content_hash = as_text(summary.get("source_content_hash"), as_text(document.get("content_hash")))
 
     lines = [
@@ -197,6 +200,9 @@ def build_frontmatter(
         f'source_content_hash: {yaml_string(source_content_hash)}',
         f'summary_id: {yaml_string(summary.get("id"))}',
         f'summary_method: {yaml_string(summary.get("method"))}',
+        f'decision_artifact_id: {yaml_string(decision.get("id"))}',
+        f'decision_method: {yaml_string(decision.get("method"))}',
+        f'decision_source_content_hash: {yaml_string(decision.get("source_content_hash"))}',
         "tags:",
         "  - local-ai-workbench",
         "  - document-summary",
@@ -222,6 +228,7 @@ def select_document_audit_events(
     *,
     document_id: str,
     summary_id: str | None = None,
+    decision_artifact_id: str | None = None,
 ) -> list[Mapping[str, Any]]:
     selected = []
     for event in audit_events:
@@ -233,13 +240,44 @@ def select_document_audit_events(
             continue
         if summary_id and payload.get("artifact_id") == summary_id:
             selected.append(event)
+            continue
+        if decision_artifact_id and payload.get("artifact_id") == decision_artifact_id:
+            selected.append(event)
     return selected
+
+
+def build_decisions_section(decision_artifact: Mapping[str, Any] | None) -> str:
+    if not decision_artifact:
+        return "No decision artifact provided."
+
+    raw_decisions = decision_artifact.get("decisions")
+    if not isinstance(raw_decisions, list) or not raw_decisions:
+        return "No explicit decisions were found in the selected source document."
+
+    sections: list[str] = []
+    for index, raw_decision in enumerate(raw_decisions, start=1):
+        if not isinstance(raw_decision, Mapping):
+            continue
+        decision_text = as_text(raw_decision.get("decision_text"), "Decision text unavailable.")
+        evidence_quote = as_text(raw_decision.get("evidence_quote"), "Evidence unavailable.")
+        line_start = as_text(raw_decision.get("source_line_start"), "unknown")
+        line_end = as_text(raw_decision.get("source_line_end"), line_start)
+        line_range = line_start if line_start == line_end else f"{line_start}-{line_end}"
+        quoted_evidence = "\n".join(f"> {line}" for line in evidence_quote.splitlines())
+        sections.append(
+            f"### Decision {index}\n\n"
+            f"{decision_text}\n\n"
+            f"- Source lines: `{line_range}`\n"
+            f"- Evidence:\n\n{quoted_evidence}"
+        )
+    return "\n\n".join(sections) or "No explicit decisions were found in the selected source document."
 
 
 def build_obsidian_document_summary_markdown(
     document: Mapping[str, Any],
     summary_artifact: Mapping[str, Any] | None = None,
     *,
+    decision_artifact: Mapping[str, Any] | None = None,
     audit_events: Sequence[Mapping[str, Any]] | None = None,
     exported_at: str | None = None,
 ) -> str:
@@ -255,7 +293,18 @@ def build_obsidian_document_summary_markdown(
     summary_created_at = as_text(summary.get("created_at"), "unknown")
     summary_method = as_text(summary.get("method"), "not_available")
 
-    frontmatter = build_frontmatter(document, summary_artifact, exported_at=export_timestamp)
+    decision = decision_artifact or {}
+    decisions_section = build_decisions_section(decision_artifact)
+    decision_created_at = as_text(decision.get("created_at"), "unknown")
+    decision_method = as_text(decision.get("method"), "not_available")
+    decision_source_content_hash = as_text(decision.get("source_content_hash"), "not_available")
+
+    frontmatter = build_frontmatter(
+        document,
+        summary_artifact,
+        decision_artifact=decision_artifact,
+        exported_at=export_timestamp,
+    )
     audit_section = build_audit_section(audit_events or [])
 
     sections = [
@@ -278,6 +327,16 @@ def build_obsidian_document_summary_markdown(
         "",
         f"- Method: `{summary_method}`",
         f"- Created at: `{summary_created_at}`",
+        "",
+        "## Explicit Decisions",
+        "",
+        decisions_section,
+        "",
+        "## Decision Metadata",
+        "",
+        f"- Method: `{decision_method}`",
+        f"- Source content hash: `{decision_source_content_hash}`",
+        f"- Created at: `{decision_created_at}`",
         "",
         "## Audit Context",
         "",
@@ -302,21 +361,32 @@ def build_obsidian_export_preview(connection: sqlite3.Connection, document_id: s
         summary_artifact = None
         has_summary = False
 
+    try:
+        decision_artifact = get_latest_decision_artifact(connection, document_id)
+        has_decisions = True
+    except DecisionArtifactNotFoundError:
+        decision_artifact = None
+        has_decisions = False
+
     summary_id = as_text(summary_artifact.get("id")) if summary_artifact else None
+    decision_artifact_id = as_text(decision_artifact.get("id")) if decision_artifact else None
     audit_events = select_document_audit_events(
         list_audit_events(connection),
         document_id=document_id,
         summary_id=summary_id,
+        decision_artifact_id=decision_artifact_id,
     )
     markdown = build_obsidian_document_summary_markdown(
         document,
         summary_artifact,
+        decision_artifact=decision_artifact,
         audit_events=audit_events,
     )
 
     return {
         "document_id": document_id,
         "has_summary": has_summary,
+        "has_decisions": has_decisions,
         "markdown": markdown,
     }
 
@@ -377,6 +447,7 @@ def write_obsidian_export(
             "export_path": str(export_path),
             "filename": filename,
             "has_summary": preview["has_summary"],
+            "has_decisions": preview["has_decisions"],
         },
         created_at=exported_at,
     )
@@ -384,6 +455,7 @@ def write_obsidian_export(
     return {
         "document_id": document_id,
         "has_summary": preview["has_summary"],
+        "has_decisions": preview["has_decisions"],
         "export_path": str(export_path),
         "filename": filename,
         "bytes_written": len(markdown.encode("utf-8")),

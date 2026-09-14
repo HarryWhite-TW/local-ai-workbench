@@ -3,9 +3,11 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   ApiError,
   checkObsidianExportFolder,
+  extractDocumentDecisions,
   generateDocumentSummary,
   getAuditEvents,
   getDocumentDetail,
+  getDocumentDecisions,
   getDocumentSummary,
   getDocuments,
   getObsidianExportPreview,
@@ -18,6 +20,7 @@ import {
 import { AuditList } from "./components/AuditList";
 import type {
   AuditEventRecord,
+  DecisionArtifactRecord,
   DocumentDetailRecord,
   DocumentListItemRecord,
   DocumentScanResult,
@@ -30,7 +33,8 @@ import type {
 } from "./types";
 
 type SummaryState = "idle" | "loading" | "empty" | "ready";
-type AssistantPanelTab = "summary" | "export" | "audit";
+type DecisionState = "idle" | "loading" | "empty" | "ready";
+type AssistantPanelTab = "summary" | "decisions" | "export" | "audit";
 
 const OBSIDIAN_EXPORT_FOLDER_STORAGE_KEY = "local-ai-workbench.obsidian-export-folder";
 
@@ -144,6 +148,8 @@ export default function App() {
   const [selectedDocument, setSelectedDocument] = useState<DocumentDetailRecord | null>(null);
   const [summaryArtifact, setSummaryArtifact] = useState<SummaryArtifactRecord | null>(null);
   const [summaryState, setSummaryState] = useState<SummaryState>("idle");
+  const [decisionArtifact, setDecisionArtifact] = useState<DecisionArtifactRecord | null>(null);
+  const [decisionState, setDecisionState] = useState<DecisionState>("idle");
   const [rootFolderInput, setRootFolderInput] = useState("");
   const [rootFolderMessage, setRootFolderMessage] = useState<string | null>(null);
   const [rootFolderError, setRootFolderError] = useState<string | null>(null);
@@ -154,6 +160,7 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [isExtractingDecisions, setIsExtractingDecisions] = useState(false);
   const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
   const [isSavingRootFolder, setIsSavingRootFolder] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -184,6 +191,8 @@ export default function App() {
     setSelectedDocument(null);
     setSummaryState("loading");
     setSummaryArtifact(null);
+    setDecisionState("loading");
+    setDecisionArtifact(null);
     setObsidianPreview(null);
     setObsidianExportMessage(null);
     setObsidianExportError(null);
@@ -196,6 +205,7 @@ export default function App() {
     } catch (loadError) {
       setSelectedDocument(null);
       setSummaryState("idle");
+      setDecisionState("idle");
       setIsLoadingDocument(false);
 
       if (loadError instanceof ApiError && loadError.status === 404) {
@@ -213,45 +223,53 @@ export default function App() {
       return;
     }
 
-    try {
-      const artifact = await getDocumentSummary(documentId);
-      setSummaryArtifact(artifact);
+    const [summaryResult, decisionResult] = await Promise.allSettled([
+      getDocumentSummary(documentId),
+      getDocumentDecisions(documentId)
+    ]);
+
+    if (summaryResult.status === "fulfilled") {
+      setSummaryArtifact(summaryResult.value);
       setSummaryState("ready");
-    } catch (loadError) {
-      if (
-        loadError instanceof ApiError &&
-        loadError.status === 404 &&
-        loadError.detail === "Summary artifact not found."
-      ) {
-        setSummaryArtifact(null);
-        setSummaryState("empty");
-        return;
-      }
-
-      if (
-        loadError instanceof ApiError &&
-        loadError.status === 404 &&
-        loadError.detail === "Document not found."
-      ) {
-        setSelectedDocumentId(null);
-        setSelectedDocument(null);
-        setSummaryArtifact(null);
-        setSummaryState("idle");
-        setError("Selected document is no longer available.");
-        return;
-      }
-
+    } else if (
+      summaryResult.reason instanceof ApiError &&
+      summaryResult.reason.status === 404 &&
+      summaryResult.reason.detail === "Summary artifact not found."
+    ) {
+      setSummaryArtifact(null);
+      setSummaryState("empty");
+    } else {
       setSummaryArtifact(null);
       setSummaryState("empty");
       setError(
         `Could not load the latest summary. ${getErrorDetail(
-          loadError,
+          summaryResult.reason,
           "The API did not return an error detail."
         )} You can still read the document or generate a new summary.`
       );
-    } finally {
-      setIsLoadingDocument(false);
     }
+
+    if (decisionResult.status === "fulfilled") {
+      setDecisionArtifact(decisionResult.value);
+      setDecisionState("ready");
+    } else if (
+      decisionResult.reason instanceof ApiError &&
+      decisionResult.reason.status === 404 &&
+      decisionResult.reason.detail === "Decision artifact not found."
+    ) {
+      setDecisionArtifact(null);
+      setDecisionState("empty");
+    } else {
+      setDecisionArtifact(null);
+      setDecisionState("empty");
+      setError(
+        `Could not load the latest decision artifact. ${getErrorDetail(
+          decisionResult.reason,
+          "The API did not return an error detail."
+        )} You can still read the document or extract decisions again.`
+      );
+    }
+    setIsLoadingDocument(false);
   }
 
   async function loadOverview(preferredDocumentId?: string | null) {
@@ -276,6 +294,8 @@ export default function App() {
         setSelectedDocument(null);
         setSummaryArtifact(null);
         setSummaryState("idle");
+        setDecisionArtifact(null);
+        setDecisionState("idle");
         setSearchResults([]);
         setActiveQuery("");
         return;
@@ -389,6 +409,32 @@ export default function App() {
       );
     } finally {
       setIsGeneratingSummary(false);
+    }
+  }
+
+  async function handleExtractDecisions() {
+    if (!selectedDocumentId) {
+      return;
+    }
+
+    setActiveAssistantTab("decisions");
+    setIsExtractingDecisions(true);
+    setError(null);
+    try {
+      const artifact = await extractDocumentDecisions(selectedDocumentId);
+      setDecisionArtifact(artifact);
+      setDecisionState("ready");
+      setObsidianPreview(null);
+      await loadAudit();
+    } catch (extractError) {
+      setError(
+        `Could not extract decisions. ${getErrorDetail(
+          extractError,
+          "The API did not return an error detail."
+        )} The source document stays unchanged; try again after selecting the document.`
+      );
+    } finally {
+      setIsExtractingDecisions(false);
     }
   }
 
@@ -613,8 +659,8 @@ export default function App() {
             <p className="eyebrow">Local document assistant v1</p>
             <h1>Local Document Workbench</h1>
             <p className="workspace-intro">
-              A local document workspace for scan, read, search, summary, and audit. Search and summary stay attached
-              to the selected document instead of taking over the page.
+              A local document workspace for scan, read, search, source-linked decisions, summary, export, and audit.
+              Transformations stay attached to the selected document instead of taking over the page.
             </p>
           </div>
           <div className="workspace-header-actions">
@@ -905,7 +951,7 @@ export default function App() {
           <aside className="right-column panel-stack">
             <section className="panel assistant-tabs-panel">
               <div className="assistant-tab-list" role="tablist" aria-label="Assistant panel">
-                {(["summary", "export", "audit"] as AssistantPanelTab[]).map((tab) => (
+                {(["summary", "decisions", "export", "audit"] as AssistantPanelTab[]).map((tab) => (
                   <button
                     key={tab}
                     type="button"
@@ -913,7 +959,13 @@ export default function App() {
                     aria-selected={activeAssistantTab === tab}
                     onClick={() => setActiveAssistantTab(tab)}
                   >
-                    {tab === "summary" ? "Summary" : tab === "export" ? "Export" : "Audit"}
+                    {tab === "summary"
+                      ? "Summary"
+                      : tab === "decisions"
+                        ? "Decisions"
+                        : tab === "export"
+                          ? "Export"
+                          : "Audit"}
                   </button>
                 ))}
               </div>
@@ -981,13 +1033,86 @@ export default function App() {
             </section>
               ) : null}
 
+              {activeAssistantTab === "decisions" ? (
+                <section className="panel decision-panel">
+                  <div className="panel-header">
+                    <div>
+                      <h2>Explicit decisions</h2>
+                      <p className="muted compact">
+                        Deterministic explicit_decision_v1 results with exact source evidence and provenance.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={!selectedDocumentId || isExtractingDecisions || isLoadingDocument}
+                      onClick={() => void handleExtractDecisions()}
+                    >
+                      {isExtractingDecisions ? "Extracting..." : "Extract decisions"}
+                    </button>
+                  </div>
+                  {!selectedDocumentId ? (
+                    <p className="empty-state">Choose a scanned document before extracting decisions.</p>
+                  ) : decisionState === "loading" ? (
+                    <p className="empty-state">Loading the latest decision artifact for this document...</p>
+                  ) : decisionState === "empty" || !decisionArtifact ? (
+                    <>
+                      <p className="empty-state">No decision artifact exists for the selected document yet.</p>
+                      <p className="muted compact">
+                        Extract decisions to identify explicit decision statements without changing the source document.
+                      </p>
+                    </>
+                  ) : (
+                    <div className="content-block decision-content-block">
+                      <div className="decision-provenance-grid">
+                        <div>
+                          <span className="detail-label">Method</span>
+                          <strong>{decisionArtifact.method}</strong>
+                        </div>
+                        <div>
+                          <span className="detail-label">Created</span>
+                          <strong>{decisionArtifact.created_at}</strong>
+                        </div>
+                        <div>
+                          <span className="detail-label">Source content hash</span>
+                          <strong>{decisionArtifact.source_content_hash}</strong>
+                        </div>
+                      </div>
+                      {decisionArtifact.decisions.length === 0 ? (
+                        <p className="empty-state">
+                          No explicit decisions were found. Recommendations and pending decisions are intentionally excluded.
+                        </p>
+                      ) : (
+                        <ol className="decision-list">
+                          {decisionArtifact.decisions.map((decision, index) => (
+                            <li
+                              className="decision-card"
+                              key={`${decision.source_line_start}-${decision.source_line_end}-${index}`}
+                            >
+                              <strong>{decision.decision_text}</strong>
+                              <span className="decision-line-reference">
+                                Source {decision.source_line_start === decision.source_line_end
+                                  ? `line ${decision.source_line_start}`
+                                  : `lines ${decision.source_line_start}-${decision.source_line_end}`}
+                              </span>
+                              <blockquote>{decision.evidence_quote}</blockquote>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </div>
+                  )}
+                </section>
+              ) : null}
+
               {activeAssistantTab === "export" ? (
                 <section className="panel obsidian-export-panel">
               <div className="panel-header">
                 <div>
                   <h2>Obsidian-ready Markdown Export</h2>
                   <p className="muted compact">
-                    Export the selected document summary as an Obsidian-ready local Markdown note after previewing it.
+                     Export the selected document's latest summary and reviewed decision artifact as a local Markdown note
+                     after previewing it.
                   </p>
                 </div>
                 <button
@@ -1111,6 +1236,8 @@ export default function App() {
                         <dd>{obsidianExportResult.exported_at}</dd>
                         <dt>summary_included</dt>
                         <dd>{obsidianExportResult.has_summary ? "yes" : "no"}</dd>
+                        <dt>decisions_included</dt>
+                        <dd>{obsidianExportResult.has_decisions ? "yes" : "no"}</dd>
                       </dl>
 
                       <div className="export-path-block">
@@ -1142,7 +1269,10 @@ export default function App() {
                     <div className="content-block obsidian-preview-card">
                       <div className="detail-row">
                         <span className="detail-label">Preview status</span>
-                        <span>{obsidianPreview.has_summary ? "Summary included" : "No summary artifact yet"}</span>
+                         <span>
+                           {obsidianPreview.has_summary ? "Summary included" : "No summary artifact"}
+                           {obsidianPreview.has_decisions ? " · Decisions included" : " · No decision artifact"}
+                         </span>
                       </div>
                       <details className="markdown-preview-details">
                         <summary>Show Markdown preview</summary>
@@ -1163,7 +1293,7 @@ export default function App() {
                 <div className="audit-panel-wrap">
                   <AuditList
                     events={auditEvents}
-                    emptyMessage="Audit events will appear after saving a root folder, scanning documents, or generating a summary."
+                    emptyMessage="Audit events will appear after scanning, generating a summary, extracting decisions, or exporting."
                   />
                 </div>
               ) : null}
