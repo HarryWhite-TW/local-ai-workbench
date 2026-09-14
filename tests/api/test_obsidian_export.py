@@ -30,6 +30,24 @@ def sample_summary() -> dict[str, object]:
     }
 
 
+def sample_decision_artifact() -> dict[str, object]:
+    return {
+        "id": "dec_123",
+        "document_id": "doc_123",
+        "method": "explicit_decision_v1",
+        "source_content_hash": "hash_abc",
+        "decisions": [
+            {
+                "decision_text": "Keep the source unchanged.",
+                "evidence_quote": "Decision: Keep the source unchanged.",
+                "source_line_start": 7,
+                "source_line_end": 7,
+            }
+        ],
+        "created_at": "2026-06-08T10:02:30Z",
+    }
+
+
 def prepare_scanned_root(client, tmp_path: Path, filename: str, content: str) -> str:
     root = tmp_path / "documents"
     root.mkdir()
@@ -77,6 +95,40 @@ def test_build_obsidian_markdown_preserves_multiline_summary_text_verbatim():
     )
 
     assert summary["summary_text"] in markdown
+
+
+def test_build_obsidian_markdown_contains_source_linked_decisions_and_provenance():
+    markdown = build_obsidian_document_summary_markdown(
+        sample_document(),
+        sample_summary(),
+        decision_artifact=sample_decision_artifact(),
+        exported_at="2026-06-08T10:03:00Z",
+    )
+
+    assert 'decision_artifact_id: "dec_123"' in markdown
+    assert 'decision_method: "explicit_decision_v1"' in markdown
+    assert 'decision_source_content_hash: "hash_abc"' in markdown
+    assert "## Explicit Decisions" in markdown
+    assert "Keep the source unchanged." in markdown
+    assert "- Source lines: `7`" in markdown
+    assert "> Decision: Keep the source unchanged." in markdown
+
+
+def test_build_obsidian_markdown_keeps_current_and_decision_source_hashes_distinct():
+    document = {**sample_document(), "content_hash": "hash_current_rescan"}
+    decision_artifact = {**sample_decision_artifact(), "source_content_hash": "hash_original_decision"}
+
+    markdown = build_obsidian_document_summary_markdown(
+        document,
+        None,
+        decision_artifact=decision_artifact,
+        exported_at="2026-06-08T10:03:00Z",
+    )
+
+    assert 'source_content_hash: "hash_current_rescan"' in markdown
+    assert 'decision_source_content_hash: "hash_original_decision"' in markdown
+    assert "- Source content hash: `hash_original_decision`" in markdown
+    assert 'decision_source_content_hash: "hash_current_rescan"' not in markdown
 
 
 def test_build_obsidian_markdown_does_not_export_full_source_content_by_default():
@@ -175,7 +227,10 @@ def test_get_obsidian_preview_returns_markdown_without_summary(client, tmp_path:
     body = response.json()
     assert body["document_id"] == document_id
     assert body["has_summary"] is False
+    assert body["has_decisions"] is False
     assert "No summary artifact provided." in body["markdown"]
+    assert 'decision_source_content_hash: ""' in body["markdown"]
+    assert "- Source content hash: `not_available`" in body["markdown"]
 
 
 def test_get_obsidian_preview_returns_404_when_document_is_missing(client):
@@ -209,10 +264,14 @@ def test_post_obsidian_export_writes_markdown_file_after_approval(client, tmp_pa
         client,
         tmp_path,
         "export-me.md",
-        "This document should be exported. It has useful local knowledge.",
+        "This document should be exported. It has useful local knowledge.\nDecision: Export reviewed Markdown only.",
     )
+    source_path = tmp_path / "documents" / "export-me.md"
+    source_before = source_path.read_bytes()
     summary_response = client.post(f"/documents/{document_id}/summary")
     assert summary_response.status_code == 200
+    decision_response = client.post(f"/documents/{document_id}/decisions")
+    assert decision_response.status_code == 200
     export_folder = tmp_path / "obsidian"
     export_folder.mkdir()
 
@@ -225,6 +284,7 @@ def test_post_obsidian_export_writes_markdown_file_after_approval(client, tmp_pa
     body = response.json()
     assert body["document_id"] == document_id
     assert body["has_summary"] is True
+    assert body["has_decisions"] is True
     assert body["filename"].endswith(f"{document_id}.md")
     assert body["bytes_written"] > 0
 
@@ -237,13 +297,18 @@ def test_post_obsidian_export_writes_markdown_file_after_approval(client, tmp_pa
     assert "Title: export-me" in exported_text
     assert "Role / purpose evidence:\nThis document should be exported." in exported_text
     assert 'summary_method: "extractive_v1"' in exported_text
+    assert 'decision_method: "explicit_decision_v1"' in exported_text
+    assert "Export reviewed Markdown only." in exported_text
+    assert "> Decision: Export reviewed Markdown only." in exported_text
     assert "source_content_hash:" in exported_text
     assert "It does not modify the original source document." in exported_text
+    assert source_path.read_bytes() == source_before
 
     audit_events = client.get("/audit").json()
     assert audit_events[0]["event_type"] == "obsidian_export_written"
     assert audit_events[0]["event_payload"]["document_id"] == document_id
     assert audit_events[0]["event_payload"]["export_path"] == str(export_path)
+    assert audit_events[0]["event_payload"]["has_decisions"] is True
 
 
 def test_web_summary_uses_safe_text_node_with_multiline_wrapping():

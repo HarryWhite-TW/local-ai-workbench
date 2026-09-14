@@ -1,5 +1,6 @@
 import type {
   AuditEventRecord,
+  DecisionArtifactRecord,
   DocumentDetailRecord,
   DocumentListItemRecord,
   DocumentSearchResultRecord,
@@ -82,6 +83,16 @@ export function getDocumentSummary(documentId: string): Promise<SummaryArtifactR
 
 export function generateDocumentSummary(documentId: string): Promise<SummaryArtifactRecord> {
   return request<SummaryArtifactRecord>(`/documents/${documentId}/summary`, {
+    method: "POST"
+  });
+}
+
+export function getDocumentDecisions(documentId: string): Promise<DecisionArtifactRecord> {
+  return request<DecisionArtifactRecord>(`/documents/${documentId}/decisions`);
+}
+
+export function extractDocumentDecisions(documentId: string): Promise<DecisionArtifactRecord> {
+  return request<DecisionArtifactRecord>(`/documents/${documentId}/decisions`, {
     method: "POST"
   });
 }

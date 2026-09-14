@@ -178,7 +178,7 @@ pre {
 
 .assistant-tab-list {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -211,6 +211,7 @@ pre {
 }
 
 .right-column .summary-panel,
+.right-column .decision-panel,
 .right-column .obsidian-export-panel,
 .right-column .audit-panel-wrap {
   min-height: 360px;
@@ -485,6 +486,62 @@ pre {
 
 .summary-panel {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(248, 251, 255, 0.96) 100%);
+}
+
+.decision-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(248, 251, 255, 0.96) 100%);
+}
+
+.decision-provenance-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.decision-provenance-grid > div {
+  border: 1px solid #dce6f1;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 10px 12px;
+}
+
+.decision-provenance-grid strong {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.decision-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding-left: 24px;
+}
+
+.decision-card {
+  border: 1px solid #d8e5f2;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.decision-card > strong,
+.decision-line-reference {
+  display: block;
+}
+
+.decision-line-reference {
+  margin-top: 6px;
+  color: #5b6f86;
+  font-size: 0.86rem;
+}
+
+.decision-card blockquote {
+  margin: 10px 0 0;
+  border-left: 3px solid #93b4df;
+  padding-left: 10px;
+  color: #405a75;
+  overflow-wrap: anywhere;
 }
 
 .summary-paragraph {
@@ -1029,13 +1086,15 @@ pre {
 }
 
 .right-column .summary-panel,
+.right-column .decision-panel,
 .right-column .obsidian-export-panel,
 .right-column .audit-panel-wrap {
   min-height: calc(100vh - 252px);
 }
 
 .right-column .obsidian-export-panel,
-.right-column .summary-panel {
+.right-column .summary-panel,
+.right-column .decision-panel {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 251, 255, 0.96) 100%);
 }

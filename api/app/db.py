@@ -141,6 +141,20 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS decision_artifacts (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                method TEXT NOT NULL
+                    CHECK (method = 'explicit_decision_v1'),
+                source_content_hash TEXT NOT NULL,
+                decisions_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (document_id) REFERENCES documents(id)
+            )
+            """
+        )
         connection.commit()
 
 

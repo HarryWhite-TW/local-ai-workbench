@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from api.app.db import get_connection
 from api.app.schemas import (
+    DecisionArtifactResponse,
     DocumentDetailResponse,
     DocumentListItemResponse,
     ObsidianExportFolderCheckRequest,
@@ -12,6 +13,11 @@ from api.app.schemas import (
     DocumentSearchResultResponse,
     DocumentScanResponse,
     SummaryArtifactResponse,
+)
+from api.app.services.decisions import (
+    DecisionArtifactNotFoundError,
+    create_decision_artifact,
+    get_latest_decision_artifact,
 )
 from api.app.services.documents import (
     DocumentNotFoundError,
@@ -113,6 +119,31 @@ def get_document_by_id(document_id: str) -> DocumentDetailResponse:
         except DocumentNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.") from exc
     return DocumentDetailResponse(**document)
+
+
+@router.post("/{document_id}/decisions", response_model=DecisionArtifactResponse)
+def post_document_decisions(document_id: str) -> DecisionArtifactResponse:
+    with get_connection() as connection:
+        try:
+            artifact = create_decision_artifact(connection, document_id)
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.") from exc
+    return DecisionArtifactResponse(**artifact)
+
+
+@router.get("/{document_id}/decisions", response_model=DecisionArtifactResponse)
+def get_document_decisions(document_id: str) -> DecisionArtifactResponse:
+    with get_connection() as connection:
+        try:
+            artifact = get_latest_decision_artifact(connection, document_id)
+        except DocumentNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.") from exc
+        except DecisionArtifactNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Decision artifact not found.",
+            ) from exc
+    return DecisionArtifactResponse(**artifact)
 
 
 @router.post("/{document_id}/summary", response_model=SummaryArtifactResponse)

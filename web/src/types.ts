@@ -68,6 +68,22 @@ export interface SummaryArtifactRecord {
   created_at: string;
 }
 
+export interface DecisionItemRecord {
+  decision_text: string;
+  evidence_quote: string;
+  source_line_start: number;
+  source_line_end: number;
+}
+
+export interface DecisionArtifactRecord {
+  id: string;
+  document_id: string;
+  method: "explicit_decision_v1";
+  source_content_hash: string;
+  decisions: DecisionItemRecord[];
+  created_at: string;
+}
+
 
 
 export type ObsidianExportDestinationType =
@@ -93,12 +109,14 @@ export interface ObsidianExportFolderCheckRecord {
 export interface ObsidianExportPreviewRecord {
   document_id: string;
   has_summary: boolean;
+  has_decisions: boolean;
   markdown: string;
 }
 
 export interface ObsidianExportWriteResultRecord {
   document_id: string;
   has_summary: boolean;
+  has_decisions: boolean;
   export_path: string;
   filename: string;
   bytes_written: number;
