@@ -508,14 +508,14 @@ def _review_projection(
         if comment_id is not None:
             evidence_pointer = f"issue_comment:{comment_id}"
             evidence_summary = (
-                "Trusted review bundle; candidate manifest "
+                "可信任的 review bundle；candidate manifest "
                 f"{candidate['candidate_manifest_fingerprint']}"
             )
     if evidence_pointer is None and record is not None:
         comment_id = _safe_comment_id(record.get("target_result_comment_id"))
         if comment_id is not None:
             evidence_pointer = f"issue_comment:{comment_id}"
-            evidence_summary = "Trusted terminal result"
+            evidence_summary = "可信任的終態結果"
     return {
         "warning_or_error": warning,
         "changed_files": {"status": "unavailable", "items": []},
@@ -544,28 +544,28 @@ def _scan_lifecycle(scan: dict[str, Any]) -> dict[str, str]:
 
 def _next_action(stage: str, operator_health: str) -> str:
     if stage == "RUNNING":
-        return "Task is running. You do not need to do anything."
+        return "任務執行中，您目前不需要操作。"
     if stage == "DISPATCHING":
-        return "The request is starting now. You do not need to do anything."
+        return "請求正在啟動，您目前不需要操作。"
     if operator_health == "stale":
-        return "Operator has not checked for work recently."
+        return "Operator 最近沒有檢查工作。"
     if operator_health in {"offline", "unknown"}:
-        return "Operator is not available, so new work will not start automatically."
+        return "Operator 目前不可用，因此新工作不會自動啟動。"
     if stage == "WAITING_FOR_CHATGPT_REVIEW":
-        return "Task finished and is waiting for ChatGPT review."
+        return "任務已完成，正在等待 ChatGPT 審查。"
     if stage == "COMPLETED_OR_LAST_COMPLETED":
-        return "Task completed. No action is required unless ChatGPT asks for a decision."
+        return "任務已完成。除非 ChatGPT 要求決策，否則不需要操作。"
     if stage == "BLOCKED_OR_FAILED":
-        return "The workflow is blocked or failed. Review the warning below."
+        return "Workflow 已阻擋或失敗，請查看下方警告。"
     if stage == "REQUEST_DETECTED":
-        return "A request was detected and is waiting to start."
+        return "已偵測到請求，正在等待接手。"
     if stage == "EXPIRED":
-        return "The observed request expired and will not start."
+        return "觀察到的請求已過期，不會啟動。"
     if stage == "NO_REQUEST_DETECTED":
-        return "Everything is ready. The last check found no request, so you do not need to do anything."
+        return "系統已就緒。最近一次檢查沒有找到請求，您目前不需要操作。"
     if stage == "CHECKING_FOR_WORK":
-        return "The Operator is checking for work now."
-    return "The current request state is unknown. Wait for the next check or review the warning below."
+        return "Operator 正在檢查工作。"
+    return "目前的請求狀態不明。請等待下一次檢查，或查看下方警告。"
 
 
 def _system_projection(
@@ -697,7 +697,9 @@ def build_workflow_snapshot(
         and (
             processed_record is None
             or (
-                observed_request["request_id"] != processed_record.get("request_id")
+                inbox_scan["result"] == "eligible_request_detected"
+                and observed_request["pickup_decision"] == "ready_for_pickup"
+                and observed_request["request_id"] != processed_record.get("request_id")
                 and scan_time is not None
                 and (processed_time is None or scan_time >= processed_time)
             )
@@ -854,7 +856,12 @@ def build_workflow_snapshot(
 
     if failure_status == "available" and applicable_failure is None:
         failure_status = "historical_not_current"
-    candidate_matches = _review_candidate_matches(review_candidate, processed_record)
+    selected_processed_record = (
+        processed_records.get(request_id) if request_id is not None else None
+    )
+    candidate_matches = _review_candidate_matches(
+        review_candidate, selected_processed_record
+    )
     if review_candidate_status == "available" and not candidate_matches:
         review_candidate_status = "historical_or_unmatched"
 
@@ -866,7 +873,7 @@ def build_workflow_snapshot(
         else []
     )
     warning = _warning_projection(applicable_failure, request_events)
-    review = _review_projection(processed_record, review_candidate, warning)
+    review = _review_projection(selected_processed_record, review_candidate, warning)
     global_latest_event = events[-1] if events else None
     system = _system_projection(
         operator_health=operator_health,

@@ -447,11 +447,67 @@ def test_newest_terminal_truth_outranks_stale_state_and_review_candidate(
     assert snapshot["review"]["evidence"] == {
         "status": "available",
         "pointer": "issue_comment:5570230576",
-        "summary": "Trusted terminal result",
+        "summary": "可信任的終態結果",
     }
     assert snapshot["source_status"]["review_candidate"] == (
         "historical_or_unmatched"
     )
+
+
+def test_later_scan_reobserving_older_expired_request_does_not_replace_newer_terminal(
+    tmp_path,
+):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    newer_request = "product-extract-decisions-317"
+    append_processed(
+        state_dir,
+        processed_record(
+            request_id=newer_request,
+            action="run-reviewbundle",
+            result="success",
+            observed_at="2026-09-14T12:00:00Z",
+            target_issue=317,
+        ),
+    )
+    expired_request = observed_request(
+        request_id="older-expired-request-302",
+        decision="expired",
+        reason="request_expired",
+        expires="20260901T000000Z",
+    )
+    expired_request["target_issue"] = 302
+    expired_request["observed_at_utc"] = "2026-09-15T00:00:00Z"
+    write_json(
+        state_dir / "heartbeat.json",
+        operator_heartbeat(
+            status="waiting",
+            updated_at="2026-09-15T00:00:00Z",
+            scan_result="expired_request_observed",
+            scan_reason="request_expired",
+            scan_request=expired_request,
+        ),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir,
+        EventStore((tmp_path / "events.jsonl").resolve()),
+        now=datetime(2026, 9, 15, 0, 0, 10, tzinfo=timezone.utc),
+    )
+
+    assert snapshot["current_task"]["request_id"] == newer_request
+    assert snapshot["current_task"]["issue_number"] == 317
+    assert snapshot["current_task"]["lifecycle"] == {
+        "stage": "WAITING_FOR_CHATGPT_REVIEW",
+        "certainty": "verified",
+        "basis": "processed_request:success",
+    }
+    assert snapshot["current_task"]["terminal_result"] == "success"
+    assert snapshot["review"]["evidence"] == {
+        "status": "available",
+        "pointer": "issue_comment:5559170694",
+        "summary": "可信任的終態結果",
+    }
 
 
 def test_current_in_flight_outranks_newer_processed_terminal(tmp_path):
@@ -482,6 +538,55 @@ def test_current_in_flight_outranks_newer_processed_terminal(tmp_path):
     }
 
 
+def test_review_and_warning_projection_never_borrow_from_another_request(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    store_path = (tmp_path / "events.jsonl").resolve()
+    other_record = processed_record(
+        request_id="other-terminal-request",
+        observed_at="2026-09-07T11:54:17Z",
+        target_issue=317,
+    )
+    append_processed(state_dir, other_record)
+    write_json(state_dir / "in_flight.json", in_flight_payload())
+    write_json(
+        state_dir / "review_candidate.json",
+        new_review_candidate_payload(
+            target_repository=other_record["target_repository"],
+            target_issue=other_record["target_issue"],
+            dispatch_request_id=other_record["target_dispatch_request_id"],
+            action=other_record["requested_action"],
+            branch=other_record["expected_branch"],
+            expected_head=other_record["expected_head"],
+            terminal_result_comment_id="5559170694",
+            review_bundle_comment_id="5559170528",
+            candidate_manifest_fingerprint="0" * 64,
+            target_repo_root=str(tmp_path.resolve()),
+            recorded_at=datetime(2026, 9, 7, 11, 54, 17, tzinfo=timezone.utc),
+        ),
+    )
+    add_event(
+        store_path,
+        {"type": "turn.failed"},
+        observed_at="2026-09-07T11:54:18Z",
+        request_id=other_record["request_id"],
+        run_id="other-terminal-run",
+    )
+
+    snapshot = build_workflow_snapshot(state_dir, EventStore(store_path))
+
+    assert snapshot["current_task"]["request_id"] == REQUEST_ID
+    assert snapshot["review"]["warning_or_error"]["status"] == "unavailable"
+    assert snapshot["review"]["evidence"] == {
+        "status": "unavailable",
+        "pointer": None,
+        "summary": None,
+    }
+    assert snapshot["source_status"]["review_candidate"] == (
+        "historical_or_unmatched"
+    )
+
+
 def test_dispatched_in_flight_projects_running_request(tmp_path):
     state_dir = (tmp_path / "state").resolve()
     state_dir.mkdir()
@@ -506,7 +611,7 @@ def test_dispatched_in_flight_projects_running_request(tmp_path):
 
     assert snapshot["current_task"]["lifecycle"]["stage"] == "RUNNING"
     assert snapshot["system"]["next_action"] == (
-        "Task is running. You do not need to do anything."
+        "任務執行中，您目前不需要操作。"
     )
 
 
@@ -578,10 +683,7 @@ def test_recent_polling_and_empty_scan_projects_ready_no_request(tmp_path):
         "workflow": "ready",
         "operator": "online",
         "panel": "online",
-        "next_action": (
-            "Everything is ready. The last check found no request, so you do not "
-            "need to do anything."
-        ),
+        "next_action": "系統已就緒。最近一次檢查沒有找到請求，您目前不需要操作。",
     }
     assert snapshot["current_task"]["lifecycle"]["stage"] == "NO_REQUEST_DETECTED"
     assert snapshot["operator"]["activity"] == {
@@ -622,7 +724,7 @@ def test_stale_heartbeat_makes_operator_effectively_unavailable(tmp_path):
     assert snapshot["system"]["readiness"] == "unavailable"
     assert snapshot["system"]["operator"] == "stale"
     assert snapshot["system"]["next_action"] == (
-        "Operator has not checked for work recently."
+        "Operator 最近沒有檢查工作。"
     )
     assert snapshot["current_task"]["lifecycle"]["stage"] == "UNKNOWN"
 
@@ -655,7 +757,7 @@ def test_detected_request_waiting_for_pickup_exposes_only_safe_identity(tmp_path
     assert snapshot["current_task"]["detected_at_utc"] == "2026-09-06T12:08:20Z"
     assert snapshot["current_task"]["expires_at_utc"] == "2026-09-06T12:18:00Z"
     assert snapshot["system"]["next_action"] == (
-        "A request was detected and is waiting to start."
+        "已偵測到請求，正在等待接手。"
     )
 
 
@@ -687,7 +789,7 @@ def test_expired_request_observation_is_explicit(tmp_path):
     assert snapshot["current_task"]["lifecycle"]["stage"] == "EXPIRED"
     assert snapshot["current_task"]["pickup_decision"] == "expired"
     assert snapshot["system"]["next_action"] == (
-        "The observed request expired and will not start."
+        "觀察到的請求已過期，不會啟動。"
     )
 
 
@@ -856,7 +958,7 @@ def test_matching_review_candidate_exposes_only_bounded_trusted_evidence_pointer
     assert snapshot["review"]["evidence"] == {
         "status": "available",
         "pointer": "issue_comment:5559170528",
-        "summary": "Trusted review bundle; candidate manifest " + "0" * 64,
+        "summary": "可信任的 review bundle；candidate manifest " + "0" * 64,
     }
 
 
@@ -910,8 +1012,24 @@ def test_temporary_fixture_panel_http_static_snapshot_sse_and_read_only_methods(
         with urlopen(f"{base}/", timeout=2) as response:
             html = response.read().decode("utf-8")
             assert response.headers["Content-Security-Policy"].startswith("default-src 'self'")
-        assert "Workflow Panel" in html
+        assert '<html lang="zh-Hant">' in html
+        assert "Workflow 狀態面板" in html
+        assert "Workflow 可以接手工作嗎？" in html
+        assert "目前發生什麼事？" in html
+        assert "審查證據" in html
+        assert "輪詢活動" in html
+        assert "即時活動" in html
+        assert "立即檢查" in html
         assert "approval" not in html.lower()
+        for untranslated in (
+            "System readiness",
+            "What is happening now?",
+            "Review evidence",
+            "Polling activity",
+            "Live activity",
+            "Check now",
+        ):
+            assert untranslated not in html
         assert 'id="readiness"' in html
         assert 'id="operator-health"' in html
         assert 'id="last-check-time"' in html
@@ -932,6 +1050,10 @@ def test_temporary_fixture_panel_http_static_snapshot_sse_and_read_only_methods(
         assert "sessionStorage.getItem(CURSOR_KEY)" in javascript
         assert "setInterval(() => refreshSnapshot(false), SNAPSHOT_POLL_MS)" in javascript
         assert "if (eventSource && connectedStreamUrl === streamUrl) return" in javascript
+        assert '"Workflow 已就緒"' in javascript
+        assert '"即時連線 · 唯讀"' in javascript
+        assert '"無法取得"' in javascript
+        assert '"等待有限範圍的觀測事件。"' in javascript
 
         with urlopen(f"{base}/api/state", timeout=2) as response:
             snapshot = json.loads(response.read())
@@ -1018,23 +1140,23 @@ process.stdout.write(JSON.stringify({
         "cursor": 12,
         "reconnectUrl": "/events?follow=1&after=12",
         "lifecycleLabels": [
-            "No request detected",
-            "Checking for work",
-            "No request detected",
-            "Request detected / waiting for pickup",
-            "Dispatching",
-            "Running",
-            "Blocked / failed",
-            "Waiting for ChatGPT review",
-            "Completed / last completed",
-            "Expired",
-            "Unknown",
+            "未偵測到請求",
+            "正在檢查工作",
+            "未偵測到請求",
+            "已偵測請求／等待接手",
+            "正在派送",
+            "執行中",
+            "已阻擋／失敗",
+            "等待 ChatGPT 審查",
+            "已完成／最近完成",
+            "已過期",
+            "狀態不明",
         ],
-        "knownLabel": "Codex process exited (activity only)",
-        "unknownLabel": "Observed structured activity",
-        "ages": ["just now", "18 seconds ago", "2 minutes ago"],
-        "relativeTimes": ["18 seconds ago", "in 10 minutes"],
-        "cadence": "Checks for work about every 30 seconds",
+        "knownLabel": "Codex 行程已結束（僅代表活動）",
+        "unknownLabel": "已觀察到結構化活動",
+        "ages": ["剛剛", "18 秒前", "2 分鐘前"],
+        "relativeTimes": ["18 秒前", "10 分鐘後"],
+        "cadence": "約每 30 秒檢查一次工作",
     }
 
 

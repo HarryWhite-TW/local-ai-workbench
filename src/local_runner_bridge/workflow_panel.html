@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Workflow Panel</title>
+  <title>Workflow 狀態面板</title>
   <link rel="stylesheet" href="/workflow_panel.css">
 </head>
 <body>
@@ -11,32 +11,32 @@
     <header class="masthead">
       <div>
         <p class="eyebrow">Local AI Workbench</p>
-        <h1>Workflow Panel</h1>
-        <p class="subtitle">A plain-language view of whether Workflow can pick up and run work.</p>
+        <h1>Workflow 狀態面板</h1>
+        <p class="subtitle">以易懂方式顯示 Workflow 是否能接手並執行工作。</p>
       </div>
       <div class="connection" aria-live="polite">
         <span id="connection-dot" class="dot"></span>
-        <span id="connection-status">Connecting</span>
+        <span id="connection-status">連線中</span>
       </div>
     </header>
 
     <section class="card readiness-card" aria-labelledby="readiness-heading">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">System readiness</p>
-          <h2 id="readiness-heading">Can Workflow pick up work?</h2>
+          <p class="eyebrow">系統就緒狀態</p>
+          <h2 id="readiness-heading">Workflow 可以接手工作嗎？</h2>
         </div>
-        <button id="refresh" type="button">Check now</button>
+        <button id="refresh" type="button">立即檢查</button>
       </div>
       <div class="readiness-layout">
         <div>
-          <span id="readiness" class="stage">UNKNOWN</span>
-          <p id="next-action" class="next-action">Checking local Workflow status…</p>
+          <span id="readiness" class="stage">狀態不明</span>
+          <p id="next-action" class="next-action">正在檢查本機 Workflow 狀態…</p>
         </div>
         <dl class="status-list">
-          <div><dt>Workflow</dt><dd id="workflow-readiness">Unknown</dd></div>
-          <div><dt>Operator</dt><dd id="operator-health">Unknown</dd></div>
-          <div><dt>Panel</dt><dd id="panel-health">Online</dd></div>
+          <div><dt>Workflow</dt><dd id="workflow-readiness">狀態不明</dd></div>
+          <div><dt>Operator</dt><dd id="operator-health">狀態不明</dd></div>
+          <div><dt>Panel</dt><dd id="panel-health">連線正常</dd></div>
         </dl>
       </div>
     </section>
@@ -44,56 +44,56 @@
     <section class="card current-card" aria-labelledby="current-heading">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Request state</p>
-          <h2 id="current-heading">What is happening now?</h2>
+          <p class="eyebrow">請求狀態</p>
+          <h2 id="current-heading">目前發生什麼事？</h2>
         </div>
       </div>
       <div class="state-grid">
         <div class="state-primary">
-          <span id="stage" class="stage">UNKNOWN</span>
-          <p id="request-summary" class="basis">No current request evidence loaded.</p>
+          <span id="stage" class="stage">狀態不明</span>
+          <p id="request-summary" class="basis">尚未載入目前請求的證據。</p>
         </div>
         <dl>
-          <div><dt>Request</dt><dd id="request-id">—</dd></div>
-          <div><dt>Target Issue</dt><dd id="issue-number">—</dd></div>
-          <div><dt>Action</dt><dd id="request-action">—</dd></div>
-          <div><dt>Detected</dt><dd id="detected-time">—</dd></div>
-          <div><dt>Expires</dt><dd id="expiry-time">—</dd></div>
-          <div><dt>Pickup decision</dt><dd id="pickup-decision">—</dd></div>
-          <div><dt>Last update</dt><dd id="evidence-time">—</dd></div>
+          <div><dt>請求</dt><dd id="request-id">—</dd></div>
+          <div><dt>目標 Issue</dt><dd id="issue-number">—</dd></div>
+          <div><dt>動作</dt><dd id="request-action">—</dd></div>
+          <div><dt>偵測時間</dt><dd id="detected-time">—</dd></div>
+          <div><dt>到期時間</dt><dd id="expiry-time">—</dd></div>
+          <div><dt>接手判定</dt><dd id="pickup-decision">—</dd></div>
+          <div><dt>最後更新</dt><dd id="evidence-time">—</dd></div>
         </dl>
       </div>
-      <p class="truth-note">A process exit or Codex turn completion is activity evidence, not semantic Workflow acceptance.</p>
+      <p class="truth-note">行程結束或 Codex 回合完成只代表活動證據，不代表 Workflow 語意驗收完成。</p>
     </section>
 
     <section class="card evidence-card" aria-labelledby="evidence-heading">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">Trusted local evidence only</p>
-          <h2 id="evidence-heading">Review evidence</h2>
+          <p class="eyebrow">僅使用可信任的本機證據</p>
+          <h2 id="evidence-heading">審查證據</h2>
         </div>
       </div>
       <dl class="evidence-list">
-        <div><dt>Current / last warning or error</dt><dd id="warning-or-error">Unavailable</dd></div>
-        <div><dt>Changed files</dt><dd id="changed-files">Unavailable</dd></div>
-        <div><dt>Test summary</dt><dd id="test-summary">Unavailable</dd></div>
-        <div><dt>Evidence</dt><dd id="evidence-summary">Unavailable</dd></div>
+        <div><dt>目前／最近的警告或錯誤</dt><dd id="warning-or-error">無法取得</dd></div>
+        <div><dt>變更檔案</dt><dd id="changed-files">無法取得</dd></div>
+        <div><dt>測試摘要</dt><dd id="test-summary">無法取得</dd></div>
+        <div><dt>證據</dt><dd id="evidence-summary">無法取得</dd></div>
       </dl>
-      <p class="truth-note">Unavailable means the current trusted local lifecycle sources do not support that claim.</p>
+      <p class="truth-note">「無法取得」表示目前可信任的本機 lifecycle source 無法支持該項主張。</p>
     </section>
 
     <div class="columns">
       <section class="card" aria-labelledby="operator-heading">
         <p class="eyebrow">Bridge Operator</p>
-        <h2 id="operator-heading">Polling activity</h2>
+        <h2 id="operator-heading">輪詢活動</h2>
         <dl class="compact-list">
-          <div><dt>Health</dt><dd id="operator-health-detail">Unknown</dd></div>
-          <div><dt>Last heartbeat</dt><dd id="heartbeat-time">—</dd></div>
-          <div><dt>Heartbeat age</dt><dd id="heartbeat-age">—</dd></div>
-          <div><dt>Last inbox check</dt><dd id="last-check-time">—</dd></div>
-          <div><dt>Check cadence</dt><dd id="poll-cadence">—</dd></div>
-          <div><dt>Latest check</dt><dd id="scan-result">Unknown</dd></div>
-          <div><dt>Cycle</dt><dd id="operator-cycle">—</dd></div>
+          <div><dt>健康狀態</dt><dd id="operator-health-detail">狀態不明</dd></div>
+          <div><dt>最近心跳</dt><dd id="heartbeat-time">—</dd></div>
+          <div><dt>距離最近心跳</dt><dd id="heartbeat-age">—</dd></div>
+          <div><dt>最近 Inbox 檢查</dt><dd id="last-check-time">—</dd></div>
+          <div><dt>檢查頻率</dt><dd id="poll-cadence">—</dd></div>
+          <div><dt>最近檢查結果</dt><dd id="scan-result">狀態不明</dd></div>
+          <div><dt>輪詢次數</dt><dd id="operator-cycle">—</dd></div>
         </dl>
         <div id="diagnostics" class="diagnostics" hidden></div>
       </section>
@@ -101,13 +101,13 @@
       <section class="card activity-card" aria-labelledby="activity-heading">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">Observability Spine</p>
-            <h2 id="activity-heading">Live activity</h2>
+            <p class="eyebrow">可觀測性資訊</p>
+            <h2 id="activity-heading">即時活動</h2>
           </div>
-          <span id="event-count" class="counter">0 events</span>
+          <span id="event-count" class="counter">0 個事件</span>
         </div>
         <ol id="activity" class="activity-list" aria-live="polite">
-          <li class="empty">Waiting for bounded observation events.</li>
+          <li class="empty">等待有限範圍的觀測事件。</li>
         </ol>
       </section>
     </div>
