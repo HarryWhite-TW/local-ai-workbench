@@ -24,6 +24,8 @@ LEGACY_IN_FLIGHT_SCHEMA_VERSION = 1
 REVIEW_CANDIDATE_PROTOCOL = "lawb.bridge_operator_review_candidate.v1"
 REVIEW_CANDIDATE_SCHEMA_VERSION = 2
 LEGACY_REVIEW_CANDIDATE_SCHEMA_VERSION = 1
+FINAL_REVIEW_VERDICT_PROTOCOL = "lawb.chatgpt_final_review_verdict.v1"
+FINAL_REVIEW_VERDICT_SCHEMA_VERSION = 1
 PREPARED = "PREPARED"
 DISPATCHED_NOT_LOCALLY_SETTLED = "DISPATCHED_NOT_LOCALLY_SETTLED"
 REJECTED_BEFORE_RUNNER = "REJECTED_BEFORE_RUNNER"
@@ -37,6 +39,7 @@ PRE_RUNNER_REJECTION_DECISION = "DISPATCHER_REJECTED_BEFORE_RUNNER"
 PRE_RUNNER_REJECTION_REASON = "STRUCTURED_PRE_RUNNER_REJECTION"
 TERMINAL_RESULTS = frozenset({"success", "failure", "blocked"})
 SETTLEMENTS = frozenset({"settled_success", "settled_non_success"})
+FINAL_REVIEW_VERDICTS = frozenset({"accepted", "repair_required", "blocked"})
 QUARANTINE_PREFIX = "operator.lock.quarantine."
 QUARANTINE_SUFFIX = ".json"
 
@@ -916,6 +919,160 @@ def write_or_replace_review_candidate(
         write_durable_json(path, expected, operator_session_id=operator_session_id)
         return "replaced"
     write_durable_json(path, expected, operator_session_id=operator_session_id)
+    return "written"
+
+
+def new_final_review_verdict_payload(
+    *,
+    target_repository: str,
+    target_issue: int,
+    request_id: str,
+    dispatch_request_id: str,
+    action: str,
+    branch: str,
+    expected_head: str,
+    terminal_result_comment_id: str,
+    review_bundle_comment_id: str,
+    candidate_manifest_fingerprint: str,
+    candidate_acceptance: str,
+    verdict: str,
+    source_author: str,
+    source_comment_id: str,
+    reviewed_at: datetime,
+) -> dict[str, Any]:
+    """Build review truth only; this payload grants no execution authority."""
+
+    payload = {
+        "protocol": FINAL_REVIEW_VERDICT_PROTOCOL,
+        "schema_version": FINAL_REVIEW_VERDICT_SCHEMA_VERSION,
+        "target_repository": target_repository,
+        "target_issue": target_issue,
+        "request_id": request_id,
+        "dispatch_request_id": dispatch_request_id,
+        "action": action,
+        "branch": branch,
+        "expected_head": expected_head,
+        "terminal_result_comment_id": terminal_result_comment_id,
+        "review_bundle_comment_id": review_bundle_comment_id,
+        "candidate_manifest_fingerprint": candidate_manifest_fingerprint,
+        "candidate_acceptance": candidate_acceptance,
+        "verdict": verdict,
+        "reviewer": "chatgpt",
+        "source": "issue_comment",
+        "source_author": source_author,
+        "source_comment_id": source_comment_id,
+        "reviewed_at_utc": format_utc(reviewed_at),
+        "authority_scope": "review_truth_only",
+    }
+    validate_final_review_verdict_payload(payload)
+    return payload
+
+
+def validate_final_review_verdict_payload(value: Any) -> dict[str, Any]:
+    expected_keys = {
+        "protocol",
+        "schema_version",
+        "target_repository",
+        "target_issue",
+        "request_id",
+        "dispatch_request_id",
+        "action",
+        "branch",
+        "expected_head",
+        "terminal_result_comment_id",
+        "review_bundle_comment_id",
+        "candidate_manifest_fingerprint",
+        "candidate_acceptance",
+        "verdict",
+        "reviewer",
+        "source",
+        "source_author",
+        "source_comment_id",
+        "reviewed_at_utc",
+        "authority_scope",
+    }
+    if (
+        not isinstance(value, dict)
+        or set(value) != expected_keys
+        or value.get("protocol") != FINAL_REVIEW_VERDICT_PROTOCOL
+        or value.get("schema_version") != FINAL_REVIEW_VERDICT_SCHEMA_VERSION
+        or not isinstance(value.get("target_repository"), str)
+        or not value["target_repository"]
+        or type(value.get("target_issue")) is not int
+        or value["target_issue"] <= 0
+        or not isinstance(value.get("request_id"), str)
+        or _REQUEST_ID.fullmatch(value["request_id"]) is None
+        or not isinstance(value.get("dispatch_request_id"), str)
+        or _REQUEST_ID.fullmatch(value["dispatch_request_id"]) is None
+        or value.get("action") != "run-reviewbundle"
+        or not isinstance(value.get("branch"), str)
+        or not value["branch"]
+        or "\x00" in value["branch"]
+        or not isinstance(value.get("expected_head"), str)
+        or _HEAD.fullmatch(value["expected_head"]) is None
+        or not isinstance(value.get("terminal_result_comment_id"), str)
+        or _COMMENT_ID.fullmatch(value["terminal_result_comment_id"]) is None
+        or not isinstance(value.get("review_bundle_comment_id"), str)
+        or _COMMENT_ID.fullmatch(value["review_bundle_comment_id"]) is None
+        or not isinstance(value.get("candidate_manifest_fingerprint"), str)
+        or _SHA256.fullmatch(value["candidate_manifest_fingerprint"]) is None
+        or value.get("candidate_acceptance") not in {"eligible", "ineligible"}
+        or value.get("verdict") not in FINAL_REVIEW_VERDICTS
+        or value.get("reviewer") != "chatgpt"
+        or value.get("source") != "issue_comment"
+        or not isinstance(value.get("source_author"), str)
+        or not value["source_author"]
+        or len(value["source_author"]) > 80
+        or any(ord(character) < 32 for character in value["source_author"])
+        or not isinstance(value.get("source_comment_id"), str)
+        or _COMMENT_ID.fullmatch(value["source_comment_id"]) is None
+        or parse_utc(value.get("reviewed_at_utc")) is None
+        or value.get("authority_scope") != "review_truth_only"
+    ):
+        raise LifecycleEvidenceError("final_review_verdict_invalid")
+    return dict(value)
+
+
+def load_final_review_verdicts(
+    path: Path,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    records: dict[tuple[str, str], dict[str, Any]] = {}
+    if not path.exists():
+        return records
+    try:
+        lines = path.read_bytes().splitlines()
+        for raw in lines:
+            if not raw.strip():
+                continue
+            payload = validate_final_review_verdict_payload(_load_json_bytes(raw))
+            identity = (payload["target_repository"], payload["request_id"])
+            if identity in records:
+                raise LifecycleEvidenceError("final_review_verdict_invalid")
+            records[identity] = payload
+    except (OSError, LifecycleEvidenceError) as error:
+        raise LifecycleEvidenceError("final_review_verdict_invalid") from error
+    return records
+
+
+def append_final_review_verdict(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    trusted_actors: tuple[str, ...],
+) -> str:
+    """Append immutable review truth without granting any follow-on action."""
+
+    expected = validate_final_review_verdict_payload(payload)
+    if expected["source_author"] not in trusted_actors:
+        raise LifecycleEvidenceError("final_review_verdict_untrusted")
+    records = load_final_review_verdicts(path)
+    identity = (expected["target_repository"], expected["request_id"])
+    existing = records.get(identity)
+    if existing is not None:
+        if existing != expected:
+            raise LifecycleEvidenceError("final_review_verdict_conflict")
+        return "already_present"
+    append_jsonl_durable(path, expected)
     return "written"
 
 

@@ -15,7 +15,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from local_runner_bridge.bridge_operator_lifecycle_state import (
     DISPATCHED_NOT_LOCALLY_SETTLED,
+    append_final_review_verdict,
     new_in_flight_payload,
+    new_final_review_verdict_payload,
     new_review_candidate_payload,
     updated_in_flight_payload,
 )
@@ -186,6 +188,34 @@ def append_processed(state_dir: Path, record: dict) -> None:
         "a", encoding="utf-8", newline="\n"
     ) as stream:
         stream.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def final_review_verdict(
+    *,
+    request_id: str = REQUEST_ID,
+    verdict: str = "accepted",
+    source_author: str = "HarryWhite-TW",
+    target_issue: int = 308,
+    candidate_acceptance: str = "ineligible",
+    candidate_manifest_fingerprint: str = "a" * 64,
+) -> dict:
+    return new_final_review_verdict_payload(
+        target_repository="HarryWhite-TW/local-ai-workbench",
+        target_issue=target_issue,
+        request_id=request_id,
+        dispatch_request_id=f"{request_id}-dispatch",
+        action="run-reviewbundle",
+        branch="master",
+        expected_head="d8118bd9649f09cf9dc9ec0a20ac5ab8dd81fd7c",
+        terminal_result_comment_id="5559170694",
+        review_bundle_comment_id="5559170528",
+        candidate_manifest_fingerprint=candidate_manifest_fingerprint,
+        candidate_acceptance=candidate_acceptance,
+        verdict=verdict,
+        source_author=source_author,
+        source_comment_id="5559170999",
+        reviewed_at=datetime(2026, 9, 6, 12, 9, tzinfo=timezone.utc),
+    )
 
 
 def current_failure(*, request_id: str = REQUEST_ID) -> dict:
@@ -365,6 +395,180 @@ def test_processed_terminal_truth_projects_review_completed_and_blocked(
     assert snapshot["current_task"]["lifecycle"]["certainty"] == "verified"
     assert snapshot["current_task"]["lifecycle"]["basis"] == f"processed_request:{result}"
     assert snapshot["current_task"]["terminal_result"] == result
+    if action == "run-reviewbundle" and result == "success":
+        assert snapshot["review"]["final_verdict"]["status"] == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected_stage", "expected_next_action"),
+    [
+        (
+            "accepted",
+            "FINAL_ACCEPTED",
+            "ChatGPT 已完成最終審查並接受此結果。",
+        ),
+        (
+            "repair_required",
+            "REPAIR_REQUIRED",
+            "ChatGPT 最終審查要求修復；請查看審查證據。",
+        ),
+        (
+            "blocked",
+            "FINAL_REVIEW_BLOCKED",
+            "ChatGPT 最終審查未接受或已阻擋；請查看審查證據。",
+        ),
+    ],
+)
+def test_exact_trusted_final_review_verdict_projects_durable_review_truth(
+    tmp_path, verdict, expected_stage, expected_next_action
+):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    write_json(state_dir / "state.json", operator_state(last_request_id=REQUEST_ID))
+    append_processed(state_dir, processed_record())
+    payload = final_review_verdict(verdict=verdict)
+    append_final_review_verdict(
+        state_dir / "final_review_verdicts.jsonl",
+        payload,
+        trusted_actors=("HarryWhite-TW",),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir, EventStore((tmp_path / "events.jsonl").resolve())
+    )
+
+    assert snapshot["current_task"]["request_id"] == REQUEST_ID
+    assert snapshot["current_task"]["terminal_result"] == "success"
+    assert snapshot["current_task"]["lifecycle"] == {
+        "stage": expected_stage,
+        "certainty": "verified",
+        "basis": f"final_review_verdict:{verdict}",
+    }
+    assert snapshot["system"]["next_action"] == expected_next_action
+    assert snapshot["review"]["final_verdict"] == {
+        "status": "available",
+        "verdict": verdict,
+        "reviewer": "chatgpt",
+        "reviewed_at_utc": "2026-09-06T12:09:00Z",
+        "evidence_pointer": "issue_comment:5559170999",
+        "authority_scope": "review_truth_only",
+    }
+    assert snapshot["source_status"]["final_review_verdicts"] == "available"
+
+
+def test_eligible_final_review_verdict_requires_exact_review_candidate_identity(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    record = processed_record()
+    append_processed(state_dir, record)
+    write_json(
+        state_dir / "review_candidate.json",
+        new_review_candidate_payload(
+            target_repository=record["target_repository"],
+            target_issue=record["target_issue"],
+            dispatch_request_id=record["target_dispatch_request_id"],
+            action=record["requested_action"],
+            branch=record["expected_branch"],
+            expected_head=record["expected_head"],
+            terminal_result_comment_id="5559170694",
+            review_bundle_comment_id="5559170528",
+            candidate_manifest_fingerprint="a" * 64,
+            target_repo_root=str(tmp_path.resolve()),
+            recorded_at=datetime(2026, 9, 6, 12, 8, tzinfo=timezone.utc),
+        ),
+    )
+    append_final_review_verdict(
+        state_dir / "final_review_verdicts.jsonl",
+        final_review_verdict(
+            candidate_acceptance="eligible",
+            candidate_manifest_fingerprint="b" * 64,
+        ),
+        trusted_actors=("HarryWhite-TW",),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir, EventStore((tmp_path / "events.jsonl").resolve())
+    )
+
+    assert snapshot["current_task"]["lifecycle"]["stage"] == (
+        "WAITING_FOR_CHATGPT_REVIEW"
+    )
+    assert snapshot["review"]["final_verdict"]["status"] == "unavailable"
+    assert snapshot["source_status"]["final_review_verdicts"] == (
+        "historical_or_unmatched"
+    )
+
+
+def test_stale_final_review_verdict_cannot_alter_newer_current_request(tmp_path):
+    state_dir = (tmp_path / "state").resolve()
+    state_dir.mkdir()
+    older_request = "workflow-panel-request-older-307"
+    newer_request = "workflow-panel-request-newer-319"
+    append_processed(
+        state_dir,
+        processed_record(
+            request_id=older_request,
+            observed_at="2026-09-06T12:08:10Z",
+            target_issue=307,
+        ),
+    )
+    append_processed(
+        state_dir,
+        processed_record(
+            request_id=newer_request,
+            observed_at="2026-09-07T12:08:10Z",
+            target_issue=319,
+        ),
+    )
+    append_final_review_verdict(
+        state_dir / "final_review_verdicts.jsonl",
+        final_review_verdict(request_id=older_request, target_issue=307),
+        trusted_actors=("HarryWhite-TW",),
+    )
+
+    snapshot = build_workflow_snapshot(
+        state_dir, EventStore((tmp_path / "events.jsonl").resolve())
+    )
+
+    assert snapshot["current_task"]["request_id"] == newer_request
+    assert snapshot["current_task"]["lifecycle"]["stage"] == (
+        "WAITING_FOR_CHATGPT_REVIEW"
+    )
+    assert snapshot["review"]["final_verdict"]["status"] == "unavailable"
+    assert snapshot["source_status"]["final_review_verdicts"] == (
+        "historical_or_unmatched"
+    )
+
+
+def test_untrusted_or_malformed_final_review_evidence_fails_closed(tmp_path):
+    for case in ("untrusted", "malformed"):
+        state_dir = (tmp_path / case).resolve()
+        state_dir.mkdir()
+        append_processed(state_dir, processed_record())
+        path = state_dir / "final_review_verdicts.jsonl"
+        payload = final_review_verdict(source_author="untrusted-reviewer")
+        if case == "untrusted":
+            path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        else:
+            payload["authority_scope"] = "execution_authority"
+            path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+        snapshot = build_workflow_snapshot(
+            state_dir, EventStore((state_dir / "events.jsonl").resolve())
+        )
+
+        assert snapshot["current_task"]["lifecycle"]["stage"] == (
+            "WAITING_FOR_CHATGPT_REVIEW"
+        )
+        assert snapshot["review"]["final_verdict"]["status"] == "unavailable"
+        expected_status = "untrusted" if case == "untrusted" else "invalid"
+        expected_diagnostic = (
+            "final_review_verdict_untrusted"
+            if case == "untrusted"
+            else "final_review_verdict_evidence_invalid"
+        )
+        assert snapshot["source_status"]["final_review_verdicts"] == expected_status
+        assert expected_diagnostic in snapshot["diagnostics"]
 
 
 @pytest.mark.parametrize(
@@ -1112,7 +1316,7 @@ process.stdout.write(JSON.stringify({
   sequences: state.events.map((event) => event.sequence),
   cursor: state.lastSequence,
   reconnectUrl: panel.streamUrlWithCursor('/events?follow=1', state.lastSequence),
-  lifecycleLabels: ['IDLE', 'CHECKING_FOR_WORK', 'NO_REQUEST_DETECTED', 'REQUEST_DETECTED', 'DISPATCHING', 'RUNNING', 'BLOCKED_OR_FAILED', 'WAITING_FOR_CHATGPT_REVIEW', 'COMPLETED_OR_LAST_COMPLETED', 'EXPIRED', 'UNKNOWN'].map(panel.lifecycleLabel),
+  lifecycleLabels: ['IDLE', 'CHECKING_FOR_WORK', 'NO_REQUEST_DETECTED', 'REQUEST_DETECTED', 'DISPATCHING', 'RUNNING', 'BLOCKED_OR_FAILED', 'WAITING_FOR_CHATGPT_REVIEW', 'FINAL_ACCEPTED', 'REPAIR_REQUIRED', 'FINAL_REVIEW_BLOCKED', 'COMPLETED_OR_LAST_COMPLETED', 'EXPIRED', 'UNKNOWN'].map(panel.lifecycleLabel),
   knownLabel: panel.eventLabel('process.completed'),
   unknownLabel: panel.eventLabel('future.kind'),
   ages: [panel.relativeAge(3), panel.relativeAge(18), panel.relativeAge(120)],
@@ -1148,6 +1352,9 @@ process.stdout.write(JSON.stringify({
             "執行中",
             "已阻擋／失敗",
             "等待 ChatGPT 審查",
+            "ChatGPT 最終審查已接受",
+            "ChatGPT 最終審查要求修復",
+            "ChatGPT 最終審查未接受／已阻擋",
             "已完成／最近完成",
             "已過期",
             "狀態不明",

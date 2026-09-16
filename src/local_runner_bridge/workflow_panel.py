@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit
 
+from local_runner_bridge.bridge_operator_b1 import TRUSTED_ACTORS
 from local_runner_bridge.bridge_operator_b3 import (
     DEFAULT_REPOSITORY,
     FAILURE_PROTOCOL,
@@ -23,6 +24,7 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     PROCESSED,
     REJECTED_BEFORE_RUNNER,
     LifecycleEvidenceError,
+    load_final_review_verdicts,
     load_in_flight,
     load_review_candidate,
     parse_utc,
@@ -43,6 +45,7 @@ STATE_PROTOCOL = "lawb.bridge_operator_b3_state.v1"
 HEARTBEAT_PROTOCOL = "lawb.bridge_operator_b3_heartbeat.v1"
 MAX_STATE_FILE_BYTES = 1_048_576
 MAX_PROCESSED_HISTORY_BYTES = 8_388_608
+MAX_FINAL_REVIEW_HISTORY_BYTES = 8_388_608
 DEFAULT_HEARTBEAT_STALE_SECONDS = 90.0
 
 _SAFE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
@@ -389,6 +392,24 @@ def _processed_lifecycle(record: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _read_final_review_source(
+    path: Path, *, repository: str
+) -> tuple[str, dict[str, dict[str, Any]]]:
+    if not path.exists():
+        return "missing", {}
+    try:
+        if path.stat().st_size > MAX_FINAL_REVIEW_HISTORY_BYTES:
+            return "invalid", {}
+        records = load_final_review_verdicts(path)
+    except (OSError, UnicodeError, LifecycleEvidenceError):
+        return "invalid", {}
+    return "available", {
+        request_id: payload
+        for (record_repository, request_id), payload in records.items()
+        if record_repository == repository
+    }
+
+
 def _valid_failure(value: dict[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -457,6 +478,61 @@ def _review_candidate_matches(
     )
 
 
+def _final_review_verdict_matches(
+    verdict: dict[str, Any] | None,
+    record: dict[str, Any] | None,
+    candidate: dict[str, Any] | None,
+) -> bool:
+    if verdict is None or record is None:
+        return False
+    if (
+        record.get("requested_action") != "run-reviewbundle"
+        or record.get("terminal_result") != "success"
+        or record.get("result_verified") is not True
+        or verdict.get("source_author") not in TRUSTED_ACTORS
+    ):
+        return False
+    if not all(
+        (
+            verdict.get("target_repository")
+            == (record.get("target_repository") or DEFAULT_REPOSITORY),
+            verdict.get("target_issue") == record.get("target_issue"),
+            verdict.get("request_id") == record.get("request_id"),
+            verdict.get("dispatch_request_id")
+            == record.get("target_dispatch_request_id"),
+            verdict.get("action") == record.get("requested_action"),
+            verdict.get("branch") == record.get("expected_branch"),
+            verdict.get("expected_head") == record.get("expected_head"),
+            verdict.get("terminal_result_comment_id")
+            == record.get("target_result_comment_id"),
+        )
+    ):
+        return False
+    candidate_matches = _review_candidate_matches(candidate, record)
+    if verdict.get("candidate_acceptance") == "eligible":
+        return bool(
+            candidate_matches
+            and verdict.get("review_bundle_comment_id")
+            == candidate.get("review_bundle_comment_id")
+            and verdict.get("candidate_manifest_fingerprint")
+            == candidate.get("candidate_manifest_fingerprint")
+        )
+    return not candidate_matches
+
+
+def _final_review_lifecycle(verdict: dict[str, Any]) -> dict[str, str]:
+    stages = {
+        "accepted": "FINAL_ACCEPTED",
+        "repair_required": "REPAIR_REQUIRED",
+        "blocked": "FINAL_REVIEW_BLOCKED",
+    }
+    return {
+        "stage": stages[verdict["verdict"]],
+        "certainty": "verified",
+        "basis": f"final_review_verdict:{verdict['verdict']}",
+    }
+
+
 def _safe_comment_id(value: Any) -> str | None:
     if not isinstance(value, str) or not value.isascii() or not value.isdigit():
         return None
@@ -500,6 +576,7 @@ def _review_projection(
     record: dict[str, Any] | None,
     candidate: dict[str, Any] | None,
     warning: dict[str, Any],
+    final_verdict: dict[str, Any] | None,
 ) -> dict[str, Any]:
     evidence_pointer = None
     evidence_summary = None
@@ -525,6 +602,22 @@ def _review_projection(
             "pointer": evidence_pointer,
             "summary": evidence_summary,
         },
+        "final_verdict": {
+            "status": "available" if final_verdict is not None else "unavailable",
+            "verdict": final_verdict.get("verdict") if final_verdict else None,
+            "reviewer": final_verdict.get("reviewer") if final_verdict else None,
+            "reviewed_at_utc": final_verdict.get("reviewed_at_utc")
+            if final_verdict
+            else None,
+            "evidence_pointer": (
+                f"issue_comment:{final_verdict['source_comment_id']}"
+                if final_verdict
+                else None
+            ),
+            "authority_scope": final_verdict.get("authority_scope")
+            if final_verdict
+            else None,
+        },
     }
 
 
@@ -547,6 +640,12 @@ def _next_action(stage: str, operator_health: str) -> str:
         return "任務執行中，您目前不需要操作。"
     if stage == "DISPATCHING":
         return "請求正在啟動，您目前不需要操作。"
+    if stage == "FINAL_ACCEPTED":
+        return "ChatGPT 已完成最終審查並接受此結果。"
+    if stage == "REPAIR_REQUIRED":
+        return "ChatGPT 最終審查要求修復；請查看審查證據。"
+    if stage == "FINAL_REVIEW_BLOCKED":
+        return "ChatGPT 最終審查未接受或已阻擋；請查看審查證據。"
     if operator_health == "stale":
         return "Operator 最近沒有檢查工作。"
     if operator_health in {"offline", "unknown"}:
@@ -631,6 +730,12 @@ def build_workflow_snapshot(
     )
     if processed_status == "invalid":
         diagnostics.append("processed_request_evidence_invalid")
+    final_review_status, final_review_records = _read_final_review_source(
+        state_dir / "final_review_verdicts.jsonl",
+        repository=repository,
+    )
+    if final_review_status == "invalid":
+        diagnostics.append("final_review_verdict_evidence_invalid")
 
     failure_status, failure_value = _read_source(
         state_dir / "last_failure.json", protocol=FAILURE_PROTOCOL
@@ -865,6 +970,36 @@ def build_workflow_snapshot(
     if review_candidate_status == "available" and not candidate_matches:
         review_candidate_status = "historical_or_unmatched"
 
+    final_verdict = (
+        final_review_records.get(request_id) if request_id is not None else None
+    )
+    final_verdict_matches = (
+        review_candidate_status != "invalid"
+        and _final_review_verdict_matches(
+            final_verdict,
+            selected_processed_record,
+            review_candidate,
+        )
+    )
+    if final_review_status == "available":
+        if final_verdict is None and final_review_records:
+            final_review_status = "historical_or_unmatched"
+        elif (
+            final_verdict is not None
+            and final_verdict.get("source_author") not in TRUSTED_ACTORS
+        ):
+            final_review_status = "untrusted"
+            diagnostics.append("final_review_verdict_untrusted")
+        elif final_verdict is not None and not final_verdict_matches:
+            final_review_status = "historical_or_unmatched"
+    if (
+        final_verdict_matches
+        and final_review_status == "available"
+        and lifecycle["stage"] == "WAITING_FOR_CHATGPT_REVIEW"
+    ):
+        lifecycle = _final_review_lifecycle(final_verdict)
+        updated_at_utc = final_verdict["reviewed_at_utc"]
+
     request_events = [event for event in events if event["request_id"] == request_id]
     latest_event = request_events[-1] if request_events else None
     matching_events = (
@@ -873,7 +1008,17 @@ def build_workflow_snapshot(
         else []
     )
     warning = _warning_projection(applicable_failure, request_events)
-    review = _review_projection(selected_processed_record, review_candidate, warning)
+    applicable_final_verdict = (
+        final_verdict
+        if final_verdict_matches and final_review_status == "available"
+        else None
+    )
+    review = _review_projection(
+        selected_processed_record,
+        review_candidate,
+        warning,
+        applicable_final_verdict,
+    )
     global_latest_event = events[-1] if events else None
     system = _system_projection(
         operator_health=operator_health,
@@ -950,6 +1095,7 @@ def build_workflow_snapshot(
             "inbox_scan_observation": scan_status,
             "in_flight": in_flight_status,
             "processed_requests": processed_status,
+            "final_review_verdicts": final_review_status,
             "last_failure": failure_status,
             "review_candidate": review_candidate_status,
             "observation_store": "available" if store.path.exists() else "missing",

@@ -15,14 +15,17 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     PROCESSED,
     REJECTED_BEFORE_RUNNER,
     LifecycleEvidenceError,
+    append_final_review_verdict,
     append_jsonl_durable,
     capture_current_process_identity,
     create_lock_payload,
     inspect_expected_process,
     inspect_lock_file,
+    load_final_review_verdicts,
     load_in_flight,
     load_review_candidate,
     new_in_flight_payload,
+    new_final_review_verdict_payload,
     new_review_candidate_payload,
     quarantine_lock,
     updated_in_flight_payload,
@@ -93,6 +96,28 @@ def review_candidate_payload(*, target_repo_root: str, **overrides) -> dict:
         candidate_manifest_fingerprint="a" * 64,
         target_repo_root=target_repo_root,
         recorded_at=NOW,
+    )
+    value.update(overrides)
+    return value
+
+
+def final_review_verdict_payload(**overrides) -> dict:
+    value = new_final_review_verdict_payload(
+        target_repository="HarryWhite-TW/local-ai-workbench",
+        target_issue=151,
+        request_id="review-candidate-request-151",
+        dispatch_request_id="review-candidate-151",
+        action="run-reviewbundle",
+        branch="ov1-test",
+        expected_head=HEAD,
+        terminal_result_comment_id="5313180923",
+        review_bundle_comment_id="5313180922",
+        candidate_manifest_fingerprint="a" * 64,
+        candidate_acceptance="eligible",
+        verdict="accepted",
+        source_author="HarryWhite-TW",
+        source_comment_id="5313180999",
+        reviewed_at=NOW,
     )
     value.update(overrides)
     return value
@@ -371,3 +396,68 @@ def test_review_candidate_record_is_strict_and_replacement_is_request_bound(tmp_
     path.write_text(json.dumps(malformed), encoding="utf-8")
     with pytest.raises(LifecycleEvidenceError, match="review_candidate_invalid"):
         load_review_candidate(path)
+
+
+def test_final_review_verdict_history_is_strict_immutable_and_request_bound(tmp_path):
+    path = tmp_path / "final_review_verdicts.jsonl"
+    first = final_review_verdict_payload()
+
+    with pytest.raises(LifecycleEvidenceError, match="final_review_verdict_untrusted"):
+        append_final_review_verdict(
+            path,
+            final_review_verdict_payload(source_author="untrusted-reviewer"),
+            trusted_actors=("HarryWhite-TW",),
+        )
+    assert not path.exists()
+
+    assert append_final_review_verdict(
+        path, first, trusted_actors=("HarryWhite-TW",)
+    ) == "written"
+    assert load_final_review_verdicts(path) == {
+        (first["target_repository"], first["request_id"]): first
+    }
+    assert append_final_review_verdict(
+        path, first, trusted_actors=("HarryWhite-TW",)
+    ) == "already_present"
+
+    conflicting = final_review_verdict_payload(verdict="repair_required")
+    with pytest.raises(LifecycleEvidenceError, match="final_review_verdict_conflict"):
+        append_final_review_verdict(
+            path, conflicting, trusted_actors=("HarryWhite-TW",)
+        )
+
+    second = final_review_verdict_payload(
+        request_id="review-candidate-request-152",
+        dispatch_request_id="review-candidate-152",
+        target_issue=152,
+        source_comment_id="5313181000",
+    )
+    assert append_final_review_verdict(
+        path, second, trusted_actors=("HarryWhite-TW",)
+    ) == "written"
+    assert set(load_final_review_verdicts(path)) == {
+        (first["target_repository"], first["request_id"]),
+        (second["target_repository"], second["request_id"]),
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("reviewer", "codex"),
+        ("authority_scope", "execution_authority"),
+        ("verdict", "completed"),
+        ("candidate_manifest_fingerprint", "not-a-sha"),
+        ("source_comment_id", "0"),
+    ],
+)
+def test_final_review_verdict_rejects_malformed_or_authority_expanding_evidence(
+    tmp_path, field, value
+):
+    path = tmp_path / "final_review_verdicts.jsonl"
+    malformed = final_review_verdict_payload()
+    malformed[field] = value
+    path.write_text(json.dumps(malformed) + "\n", encoding="utf-8")
+
+    with pytest.raises(LifecycleEvidenceError, match="final_review_verdict_invalid"):
+        load_final_review_verdicts(path)
