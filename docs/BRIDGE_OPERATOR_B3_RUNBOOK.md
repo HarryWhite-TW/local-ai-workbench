@@ -550,7 +550,7 @@ uncertain in-flight request or reuse its request ID:
 
 ## Next Phase Boundary
 
-The bounded visible login Startup adapter below is the only approved startup
+The bounded login Startup adapter below is the only approved startup
 surface. B3-C does not authorize a service, scheduler, daemon, second poller,
 tray UX, MCP, trusted-actor changes, further action allowlist changes, or any
 commit/push/close/label/PR/merge behavior. Those changes require separate
@@ -565,7 +565,7 @@ deletes, quarantines, or rewrites lifecycle evidence and never calls
 Dispatcher, Runner, Codex, or GitHub. An expired status is evidence for
 attention, not proof that a matching live process is dead.
 
-## Optional Visible Login Startup Adapter
+## Optional Login Startup Adapter
 
 The separately approved B3-C login-startup adapter manages one current-user
 Windows Startup-folder file:
@@ -589,12 +589,14 @@ managed content, and a blocked adapter. Enable is idempotent only for the exact
 managed content. Disable removes only that exact content and is idempotent when
 the entry is absent. Both refuse an unrecognized or drifted file.
 
-The managed command opens a visible Windows PowerShell console and invokes the
-canonical repository launcher with fixed values:
+The current v2 managed entry starts a hidden, non-interactive Windows
+PowerShell process and invokes `scripts/start_workflow_runtime.ps1`. That
+canonical runtime wrapper starts the read-only Workflow Panel on loopback
+`127.0.0.1:8765` with a bounded lifetime and starts the Bridge Operator through
+`scripts/start_bridge_operator_b3c.ps1` with these fixed operator values:
 
 ```text
 -StartForeground
--PublishStatus
 -MaxCycles 960
 -PollIntervalSeconds 30
 -TimeoutSeconds 600
@@ -603,17 +605,32 @@ canonical repository launcher with fixed values:
 
 This starts a bounded 960-cycle session. The configured lifecycle validity is
 eight hours (`960 * 30` seconds); it is not a permanent background service or
-an infinite loop. Startup publishes one session status using the existing
-status schema, while actual health before a real task still requires the
-on-demand probe above.
+an infinite loop. Automatic login Startup does not pass `-PublishStatus` and
+does not create or update a GitHub `LAWBRIDGE-STATUS` comment merely because
+startup occurred. Status publication remains an explicit manual opt-in through
+`scripts/start_bridge_operator_b3c.ps1 -PublishStatus`, as described above,
+while actual health before a real task still requires the on-demand probe.
 The existing `pause.flag` and `stop.flag` mechanisms remain available:
 `pause.flag` pauses request processing for subsequent cycles, while
 `stop.flag` exits the foreground loop cleanly.
 
-The file is deterministic UTF-8 without a BOM and carries the ownership marker
-`LAWBRIDGE-B3C-STARTUP-MANAGED`. The adapter uses only the logged-in user's
-standard Startup folder. Its temporary-directory override is test-only and
-requires the explicit `LAWB_STARTUP_ADAPTER_TEST_ONLY=1` test-process guard.
+The file is deterministic UTF-8 without a BOM and carries this current
+ownership marker:
+
+```text
+LAWB-WORKFLOW-RUNTIME-STARTUP-MANAGED protocol=lawb.workflow_runtime_startup.v2
+```
+
+The historical marker below identifies only the recognized legacy-v1 migration
+form; it is not the current managed content:
+
+```text
+LAWBRIDGE-B3C-STARTUP-MANAGED protocol=lawb.bridge_operator_b3c_startup.v1
+```
+
+The adapter uses only the logged-in user's standard Startup folder. Its
+temporary-directory override is test-only and requires the explicit
+`LAWB_STARTUP_ADAPTER_TEST_ONLY=1` test-process guard.
 
 This adapter does not start the operator while configuring it, create a
 scheduled task, Registry autorun entry, Windows service, tray process,
