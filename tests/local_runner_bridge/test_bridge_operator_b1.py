@@ -886,6 +886,8 @@ def test_github_client_uses_authenticated_paginated_gh_read_path():
                         "id": 1,
                         "body": "one",
                         "user": {"login": "HarryWhite-TW"},
+                        "issue_url": "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/137",
+                        "created_at": "2026-06-16T08:00:00Z",
                     }
                 ],
                 [
@@ -893,6 +895,8 @@ def test_github_client_uses_authenticated_paginated_gh_read_path():
                         "id": 2,
                         "body": "two",
                         "user": {"login": "HarryWhite-TW"},
+                        "issue_url": "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/137",
+                        "created_at": "2026-06-16T08:01:00Z",
                     }
                 ],
             ]
@@ -909,6 +913,9 @@ def test_github_client_uses_authenticated_paginated_gh_read_path():
 
     assert issue.number == 137
     assert [comment.id for comment in comments] == [1, 2]
+    assert comments[0].repository == "HarryWhite-TW/local-ai-workbench"
+    assert comments[0].issue_number == 137
+    assert comments[0].created_at == "2026-06-16T08:00:00Z"
     assert calls == [
         (["repos/HarryWhite-TW/local-ai-workbench/issues/137"], "secret-token", False),
         (

@@ -46,12 +46,15 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     PROCESSED,
     REJECTED_BEFORE_RUNNER,
     create_lock_payload,
+    new_review_candidate_payload,
     write_exclusive_json,
 )
 from local_runner_bridge.workflow_result_notifications import (
     SUBMITTED,
     NotificationSubmission,
 )
+from local_runner_bridge.workflow_observability import EventStore
+from local_runner_bridge.workflow_panel import build_workflow_snapshot
 
 NOW = datetime(2026, 6, 16, 8, 0, 0, tzinfo=timezone.utc)
 HEAD = "3aedc4925e9da241429a7905418b6a815fd9ee37"
@@ -398,6 +401,371 @@ def processed_record(**overrides):
     if payload["target_dispatch_request_id"] is None:
         payload["target_dispatch_request_id"] = payload["request_id"]
     return payload
+
+
+FINAL_REVIEW_REQUEST_ID = "final-review-sync-151-r2"
+FINAL_REVIEW_RESULT_COMMENT_ID = "20"
+FINAL_REVIEW_BUNDLE_COMMENT_ID = "30"
+FINAL_REVIEW_FINGERPRINT = "a" * 64
+FINAL_REVIEW_CREATED_AT = "2026-06-16T08:05:00Z"
+
+
+def final_review_declared(**overrides):
+    payload = {
+        "action": "run-reviewbundle",
+        "authority_scope": "review_truth_only",
+        "branch": "feature/bridge-operator-b3a",
+        "candidate_acceptance": "ineligible",
+        "candidate_manifest_fingerprint": FINAL_REVIEW_FINGERPRINT,
+        "dispatch_request_id": FINAL_REVIEW_REQUEST_ID,
+        "expected_head": HEAD,
+        "protocol": "lawb.chatgpt_final_review_verdict.v1",
+        "review_bundle_comment_id": FINAL_REVIEW_BUNDLE_COMMENT_ID,
+        "reviewer": "chatgpt",
+        "schema_version": 1,
+        "target_issue": 151,
+        "target_repository": DEFAULT_REPOSITORY,
+        "terminal_result_comment_id": FINAL_REVIEW_RESULT_COMMENT_ID,
+        "verdict": "accepted",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def final_review_comment(
+    *,
+    comment_id=40,
+    author="HarryWhite-TW",
+    repository=DEFAULT_REPOSITORY,
+    issue_number=151,
+    created_at=FINAL_REVIEW_CREATED_AT,
+    raw_json=None,
+    **overrides,
+):
+    json_text = raw_json or json.dumps(final_review_declared(**overrides))
+    return CommentRecord(
+        id=comment_id,
+        author=author,
+        repository=repository,
+        issue_number=issue_number,
+        created_at=created_at,
+        body=(
+            "CHATGPT-FINAL-REVIEW "
+            "protocol=lawb.chatgpt_final_review_verdict.v1\n"
+            f"{json_text}"
+        ),
+    )
+
+
+def write_final_review_processed_record(
+    state_dir: Path,
+    *,
+    request_id=FINAL_REVIEW_REQUEST_ID,
+    result_comment_id=FINAL_REVIEW_RESULT_COMMENT_ID,
+    terminal_result="success",
+    observed_at="2026-06-16T08:04:00Z",
+):
+    payload = {
+        "protocol": PROCESSED_REQUEST_PROTOCOL,
+        "processed_at_utc": observed_at,
+        "cycle": 1,
+        "request_id": request_id,
+        "target_repository": DEFAULT_REPOSITORY,
+        "target_issue": 151,
+        "target_dispatch_request_id": request_id,
+        "requested_action": "run-reviewbundle",
+        "expected_branch": "feature/bridge-operator-b3a",
+        "expected_head": HEAD,
+        "target_result_comment_id": result_comment_id,
+        "target_result_author": "HarryWhite-TW",
+        "terminal_result": terminal_result,
+        "terminal_settlement": (
+            "settled_success"
+            if terminal_result == "success"
+            else "settled_non_success"
+        ),
+        "terminal_observed_at_utc": observed_at,
+        "dispatcher_invoked": True,
+        "result_verified": True,
+        "lifecycle_state": "CONSUMED",
+    }
+    path = state_dir / "processed_requests.jsonl"
+    with path.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def final_review_sync_client(
+    *verdict_comments,
+    include_stale_r1=False,
+    candidate_acceptance="ineligible",
+):
+    target_comments = [
+        CommentRecord(
+            id=10,
+            body=dispatch_marker(
+                action="run-reviewbundle",
+                request_id=FINAL_REVIEW_REQUEST_ID,
+            ),
+            author="HarryWhite-TW",
+        ),
+        CommentRecord(
+            id=20,
+            body=result_comment(
+                action="run-reviewbundle",
+                request_id=FINAL_REVIEW_REQUEST_ID,
+                **review_candidate_binding(
+                    comment_id=FINAL_REVIEW_BUNDLE_COMMENT_ID,
+                    acceptance=candidate_acceptance,
+                ),
+            ),
+            author="HarryWhite-TW",
+        ),
+    ]
+    if include_stale_r1:
+        target_comments.extend(
+            [
+                CommentRecord(
+                    id=18,
+                    body=result_comment(
+                        action="run-reviewbundle",
+                        request_id="final-review-sync-151-r1",
+                        result="failure",
+                        **review_candidate_binding(
+                            comment_id="28",
+                            acceptance="ineligible",
+                        ),
+                    ),
+                    author="HarryWhite-TW",
+                ),
+                final_review_comment(
+                    comment_id=38,
+                    dispatch_request_id="final-review-sync-151-r1",
+                    terminal_result_comment_id="18",
+                    review_bundle_comment_id="28",
+                    verdict="blocked",
+                ),
+            ]
+        )
+    target_comments.extend(verdict_comments)
+    return FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    action="run-reviewbundle",
+                    request_id=FINAL_REVIEW_REQUEST_ID,
+                    target_dispatch_request_id=FINAL_REVIEW_REQUEST_ID,
+                ),
+                author="HarryWhite-TW",
+            )
+        ],
+        target_comments=target_comments,
+    )
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected_stage"),
+    [
+        ("accepted", "FINAL_ACCEPTED"),
+        ("repair_required", "REPAIR_REQUIRED"),
+        ("blocked", "FINAL_REVIEW_BLOCKED"),
+    ],
+)
+def test_final_review_auto_sync_projects_exact_trusted_verdict(
+    tmp_path, verdict, expected_stage
+):
+    write_final_review_processed_record(tmp_path)
+    client = final_review_sync_client(
+        final_review_comment(verdict=verdict),
+    )
+
+    summary = run_b3c(tmp_path, client, max_cycles=1)
+
+    assert summary["final_review_sync_attempted"] is True
+    assert summary["final_review_sync_status"] == "written"
+    assert summary["final_review_sync_comment_id"] == "40"
+    assert summary["dispatcher_invoked"] is False
+    verdicts = (tmp_path / "final_review_verdicts.jsonl").read_text(
+        encoding="utf-8"
+    ).splitlines()
+    assert len(verdicts) == 1
+    durable = json.loads(verdicts[0])
+    assert durable["request_id"] == FINAL_REVIEW_REQUEST_ID
+    assert durable["verdict"] == verdict
+    assert durable["source_author"] == "HarryWhite-TW"
+    assert durable["source_comment_id"] == "40"
+    assert durable["reviewed_at_utc"] == FINAL_REVIEW_CREATED_AT
+    assert durable["authority_scope"] == "review_truth_only"
+    snapshot = build_workflow_snapshot(
+        tmp_path,
+        EventStore(tmp_path / "observability" / "events.jsonl"),
+    )
+    assert snapshot["current_task"]["request_id"] == FINAL_REVIEW_REQUEST_ID
+    assert snapshot["current_task"]["lifecycle"] == {
+        "stage": expected_stage,
+        "certainty": "verified",
+        "basis": f"final_review_verdict:{verdict}",
+    }
+
+
+def test_final_review_auto_sync_without_comment_stays_waiting(tmp_path):
+    write_final_review_processed_record(tmp_path)
+    client = final_review_sync_client()
+
+    summary = run_b3c(tmp_path, client, max_cycles=1)
+
+    assert summary["final_review_sync_status"] == "no_matching_verdict"
+    assert not (tmp_path / "final_review_verdicts.jsonl").exists()
+    snapshot = build_workflow_snapshot(
+        tmp_path,
+        EventStore(tmp_path / "observability" / "events.jsonl"),
+    )
+    assert snapshot["current_task"]["lifecycle"]["stage"] == (
+        "WAITING_FOR_CHATGPT_REVIEW"
+    )
+    assert snapshot["current_task"]["terminal_result"] == "success"
+
+
+def test_final_review_auto_sync_requires_exact_eligible_candidate(tmp_path):
+    write_final_review_processed_record(tmp_path)
+    candidate = new_review_candidate_payload(
+        target_repository=DEFAULT_REPOSITORY,
+        target_issue=151,
+        dispatch_request_id=FINAL_REVIEW_REQUEST_ID,
+        action="run-reviewbundle",
+        branch="feature/bridge-operator-b3a",
+        expected_head=HEAD,
+        terminal_result_comment_id=FINAL_REVIEW_RESULT_COMMENT_ID,
+        review_bundle_comment_id=FINAL_REVIEW_BUNDLE_COMMENT_ID,
+        candidate_manifest_fingerprint=FINAL_REVIEW_FINGERPRINT,
+        target_repo_root=str(tmp_path.resolve()),
+        recorded_at=NOW,
+    )
+    (tmp_path / "review_candidate.json").write_text(
+        json.dumps(candidate),
+        encoding="utf-8",
+    )
+    client = final_review_sync_client(
+        final_review_comment(candidate_acceptance="eligible"),
+        candidate_acceptance="eligible",
+    )
+
+    summary = run_b3c(tmp_path, client, max_cycles=1)
+
+    assert summary["final_review_sync_status"] == "written"
+    durable = json.loads(
+        (tmp_path / "final_review_verdicts.jsonl").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert durable["candidate_acceptance"] == "eligible"
+    assert durable["candidate_manifest_fingerprint"] == FINAL_REVIEW_FINGERPRINT
+
+
+def test_final_review_auto_sync_is_idempotent(tmp_path):
+    write_final_review_processed_record(tmp_path)
+    client = final_review_sync_client(final_review_comment())
+
+    first = run_b3c(tmp_path, client, max_cycles=1)
+    second = run_b3c(tmp_path, client, max_cycles=1)
+
+    assert first["final_review_sync_status"] == "written"
+    assert second["final_review_sync_status"] == "already_present"
+    assert len(
+        (tmp_path / "final_review_verdicts.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ) == 1
+
+
+def test_final_review_auto_sync_ignores_historical_failed_request(tmp_path):
+    write_final_review_processed_record(
+        tmp_path,
+        request_id="final-review-sync-151-r1",
+        result_comment_id="18",
+        terminal_result="failure",
+        observed_at="2026-06-16T08:01:00Z",
+    )
+    write_final_review_processed_record(tmp_path)
+    client = final_review_sync_client(
+        final_review_comment(),
+        include_stale_r1=True,
+    )
+
+    summary = run_b3c(tmp_path, client, max_cycles=1)
+
+    assert summary["final_review_sync_status"] == "written"
+    durable = json.loads(
+        (tmp_path / "final_review_verdicts.jsonl").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert durable["request_id"] == FINAL_REVIEW_REQUEST_ID
+    assert durable["source_comment_id"] == "40"
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_status"),
+    [
+        ("duplicate_key", "no_matching_verdict"),
+        ("untrusted", "no_matching_verdict"),
+        ("stale_request", "no_matching_verdict"),
+        ("wrong_issue_payload", "verdict_identity_mismatch"),
+        ("wrong_issue_metadata", "verdict_identity_mismatch"),
+        ("wrong_head", "verdict_identity_mismatch"),
+        ("wrong_terminal_result", "verdict_identity_mismatch"),
+        ("wrong_review_bundle", "verdict_identity_mismatch"),
+        ("wrong_fingerprint", "verdict_identity_mismatch"),
+        ("conflicting", "ambiguous_matching_verdicts"),
+    ],
+)
+def test_final_review_auto_sync_rejects_unbound_or_ambiguous_evidence(
+    tmp_path, case, expected_status
+):
+    write_final_review_processed_record(tmp_path)
+    if case == "duplicate_key":
+        raw = json.dumps(final_review_declared())[:-1] + ', "verdict": "blocked"}'
+        comments = [final_review_comment(raw_json=raw)]
+    elif case == "untrusted":
+        comments = [final_review_comment(author="mallory")]
+    elif case == "stale_request":
+        comments = [
+            final_review_comment(
+                dispatch_request_id="final-review-sync-151-r1"
+            )
+        ]
+    elif case == "wrong_issue_payload":
+        comments = [final_review_comment(target_issue=999)]
+    elif case == "wrong_issue_metadata":
+        comments = [final_review_comment(issue_number=999)]
+    elif case == "wrong_head":
+        comments = [final_review_comment(expected_head="b" * 40)]
+    elif case == "wrong_terminal_result":
+        comments = [final_review_comment(terminal_result_comment_id="21")]
+    elif case == "wrong_review_bundle":
+        comments = [final_review_comment(review_bundle_comment_id="31")]
+    elif case == "wrong_fingerprint":
+        comments = [
+            final_review_comment(candidate_manifest_fingerprint="b" * 64)
+        ]
+    else:
+        comments = [
+            final_review_comment(comment_id=40, verdict="accepted"),
+            final_review_comment(comment_id=41, verdict="blocked"),
+        ]
+    client = final_review_sync_client(*comments)
+
+    summary = run_b3c(tmp_path, client, max_cycles=1)
+
+    assert summary["final_review_sync_status"] == expected_status
+    assert not (tmp_path / "final_review_verdicts.jsonl").exists()
+    snapshot = build_workflow_snapshot(
+        tmp_path,
+        EventStore(tmp_path / "observability" / "events.jsonl"),
+    )
+    assert snapshot["current_task"]["lifecycle"]["stage"] == (
+        "WAITING_FOR_CHATGPT_REVIEW"
+    )
 
 
 def assert_b1_failure_blocks(tmp_path, summary, reason):
