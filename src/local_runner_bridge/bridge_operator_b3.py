@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from local_runner_bridge.bridge_operator_b1 import (
     CONSUMED,
+    CommentRecord,
     DEFAULT_REPOSITORY,
     GitHubApiClient,
     SUPPORTED_TARGET_REPOSITORIES,
@@ -37,22 +38,31 @@ from local_runner_bridge.bridge_operator_b2 import (
 )
 from local_runner_bridge.durable_evidence_provider import GitHubIssueCommentEvidenceProvider
 from local_runner_bridge.durable_evidence_reconciliation import (
+    EvidenceComment,
+    EvidenceReadResult,
+    ProviderStatus,
     RequestIdentity,
     ReconciliationDecision,
     resolve_durable_completion,
 )
 from local_runner_bridge.bridge_operator_lifecycle_state import (
     DISPATCHED_NOT_LOCALLY_SETTLED,
+    FINAL_REVIEW_VERDICT_PROTOCOL,
+    FINAL_REVIEW_VERDICT_SCHEMA_VERSION,
+    FINAL_REVIEW_VERDICTS,
     PREPARED,
     PROCESSED,
     REJECTED_BEFORE_RUNNER,
     LifecycleEvidenceError,
+    append_final_review_verdict,
     append_jsonl_durable,
     capture_current_process_identity,
     create_lock_payload,
     inspect_expected_process,
     inspect_lock_file,
+    load_review_candidate,
     load_in_flight,
+    new_final_review_verdict_payload,
     new_in_flight_payload,
     new_review_candidate_payload,
     parse_utc,
@@ -88,6 +98,28 @@ B3C_MODE = "b3c-run-reviewbundle"
 B3B_ALLOWED_ACTION = "maybe-status-check"
 B3C_ALLOWED_ACTION = "run-reviewbundle"
 B3C_FINAL_AUDIT_ACTION = "read-final-audit"
+FINAL_REVIEW_COMMENT_MARKER = (
+    f"CHATGPT-FINAL-REVIEW protocol={FINAL_REVIEW_VERDICT_PROTOCOL}"
+)
+FINAL_REVIEW_COMMENT_KEYS = frozenset(
+    {
+        "action",
+        "authority_scope",
+        "branch",
+        "candidate_acceptance",
+        "candidate_manifest_fingerprint",
+        "dispatch_request_id",
+        "expected_head",
+        "protocol",
+        "review_bundle_comment_id",
+        "reviewer",
+        "schema_version",
+        "target_issue",
+        "target_repository",
+        "terminal_result_comment_id",
+        "verdict",
+    }
+)
 SAME_NODE_LAUNCHER_BINDING_ENV = "LAWB_SAME_NODE_CONTINUATION_BINDING"
 SAME_NODE_LAUNCHER_BINDING_PROTOCOL = (
     "lawb.same_node_exact_candidate_continuation_launcher_binding.v1"
@@ -615,6 +647,15 @@ def run_bridge_operator_b3_dry_run_loop(
                     _write_log(state_root, "failed", failure_reason, summary)
                     break
 
+                if mode == B3C_MODE:
+                    _synchronize_final_review_verdict(
+                        state_root=state_root,
+                        repository=repository,
+                        target_client=target_client,
+                        b1_summary=b1_summary,
+                        summary=summary,
+                    )
+
             if cycle < max_cycles:
                 summary["sleep_call_count"] += 1
                 sleep(poll_interval_seconds)
@@ -699,6 +740,323 @@ def _process_workflow_notifications(
         summary["workflow_notification_last_id"] = notification_result[
             "last_notification_id"
         ]
+
+
+class _IssueCommentSnapshotProvider:
+    def __init__(
+        self,
+        comments: list[CommentRecord],
+        *,
+        repository: str,
+        issue_number: int,
+    ) -> None:
+        self.comments = tuple(comments)
+        self.repository = repository
+        self.issue_number = issue_number
+
+    def read_result_comments(
+        self, request: RequestIdentity
+    ) -> EvidenceReadResult:
+        if (
+            request.repository != self.repository
+            or request.issue_number != self.issue_number
+        ):
+            return EvidenceReadResult(
+                status=ProviderStatus.ERROR,
+                comments=(),
+                diagnostics=("snapshot_identity_mismatch",),
+            )
+        return EvidenceReadResult(
+            status=ProviderStatus.COMPLETE,
+            comments=tuple(
+                EvidenceComment(
+                    evidence_id=str(comment.id),
+                    repository=self.repository,
+                    issue_number=self.issue_number,
+                    surface="issue_comment",
+                    author=comment.author,
+                    body=comment.body,
+                )
+                for comment in self.comments
+            ),
+            diagnostics=("snapshot_complete",),
+        )
+
+
+def _synchronize_final_review_verdict(
+    *,
+    state_root: Path,
+    repository: str,
+    target_client: Any,
+    b1_summary: dict[str, Any],
+    summary: dict[str, Any],
+) -> None:
+    """Ingest exact ChatGPT review truth without granting follow-on authority."""
+
+    if (state_root / "in_flight.json").exists():
+        summary["final_review_sync_status"] = "in_flight_present"
+        return
+    try:
+        records = _read_processed_request_records(
+            state_root / "processed_requests.jsonl",
+            repository=repository,
+        )
+    except (OSError, ValueError):
+        summary["final_review_sync_status"] = "processed_state_invalid"
+        return
+    record = _latest_terminal_processed_record(records)
+    if record is None:
+        summary["final_review_sync_status"] = "no_terminal_request"
+        return
+
+    if b1_summary.get("result") == "success":
+        selected_request_id = str(b1_summary.get("request_id") or "")
+        if record.get("request_id") != selected_request_id:
+            summary["final_review_sync_status"] = "newer_request_not_settled"
+            return
+    elif not _is_safe_wait_b1_result(b1_summary):
+        summary["final_review_sync_status"] = "operator_not_waiting"
+        return
+
+    if (
+        record.get("requested_action") != B3C_ALLOWED_ACTION
+        or record.get("terminal_result") != "success"
+        or record.get("result_verified") is not True
+        or record.get("terminal_settlement") != "settled_success"
+    ):
+        summary["final_review_sync_status"] = "not_waiting_for_final_review"
+        return
+    request_id = str(record["request_id"])
+    summary["final_review_sync_attempted"] = True
+    summary["final_review_sync_request_id"] = request_id
+    summary["final_review_sync_status"] = "reading_issue_comments"
+
+    issue_number = int(record["target_issue"])
+    summary["final_review_sync_read_attempts"] += 1
+    summary["github_read_attempts"] += 1
+    try:
+        comments = target_client.list_issue_comments(issue_number)
+    except Exception as error:
+        summary["final_review_sync_status"] = "github_read_unavailable"
+        summary["final_review_sync_diagnostics"] = [type(error).__name__]
+        return
+
+    request = RequestIdentity(
+        repository=str(record.get("target_repository") or repository),
+        issue_number=issue_number,
+        surface="issue_comment",
+        request_id=str(record["target_dispatch_request_id"]),
+        action=str(record["requested_action"]),
+        branch=str(record["expected_branch"]),
+        head=str(record["expected_head"]),
+    )
+    reconciliation = resolve_durable_completion(
+        request,
+        _IssueCommentSnapshotProvider(
+            comments,
+            repository=request.repository,
+            issue_number=issue_number,
+        ),
+        frozenset(TRUSTED_ACTORS),
+    )
+    expected_result_comment_id = str(record.get("target_result_comment_id") or "")
+    if (
+        reconciliation.decision != ReconciliationDecision.COMPLETED
+        or reconciliation.matched_evidence_ids != (expected_result_comment_id,)
+        or reconciliation.terminal_author != record.get("target_result_author")
+        or reconciliation.review_candidate_binding_status != "valid"
+        or reconciliation.review_candidate_binding is None
+    ):
+        summary["final_review_sync_status"] = "terminal_evidence_not_exact"
+        summary["final_review_sync_diagnostics"] = list(
+            reconciliation.diagnostics
+        )
+        return
+    binding = reconciliation.review_candidate_binding
+
+    try:
+        review_candidate = load_review_candidate(
+            state_root / REVIEW_CANDIDATE_FILENAME
+        )
+    except LifecycleEvidenceError:
+        summary["final_review_sync_status"] = "review_candidate_invalid"
+        return
+    candidate_matches = _review_candidate_matches_sync(
+        review_candidate,
+        record,
+        binding,
+    )
+    candidate_acceptance = binding["candidate_acceptance"]
+    if (
+        candidate_acceptance == "eligible"
+        and not candidate_matches
+    ) or (
+        candidate_acceptance == "ineligible"
+        and candidate_matches
+    ):
+        summary["final_review_sync_status"] = "candidate_binding_mismatch"
+        return
+
+    malformed_ids: list[str] = []
+    untrusted_ids: list[str] = []
+    matching: list[tuple[CommentRecord, dict[str, Any]]] = []
+    for comment in comments:
+        kind, parsed = _parse_final_review_comment(comment)
+        if kind == "malformed":
+            malformed_ids.append(str(comment.id))
+            continue
+        if kind != "candidate" or parsed is None:
+            continue
+        if parsed.get("dispatch_request_id") != record[
+            "target_dispatch_request_id"
+        ]:
+            continue
+        if comment.author not in TRUSTED_ACTORS:
+            untrusted_ids.append(str(comment.id))
+            continue
+        matching.append((comment, parsed))
+
+    diagnostics = [
+        *(f"malformed:{comment_id}" for comment_id in malformed_ids),
+        *(f"untrusted:{comment_id}" for comment_id in untrusted_ids),
+    ]
+    summary["final_review_sync_diagnostics"] = diagnostics
+    if not matching:
+        summary["final_review_sync_status"] = "no_matching_verdict"
+        return
+    if len(matching) != 1:
+        summary["final_review_sync_status"] = "ambiguous_matching_verdicts"
+        return
+
+    comment, declared = matching[0]
+    expected_declared = {
+        "action": record["requested_action"],
+        "authority_scope": "review_truth_only",
+        "branch": record["expected_branch"],
+        "candidate_acceptance": candidate_acceptance,
+        "candidate_manifest_fingerprint": binding[
+            "candidate_manifest_fingerprint"
+        ],
+        "dispatch_request_id": record["target_dispatch_request_id"],
+        "expected_head": record["expected_head"],
+        "protocol": FINAL_REVIEW_VERDICT_PROTOCOL,
+        "review_bundle_comment_id": binding["review_bundle_comment_id"],
+        "reviewer": "chatgpt",
+        "schema_version": FINAL_REVIEW_VERDICT_SCHEMA_VERSION,
+        "target_issue": record["target_issue"],
+        "target_repository": record.get("target_repository") or repository,
+        "terminal_result_comment_id": expected_result_comment_id,
+        "verdict": declared.get("verdict"),
+    }
+    reviewed_at = parse_utc(comment.created_at)
+    if (
+        declared != expected_declared
+        or declared.get("verdict")
+        not in FINAL_REVIEW_VERDICTS
+        or comment.repository != expected_declared["target_repository"]
+        or comment.issue_number != issue_number
+        or reviewed_at is None
+    ):
+        summary["final_review_sync_status"] = "verdict_identity_mismatch"
+        return
+
+    try:
+        payload = new_final_review_verdict_payload(
+            target_repository=expected_declared["target_repository"],
+            target_issue=issue_number,
+            request_id=request_id,
+            dispatch_request_id=record["target_dispatch_request_id"],
+            action=record["requested_action"],
+            branch=record["expected_branch"],
+            expected_head=record["expected_head"],
+            terminal_result_comment_id=expected_result_comment_id,
+            review_bundle_comment_id=binding["review_bundle_comment_id"],
+            candidate_manifest_fingerprint=binding[
+                "candidate_manifest_fingerprint"
+            ],
+            candidate_acceptance=candidate_acceptance,
+            verdict=declared["verdict"],
+            source_author=comment.author,
+            source_comment_id=str(comment.id),
+            reviewed_at=reviewed_at,
+        )
+        append_result = append_final_review_verdict(
+            state_root / "final_review_verdicts.jsonl",
+            payload,
+            trusted_actors=TRUSTED_ACTORS,
+        )
+    except (OSError, LifecycleEvidenceError) as error:
+        summary["final_review_sync_status"] = "durable_append_rejected"
+        summary["final_review_sync_diagnostics"].append(str(error))
+        return
+    summary["final_review_sync_status"] = append_result
+    summary["final_review_sync_comment_id"] = str(comment.id)
+
+
+def _latest_terminal_processed_record(
+    records: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    timed: list[tuple[datetime, dict[str, Any]]] = []
+    for record in records.values():
+        if record.get("terminal_result") not in {"success", "failure", "blocked"}:
+            continue
+        observed_at = parse_utc(record.get("terminal_observed_at_utc"))
+        processed_at = parse_utc(record.get("processed_at_utc"))
+        timestamp = observed_at or processed_at
+        if timestamp is not None:
+            timed.append((timestamp, record))
+    if not timed:
+        return None
+    latest_time = max(timestamp for timestamp, _ in timed)
+    latest = [record for timestamp, record in timed if timestamp == latest_time]
+    return latest[0] if len(latest) == 1 else None
+
+
+def _review_candidate_matches_sync(
+    candidate: dict[str, Any] | None,
+    record: dict[str, Any],
+    binding: dict[str, Any],
+) -> bool:
+    if candidate is None:
+        return False
+    return all(
+        (
+            candidate.get("target_repository")
+            == record.get("target_repository"),
+            candidate.get("target_issue") == record.get("target_issue"),
+            candidate.get("dispatch_request_id")
+            == record.get("target_dispatch_request_id"),
+            candidate.get("action") == record.get("requested_action"),
+            candidate.get("branch") == record.get("expected_branch"),
+            candidate.get("expected_head") == record.get("expected_head"),
+            candidate.get("terminal_result_comment_id")
+            == record.get("target_result_comment_id"),
+            candidate.get("review_bundle_comment_id")
+            == binding.get("review_bundle_comment_id"),
+            candidate.get("candidate_manifest_fingerprint")
+            == binding.get("candidate_manifest_fingerprint"),
+        )
+    )
+
+
+def _parse_final_review_comment(
+    comment: CommentRecord,
+) -> tuple[str, dict[str, Any] | None]:
+    lines = comment.body.splitlines()
+    if not lines or not lines[0].startswith("CHATGPT-FINAL-REVIEW"):
+        return "ordinary", None
+    if len(lines) != 2 or lines[0] != FINAL_REVIEW_COMMENT_MARKER:
+        return "malformed", None
+    try:
+        payload = json.loads(
+            lines[1],
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except (json.JSONDecodeError, ValueError):
+        return "malformed", None
+    if not isinstance(payload, dict) or set(payload) != FINAL_REVIEW_COMMENT_KEYS:
+        return "malformed", None
+    return "candidate", payload
 
 
 def _base_summary(
@@ -813,6 +1171,12 @@ def _base_summary(
         "target_result_verified": False,
         "target_result_comment_id": None,
         "target_result_author": None,
+        "final_review_sync_attempted": False,
+        "final_review_sync_read_attempts": 0,
+        "final_review_sync_status": "not_attempted",
+        "final_review_sync_request_id": None,
+        "final_review_sync_comment_id": None,
+        "final_review_sync_diagnostics": [],
         "workflow_notifications_enabled": False,
         "workflow_notification_scan_count": 0,
         "workflow_notification_activation_created": False,

@@ -54,6 +54,9 @@ class CommentRecord:
     id: int | str
     body: str
     author: str
+    repository: str | None = None
+    issue_number: int | None = None
+    created_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -522,12 +525,24 @@ class GitHubApiClient:
         if payload and isinstance(payload[0], list):
             payload = [item for page in payload for item in page]
         comments = []
+        expected_issue_url = (
+            f"https://api.github.com/repos/{self.repository}/issues/{issue_number}"
+        )
         for item in payload:
+            issue_metadata_matches = item.get("issue_url") == expected_issue_url
             comments.append(
                 CommentRecord(
                     id=item["id"],
                     body=str(item.get("body") or ""),
                     author=str((item.get("user") or {}).get("login") or ""),
+                    repository=(self.repository if issue_metadata_matches else None),
+                    issue_number=(issue_number if issue_metadata_matches else None),
+                    created_at=(
+                        str(item["created_at"])
+                        if isinstance(item.get("created_at"), str)
+                        and item["created_at"]
+                        else None
+                    ),
                 )
             )
         return comments
