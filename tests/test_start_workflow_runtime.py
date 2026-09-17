@@ -440,6 +440,9 @@ def test_source_has_one_routing_authority_and_no_panel_reuse_or_supervisor():
     parameter_block = body.split("Set-StrictMode", 1)[0]
     main = body.split('$resolvedStateDir = ""', 1)[1]
     operator = OPERATOR_LAUNCHER.read_text(encoding="utf-8")
+    operator_arguments = main.split("$operatorArguments = (", 1)[1].split(
+        "    try {", 1
+    )[0]
     lowered = body.lower()
     port_free_function = body.split("function Test-PanelPortFree", 1)[1].split(
         "function Test-OwnedPanelListener", 1
@@ -456,7 +459,14 @@ def test_source_has_one_routing_authority_and_no_panel_reuse_or_supervisor():
     assert "Get-PanelPortState" not in body
     assert "start_workflow_panel.ps1" in body
     assert "start_bridge_operator_b3c.ps1" in body
-    assert "-StartForeground -PublishStatus" in body
+    assert '"-StartForeground"' in operator_arguments
+    assert " -MaxCycles " in operator_arguments
+    assert " -PollIntervalSeconds " in operator_arguments
+    assert " -TimeoutSeconds " in operator_arguments
+    assert " -StateDir " in operator_arguments
+    assert "-PublishStatus" not in operator_arguments
+    assert "[switch]$PublishStatus" in operator
+    assert "if ($PublishStatus)" in operator
     assert " -TargetRepoRoot " not in body
     assert "repository_routing.json" in operator
     assert "--lifetime-seconds" in body

@@ -586,7 +586,7 @@ try {
     $panelAction = "started"
 
     $operatorArguments = (
-        "-StartForeground -PublishStatus" +
+        "-StartForeground" +
         " -MaxCycles " + $MaxCycles +
         " -PollIntervalSeconds " + $PollIntervalSeconds +
         " -TimeoutSeconds " + $TimeoutSeconds +
