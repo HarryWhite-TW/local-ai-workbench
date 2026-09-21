@@ -108,13 +108,19 @@ def _parse_scalar(value: str) -> Any:
         return value
 
 
-def _parse_line_oriented_packet(packet_text: str) -> dict:
+def _parse_line_oriented_packet(
+    packet_text: str,
+) -> tuple[dict, list[str], list[int]]:
     parsed: dict[str, Any] = {}
-    stack: list[tuple[int, Any, dict[str, Any] | None, str | None]] = [
-        (-1, parsed, None, None)
+    duplicate_fields: list[str] = []
+    unconsumed_line_numbers: list[int] = []
+    stack: list[
+        tuple[int, Any, dict[str, Any] | None, str | None, tuple[str, ...]]
+    ] = [
+        (-1, parsed, None, None, ())
     ]
 
-    for raw_line in packet_text.splitlines():
+    for line_number, raw_line in enumerate(packet_text.splitlines(), start=1):
         stripped = raw_line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -125,17 +131,25 @@ def _parse_line_oriented_packet(packet_text: str) -> dict:
 
         if stripped.startswith("- "):
             item = stripped[2:].strip()
-            current_indent, current_container, parent, parent_key = stack[-1]
+            current_indent, current_container, parent, parent_key, path = stack[-1]
             if not isinstance(current_container, list):
                 if parent is None or parent_key is None:
+                    unconsumed_line_numbers.append(line_number)
                     continue
                 current_container = []
                 parent[parent_key] = current_container
-                stack[-1] = (current_indent, current_container, parent, parent_key)
+                stack[-1] = (
+                    current_indent,
+                    current_container,
+                    parent,
+                    parent_key,
+                    path,
+                )
             current_container.append(_parse_scalar(item))
             continue
 
         if ":" not in stripped:
+            unconsumed_line_numbers.append(line_number)
             continue
 
         key, value = stripped.split(":", 1)
@@ -144,16 +158,22 @@ def _parse_line_oriented_packet(packet_text: str) -> dict:
 
         parent = stack[-1][1]
         if not isinstance(parent, dict):
+            unconsumed_line_numbers.append(line_number)
             continue
+
+        parent_path = stack[-1][4]
+        field_path = ".".join((*parent_path, key))
+        if key in parent and field_path not in duplicate_fields:
+            duplicate_fields.append(field_path)
 
         if value == "":
             child: dict[str, Any] = {}
             parent[key] = child
-            stack.append((indent, child, parent, key))
+            stack.append((indent, child, parent, key, (*parent_path, key)))
         else:
             parent[key] = _parse_scalar(value)
 
-    return parsed
+    return parsed, duplicate_fields, unconsumed_line_numbers
 
 
 def _has_nested(parsed: dict, path: tuple[str, str]) -> bool:
@@ -261,7 +281,16 @@ def validate_task_packet(packet_text: str, expected: dict | None = None) -> dict
         summary["errors"].append("packet_text_not_string")
         return summary
 
-    parsed = _parse_line_oriented_packet(packet_text)
+    parsed, duplicate_fields, unconsumed_line_numbers = _parse_line_oriented_packet(
+        packet_text
+    )
+    if duplicate_fields:
+        summary["errors"].append("duplicate_fields")
+        summary["duplicate_fields"] = duplicate_fields
+    if unconsumed_line_numbers:
+        summary["errors"].append("unconsumed_packet_lines")
+        summary["unconsumed_line_numbers"] = unconsumed_line_numbers
+
     protocol = parsed.get("protocol")
     required_top_level_fields = list(REQUIRED_TOP_LEVEL_FIELDS)
     if protocol == TASK_PACKET_PROTOCOL_V1_1:
