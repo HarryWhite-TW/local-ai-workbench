@@ -187,6 +187,50 @@ def test_unknown_top_level_field_returns_blocked():
     assert summary["unknown_fields"] == ["unexpected_authority"]
 
 
+def test_duplicate_top_level_field_returns_blocked():
+    packet = VALID_PACKET + "branch: duplicate-branch\n"
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "duplicate_fields" in summary["errors"]
+    assert summary["duplicate_fields"] == ["branch"]
+
+
+def test_duplicate_nested_field_returns_blocked():
+    packet = VALID_PACKET.replace(
+        "  required: false\n", "  required: false\n  required: true\n"
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "duplicate_fields" in summary["errors"]
+    assert summary["duplicate_fields"] == ["approval.required"]
+
+
+def test_unconsumed_non_comment_line_returns_blocked():
+    packet = VALID_PACKET + "this line has no structural meaning\n"
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "blocked"
+    assert "unconsumed_packet_lines" in summary["errors"]
+    assert summary["unconsumed_line_numbers"] == [len(VALID_PACKET.splitlines()) + 1]
+
+
+def test_blank_and_comment_lines_remain_compatible():
+    packet = VALID_PACKET.replace(
+        "packet_id: task-138-read-only-validator\n",
+        "# packet identity follows\n\npacket_id: task-138-read-only-validator\n",
+    )
+
+    summary = validate_task_packet(packet)
+
+    assert summary["result"] == "success"
+    assert "unconsumed_packet_lines" not in summary["errors"]
+
+
 def test_v1_1_valid_packet_returns_success_summary():
     summary = validate_task_packet(VALID_PACKET_V1_1)
 

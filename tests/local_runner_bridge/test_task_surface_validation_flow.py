@@ -103,6 +103,27 @@ def test_unknown_top_level_field_returns_blocked():
     assert_no_authority(summary)
 
 
+def test_duplicate_field_returns_blocked():
+    packet = VALID_PACKET + "logical_issue: 999\n"
+
+    summary = validate_task_surface(surface(packet), expected=EXPECTED)
+
+    assert summary["result"] == "blocked"
+    assert "duplicate_fields" in summary["errors"]
+    assert summary["duplicate_fields"] == ["logical_issue"]
+    assert_no_authority(summary)
+
+
+def test_unconsumed_non_comment_line_returns_blocked():
+    packet = VALID_PACKET + "unconsumed packet content\n"
+
+    summary = validate_task_surface(surface(packet), expected=EXPECTED)
+
+    assert summary["result"] == "blocked"
+    assert "unconsumed_packet_lines" in summary["errors"]
+    assert_no_authority(summary)
+
+
 def test_scalar_allowed_files_returns_blocked():
     packet = VALID_PACKET.replace(
         "allowed_files:\n"
