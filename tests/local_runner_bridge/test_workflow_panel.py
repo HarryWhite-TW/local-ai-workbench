@@ -885,9 +885,14 @@ def test_recent_polling_and_empty_scan_projects_ready_no_request(tmp_path):
     assert snapshot["system"] == {
         "readiness": "ready",
         "workflow": "ready",
+        "local_workflow": "ready",
+        "external_model_execution": "unknown_until_execution",
         "operator": "online",
         "panel": "online",
-        "next_action": "系統已就緒。最近一次檢查沒有找到請求，您目前不需要操作。",
+        "next_action": (
+            "本機 Workflow 已就緒。最近一次檢查沒有找到請求；"
+            "外部模型執行可用性會在實際執行時確認。"
+        ),
     }
     assert snapshot["current_task"]["lifecycle"]["stage"] == "NO_REQUEST_DETECTED"
     assert snapshot["operator"]["activity"] == {
@@ -1254,7 +1259,8 @@ def test_temporary_fixture_panel_http_static_snapshot_sse_and_read_only_methods(
         assert "sessionStorage.getItem(CURSOR_KEY)" in javascript
         assert "setInterval(() => refreshSnapshot(false), SNAPSHOT_POLL_MS)" in javascript
         assert "if (eventSource && connectedStreamUrl === streamUrl) return" in javascript
-        assert '"Workflow 已就緒"' in javascript
+        assert '"本機 Workflow 已就緒"' in javascript
+        assert '"外部模型執行可用性需在實際執行時確認"' in javascript
         assert '"即時連線 · 唯讀"' in javascript
         assert '"無法取得"' in javascript
         assert '"等待有限範圍的觀測事件。"' in javascript

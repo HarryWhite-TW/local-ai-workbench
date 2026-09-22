@@ -704,6 +704,133 @@ def test_final_review_auto_sync_ignores_historical_failed_request(tmp_path):
     assert durable["source_comment_id"] == "40"
 
 
+def test_final_review_auto_sync_settles_all_unresolved_terminal_requests_by_identity(
+    tmp_path,
+):
+    older_request_id = "final-review-sync-151-r1"
+    write_final_review_processed_record(
+        tmp_path,
+        request_id=older_request_id,
+        result_comment_id="18",
+        observed_at="2026-06-16T08:01:00Z",
+    )
+    write_final_review_processed_record(tmp_path)
+    client = final_review_sync_client(final_review_comment())
+    client.target_comments.extend(
+        [
+            CommentRecord(
+                id=18,
+                body=result_comment(
+                    action="run-reviewbundle",
+                    request_id=older_request_id,
+                    **review_candidate_binding(
+                        comment_id="28",
+                        acceptance="ineligible",
+                    ),
+                ),
+                author="HarryWhite-TW",
+            ),
+            final_review_comment(
+                comment_id=38,
+                dispatch_request_id=older_request_id,
+                terminal_result_comment_id="18",
+                review_bundle_comment_id="28",
+                verdict="blocked",
+            ),
+        ]
+    )
+
+    summary = run_b3c(tmp_path, client, max_cycles=1)
+
+    assert summary["final_review_sync_status"] == "written"
+    assert summary["final_review_sync_candidate_count"] == 2
+    assert summary["final_review_sync_settled_count"] == 2
+    assert summary["final_review_sync_results"] == [
+        {
+            "request_id": older_request_id,
+            "status": "written",
+            "comment_id": "38",
+        },
+        {
+            "request_id": FINAL_REVIEW_REQUEST_ID,
+            "status": "written",
+            "comment_id": "40",
+        },
+    ]
+    verdicts = [
+        json.loads(line)
+        for line in (tmp_path / "final_review_verdicts.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert {
+        (record["request_id"], record["source_comment_id"], record["verdict"])
+        for record in verdicts
+    } == {
+        (older_request_id, "38", "blocked"),
+        (FINAL_REVIEW_REQUEST_ID, "40", "accepted"),
+    }
+
+
+def test_final_review_auto_sync_does_not_hide_older_unresolved_request(
+    tmp_path,
+):
+    write_final_review_processed_record(tmp_path)
+    client = final_review_sync_client(final_review_comment())
+    first = run_b3c(tmp_path, client, max_cycles=1)
+    assert first["final_review_sync_status"] == "written"
+
+    older_request_id = "final-review-sync-151-r1"
+    write_final_review_processed_record(
+        tmp_path,
+        request_id=older_request_id,
+        result_comment_id="18",
+        observed_at="2026-06-16T08:01:00Z",
+    )
+    client.target_comments.extend(
+        [
+            CommentRecord(
+                id=18,
+                body=result_comment(
+                    action="run-reviewbundle",
+                    request_id=older_request_id,
+                    **review_candidate_binding(
+                        comment_id="28",
+                        acceptance="ineligible",
+                    ),
+                ),
+                author="HarryWhite-TW",
+            ),
+            final_review_comment(
+                comment_id=38,
+                dispatch_request_id=older_request_id,
+                terminal_result_comment_id="18",
+                review_bundle_comment_id="28",
+                verdict="blocked",
+            ),
+        ]
+    )
+
+    second = run_b3c(tmp_path, client, max_cycles=1)
+
+    assert second["final_review_sync_status"] == "written"
+    assert second["final_review_sync_candidate_count"] == 1
+    assert second["final_review_sync_settled_count"] == 1
+    assert second["final_review_sync_results"] == [
+        {
+            "request_id": older_request_id,
+            "status": "written",
+            "comment_id": "38",
+        }
+    ]
+    assert {
+        json.loads(line)["request_id"]
+        for line in (tmp_path / "final_review_verdicts.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    } == {older_request_id, FINAL_REVIEW_REQUEST_ID}
+
+
 @pytest.mark.parametrize(
     ("case", "expected_status"),
     [
@@ -1888,6 +2015,40 @@ def test_b3c_dispatcher_failures_do_not_write_processed_request(tmp_path):
         assert failure["dispatcher_result_writeback_verified"] is False
         assert not (case_dir / "processed_requests.jsonl").exists()
         assert_high_risk_safety(summary)
+
+
+@pytest.mark.parametrize("runner", [run_b3b, run_b3c])
+def test_failed_dispatch_transition_does_not_claim_dispatcher_reached(
+    tmp_path, monkeypatch, runner
+):
+    calls = []
+    durable_write = bridge_operator_b3.write_durable_json
+
+    def fail_dispatch_transition(path, payload, **kwargs):
+        if payload.get("stage") == DISPATCHED_NOT_LOCALLY_SETTLED:
+            raise OSError("dispatch transition unavailable")
+        return durable_write(path, payload, **kwargs)
+
+    monkeypatch.setattr(
+        bridge_operator_b3,
+        "write_durable_json",
+        fail_dispatch_transition,
+    )
+
+    summary = runner(
+        tmp_path,
+        dispatcher_invoker=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert summary["blocked_reasons"] == ["in_flight_dispatch_transition_failed"]
+    assert summary["dispatcher_invoked"] is False
+    assert summary["dispatcher_invocation_count"] == 0
+    assert summary["operator_direct_execution_performed"] is False
+    assert calls == []
+    assert read_json(tmp_path / "in_flight.json")["stage"] == PREPARED
+    failure = read_json(tmp_path / "last_failure.json")
+    assert failure["dispatcher_reached"] is False
+    assert failure["current_run"]["dispatcher_invoked"] is False
 
 
 @pytest.mark.parametrize("runner", [run_b3b, run_b3c])

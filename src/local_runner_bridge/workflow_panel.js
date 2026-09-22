@@ -23,9 +23,13 @@ const LIFECYCLE_LABELS = Object.freeze({
 });
 
 const READINESS_LABELS = Object.freeze({
-  ready: "Workflow 已就緒",
-  degraded: "Workflow 狀態降級",
-  unavailable: "Workflow 不可用",
+  ready: "本機 Workflow 已就緒",
+  degraded: "本機 Workflow 狀態降級",
+  unavailable: "本機 Workflow 不可用",
+});
+
+const EXTERNAL_EXECUTION_LABELS = Object.freeze({
+  unknown_until_execution: "外部模型執行可用性需在實際執行時確認",
 });
 
 const HEALTH_LABELS = Object.freeze({
@@ -284,9 +288,13 @@ function startPanel() {
     const task = snapshot.current_task;
     const lifecycle = task.lifecycle;
     const readiness = system.readiness || "unavailable";
-    elements.readiness.textContent = READINESS_LABELS[readiness] || "Workflow 不可用";
+    elements.readiness.textContent = READINESS_LABELS[readiness] || "本機 Workflow 不可用";
     elements.readiness.dataset.readiness = readiness;
-    elements.workflowReadiness.textContent = READINESS_LABELS[system.workflow] || "Workflow 不可用";
+    const localWorkflow = READINESS_LABELS[system.local_workflow || system.workflow]
+      || "本機 Workflow 不可用";
+    const externalExecution = EXTERNAL_EXECUTION_LABELS[system.external_model_execution]
+      || "外部模型執行可用性不明";
+    elements.workflowReadiness.textContent = `${localWorkflow}；${externalExecution}`;
     elements.operatorHealth.textContent = HEALTH_LABELS[system.operator] || "Operator 狀態不明";
     elements.panelHealth.textContent = system.panel === "online" ? "Panel 連線正常" : "Panel 不可用";
     elements.nextAction.textContent = shown(system.next_action, "目前狀態不明。");
@@ -436,7 +444,7 @@ function startPanel() {
     } catch (_error) {
       setConnection("狀態快照不可用", "degraded");
       elements.panelHealth.textContent = "Panel 不可用";
-      elements.readiness.textContent = "Workflow 不可用";
+      elements.readiness.textContent = "本機 Workflow 不可用";
       elements.readiness.dataset.readiness = "unavailable";
     } finally {
       if (manual) elements.refresh.disabled = false;
