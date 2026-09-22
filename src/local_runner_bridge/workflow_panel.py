@@ -661,7 +661,10 @@ def _next_action(stage: str, operator_health: str) -> str:
     if stage == "EXPIRED":
         return "觀察到的請求已過期，不會啟動。"
     if stage == "NO_REQUEST_DETECTED":
-        return "系統已就緒。最近一次檢查沒有找到請求，您目前不需要操作。"
+        return (
+            "本機 Workflow 已就緒。最近一次檢查沒有找到請求；"
+            "外部模型執行可用性會在實際執行時確認。"
+        )
     if stage == "CHECKING_FOR_WORK":
         return "Operator 正在檢查工作。"
     return "目前的請求狀態不明。請等待下一次檢查，或查看下方警告。"
@@ -684,6 +687,8 @@ def _system_projection(
     return {
         "readiness": readiness,
         "workflow": readiness,
+        "local_workflow": readiness,
+        "external_model_execution": "unknown_until_execution",
         "operator": operator_health,
         "panel": "online",
         "next_action": _next_action(lifecycle_stage, operator_health),

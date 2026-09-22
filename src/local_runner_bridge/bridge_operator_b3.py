@@ -60,6 +60,7 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
     create_lock_payload,
     inspect_expected_process,
     inspect_lock_file,
+    load_final_review_verdicts,
     load_review_candidate,
     load_in_flight,
     new_final_review_verdict_payload,
@@ -791,7 +792,7 @@ def _synchronize_final_review_verdict(
     b1_summary: dict[str, Any],
     summary: dict[str, Any],
 ) -> None:
-    """Ingest exact ChatGPT review truth without granting follow-on authority."""
+    """Ingest every unresolved exact-request review verdict without new authority."""
 
     if (state_root / "in_flight.json").exists():
         summary["final_review_sync_status"] = "in_flight_present"
@@ -804,43 +805,134 @@ def _synchronize_final_review_verdict(
     except (OSError, ValueError):
         summary["final_review_sync_status"] = "processed_state_invalid"
         return
-    record = _latest_terminal_processed_record(records)
-    if record is None:
+    review_records = _terminal_review_processed_records(records)
+    if not review_records:
+        if _latest_terminal_processed_record(records) is not None:
+            summary["final_review_sync_status"] = "not_waiting_for_final_review"
+            return
         summary["final_review_sync_status"] = "no_terminal_request"
         return
 
-    if b1_summary.get("result") == "success":
-        selected_request_id = str(b1_summary.get("request_id") or "")
-        if record.get("request_id") != selected_request_id:
-            summary["final_review_sync_status"] = "newer_request_not_settled"
-            return
-    elif not _is_safe_wait_b1_result(b1_summary):
+    if b1_summary.get("result") != "success" and not _is_safe_wait_b1_result(
+        b1_summary
+    ):
         summary["final_review_sync_status"] = "operator_not_waiting"
         return
 
-    if (
-        record.get("requested_action") != B3C_ALLOWED_ACTION
-        or record.get("terminal_result") != "success"
-        or record.get("result_verified") is not True
-        or record.get("terminal_settlement") != "settled_success"
-    ):
-        summary["final_review_sync_status"] = "not_waiting_for_final_review"
-        return
-    request_id = str(record["request_id"])
-    summary["final_review_sync_attempted"] = True
-    summary["final_review_sync_request_id"] = request_id
-    summary["final_review_sync_status"] = "reading_issue_comments"
-
-    issue_number = int(record["target_issue"])
-    summary["final_review_sync_read_attempts"] += 1
-    summary["github_read_attempts"] += 1
     try:
-        comments = target_client.list_issue_comments(issue_number)
-    except Exception as error:
-        summary["final_review_sync_status"] = "github_read_unavailable"
-        summary["final_review_sync_diagnostics"] = [type(error).__name__]
+        final_review_records = load_final_review_verdicts(
+            state_root / "final_review_verdicts.jsonl"
+        )
+    except LifecycleEvidenceError:
+        summary["final_review_sync_status"] = "final_review_state_invalid"
         return
 
+    pending: list[dict[str, Any]] = []
+    for record in review_records:
+        identity = (
+            str(record.get("target_repository") or repository),
+            str(record["request_id"]),
+        )
+        existing = final_review_records.get(identity)
+        if existing is None:
+            pending.append(record)
+            continue
+        if not _final_review_verdict_matches_processed_record(existing, record):
+            summary["final_review_sync_status"] = "final_review_state_invalid"
+            summary["final_review_sync_request_id"] = identity[1]
+            summary["final_review_sync_diagnostics"] = [
+                f"{identity[1]}:verdict_identity_mismatch"
+            ]
+            return
+    summary["final_review_sync_candidate_count"] = len(pending)
+    if not pending:
+        summary["final_review_sync_request_id"] = str(
+            review_records[-1]["request_id"]
+        )
+        summary["final_review_sync_status"] = "already_present"
+        return
+
+    summary["final_review_sync_attempted"] = True
+    summary["final_review_sync_status"] = "reading_issue_comments"
+    comments_by_issue: dict[int, list[CommentRecord]] = {}
+    results: list[dict[str, Any]] = []
+    diagnostics: list[str] = []
+    settled_count = 0
+    written_count = 0
+    for record in pending:
+        request_id = str(record["request_id"])
+        issue_number = int(record["target_issue"])
+        summary["final_review_sync_request_id"] = request_id
+        if issue_number not in comments_by_issue:
+            summary["final_review_sync_read_attempts"] += 1
+            summary["github_read_attempts"] += 1
+            try:
+                comments_by_issue[issue_number] = target_client.list_issue_comments(
+                    issue_number
+                )
+            except Exception as error:
+                status = "github_read_unavailable"
+                request_diagnostics = [type(error).__name__]
+                results.append(
+                    {
+                        "request_id": request_id,
+                        "status": status,
+                        "comment_id": None,
+                    }
+                )
+                diagnostics.extend(
+                    f"{request_id}:{item}" for item in request_diagnostics
+                )
+                continue
+
+        status, comment_id, request_diagnostics = (
+            _synchronize_exact_final_review_record(
+                state_root=state_root,
+                repository=repository,
+                record=record,
+                comments=comments_by_issue[issue_number],
+            )
+        )
+        results.append(
+            {
+                "request_id": request_id,
+                "status": status,
+                "comment_id": comment_id,
+            }
+        )
+        diagnostics.extend(f"{request_id}:{item}" for item in request_diagnostics)
+        if status in {"written", "already_present"}:
+            settled_count += 1
+            summary["final_review_sync_comment_id"] = comment_id
+        if status == "written":
+            written_count += 1
+
+    summary["final_review_sync_settled_count"] = settled_count
+    summary["final_review_sync_results"] = results
+    summary["final_review_sync_diagnostics"] = diagnostics
+    if settled_count == len(pending):
+        summary["final_review_sync_status"] = (
+            "written" if written_count else "already_present"
+        )
+    elif len(results) == 1:
+        summary["final_review_sync_status"] = results[0]["status"]
+    elif settled_count:
+        summary["final_review_sync_status"] = "partially_settled"
+    else:
+        summary["final_review_sync_status"] = "no_requests_settled"
+
+
+def _synchronize_exact_final_review_record(
+    *,
+    state_root: Path,
+    repository: str,
+    record: dict[str, Any],
+    comments: list[CommentRecord],
+) -> tuple[str, str | None, list[str]]:
+    """Synchronize one terminal record using only its exact durable identity."""
+
+    request_id = str(record["request_id"])
+    issue_number = int(record["target_issue"])
     request = RequestIdentity(
         repository=str(record.get("target_repository") or repository),
         issue_number=issue_number,
@@ -867,11 +959,11 @@ def _synchronize_final_review_verdict(
         or reconciliation.review_candidate_binding_status != "valid"
         or reconciliation.review_candidate_binding is None
     ):
-        summary["final_review_sync_status"] = "terminal_evidence_not_exact"
-        summary["final_review_sync_diagnostics"] = list(
-            reconciliation.diagnostics
+        return (
+            "terminal_evidence_not_exact",
+            None,
+            list(reconciliation.diagnostics),
         )
-        return
     binding = reconciliation.review_candidate_binding
 
     try:
@@ -879,8 +971,7 @@ def _synchronize_final_review_verdict(
             state_root / REVIEW_CANDIDATE_FILENAME
         )
     except LifecycleEvidenceError:
-        summary["final_review_sync_status"] = "review_candidate_invalid"
-        return
+        return "review_candidate_invalid", None, []
     candidate_matches = _review_candidate_matches_sync(
         review_candidate,
         record,
@@ -894,8 +985,7 @@ def _synchronize_final_review_verdict(
         candidate_acceptance == "ineligible"
         and candidate_matches
     ):
-        summary["final_review_sync_status"] = "candidate_binding_mismatch"
-        return
+        return "candidate_binding_mismatch", None, []
 
     malformed_ids: list[str] = []
     untrusted_ids: list[str] = []
@@ -920,13 +1010,10 @@ def _synchronize_final_review_verdict(
         *(f"malformed:{comment_id}" for comment_id in malformed_ids),
         *(f"untrusted:{comment_id}" for comment_id in untrusted_ids),
     ]
-    summary["final_review_sync_diagnostics"] = diagnostics
     if not matching:
-        summary["final_review_sync_status"] = "no_matching_verdict"
-        return
+        return "no_matching_verdict", None, diagnostics
     if len(matching) != 1:
-        summary["final_review_sync_status"] = "ambiguous_matching_verdicts"
-        return
+        return "ambiguous_matching_verdicts", None, diagnostics
 
     comment, declared = matching[0]
     expected_declared = {
@@ -957,8 +1044,7 @@ def _synchronize_final_review_verdict(
         or comment.issue_number != issue_number
         or reviewed_at is None
     ):
-        summary["final_review_sync_status"] = "verdict_identity_mismatch"
-        return
+        return "verdict_identity_mismatch", None, diagnostics
 
     try:
         payload = new_final_review_verdict_payload(
@@ -986,11 +1072,47 @@ def _synchronize_final_review_verdict(
             trusted_actors=TRUSTED_ACTORS,
         )
     except (OSError, LifecycleEvidenceError) as error:
-        summary["final_review_sync_status"] = "durable_append_rejected"
-        summary["final_review_sync_diagnostics"].append(str(error))
-        return
-    summary["final_review_sync_status"] = append_result
-    summary["final_review_sync_comment_id"] = str(comment.id)
+        return "durable_append_rejected", None, [*diagnostics, str(error)]
+    return append_result, str(comment.id), diagnostics
+
+
+def _terminal_review_processed_records(
+    records: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    timed: list[tuple[datetime, str, dict[str, Any]]] = []
+    for record in records.values():
+        if (
+            record.get("requested_action") != B3C_ALLOWED_ACTION
+            or record.get("terminal_result") != "success"
+            or record.get("result_verified") is not True
+            or record.get("terminal_settlement") != "settled_success"
+        ):
+            continue
+        observed_at = parse_utc(record.get("terminal_observed_at_utc"))
+        processed_at = parse_utc(record.get("processed_at_utc"))
+        timestamp = observed_at or processed_at
+        if timestamp is not None:
+            timed.append((timestamp, str(record["request_id"]), record))
+    return [record for _, _, record in sorted(timed)]
+
+
+def _final_review_verdict_matches_processed_record(
+    verdict: dict[str, Any], record: dict[str, Any]
+) -> bool:
+    return bool(
+        verdict.get("source_author") in TRUSTED_ACTORS
+        and verdict.get("target_repository")
+        == (record.get("target_repository") or DEFAULT_REPOSITORY)
+        and verdict.get("target_issue") == record.get("target_issue")
+        and verdict.get("request_id") == record.get("request_id")
+        and verdict.get("dispatch_request_id")
+        == record.get("target_dispatch_request_id")
+        and verdict.get("action") == record.get("requested_action")
+        and verdict.get("branch") == record.get("expected_branch")
+        and verdict.get("expected_head") == record.get("expected_head")
+        and verdict.get("terminal_result_comment_id")
+        == record.get("target_result_comment_id")
+    )
 
 
 def _latest_terminal_processed_record(
@@ -1177,6 +1299,9 @@ def _base_summary(
         "final_review_sync_request_id": None,
         "final_review_sync_comment_id": None,
         "final_review_sync_diagnostics": [],
+        "final_review_sync_candidate_count": 0,
+        "final_review_sync_settled_count": 0,
+        "final_review_sync_results": [],
         "workflow_notifications_enabled": False,
         "workflow_notification_scan_count": 0,
         "workflow_notification_activation_created": False,
@@ -2484,9 +2609,6 @@ def _delegate_b3_request(
         repository=repository,
     )
     summary["dispatcher_invocation_args"] = args
-    summary["operator_direct_execution_performed"] = True
-    summary["dispatcher_invoked"] = True
-    summary["dispatcher_invocation_count"] += 1
 
     # Commit dispatch ownership before process creation. If the Operator dies
     # after this point, restart reconciles this request and never redispatches
@@ -2508,6 +2630,9 @@ def _delegate_b3_request(
         _block(summary, "in_flight_dispatch_transition_failed")
         return "in_flight_dispatch_transition_failed"
     summary["in_flight_stage"] = DISPATCHED_NOT_LOCALLY_SETTLED
+    summary["operator_direct_execution_performed"] = True
+    summary["dispatcher_invoked"] = True
+    summary["dispatcher_invocation_count"] += 1
 
     try:
         invocation = invoker(
