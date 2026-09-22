@@ -24,10 +24,36 @@ Recommended future session read order:
 - PRs and comments are historical or append-only evidence unless explicitly identified as current.
 - `README.md` is a public overview, not the safest current-truth authority.
 
-## Current Important Anchors
+## Phase 0 Final Daily-Use and Grand Audit Anchors
 
-- Roadmap v2 tracker: Issue `#168`
-- ChatGPT-first daily-UX closeout record: `docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md`. Its evidence-supported verdict is `CHATGPT-FIRST CORE DAILY UX ACCEPTED — MANUAL FOREGROUND, BOUNDED, NO ROUTINE TASK/RESULT RELAY`. Repository-local interpretation is branch-sensitive: on a feature branch/open PR it is candidate publication content; on canonical `master` it states durable evidence-supported truth; operational synchronization still requires an independent post-merge exact-content and no-drift check. Evidence anchors include HAG Issue `#6` Runner ReviewBundle comment `5139431417`, HAG Issue `#6` matching `LAWBRUNNER-RESULT` comment `5139431571`, LAWB Issue `#147` launcher-preflight fail-closed status comment `5139709504`, and LAWB Issue `#147` Operator exact-dispatch fail-closed status comment `5139364732`.
+- The accepted Phase 0 Final Daily-Use Acceptance is the current Workflow
+  baseline described by `PLANS.md`. Its supported scope is the already merged,
+  visible localhost single-user path; local readiness is not evidence that
+  external model execution is available, and no continuous end-to-end telemetry,
+  service, tray, VM executor, new external API, publication automation, or
+  expanded approval authority is claimed.
+- Phase 0 implementation anchors include Human View closure PR #320, durable
+  final-review synchronization PRs #322 and #324, local-only automatic startup
+  PR #325, and startup/runbook reconciliation PR #326. These are evidence
+  anchors, not independent activation authority.
+- Grand Audit R1 contract-integrity remediation: PR #330, implementation commit
+  `689ce71b09232833018716c01c59a795500b4cbb`, canonical merge
+  `d7295ad8f226152a9c2ffbc7eabb87493f2ac713`. Duplicate fields and unconsumed
+  non-comment Task Packet lines fail closed without execution authority.
+- Grand Audit R2 lifecycle-truth remediation: PR #332, implementation commit
+  `0a25903136f6b44258214207596535e053c85b88`, canonical merge
+  `c7a167d31a9c333af26c65c7160aa069ffef9761`. Unresolved exact-request final
+  reviews remain visible across requests, dispatch is not claimed before its
+  durable transition, and local readiness is distinct from external execution
+  availability.
+- The final-regression freeze gate and post-freeze thaw conditions are normative
+  in `PLANS.md`. This index only navigates to that policy; it does not satisfy
+  the gate, freeze the baseline, or authorize a thaw.
+
+## Historical Workflow v1 and Daily-UX Anchors
+
+- Roadmap v2 tracker: Issue `#168` (historical Workflow v1 tracker)
+- ChatGPT-first daily-UX closeout record: `docs/CHATGPT_FIRST_DAILY_UX_PILOT_CLOSEOUT_2026-07-31.md`. Its evidence-supported verdict is `CHATGPT-FIRST CORE DAILY UX ACCEPTED — MANUAL FOREGROUND, BOUNDED, NO ROUTINE TASK/RESULT RELAY`. It is a historical predecessor to Phase 0 Final Daily-Use Acceptance, not the current Workflow status. Evidence anchors include HAG Issue `#6` Runner ReviewBundle comment `5139431417`, HAG Issue `#6` matching `LAWBRUNNER-RESULT` comment `5139431571`, LAWB Issue `#147` launcher-preflight fail-closed status comment `5139709504`, and LAWB Issue `#147` Operator exact-dispatch fail-closed status comment `5139364732`.
 - Workflow v1 Final Closeout record: `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md`; it is the primary architecture, evidence, limitation, demonstration, and conditional final-transition record
 - Accepted correction/publication PR: #211 on retained branch `workflow-v1-phase-c-powershell-env-correction`; accepted reviewed head `4d3b649da9c953480c5053ae8e0b1707315de3e6`; external Codex exact-head review completed with no major issues; canonical merge `38d3e96263b671a72141d0ab92b61b91a85e6c36`; post-merge canonical verification completed
 - Tracker #168 historical intermediate synchronization: comment `5005537101`; it records PR #212 post-merge evidence and the then-current `REVIEW` state
@@ -44,7 +70,22 @@ Recommended future session read order:
 - RV2-03 lessons publication lane: PR `#186`
 - Canonical branch: `master`; PR #211 was opened against observed base snapshot `a3be6ad46e0a2a93f7fe87dfdd3c476ed3695abb`, with any later HEAD always requiring fresh verification
 
-`PLANS.md` remains the current project-status authority. This index is navigation only and does not itself accept, activate, or grant authority for work. Post-merge automated P2 findings on PR #203 and PR #204 invalidated the earlier acceptance, so both remain historical integrity-incident evidence. PR #211 supplied the accepted correction. PR #212 was rereviewed at exact head `dd6046409505e009e95e3a68433bca147542a088`, merged canonically at `ee4f9c06dc48719b8165b75607e51d38e7344c6b`, and passed post-merge canonical verification. Tracker #168 comment `5005537101` remains historical intermediate `REVIEW` evidence, and reviewer-controlled comment `5010099708` anchors `ACCEPTED — FINAL RESIDUAL REVIEW PASSED`. PR #213 was exact-head reviewed at `60be637db0c237db3d53408a272fd3aaba98ec8b`, merged canonically at `317cd7e9fedb153daa034c1e698819042e2e4564`, and post-merge verified; Tracker #168 comment `5010353117` published final `DONE`. The first three mandatory Workflow v1 nodes remain `DONE`. Workflow v1 Final Closeout and Workflow v1 are `DONE — FINAL DURABLE TRUTH SYNCHRONIZED`; repository and tracker truth are synchronized, and no later node is activated. Feature branches and PR candidates are proposals, not current truth; merging the exact reviewed truth-sync content into `master` publishes the final `DONE` status, and post-merge canonical verification validates that publication. Successful verification requires no second repository wording update. The truth-sync PR number and its future merge SHA are intentionally not pre-recorded.
+This section is historical navigation. `PLANS.md` remains the current
+project-status authority, and this index does not itself accept, activate, or
+grant authority for work. Post-merge automated P2 findings on PR #203 and PR
+#204 invalidated the earlier acceptance, so both remain historical
+integrity-incident evidence. PR #211 supplied the accepted correction. PR #212
+was rereviewed at exact head `dd6046409505e009e95e3a68433bca147542a088`,
+merged canonically at `ee4f9c06dc48719b8165b75607e51d38e7344c6b`, and
+passed post-merge canonical verification. Tracker #168 comment `5005537101`
+remains historical intermediate `REVIEW` evidence, and reviewer-controlled
+comment `5010099708` anchors `ACCEPTED — FINAL RESIDUAL REVIEW PASSED`. PR #213
+was exact-head reviewed at `60be637db0c237db3d53408a272fd3aaba98ec8b`,
+merged canonically at `317cd7e9fedb153daa034c1e698819042e2e4564`, and
+post-merge verified; Tracker #168 comment `5010353117` published final `DONE`.
+Workflow v1 Final Closeout remains historical `DONE — FINAL DURABLE TRUTH
+SYNCHRONIZED` evidence. It does not supersede the current Phase 0 baseline or
+activate a later node.
 
 ## ECO-DOC-01 Durable Records
 
@@ -77,9 +118,10 @@ This entry is navigation, not implementation authority or a replacement for curr
 - OPT-07 is complete and accepted as `NO-GO`; `codebase-memory-mcp` is not adopted as a required or default Local AI Workbench exploration tool.
 - Neither result activates RV2-04, Issue #188, another OPT node, MCP, watchers, services, or new authority.
 
-## RV2 / Product Checkpoint Warning
+## Historical RV2 / Product Checkpoint
 
-- RV2-03, RV2-P1-SYNC, RV2-04N, and Cross-Repository Bounded Proof are recorded as `DONE` by current canonical `PLANS.md` and accepted evidence.
+- RV2-03, RV2-P1-SYNC, RV2-04N, and Cross-Repository Bounded Proof are historical
+  `DONE` evidence; they are not the current Workflow status.
 - The first three mandatory Workflow v1 nodes are `DONE`: `RV2-P1-SYNC`, `RV2-04N`, and Cross-Repository Bounded Proof. Workflow v1 Final Closeout is `DONE — FINAL DURABLE TRUTH SYNCHRONIZED`.
 - Accepted PR #211 candidate verification recorded targeted pycache regressions `10 passed`, Runner v1 `89 passed`, Runner v2 compatibility `4 passed`, related Runner/Bridge `810 passed`, full repository `1112 passed`, `0 failed`, and `git diff --check` exit `0`.
 - Historical RV2-04 was narrowed into completed RV2-04N; historical RV2-05/07/08/09 remain deferred and RV2-06 remains partially absorbed.
