@@ -37,31 +37,53 @@ upper-level gate for Workflow continuation.
 
 Product runtime and development-workflow tooling remain separate.
 
-The accepted/published/closed #281 outcome is the current Workflow
-reconciliation anchor. PR #283 published request-bound Workflow operator
-visibility. The fixed normal relay and status surface remains open Issue #279.
-ChatGPT remains the primary UI; manual copy/paste relay and manual `PollOnce`
-remain fallback or recovery only, never the target daily workflow.
+The accepted Phase 0 Final Daily-Use Acceptance is the current Workflow
+baseline. Its supported scope is the visible, localhost, single-user daily path
+already present on canonical `master`: ChatGPT remains the primary UI; GitHub
+remains the auditable Task and Result Surface; the managed local Workflow and
+Human View expose request-bound progress, terminal result, and final-review
+truth; and automatic startup remains local-only. Manual copy/paste relay and
+manual `PollOnce` remain fallback or recovery paths, not the target daily flow.
 
-Request-bound non-terminal progress is established where the accepted #281 / PR
-#283 evidence proves it. This is a Machine View capability: it makes the
-request-local state and bounded operator evidence inspectable. It does not
-claim continuous, end-to-end live telemetry through Dispatcher, Runner, and
-Codex, and it does not claim a complete comfortable human-facing presentation.
-Those deeper telemetry and Human View limitations remain explicit current gaps.
+Grand Audit R1 and R2 remediation is complete on canonical `master`. R1, merged
+through PR #330, makes ambiguous Task Packets fail closed when fields are
+duplicated or non-comment content is not consumed. R2, merged through PR #332,
+preserves unresolved final-review truth across requests, does not claim that a
+dispatcher was reached before the durable dispatch transition succeeds, and
+separates local Workflow readiness from external model execution availability.
 
-No active implementation node exists. The current priority is a comfortable,
-repeatable Human-Governed Workflow daily loop, but
-`WORKFLOW-COMFORTABLE-DAILY-LOOP-ACCEPTANCE-01` is not activated by this plan.
-PRT items are optional reality-validation assets, not a mandatory numbered
-execution queue. MCP / ChatGPT App, Desktop Agent, VM executor, service, tray,
-and repository extraction remain future or separately gated work. No Product or
-Workflow node activates automatically.
+This acceptance remains bounded. Local Workflow readiness does not prove that
+external model execution is available; that is known only when an actual
+execution is attempted. Continuous end-to-end telemetry through every
+Dispatcher, Runner, and Codex transition is not claimed. The accepted baseline
+does not add a service, tray, VM executor, repository extraction, new external
+API, broader trusted actors, automatic publication, or approval chaining.
 
-Roadmap tracker #168 remains outside this approved two-document reconciliation.
-If its tracker wording is inconsistent with this post-#281 current truth, that
-is a residual external durable-truth gap for separate review; this plan does
-not silently treat it as reconciled.
+No active implementation node exists. PRT items remain optional
+reality-validation assets, not a mandatory numbered execution queue. MCP /
+ChatGPT App, Desktop Agent, VM executor, service, tray, and repository extraction
+remain future or separately gated work. No Product or Workflow node activates
+automatically.
+
+### Final Regression Gate and Freeze
+
+The Phase 0 baseline may be declared regression-frozen only after one separately
+authorized final-regression run at an exact, freshly verified canonical
+`master` HEAD. The gate must record the exact HEAD and commands, pass the full
+committed `tests/local_runner_bridge` suite without failures, pass
+`git diff --check`, preserve the R1 fail-closed Task Packet cases and the R2
+cross-request lifecycle/readiness distinctions, and receive independent durable
+result readback. This documentation reconciliation defines the gate; its
+docs-only `git diff --check` does not satisfy the runtime regression gate.
+
+After that freeze, Workflow implementation may thaw only through a separately
+approved task with an explicit objective, scope, authority, and verification
+plan, prompted by a reproducible regression or security defect, material
+platform drift, or an explicitly approved product outcome. Thaw work must start
+from freshly verified state, rerun impacted checks plus the final-regression
+gate, and resynchronize durable truth if any current claim changes. An Issue,
+roadmap ordering, optional PRT item, or stale document alone cannot thaw the
+baseline or activate a next node.
 
 ## Canonical Ecosystem Forward Plan
 
@@ -71,8 +93,8 @@ maintained in:
 [`WORKFLOW_HAG_ECOSYSTEM_ROADMAP_v2.0.md`](https://github.com/HarryWhite-TW/human-governed-workflow/blob/main/docs/WORKFLOW_HAG_ECOSYSTEM_ROADMAP_v2.0.md)
 
 That roadmap is not a current activation queue. It does not supersede the
-post-#281 reconciliation above or grant a next node, runtime expansion, or
-high-risk authority without separate review and approval.
+Phase 0 baseline and freeze rules above or grant a next node, runtime expansion,
+or high-risk authority without separate review and approval.
 
 ## Repository Roles
 
@@ -141,7 +163,7 @@ The historical durable verdict is:
 `ECO-CP1 ACCEPTED — STABLE STOP POINT`
 
 It is retained as history, not as a current activation queue. The current
-post-#281 state and limitations are recorded above. No later node activates
+Phase 0 state and limitations are recorded above. No later node activates
 automatically.
 
 ## Historical Stop Lines
@@ -190,6 +212,10 @@ Its historical status does not activate product or Workflow work.
 
 ## Change Log
 
+- 2026-09-22: Reconciled the accepted Phase 0 Final Daily-Use baseline with
+  completed Grand Audit R1/R2 remediation, preserved bounded supported-scope
+  and limitation wording, and defined the final-regression freeze and explicit
+  thaw conditions without activating another node.
 - 2026-08-13: Recorded Display Pilot package publication, the later supervising
   ChatGPT closeout adjudication, and the final canonical LAWB/HGW/HAG
   durable-truth record. That record becomes effective only after the exact
