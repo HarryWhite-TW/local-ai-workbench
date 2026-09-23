@@ -18,6 +18,7 @@ Bridge Operator, Dispatcher, Runner, Codex, or a GitHub write path.
 param(
     [switch]$StartForeground,
     [switch]$PublishStatus,
+    [switch]$PublishStartupBlocker,
     [ValidateSet(
         "HarryWhite-TW/local-ai-workbench",
         "HarryWhite-TW/human-approval-automation-gateway"
@@ -2340,7 +2341,11 @@ $statusCommentCreateSucceeded = $false
 $statusCommentUpdateAttempted = $false
 $statusCommentUpdateSucceeded = $false
 $statusCommentId = $null
-$statusPublicationResult = if ($PublishStatus) { "pending" } else { "not_requested" }
+$statusPublicationRequested = [bool]$PublishStatus
+$statusPublicationResult = if ($statusPublicationRequested) { "pending" } else { "not_requested" }
+$startupPendingRequestProbe = "not_requested"
+$startupPendingRequestId = ""
+$startupPendingTargetIssue = $null
 $statusPublicationBlockedReason = ""
 $statusPublicationRunId = [guid]::NewGuid().ToString("N")
 $statusPublicationStartedAt = [DateTime]::UtcNow
@@ -2757,6 +2762,28 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
             $statusBranch = $targetRepoEvidence.branch
             $statusHead = $targetRepoEvidence.head
         }
+        if ($blockedReasons.Count -eq $targetReasonCountBefore -and
+            $targetSelectionMode -eq "ordinary_routing" -and
+            -not [string]::IsNullOrWhiteSpace($lawbRouting.selection_id) -and
+            $controlRepositoryValidated -and
+            [string]::Equals($branch, "master", [System.StringComparison]::Ordinal) -and
+            -not [string]::Equals(
+                $targetRepoEvidence.head,
+                $head,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+            $ancestorResult = Invoke-GitRead -GitPath $gitPath `
+                -RepositoryRoot $ControlRepoRoot `
+                -GitArguments @(
+                    "merge-base", "--is-ancestor", $targetRepoEvidence.head, $head
+                )
+            if ($ancestorResult.exit_code -eq 0) {
+                $ResolvedTargetRepoRoot = $ControlRepoRoot
+                $statusBranch = $branch
+                $statusHead = $head
+                $targetSelectionMode = "canonical_master_fast_forward"
+            }
+        }
         # This is diagnostic only.  Test-ExactRepository has already retained
         # the ordinary dirty-worktree blocked reason unless the independently
         # requested same-node continuation path is active.
@@ -2825,7 +2852,73 @@ elseif ([string]::Equals($Repository, $HagRepository, [System.StringComparison]:
     }
 }
 
-if ($PublishStatus) {
+if ($PublishStartupBlocker -and $StartForeground -and
+    -not $statusPublicationRequested -and $blockedReasons.Count -gt 0 -and
+    $controlRepositoryValidated -and
+    -not [string]::IsNullOrWhiteSpace($reviewedPythonPath) -and
+    -not [string]::IsNullOrWhiteSpace($reviewedGhPath)) {
+    $startupPendingRequestProbe = "unavailable"
+    $previousPathForProbe = $env:PATH
+    $previousPythonPathForProbe = $env:PYTHONPATH
+    try {
+        $probeRuntimeDirectories = @(
+            (Split-Path -Parent $reviewedPythonPath),
+            (Split-Path -Parent $reviewedGhPath)
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+        $env:PATH = (@($probeRuntimeDirectories) + @($previousPathForProbe) -join ";")
+        $probeSrcPath = Join-Path $ControlRepoRoot "src"
+        $env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($previousPythonPathForProbe)) {
+            $probeSrcPath
+        }
+        else { $probeSrcPath + ";" + $previousPythonPathForProbe }
+        $probeCode = (
+            "import json,sys; " +
+            "import local_runner_bridge.bridge_operator_b1 as b1; " +
+            "from local_runner_bridge.bridge_operator_b3 import probe_startup_pending_request; " +
+            "b1._resolve_gh_path=lambda:sys.argv[3]; " +
+            "print(json.dumps(probe_startup_pending_request(state_dir=sys.argv[1], repo_root=sys.argv[2]), separators=(',', ':')))"
+        )
+        $probeResult = Invoke-CapturedNative -CommandPath $reviewedPythonPath `
+            -Arguments @(
+                "-c", $probeCode, $ResolvedStateDir, $ControlRepoRoot, $reviewedGhPath
+            ) `
+            -WorkingDirectory $ControlRepoRoot -EncodingPolicy "utf-8" `
+            -ProcessTimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
+        $probeDecodeReasons = New-Object System.Collections.ArrayList
+        if ($probeResult.exit_code -eq 0 -and
+            (Test-NativeCaptureDecoded -Result $probeResult `
+                -Reason "startup_pending_request_probe_undecodable" `
+                -Reasons $probeDecodeReasons)) {
+            $probe = Get-JsonObject -JsonText $probeResult.stdout
+            if ([bool](Get-ObjectProperty -Object $probe -Name "actionable")) {
+                $statusPublicationRequested = $true
+                $statusPublicationResult = "pending"
+                $startupPendingRequestProbe = "actionable_request"
+                $startupPendingRequestId = [string](
+                    Get-ObjectProperty -Object $probe -Name "request_id"
+                )
+                $startupPendingTargetIssue = [long](
+                    Get-ObjectProperty -Object $probe -Name "target_issue"
+                )
+            }
+            else {
+                $startupPendingRequestProbe = [string](
+                    Get-ObjectProperty -Object $probe -Name "reason"
+                )
+            }
+        }
+    }
+    catch {
+        $startupPendingRequestProbe = "unavailable"
+    }
+    finally {
+        $env:PATH = $previousPathForProbe
+        $env:PYTHONPATH = $previousPythonPathForProbe
+    }
+}
+
+if ($statusPublicationRequested) {
     if (-not $statusPublicationCapable) {
         Add-BlockedReason -Reasons $blockedReasons -Reason "status_publication_unavailable"
         $statusPublicationResult = "unavailable"
@@ -2849,6 +2942,13 @@ if ($PublishStatus) {
             $statusResult = "ready"
             $statusNextAction = "start_foreground"
         }
+        $statusPreflightSummary = if ($startupPendingRequestProbe -eq "actionable_request") {
+            [pscustomobject]@{
+                request_id = $startupPendingRequestId
+                target_issue = $startupPendingTargetIssue
+            }
+        }
+        else { $null }
         $statusPayload = New-StatusPayload `
             -RunId $statusPublicationRunId `
             -Stage $statusStage `
@@ -2858,7 +2958,7 @@ if ($PublishStatus) {
             -Head $statusHead `
             -LaunchRequested ([bool]$StartForeground) `
             -OperatorInvoked $false `
-            -OperatorSummary $null `
+            -OperatorSummary $statusPreflightSummary `
             -BlockedReasons @($blockedReasons) `
             -NextAction $statusNextAction
         $statusPublicationAttempted = $true
@@ -3059,7 +3159,7 @@ elseif ($StartForeground) {
 else {
     "ready"
 }
-if ($PublishStatus -and $statusCommentNeedsUpdate -and
+if ($statusPublicationRequested -and $statusCommentNeedsUpdate -and
     $statusCommentCreateSucceeded -and $null -ne $statusCommentId) {
     $updateNextAction = if ($resultBeforeStatusUpdate -eq "waiting_review") {
         "chatgpt_final_review"
@@ -3185,7 +3285,11 @@ $summary = [ordered]@{
     review_candidate_status = $reviewCandidateStatus
     review_candidate_reason = $reviewCandidateReason
     review_candidate_parent_comment_id = $reviewCandidateParentCommentId
-    status_publication_requested = [bool]$PublishStatus
+    status_publication_requested = $statusPublicationRequested
+    startup_blocker_publication_requested = [bool]$PublishStartupBlocker
+    startup_pending_request_probe = $startupPendingRequestProbe
+    startup_pending_request_id = $startupPendingRequestId
+    startup_pending_target_issue = $startupPendingTargetIssue
     status_publication_attempted = $statusPublicationAttempted
     status_comment_create_attempted = $statusCommentCreateAttempted
     status_comment_create_succeeded = $statusCommentCreateSucceeded

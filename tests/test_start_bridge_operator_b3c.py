@@ -724,6 +724,8 @@ exit $exitCode
 def write_fake_operator(path: Path) -> None:
     path.write_text(
         r"""@echo off
+if "%1"=="-c" "%B3C_TEST_REAL_PYTHON%" %*
+if "%1"=="-c" exit /b %ERRORLEVEL%
 if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo INVOCATION
 if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo ARGS=%*
 if not "%B3C_TEST_OPERATOR_LOG%"=="" >>"%B3C_TEST_OPERATOR_LOG%" echo PATH=%PATH%
@@ -751,8 +753,13 @@ import time
 from pathlib import Path
 
 args = sys.argv[1:]
-method = args[args.index("--method") + 1]
-endpoint = args[args.index("--method") + 2]
+if "--method" in args:
+    method_index = args.index("--method")
+    method = args[method_index + 1]
+    endpoint = args[1] if not args[1].startswith("--") else args[method_index + 2]
+else:
+    method = "GET"
+    endpoint = args[1]
 request_body = sys.stdin.buffer.read()
 log_path = Path(os.environ["B3C_TEST_GH_LOG"])
 invocation_count = 1
@@ -892,6 +899,7 @@ class LauncherHarness:
         write_fake_bootstrap(self.scripts / "bootstrap_course_environment.ps1")
         write_fake_operator(self.python)
         write_fake_gh(self.gh, self.gh_helper)
+        shutil.copy2(self.gh, self.tools / "gh.cmd")
         self.codex.write_text("@echo off\r\nexit /b 0\r\n", encoding="ascii")
         self.write_bootstrap(
             ready_bootstrap_payload(
@@ -926,6 +934,7 @@ class LauncherHarness:
                 "B3C_TEST_GH_LOG": str(self.gh_log),
                 "B3C_TEST_GH_EXECUTABLE": str(self.gh),
                 "B3C_TEST_GH_MODE": "success",
+                "B3C_TEST_REAL_PYTHON": sys.executable,
                 "LOCALAPPDATA": str(self.base / "local app data"),
             }
         )
@@ -1193,6 +1202,56 @@ def test_lawb_v2_local_selection_binds_clean_target_identity_and_reaches_cli(
     assert routing_path.read_bytes() == original_routing_bytes
     assert not (fixture.state / "operator.lock").exists()
     assert not (fixture.state / "in_flight.json").exists()
+
+
+def test_lawb_v2_selection_yields_to_clean_canonical_master_fast_forward(
+    tmp_path: Path,
+):
+    fixture = LauncherHarness(tmp_path).create()
+    target = tmp_path / "previous clean execution target"
+    old_head = git(fixture.repo, "rev-parse", "HEAD").stdout.strip()
+    git(
+        fixture.repo,
+        "worktree",
+        "add",
+        "-b",
+        "codex/previous-execution-target",
+        str(target),
+        old_head,
+    )
+    target_branch = git(target, "branch", "--show-current").stdout.strip()
+    (fixture.repo / "fast-forward.txt").write_text("new canonical head\n", encoding="utf-8")
+    git(fixture.repo, "add", "fast-forward.txt")
+    git(fixture.repo, "commit", "-m", "canonical fast forward")
+    new_head = git(fixture.repo, "rev-parse", "HEAD").stdout.strip()
+    routing_path = fixture.state / ROUTING_FILE
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL_V2,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "selected_target": {
+                    "selection_id": "previous-execution-target",
+                    "target_repo_root": str(target),
+                    "branch": target_branch,
+                    "head": old_head,
+                },
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    original_routing = routing_path.read_bytes()
+
+    result, payload = fixture.run()
+
+    assert result.returncode == 0
+    assert payload["result"] == "ready"
+    assert payload["target_repo_root"] == str(fixture.repo)
+    assert payload["branch"] == "master"
+    assert payload["head"] == new_head
+    assert new_head != old_head
+    assert routing_path.read_bytes() == original_routing
 
 
 def test_lawb_b3_transition_writes_selection_for_the_normal_launcher_path(
@@ -3044,6 +3103,105 @@ def test_status_publication_is_not_requested_by_default(harness: LauncherHarness
     assert payload["status_publication_result"] == "not_requested"
     assert payload["status_publication_blocked_reason"] == ""
     assert len(payload["status_publication_run_id"]) == 32
+    assert payload["github_write_performed_directly"] is False
+
+
+def test_startup_blocker_publishes_only_for_one_actionable_pending_request(
+    harness: LauncherHarness,
+):
+    branch = git(harness.repo, "branch", "--show-current").stdout.strip()
+    head = git(harness.repo, "rev-parse", "HEAD").stdout.strip()
+    issue_279 = harness.base / "issue-279.json"
+    comments_279 = harness.base / "comments-279.json"
+    issue_336 = harness.base / "issue-336.json"
+    issue_279.write_text(
+        json.dumps({"number": 279, "state": "open", "body": ""}), encoding="utf-8"
+    )
+    issue_336.write_text(
+        json.dumps({"number": 336, "state": "open", "body": ""}), encoding="utf-8"
+    )
+    marker = (
+        "BRIDGE-INBOX-REQUEST "
+        "protocol=lawb.bridge_inbox_request.v1 "
+        "request_id=startup-blocker-336 "
+        "repo=HarryWhite-TW/local-ai-workbench "
+        "target_issue=336 "
+        "target_dispatch_request_id=startup-blocker-336 "
+        f"branch={branch} head={head} "
+        "expires=20990101T000000Z action=run-reviewbundle requested_by=chatgpt"
+    )
+    comments_279.write_text(
+        json.dumps(
+            [[{
+                "id": 1,
+                "body": marker,
+                "user": {"login": "HarryWhite-TW"},
+                "issue_url": (
+                    "https://api.github.com/repos/HarryWhite-TW/"
+                    "local-ai-workbench/issues/279"
+                ),
+            }]]
+        ),
+        encoding="utf-8",
+    )
+    responses = {
+        "repos/HarryWhite-TW/local-ai-workbench/issues/279": str(issue_279),
+        "repos/HarryWhite-TW/local-ai-workbench/issues/279/comments": str(comments_279),
+        "repos/HarryWhite-TW/local-ai-workbench/issues/336": str(issue_336),
+    }
+    (harness.state / ROUTING_FILE).write_text("{}", encoding="utf-8")
+
+    result, payload = harness.run(
+        "-StartForeground",
+        "-PublishStartupBlocker",
+        env=harness.env(
+            B3C_TEST_GH_GET_RESPONSES=json.dumps(responses),
+            PYTHONPATH=str(REPO_ROOT / "src"),
+        ),
+    )
+    calls = read_gh_calls(harness)
+    writes = [call for call in calls if call["method"] in {"POST", "PATCH"}]
+
+    assert result.returncode == 2
+    assert len(writes) == 1
+    assert writes[0]["method"] == "POST"
+    remote = status_payload(writes[0])
+    assert remote["result"] == "blocked"
+    assert remote["request_id"] == "startup-blocker-336"
+    assert remote["target_issue"] == 336
+    assert payload["status_publication_requested"] is True
+    assert payload["startup_pending_request_probe"] == "actionable_request"
+    assert payload["startup_pending_request_id"] == "startup-blocker-336"
+    assert payload["operator_invoked"] is False
+
+
+def test_idle_startup_blocker_probe_performs_no_github_write(harness: LauncherHarness):
+    issue_279 = harness.base / "idle-issue-279.json"
+    comments_279 = harness.base / "idle-comments-279.json"
+    issue_279.write_text(
+        json.dumps({"number": 279, "state": "open", "body": ""}), encoding="utf-8"
+    )
+    comments_279.write_text("[[]]", encoding="utf-8")
+    responses = {
+        "repos/HarryWhite-TW/local-ai-workbench/issues/279": str(issue_279),
+        "repos/HarryWhite-TW/local-ai-workbench/issues/279/comments": str(comments_279),
+    }
+    (harness.state / ROUTING_FILE).write_text("{}", encoding="utf-8")
+
+    result, payload = harness.run(
+        "-StartForeground",
+        "-PublishStartupBlocker",
+        env=harness.env(
+            B3C_TEST_GH_GET_RESPONSES=json.dumps(responses),
+            PYTHONPATH=str(REPO_ROOT / "src"),
+        ),
+    )
+    calls = read_gh_calls(harness)
+
+    assert result.returncode == 2
+    assert [call for call in calls if call["method"] in {"POST", "PATCH"}] == []
+    assert payload["status_publication_requested"] is False
+    assert payload["startup_pending_request_probe"] == "missing_request"
     assert payload["github_write_performed_directly"] is False
 
 
