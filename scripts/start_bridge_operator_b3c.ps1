@@ -2698,6 +2698,46 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
             Add-BlockedReason -Reasons $blockedReasons `
                 -Reason "lawb_routing_target_branch_mismatch"
         }
+        $ordinaryStalePinFastForward = $false
+        if ($blockedReasons.Count -eq $targetReasonCountBefore -and
+            $targetSelectionMode -eq "ordinary_routing" -and
+            -not $continuationBindingRequested -and
+            -not [string]::IsNullOrWhiteSpace($lawbRouting.selection_id) -and
+            [string]::Equals(
+                $lawbRouting.expected_branch,
+                "master",
+                [System.StringComparison]::Ordinal
+            ) -and
+            [string]::Equals(
+                $targetRepoEvidence.branch,
+                "master",
+                [System.StringComparison]::Ordinal
+            ) -and
+            $controlRepositoryValidated -and
+            [string]::Equals($branch, "master", [System.StringComparison]::Ordinal) -and
+            [string]::Equals(
+                $targetRepoEvidence.head,
+                $head,
+                [System.StringComparison]::OrdinalIgnoreCase
+            ) -and
+            -not [string]::Equals(
+                $targetRepoEvidence.head,
+                $lawbRouting.expected_head,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+            $previousCanonicalHeadResult = Invoke-GitRead -GitPath $gitPath `
+                -RepositoryRoot $ControlRepoRoot `
+                -GitArguments @("rev-parse", "--verify", ($head + "^"))
+            $ordinaryStalePinFastForward = (
+                $previousCanonicalHeadResult.exit_code -eq 0 -and
+                $previousCanonicalHeadResult.stdout.Trim() -match '^[0-9a-fA-F]{40}$' -and
+                [string]::Equals(
+                    $previousCanonicalHeadResult.stdout.Trim(),
+                    $lawbRouting.expected_head,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )
+            )
+        }
         if ($blockedReasons.Count -eq $targetReasonCountBefore -and
             $targetSelectionMode -ne "continuation_record" -and
             -not [string]::IsNullOrWhiteSpace($lawbRouting.expected_head) -and
@@ -2705,7 +2745,8 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
                 $targetRepoEvidence.head,
                 $lawbRouting.expected_head,
                 [System.StringComparison]::Ordinal
-            )) {
+            ) -and
+            -not $ordinaryStalePinFastForward) {
             Add-BlockedReason -Reasons $blockedReasons `
                 -Reason "lawb_routing_target_head_mismatch"
         }

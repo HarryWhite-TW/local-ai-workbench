@@ -1254,6 +1254,122 @@ def test_lawb_v2_selection_yields_to_clean_canonical_master_fast_forward(
     assert routing_path.read_bytes() == original_routing
 
 
+def prepare_post_pull_stale_pin_target(
+    tmp_path: Path,
+) -> tuple[LauncherHarness, Path, Path, str, str]:
+    fixture = LauncherHarness(tmp_path).create()
+    old_head = git(fixture.repo, "rev-parse", "HEAD").stdout.strip()
+    (fixture.repo / "canonical-fast-forward.txt").write_text(
+        "new canonical head\n", encoding="utf-8"
+    )
+    git(fixture.repo, "add", "canonical-fast-forward.txt")
+    git(fixture.repo, "commit", "-m", "canonical fast forward")
+    new_head = git(fixture.repo, "rev-parse", "HEAD").stdout.strip()
+    target = tmp_path / "post-pull routed target"
+    bundle = tmp_path / "canonical-master.bundle"
+    git(fixture.repo, "bundle", "create", str(bundle), "master")
+    init_git_repo(target, EXPECTED_ORIGIN)
+    git(target, "bundle", "unbundle", str(bundle))
+    git(target, "update-ref", "refs/heads/master", new_head)
+    git(target, "read-tree", "--reset", "-u", "HEAD")
+    routing_path = fixture.state / ROUTING_FILE
+    routing_path.write_text(
+        json.dumps(
+            {
+                "protocol": ROUTING_PROTOCOL_V2,
+                "repository": "HarryWhite-TW/local-ai-workbench",
+                "selected_target": {
+                    "selection_id": "stable-runtime-master",
+                    "target_repo_root": str(target),
+                    "branch": "master",
+                    "head": old_head,
+                },
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    return fixture, target, routing_path, old_head, new_head
+
+
+def test_lawb_v2_stale_pin_admits_post_pull_clean_canonical_master(
+    tmp_path: Path,
+):
+    fixture, target, routing_path, old_head, new_head = (
+        prepare_post_pull_stale_pin_target(tmp_path)
+    )
+    original_routing = routing_path.read_bytes()
+
+    result, payload = fixture.run()
+
+    assert result.returncode == 0, result.stderr
+    assert payload["result"] == "ready"
+    assert payload["target_repo_root"] == str(target.resolve())
+    assert payload["branch"] == "master"
+    assert payload["head"] == new_head
+    assert new_head != old_head
+    assert routing_path.read_bytes() == original_routing
+    assert payload["operator_invoked"] is False
+
+
+@pytest.mark.parametrize(
+    ("case_name", "expected_reason"),
+    [
+        ("wrong", "lawb_routing_target_head_mismatch"),
+        ("divergent", "lawb_routing_target_head_mismatch"),
+        ("dirty", "target_repository_worktree_dirty"),
+        ("ambiguous", "lawb_target_repo_root_ambiguous"),
+        ("non_master", "lawb_routing_target_head_mismatch"),
+        ("candidate_continuation", "lawb_routing_target_head_mismatch"),
+    ],
+)
+def test_lawb_v2_stale_pin_relaxation_remains_fail_closed(
+    tmp_path: Path,
+    case_name: str,
+    expected_reason: str,
+):
+    fixture, target, routing_path, _, _ = prepare_post_pull_stale_pin_target(
+        tmp_path
+    )
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    args: list[str] = []
+    if case_name == "wrong":
+        routing["selected_target"]["head"] = "0" * 40
+    elif case_name == "divergent":
+        (target / "divergent.txt").write_text("divergent\n", encoding="utf-8")
+        git(target, "add", "divergent.txt")
+        git(target, "commit", "-m", "divergent target")
+    elif case_name == "dirty":
+        (target / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+    elif case_name == "ambiguous":
+        args = ["-TargetRepoRoot", str(target)]
+    elif case_name == "non_master":
+        git(target, "branch", "-m", "post-pull-candidate")
+        routing["selected_target"]["branch"] = "post-pull-candidate"
+    elif case_name == "candidate_continuation":
+        args = [
+            "-StartForeground",
+            "-ContinuationIssueNumber",
+            "336",
+            "-ExpectedState",
+            "same_node_exact_candidate_continuation_v1:parent_comment_id=5795638857",
+            "-ExpectedCandidateManifestFingerprint",
+            "a" * 64,
+        ]
+    routing_path.write_text(
+        json.dumps(routing, separators=(",", ":")), encoding="utf-8"
+    )
+    original_routing = routing_path.read_bytes()
+
+    result, payload = fixture.run(*args)
+
+    assert result.returncode == 2
+    assert expected_reason in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+    assert routing_path.read_bytes() == original_routing
+
+
 def test_lawb_b3_transition_writes_selection_for_the_normal_launcher_path(
     tmp_path: Path,
 ):
