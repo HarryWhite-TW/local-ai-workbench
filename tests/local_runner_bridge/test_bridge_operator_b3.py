@@ -23,6 +23,7 @@ from local_runner_bridge.bridge_operator_b3 import (
     B3C_MODE,
     DEFAULT_INBOX_ISSUE,
     PROCESSED_REQUEST_PROTOCOL,
+    probe_startup_pending_request,
     read_processed_request_ids,
     read_processed_request_records,
     run_bridge_operator_b3_dry_run_loop,
@@ -401,6 +402,97 @@ def processed_record(**overrides):
     if payload["target_dispatch_request_id"] is None:
         payload["target_dispatch_request_id"] = payload["request_id"]
     return payload
+
+
+def test_startup_pending_probe_requires_one_unconsumed_fully_admitted_request(
+    tmp_path,
+):
+    request_id = "startup-pending-336"
+    client = FakeGitHub(
+        inbox_comments=[
+            CommentRecord(
+                id=1,
+                body=inbox_marker(
+                    request_id=request_id,
+                    target_dispatch_request_id=request_id,
+                    action="run-reviewbundle",
+                ),
+                author="HarryWhite-TW",
+            )
+        ]
+    )
+
+    pending = probe_startup_pending_request(
+        state_dir=tmp_path,
+        repo_root=ROOT_PATH,
+        github_client=client,
+        local_checker=ready(tmp_path),
+        now_utc=NOW,
+    )
+
+    assert pending == {
+        "protocol": "lawb.bridge_operator_startup_pending_request.v1",
+        "actionable": True,
+        "reason": "actionable_request",
+        "request_id": request_id,
+        "target_issue": 151,
+        "requested_action": "run-reviewbundle",
+    }
+
+    consumed = processed_record(
+        request_id=request_id,
+        target_dispatch_request_id=request_id,
+        requested_action="run-reviewbundle",
+    )
+    (tmp_path / "processed_requests.jsonl").write_text(
+        json.dumps(consumed) + "\n", encoding="utf-8"
+    )
+    already_consumed = probe_startup_pending_request(
+        state_dir=tmp_path,
+        repo_root=ROOT_PATH,
+        github_client=client,
+        local_checker=ready(tmp_path),
+        now_utc=NOW,
+    )
+
+    assert already_consumed["actionable"] is False
+    assert already_consumed["reason"] == "no_current_request_after_consumption"
+
+
+@pytest.mark.parametrize(
+    ("comments", "reason"),
+    [
+        ([], "missing_request"),
+        (
+            [
+                CommentRecord(id=1, body=inbox_marker(), author="HarryWhite-TW"),
+                CommentRecord(
+                    id=2,
+                    body=inbox_marker(request_id="second", target_dispatch_request_id="second"),
+                    author="HarryWhite-TW",
+                ),
+            ],
+            "multiple_current_requests",
+        ),
+        (
+            [CommentRecord(id=1, body=inbox_marker(), author="untrusted")],
+            "untrusted_inbox_author",
+        ),
+    ],
+)
+def test_startup_pending_probe_fails_closed_without_actionable_request(
+    tmp_path, comments, reason
+):
+    result = probe_startup_pending_request(
+        state_dir=tmp_path,
+        repo_root=ROOT_PATH,
+        github_client=FakeGitHub(inbox_comments=comments),
+        local_checker=ready(tmp_path),
+        now_utc=NOW,
+    )
+
+    assert result["actionable"] is False
+    assert result["reason"] == reason
 
 
 FINAL_REVIEW_REQUEST_ID = "final-review-sync-151-r2"

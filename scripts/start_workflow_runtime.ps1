@@ -587,6 +587,7 @@ try {
 
     $operatorArguments = (
         "-StartForeground" +
+        " -PublishStartupBlocker" +
         " -MaxCycles " + $MaxCycles +
         " -PollIntervalSeconds " + $PollIntervalSeconds +
         " -TimeoutSeconds " + $TimeoutSeconds +

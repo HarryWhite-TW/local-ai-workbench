@@ -144,6 +144,16 @@ Task Packet, status, and child result text never select or override this local
 path. HAG continues to require its explicit local `-TargetRepoRoot` input and
 does not use the LAWB routing file.
 
+After an eligible review candidate is preserved, B3 may durably replace the
+manual v1 configuration with its exact v2 `selected_target` record. Ordinary
+Startup still validates that selected target's path, repository, branch, pinned
+HEAD, worktree, and staged state before using it. If that exact clean pinned
+HEAD is an ancestor of a newer clean canonical `master` HEAD, the launcher uses
+the canonical checkout for that session so a normal mainline fast-forward does
+not require manual routing-file surgery. It does not rewrite the routing file,
+does not fetch or merge, and does not apply this continuity rule to a divergent
+target, an invalid binding, or an exact-candidate continuation.
+
 ### Optional ChatGPT-readable status publication
 
 Status publication is disabled by default. The ordinary preflight command and
@@ -597,6 +607,7 @@ canonical runtime wrapper starts the read-only Workflow Panel on loopback
 
 ```text
 -StartForeground
+-PublishStartupBlocker
 -MaxCycles 960
 -PollIntervalSeconds 30
 -TimeoutSeconds 600
@@ -607,7 +618,14 @@ This starts a bounded 960-cycle session. The configured lifecycle validity is
 eight hours (`960 * 30` seconds); it is not a permanent background service or
 an infinite loop. Automatic login Startup does not pass `-PublishStatus` and
 does not create or update a GitHub `LAWBRIDGE-STATUS` comment merely because
-startup occurred. Status publication remains an explicit manual opt-in through
+startup occurred. It passes the narrower `-PublishStartupBlocker` policy: when
+launcher preflight is blocked, a read-only fixed-Inbox probe must first prove
+exactly one trusted, unexpired, unconsumed, fully admitted pending request
+against the clean canonical checkout. Only then may the existing bounded status
+path create one durable blocked comment. Idle Startup, expired or consumed
+history, malformed or untrusted input, multiple current requests, and
+unavailable probe evidence perform no GitHub write. Status publication
+otherwise remains an explicit manual opt-in through
 `scripts/start_bridge_operator_b3c.ps1 -PublishStatus`, as described above,
 while actual health before a real task still requires the on-demand probe.
 The existing `pause.flag` and `stop.flag` mechanisms remain available:

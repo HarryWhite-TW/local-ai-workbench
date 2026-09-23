@@ -465,8 +465,11 @@ def test_source_has_one_routing_authority_and_no_panel_reuse_or_supervisor():
     assert " -TimeoutSeconds " in operator_arguments
     assert " -StateDir " in operator_arguments
     assert "-PublishStatus" not in operator_arguments
+    assert "-PublishStartupBlocker" in operator_arguments
     assert "[switch]$PublishStatus" in operator
-    assert "if ($PublishStatus)" in operator
+    assert "[switch]$PublishStartupBlocker" in operator
+    assert "$statusPublicationRequested = [bool]$PublishStatus" in operator
+    assert "if ($statusPublicationRequested)" in operator
     assert " -TargetRepoRoot " not in body
     assert "repository_routing.json" in operator
     assert "--lifetime-seconds" in body

@@ -125,6 +125,7 @@ SAME_NODE_LAUNCHER_BINDING_ENV = "LAWB_SAME_NODE_CONTINUATION_BINDING"
 SAME_NODE_LAUNCHER_BINDING_PROTOCOL = (
     "lawb.same_node_exact_candidate_continuation_launcher_binding.v1"
 )
+STARTUP_PENDING_REQUEST_PROTOCOL = "lawb.bridge_operator_startup_pending_request.v1"
 
 DEFAULT_MAX_CYCLES_LIMIT = 960
 DEFAULT_MAX_POLL_INTERVAL_SECONDS = 3600.0
@@ -1459,6 +1460,72 @@ def _run_b1_with_bounded_retry(
 
 def _is_github_read_failure(summary: dict[str, Any]) -> bool:
     return "github_read_unavailable" in summary.get("blocked_reasons", [])
+
+
+def probe_startup_pending_request(
+    *,
+    state_dir: str | Path,
+    repo_root: str | Path,
+    repository: str = DEFAULT_REPOSITORY,
+    inbox_issue: int = DEFAULT_INBOX_ISSUE,
+    github_client: Any | None = None,
+    target_github_client: Any | None = None,
+    local_checker: Any | None = None,
+    now_utc: datetime | None = None,
+) -> dict[str, Any]:
+    """Read-only proof that Startup has one fully admitted pending request."""
+
+    processed_path = Path(state_dir) / "processed_requests.jsonl"
+    try:
+        consumed = (
+            _read_processed_request_records(processed_path, repository=repository)
+            if processed_path.exists()
+            else {}
+        )
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {
+            "protocol": STARTUP_PENDING_REQUEST_PROTOCOL,
+            "actionable": False,
+            "reason": "corrupted_state",
+        }
+
+    try:
+        b1_summary = run_bridge_operator_b1_dry_run(
+            inbox_issue=inbox_issue,
+            repo_root=repo_root,
+            repository=repository,
+            github_client=github_client,
+            target_github_client=target_github_client,
+            local_checker=local_checker,
+            now_utc=now_utc,
+            consumed_request_ids=consumed,
+        )
+    except Exception:
+        return {
+            "protocol": STARTUP_PENDING_REQUEST_PROTOCOL,
+            "actionable": False,
+            "reason": "github_read_unavailable",
+        }
+
+    actionable = bool(
+        b1_summary.get("result") == "success"
+        and b1_summary.get("current_request_count") == 1
+        and b1_summary.get("selected_request_state") == "CURRENT"
+        and isinstance(b1_summary.get("request_id"), str)
+        and b1_summary.get("request_id")
+    )
+    reasons = b1_summary.get("blocked_reasons", [])
+    reason = "actionable_request" if actionable else (
+        str(reasons[0]) if isinstance(reasons, list) and reasons else "not_actionable"
+    )
+    return {
+        "protocol": STARTUP_PENDING_REQUEST_PROTOCOL,
+        "actionable": actionable,
+        "reason": reason,
+        "request_id": b1_summary.get("request_id") if actionable else None,
+        "target_issue": b1_summary.get("target_issue") if actionable else None,
+        "requested_action": b1_summary.get("requested_action") if actionable else None,
+    }
 
 
 def _is_safe_wait_b1_result(summary: dict[str, Any]) -> bool:
