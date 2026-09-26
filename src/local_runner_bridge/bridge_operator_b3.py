@@ -1525,6 +1525,10 @@ def probe_startup_pending_request(
         "request_id": b1_summary.get("request_id") if actionable else None,
         "target_issue": b1_summary.get("target_issue") if actionable else None,
         "requested_action": b1_summary.get("requested_action") if actionable else None,
+        "target_repository": b1_summary.get("target_repository") if actionable else None,
+        "expected_branch": b1_summary.get("expected_branch") if actionable else None,
+        "expected_head": b1_summary.get("expected_head") if actionable else None,
+        "target_expected_state": b1_summary.get("target_expected_state") if actionable else None,
     }
 
 

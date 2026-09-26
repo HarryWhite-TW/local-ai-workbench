@@ -1204,7 +1204,7 @@ def test_lawb_v2_local_selection_binds_clean_target_identity_and_reaches_cli(
     assert not (fixture.state / "in_flight.json").exists()
 
 
-def test_lawb_v2_selection_yields_to_clean_canonical_master_fast_forward(
+def test_lawb_v2_ancestor_alone_never_selects_canonical_master(
     tmp_path: Path,
 ):
     fixture = LauncherHarness(tmp_path).create()
@@ -1243,15 +1243,260 @@ def test_lawb_v2_selection_yields_to_clean_canonical_master_fast_forward(
     )
     original_routing = routing_path.read_bytes()
 
-    result, payload = fixture.run()
+    result, payload = fixture.run("-StartForeground")
 
-    assert result.returncode == 0
-    assert payload["result"] == "ready"
-    assert payload["target_repo_root"] == str(fixture.repo)
-    assert payload["branch"] == "master"
-    assert payload["head"] == new_head
+    assert result.returncode == 2
+    assert payload["result"] == "blocked"
+    assert payload["target_repo_root"] == str(target)
+    assert "lawb_post_publication_reentry_not_admitted" in payload["blocked_reasons"]
+    assert payload["operator_invoked"] is False
     assert new_head != old_head
     assert routing_path.read_bytes() == original_routing
+
+
+def prepare_r5_post_publication_target(tmp_path: Path):
+    fixture = LauncherHarness(tmp_path).create()
+    reviewer = tmp_path / "preserved reviewer candidate"
+    git(fixture.repo, "worktree", "add", "-b", "reviewer", str(reviewer))
+    (reviewer / "reviewed.txt").write_text("reviewed work\n", encoding="utf-8")
+    routing_path = fixture.state / ROUTING_FILE
+    routing_path.write_text(
+        json.dumps({
+            "protocol": ROUTING_PROTOCOL,
+            "repository": "HarryWhite-TW/local-ai-workbench",
+            "target_repo_root": str(reviewer),
+        }), encoding="utf-8",
+    )
+    assert _prepare_next_lawb_execution_target(
+        state_root=fixture.state,
+        control_repo_root=fixture.repo,
+        candidate_repo_root=reviewer,
+        operator_session_id="a" * 32,
+        summary={},
+    ) is None
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    target = Path(routing["selected_target"]["target_repo_root"])
+    (fixture.repo / "published.txt").write_text("published work\n", encoding="utf-8")
+    git(fixture.repo, "add", "published.txt")
+    git(fixture.repo, "commit", "-m", "publish accepted work to canonical master")
+    fixture.operator_json.write_text(json.dumps({"result": "success"}), encoding="utf-8")
+    return fixture, target, routing_path
+
+
+def r5_request_environment(fixture: LauncherHarness, *, case: str = "valid"):
+    head = git(fixture.repo, "rev-parse", "HEAD").stdout.strip()
+    fields = {
+        "protocol": "lawb.bridge_inbox_request.v1",
+        "request_id": "r5-current-336",
+        "repo": "HarryWhite-TW/local-ai-workbench",
+        "target_issue": "336",
+        "target_dispatch_request_id": "r5-current-336",
+        "branch": "master",
+        "head": head,
+        "expires": "20990101T000000Z",
+        "action": "run-reviewbundle",
+        "requested_by": "chatgpt",
+    }
+    if case == "request_head":
+        fields["head"] = "0" * 40
+    elif case == "request_branch":
+        fields["branch"] = "other-branch"
+    elif case == "request_repository":
+        fields["repo"] = "HarryWhite-TW/human-approval-automation-gateway"
+    elif case == "expired":
+        fields["expires"] = "20000101T000000Z"
+    elif case == "request_continuation":
+        fields["expected_state"] = (
+            "same_node_exact_candidate_continuation_v1:parent_comment_id=5313180922"
+        )
+    marker = "BRIDGE-INBOX-REQUEST " + " ".join(f"{k}={v}" for k, v in fields.items())
+    comments = [{
+        "id": 1,
+        "body": marker,
+        "user": {"login": "untrusted" if case == "untrusted" else "HarryWhite-TW"},
+        "issue_url": "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/279",
+    }]
+    if case == "missing_request":
+        comments = []
+    elif case == "ambiguous_request":
+        comments.append({**comments[0], "id": 2, "body": marker.replace("r5-current-336", "r5-second-336")})
+    responses = {}
+    for issue in (279, 336):
+        path = fixture.base / f"r5-issue-{issue}.json"
+        path.write_text(json.dumps({"number": issue, "state": "open", "body": ""}), encoding="utf-8")
+        endpoint = f"repos/HarryWhite-TW/local-ai-workbench/issues/{issue}"
+        responses[endpoint] = str(path)
+        comment_path = fixture.base / f"r5-comments-{issue}.json"
+        target_comments = [{
+            "id": 5313180922,
+            "body": "LAWBRUNNER-RESULT protocol=lawb.runner_result.v1\n{}",
+            "user": {"login": "HarryWhite-TW"},
+            "issue_url": "https://api.github.com/repos/HarryWhite-TW/local-ai-workbench/issues/336",
+        }] if case == "request_continuation" else []
+        comment_path.write_text(
+            json.dumps([comments if issue == 279 else target_comments]), encoding="utf-8"
+        )
+        responses[endpoint + "/comments"] = str(comment_path)
+    if case == "consumed":
+        (fixture.state / "processed_requests.jsonl").write_text(json.dumps({
+            "protocol": "lawb.bridge_operator_b3_processed_request.v1",
+            "request_id": fields["request_id"],
+            "target_repository": fields["repo"],
+            "target_issue": 336,
+            "target_dispatch_request_id": fields["request_id"],
+            "requested_action": fields["action"],
+            "expected_branch": fields["branch"],
+            "expected_head": fields["head"],
+        }) + "\n", encoding="utf-8")
+    return fixture.env(
+        B3C_TEST_GH_GET_RESPONSES=json.dumps(responses),
+        PYTHONPATH=str(REPO_ROOT / "src"),
+        LAWB_SAME_NODE_CONTINUATION_BINDING=None,
+    )
+
+
+def r5_candidate_snapshot(target: Path):
+    state = tuple(git(target, "--no-optional-locks", *args).stdout for args in (
+        ("rev-parse", "HEAD"), ("branch", "--show-current"),
+        ("status", "--porcelain=v1", "--untracked-files=all"),
+        ("diff", "--cached", "--binary"),
+    ))
+    git_dir = Path(git(target, "rev-parse", "--absolute-git-dir").stdout.strip())
+    common = Path(git(target, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip())
+    files = {}
+    for root in (target, git_dir, common):
+        for path in root.rglob("*"):
+            if path.is_file():
+                files[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return state, files
+
+
+def test_r5_post_publication_reentry_is_request_bound_and_session_only(tmp_path: Path):
+    fixture, target, routing_path = prepare_r5_post_publication_target(tmp_path)
+    environment = r5_request_environment(fixture)
+    routing_before = routing_path.read_bytes()
+    candidate_before = r5_candidate_snapshot(target)
+    head = git(fixture.repo, "rev-parse", "HEAD").stdout.strip()
+
+    result, payload = fixture.run("-StartForeground", env=environment)
+
+    assert result.returncode == 0, (result.stderr, payload)
+    assert payload["result"] == "completed"
+    assert payload["target_repo_root"] == str(fixture.repo)
+    assert payload["branch"] == "master"
+    assert payload["head"] == head
+    assert payload["startup_pending_request_id"] == "r5-current-336"
+    assert payload["startup_pending_request_probe"] == "actionable_request"
+    assert payload["same_node_candidate_continuation"]["admitted"] is False
+    assert payload["operator_invoked"] is True
+    operator_log_text = fixture.operator_log.read_bytes().decode(
+        f"cp{ctypes.windll.kernel32.GetOEMCP()}",
+        errors="strict",
+    )
+    assert str(fixture.repo) in operator_log_text
+    assert payload["status_publication_requested"] is False
+    assert all(call["method"] == "GET" for call in read_gh_calls(fixture))
+    assert routing_path.read_bytes() == routing_before
+    assert r5_candidate_snapshot(target) == candidate_before
+    assert not (fixture.state / "processed_requests.jsonl").exists()
+
+
+@pytest.mark.parametrize("case", [
+    "external", "non_managed", "standalone_clone", "dirty", "staged", "divergent",
+    "identity_head", "identity_branch", "wrong_repository", "malformed_path",
+    "dirty_control", "staged_control", "non_master_control", "explicit_target",
+    "request_head", "request_branch", "request_repository", "request_continuation",
+    "untrusted", "expired", "consumed", "ambiguous_request", "missing_request",
+    "active_continuation", "inherited_continuation", "operator_lock", "in_flight",
+])
+def test_r5_post_publication_reentry_fails_closed(tmp_path: Path, case: str):
+    fixture, target, routing_path = prepare_r5_post_publication_target(tmp_path)
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    selected = routing["selected_target"]
+    args = ["-StartForeground"]
+    if case == "external":
+        moved = tmp_path / "external candidate"
+        git(fixture.repo, "worktree", "move", str(target), str(moved))
+        target = moved
+        selected["target_repo_root"] = str(target)
+    elif case == "non_managed":
+        git(target, "branch", "-m", "hand-written-branch")
+        selected["branch"] = "hand-written-branch"
+        selected["selection_id"] = "hand-written-selection"
+    elif case == "standalone_clone":
+        # Keep the generated path and identity, but remove the shared worktree
+        # relationship. An ancestor-compatible standalone repository is unsafe.
+        moved = tmp_path / "original managed candidate"
+        git(fixture.repo, "worktree", "move", str(target), str(moved))
+        git(fixture.repo, "clone", "--no-hardlinks", str(fixture.repo), str(target))
+        git(target, "remote", "set-url", "origin", EXPECTED_ORIGIN)
+        git(target, "checkout", "-b", selected["branch"], selected["head"])
+    elif case in {"dirty", "staged", "divergent"}:
+        (target / "candidate-change.txt").write_text("changed\n", encoding="utf-8")
+        if case != "dirty":
+            git(target, "add", "candidate-change.txt")
+        if case == "divergent":
+            git(target, "commit", "-m", "divergent candidate")
+            selected["head"] = git(target, "rev-parse", "HEAD").stdout.strip()
+    elif case == "identity_head":
+        selected["head"] = "0" * 40
+    elif case == "identity_branch":
+        selected["branch"] = "wrong-branch"
+    elif case == "wrong_repository":
+        routing["repository"] = "Other/repository"
+    elif case == "malformed_path":
+        selected["target_repo_root"] = "C:relative-target"
+    elif case in {"dirty_control", "staged_control"}:
+        (fixture.repo / "control-change.txt").write_text("changed\n", encoding="utf-8")
+        if case == "staged_control":
+            git(fixture.repo, "add", "control-change.txt")
+    elif case == "non_master_control":
+        git(fixture.repo, "branch", "-m", "not-master")
+    elif case == "explicit_target":
+        args.extend(["-TargetRepoRoot", str(target)])
+    elif case == "active_continuation":
+        args.extend([
+            "-ContinuationIssueNumber", "336", "-ExpectedState",
+            "same_node_exact_candidate_continuation_v1:parent_comment_id=5313180922",
+            "-ExpectedCandidateManifestFingerprint", "a" * 64,
+        ])
+    elif case in {"operator_lock", "in_flight"}:
+        filename = "operator.lock" if case == "operator_lock" else "in_flight.json"
+        (fixture.state / filename).write_text("{}", encoding="utf-8")
+    routing_path.write_text(json.dumps(routing), encoding="utf-8")
+    environment = r5_request_environment(fixture, case=case)
+    if case == "inherited_continuation":
+        environment["LAWB_SAME_NODE_CONTINUATION_BINDING"] = "{}"
+    routing_before = routing_path.read_bytes()
+    candidate_before = r5_candidate_snapshot(target)
+
+    result, payload = fixture.run(*args, env=environment)
+
+    assert result.returncode == 2, (result.stderr, payload)
+    assert payload["result"] == "blocked"
+    assert payload["target_repo_root"] != str(fixture.repo)
+    assert payload["operator_invoked"] is False
+    assert not fixture.operator_log.exists()
+    assert routing_path.read_bytes() == routing_before
+    assert r5_candidate_snapshot(target) == candidate_before
+    assert all(call["method"] == "GET" for call in read_gh_calls(fixture))
+    if case == "request_continuation":
+        assert payload["startup_pending_request_probe"] == "actionable_request"
+
+
+def test_r5_preflight_does_not_probe_or_reenter_master(tmp_path: Path):
+    fixture, target, routing_path = prepare_r5_post_publication_target(tmp_path)
+    routing_before = routing_path.read_bytes()
+    candidate_before = r5_candidate_snapshot(target)
+
+    result, payload = fixture.run(env=r5_request_environment(fixture))
+
+    assert result.returncode == 0
+    assert payload["target_repo_root"] == str(target)
+    assert payload["operator_invoked"] is False
+    assert read_gh_calls(fixture) == []
+    assert routing_path.read_bytes() == routing_before
+    assert r5_candidate_snapshot(target) == candidate_before
 
 
 def prepare_post_pull_stale_pin_target(

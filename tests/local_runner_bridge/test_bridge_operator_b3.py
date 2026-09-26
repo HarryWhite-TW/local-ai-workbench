@@ -404,8 +404,12 @@ def processed_record(**overrides):
     return payload
 
 
+@pytest.mark.parametrize("expected_state", [
+    None,
+    "same_node_exact_candidate_continuation_v1:parent_comment_id=20",
+])
 def test_startup_pending_probe_requires_one_unconsumed_fully_admitted_request(
-    tmp_path,
+    tmp_path, expected_state,
 ):
     request_id = "startup-pending-336"
     client = FakeGitHub(
@@ -416,10 +420,14 @@ def test_startup_pending_probe_requires_one_unconsumed_fully_admitted_request(
                     request_id=request_id,
                     target_dispatch_request_id=request_id,
                     action="run-reviewbundle",
+                    **({"expected_state": expected_state} if expected_state else {}),
                 ),
                 author="HarryWhite-TW",
             )
-        ]
+        ],
+        target_comments=[CommentRecord(
+            id=20, body=result_comment(action="run-reviewbundle"), author="HarryWhite-TW"
+        )],
     )
 
     pending = probe_startup_pending_request(
@@ -437,6 +445,10 @@ def test_startup_pending_probe_requires_one_unconsumed_fully_admitted_request(
         "request_id": request_id,
         "target_issue": 151,
         "requested_action": "run-reviewbundle",
+        "target_repository": DEFAULT_REPOSITORY,
+        "expected_branch": "feature/bridge-operator-b3a",
+        "expected_head": HEAD,
+        "target_expected_state": expected_state,
     }
 
     consumed = processed_record(
@@ -457,6 +469,9 @@ def test_startup_pending_probe_requires_one_unconsumed_fully_admitted_request(
 
     assert already_consumed["actionable"] is False
     assert already_consumed["reason"] == "no_current_request_after_consumption"
+    assert all(already_consumed[field] is None for field in (
+        "target_repository", "expected_branch", "expected_head", "target_expected_state"
+    ))
 
 
 @pytest.mark.parametrize(
@@ -493,6 +508,9 @@ def test_startup_pending_probe_fails_closed_without_actionable_request(
 
     assert result["actionable"] is False
     assert result["reason"] == reason
+    assert all(result[field] is None for field in (
+        "target_repository", "expected_branch", "expected_head", "target_expected_state"
+    ))
 
 
 FINAL_REVIEW_REQUEST_ID = "final-review-sync-151-r2"
