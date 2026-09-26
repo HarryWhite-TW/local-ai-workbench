@@ -5,7 +5,8 @@ requested, starts one bounded foreground B3-C process.
 
 .DESCRIPTION
 The default invocation is preflight-only. It does not read control relay #279 or invoke
-Bridge Operator, Dispatcher, Runner, Codex, or a GitHub write path.
+Bridge Operator, Dispatcher, Runner, Codex, or a GitHub write path. Foreground
+post-publication re-entry requires a read-only, trusted pending-request probe.
 
 .EXAMPLE
 .\scripts\start_bridge_operator_b3c.ps1
@@ -1101,7 +1102,7 @@ function Invoke-GitRead {
     )
     return Invoke-CapturedNative `
         -CommandPath $GitPath `
-        -Arguments (@("-C", $RepositoryRoot) + $GitArguments) `
+        -Arguments (@("--no-optional-locks", "-C", $RepositoryRoot) + $GitArguments) `
         -WorkingDirectory $RepositoryRoot `
         -EncodingPolicy "utf-8"
 }
@@ -1768,6 +1769,116 @@ function Test-FullyQualifiedLocalWindowsPath {
     )
 }
 
+function Get-StartupPendingRequestProbe {
+    # One read-only entry point for both re-entry and Startup blocker reporting.
+    $previousPathForProbe = $env:PATH
+    $previousPythonPathForProbe = $env:PYTHONPATH
+    $previousOptionalLocks = $env:GIT_OPTIONAL_LOCKS
+    try {
+        $probeRuntimeDirectories = @(
+            (Split-Path -Parent $reviewedPythonPath),
+            (Split-Path -Parent $reviewedGhPath)
+        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+        $env:PATH = (@($probeRuntimeDirectories) + @($previousPathForProbe) -join ";")
+        $probeSrcPath = Join-Path $ControlRepoRoot "src"
+        $env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($previousPythonPathForProbe)) {
+            $probeSrcPath
+        }
+        else { $probeSrcPath + ";" + $previousPythonPathForProbe }
+        $env:GIT_OPTIONAL_LOCKS = "0"
+        $probeCode = (
+            "import json,sys; " +
+            "import local_runner_bridge.bridge_operator_b1 as b1; " +
+            "from local_runner_bridge.bridge_operator_b3 import probe_startup_pending_request; " +
+            "b1._resolve_gh_path=lambda:sys.argv[3]; " +
+            "print(json.dumps(probe_startup_pending_request(state_dir=sys.argv[1], repo_root=sys.argv[2]), separators=(',', ':')))"
+        )
+        $probeResult = Invoke-CapturedNative -CommandPath $reviewedPythonPath `
+            -Arguments @(
+                "-c", $probeCode, $ResolvedStateDir, $ControlRepoRoot, $reviewedGhPath
+            ) `
+            -WorkingDirectory $ControlRepoRoot -EncodingPolicy "utf-8" `
+            -ProcessTimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
+        $probeDecodeReasons = New-Object System.Collections.ArrayList
+        if ($probeResult.exit_code -eq 0 -and
+            (Test-NativeCaptureDecoded -Result $probeResult `
+                -Reason "startup_pending_request_probe_undecodable" `
+                -Reasons $probeDecodeReasons)) {
+            $probe = Get-JsonObject -JsonText $probeResult.stdout
+            if ([string](Get-ObjectProperty -Object $probe -Name "protocol") -ceq
+                "lawb.bridge_operator_startup_pending_request.v1") {
+                return $probe
+            }
+        }
+    }
+    catch { }
+    finally {
+        $env:PATH = $previousPathForProbe
+        $env:PYTHONPATH = $previousPythonPathForProbe
+        $env:GIT_OPTIONAL_LOCKS = $previousOptionalLocks
+    }
+    return [pscustomobject]@{ actionable = $false; reason = "unavailable" }
+}
+
+function Test-ManagedPostPublicationCandidate {
+    param([Parameter(Mandatory = $true)][object]$Routing)
+
+    # Match _prepare_next_lawb_execution_target's identity and namespace,
+    # including its linked-worktree relationship to this control repository.
+    # A routing record or an ancestor-compatible standalone clone is not proof.
+    try {
+        if ($Routing.selection_id -cnotmatch '^candidate-[0-9a-f]{16}$' -or
+            $Routing.expected_branch -cne (
+                "codex/workflow-execution-" + $Routing.selection_id.Substring(10)
+            )) { return $false }
+        $namespace = Join-Path $ResolvedStateDir "execution-targets"
+        $expectedRoot = Join-Path $namespace $Routing.selection_id
+        if (-not [string]::Equals(
+            $Routing.target_root, $expectedRoot,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) { return $false }
+        foreach ($path in @($ResolvedStateDir, $namespace, $expectedRoot,
+            (Join-Path $expectedRoot ".git"))) {
+            $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                return $false
+            }
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $expectedRoot ".git") -PathType Leaf)) {
+            return $false
+        }
+        $commonDirectories = @()
+        foreach ($root in @($ControlRepoRoot, $expectedRoot)) {
+            $common = Invoke-GitRead -GitPath $gitPath -RepositoryRoot $root `
+                -GitArguments @("rev-parse", "--path-format=absolute", "--git-common-dir")
+            if ($common.exit_code -ne 0 -or $common.decode_error -or
+                [string]::IsNullOrWhiteSpace($common.stdout)) { return $false }
+            $commonDirectories += [IO.Path]::GetFullPath($common.stdout.Trim()).TrimEnd("\")
+        }
+        if (-not [string]::Equals(
+            $commonDirectories[0], $commonDirectories[1],
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) { return $false }
+        $worktrees = Invoke-GitRead -GitPath $gitPath -RepositoryRoot $ControlRepoRoot `
+            -GitArguments @("-c", "core.quotePath=false", "worktree", "list", "--porcelain")
+        if ($worktrees.exit_code -ne 0 -or $worktrees.decode_error) { return $false }
+        $expectedWorktree = "worktree " + $expectedRoot.Replace("\", "/")
+        $matchingWorktrees = @($worktrees.stdout.Replace("`r`n", "`n") -split "`n`n" |
+            Where-Object {
+                $lines = @($_ -split "`n")
+                $lines.Count -ge 3 -and
+                [string]::Equals($lines[0], $expectedWorktree,
+                    [System.StringComparison]::OrdinalIgnoreCase) -and
+                $lines[1] -ceq ("HEAD " + $Routing.expected_head) -and
+                $lines[2] -ceq ("branch refs/heads/" + $Routing.expected_branch) -and
+                @($lines | Where-Object { $_ -match '^(locked|prunable)( |$)' }).Count -eq 0
+            })
+        return $matchingWorktrees.Count -eq 1
+    }
+    catch { return $false }
+}
+
 function Get-LocalLawbRoutingConfiguration {
     param(
         [Parameter(Mandatory = $true)][string]$StateDirectory,
@@ -2346,6 +2457,7 @@ $statusPublicationResult = if ($statusPublicationRequested) { "pending" } else {
 $startupPendingRequestProbe = "not_requested"
 $startupPendingRequestId = ""
 $startupPendingTargetIssue = $null
+$startupProbeEvidence = $null
 $statusPublicationBlockedReason = ""
 $statusPublicationRunId = [guid]::NewGuid().ToString("N")
 $statusPublicationStartedAt = [DateTime]::UtcNow
@@ -2803,11 +2915,11 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
             $statusBranch = $targetRepoEvidence.branch
             $statusHead = $targetRepoEvidence.head
         }
-        if ($blockedReasons.Count -eq $targetReasonCountBefore -and
+        if ($blockedReasons.Count -eq 0 -and $StartForeground -and
             $targetSelectionMode -eq "ordinary_routing" -and
+            -not $continuationBindingRequested -and
             -not [string]::IsNullOrWhiteSpace($lawbRouting.selection_id) -and
             $controlRepositoryValidated -and
-            [string]::Equals($branch, "master", [System.StringComparison]::Ordinal) -and
             -not [string]::Equals(
                 $targetRepoEvidence.head,
                 $head,
@@ -2818,11 +2930,46 @@ if ([string]::Equals($Repository, $ControlRepository, [System.StringComparison]:
                 -GitArguments @(
                     "merge-base", "--is-ancestor", $targetRepoEvidence.head, $head
                 )
-            if ($ancestorResult.exit_code -eq 0) {
-                $ResolvedTargetRepoRoot = $ControlRepoRoot
-                $statusBranch = $branch
-                $statusHead = $head
-                $targetSelectionMode = "canonical_master_fast_forward"
+            # Ancestry only identifies a possible obsolete selection; it never
+            # supplies execution authority. Preserve ordinary unrelated routing.
+            if ($ancestorResult.exit_code -eq 0 -or
+                $lawbRouting.selection_id -clike "candidate-*" -or
+                $lawbRouting.expected_branch -clike "codex/workflow-execution-*") {
+                $reentryAdmitted = $false
+                if ($branch -ceq "master" -and
+                    [string]::IsNullOrWhiteSpace($TargetRepoRoot) -and
+                    -not (Test-Path -LiteralPath "Env:\LAWB_SAME_NODE_CONTINUATION_BINDING") -and
+                    -not (Test-Path -LiteralPath (Join-Path $ResolvedStateDir "operator.lock")) -and
+                    -not (Test-Path -LiteralPath (Join-Path $ResolvedStateDir "in_flight.json")) -and
+                    $ancestorResult.exit_code -eq 0 -and
+                    [string]::IsNullOrWhiteSpace([string]$ancestorResult.decode_error) -and
+                    (Test-ManagedPostPublicationCandidate -Routing $lawbRouting)) {
+                    $startupProbeEvidence = Get-StartupPendingRequestProbe
+                    $startupPendingRequestProbe = [string](Get-ObjectProperty `
+                        -Object $startupProbeEvidence -Name "reason")
+                    $reentryAdmitted = (
+                        (Get-ObjectProperty -Object $startupProbeEvidence -Name "actionable") -is [bool] -and
+                        (Get-ObjectProperty -Object $startupProbeEvidence -Name "actionable") -eq $true -and
+                        [string](Get-ObjectProperty -Object $startupProbeEvidence -Name "request_id") -cne "" -and
+                        [string](Get-ObjectProperty -Object $startupProbeEvidence -Name "target_repository") -ceq $ControlRepository -and
+                        [string](Get-ObjectProperty -Object $startupProbeEvidence -Name "expected_branch") -ceq "master" -and
+                        [string](Get-ObjectProperty -Object $startupProbeEvidence -Name "expected_head") -ceq $head -and
+                        "target_expected_state" -cin @($startupProbeEvidence.PSObject.Properties.Name) -and
+                        $null -eq (Get-ObjectProperty -Object $startupProbeEvidence -Name "target_expected_state")
+                    )
+                }
+                if ($reentryAdmitted) {
+                    $startupPendingRequestId = [string]$startupProbeEvidence.request_id
+                    $startupPendingTargetIssue = [long]$startupProbeEvidence.target_issue
+                    $ResolvedTargetRepoRoot = $ControlRepoRoot
+                    $statusBranch = $branch
+                    $statusHead = $head
+                    $targetSelectionMode = "post_publication_request_reentry"
+                }
+                else {
+                    Add-BlockedReason -Reasons $blockedReasons `
+                        -Reason "lawb_post_publication_reentry_not_admitted"
+                }
             }
         }
         # This is diagnostic only.  Test-ExactRepository has already retained
@@ -2898,64 +3045,19 @@ if ($PublishStartupBlocker -and $StartForeground -and
     $controlRepositoryValidated -and
     -not [string]::IsNullOrWhiteSpace($reviewedPythonPath) -and
     -not [string]::IsNullOrWhiteSpace($reviewedGhPath)) {
-    $startupPendingRequestProbe = "unavailable"
-    $previousPathForProbe = $env:PATH
-    $previousPythonPathForProbe = $env:PYTHONPATH
-    try {
-        $probeRuntimeDirectories = @(
-            (Split-Path -Parent $reviewedPythonPath),
-            (Split-Path -Parent $reviewedGhPath)
-        ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            Select-Object -Unique
-        $env:PATH = (@($probeRuntimeDirectories) + @($previousPathForProbe) -join ";")
-        $probeSrcPath = Join-Path $ControlRepoRoot "src"
-        $env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($previousPythonPathForProbe)) {
-            $probeSrcPath
-        }
-        else { $probeSrcPath + ";" + $previousPythonPathForProbe }
-        $probeCode = (
-            "import json,sys; " +
-            "import local_runner_bridge.bridge_operator_b1 as b1; " +
-            "from local_runner_bridge.bridge_operator_b3 import probe_startup_pending_request; " +
-            "b1._resolve_gh_path=lambda:sys.argv[3]; " +
-            "print(json.dumps(probe_startup_pending_request(state_dir=sys.argv[1], repo_root=sys.argv[2]), separators=(',', ':')))"
-        )
-        $probeResult = Invoke-CapturedNative -CommandPath $reviewedPythonPath `
-            -Arguments @(
-                "-c", $probeCode, $ResolvedStateDir, $ControlRepoRoot, $reviewedGhPath
-            ) `
-            -WorkingDirectory $ControlRepoRoot -EncodingPolicy "utf-8" `
-            -ProcessTimeoutSeconds ([Math]::Min($TimeoutSeconds, 30))
-        $probeDecodeReasons = New-Object System.Collections.ArrayList
-        if ($probeResult.exit_code -eq 0 -and
-            (Test-NativeCaptureDecoded -Result $probeResult `
-                -Reason "startup_pending_request_probe_undecodable" `
-                -Reasons $probeDecodeReasons)) {
-            $probe = Get-JsonObject -JsonText $probeResult.stdout
-            if ([bool](Get-ObjectProperty -Object $probe -Name "actionable")) {
-                $statusPublicationRequested = $true
-                $statusPublicationResult = "pending"
-                $startupPendingRequestProbe = "actionable_request"
-                $startupPendingRequestId = [string](
-                    Get-ObjectProperty -Object $probe -Name "request_id"
-                )
-                $startupPendingTargetIssue = [long](
-                    Get-ObjectProperty -Object $probe -Name "target_issue"
-                )
-            }
-            else {
-                $startupPendingRequestProbe = [string](
-                    Get-ObjectProperty -Object $probe -Name "reason"
-                )
-            }
-        }
+    if ($null -eq $startupProbeEvidence) {
+        $startupProbeEvidence = Get-StartupPendingRequestProbe
     }
-    catch {
-        $startupPendingRequestProbe = "unavailable"
-    }
-    finally {
-        $env:PATH = $previousPathForProbe
-        $env:PYTHONPATH = $previousPythonPathForProbe
+    $startupPendingRequestProbe = [string](Get-ObjectProperty `
+        -Object $startupProbeEvidence -Name "reason")
+    if ((Get-ObjectProperty -Object $startupProbeEvidence -Name "actionable") -eq $true) {
+        $statusPublicationRequested = $true
+        $statusPublicationResult = "pending"
+        $startupPendingRequestProbe = "actionable_request"
+        $startupPendingRequestId = [string](Get-ObjectProperty `
+            -Object $startupProbeEvidence -Name "request_id")
+        $startupPendingTargetIssue = [long](Get-ObjectProperty `
+            -Object $startupProbeEvidence -Name "target_issue")
     }
 }
 
