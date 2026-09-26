@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import ast
+import base64
 import json
 import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,33 @@ requires_windows = pytest.mark.skipif(
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "configure_bridge_operator_b3c_startup.ps1"
 MANAGED_NAME = "LocalAIWorkbench-BridgeOperator-B3C.cmd"
+
+
+def previous_v2_bytes() -> bytes:
+    powershell_path = (
+        Path(os.environ["SystemRoot"])
+        / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    )
+    launcher = ROOT / "scripts" / "start_workflow_runtime.ps1"
+    quoted_launcher = str(launcher).replace("%", "%%")
+    quoted_powershell = str(powershell_path).replace("%", "%%")
+    lines = [
+        "@echo off",
+        (
+            "REM LAWB-WORKFLOW-RUNTIME-STARTUP-MANAGED "
+            "protocol=lawb.workflow_runtime_startup.v2"
+        ),
+        f"REM managed-file-name={MANAGED_NAME}",
+        (
+            f'start "" /b "{quoted_powershell}" -NoLogo -NoProfile '
+            '-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass '
+            f'-File "{quoted_launcher}" -MaxCycles 960 -PollIntervalSeconds 30 '
+            '-TimeoutSeconds 600 -PanelPort 8765 '
+            '-StateDir "%LOCALAPPDATA%\\LocalAIWorkbench\\BridgeOperator"'
+        ),
+        "",
+    ]
+    return "\r\n".join(lines).encode("utf-8")
 
 
 def legacy_v1_bytes() -> bytes:
@@ -56,7 +85,7 @@ def powershell() -> str:
     return found
 
 
-def run_adapter(startup: Path, *args: str):
+def run_adapter(startup: Path, *args: str, script: Path = SCRIPT):
     env = os.environ.copy()
     env["LAWB_STARTUP_ADAPTER_TEST_ONLY"] = "1"
     command = [
@@ -65,7 +94,7 @@ def run_adapter(startup: Path, *args: str):
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        str(SCRIPT),
+        str(script),
         *args,
         "-TestOnlyStartupDirectory",
         str(startup),
@@ -132,17 +161,139 @@ def test_enable_is_deterministic_bomless_exact_and_idempotent(tmp_path):
     } == fixed_session
     assert managed.read_bytes() == first_bytes
     assert not first_bytes.startswith(b"\xef\xbb\xbf")
-    text = first_bytes.decode("utf-8")
+    assert first_bytes.isascii()
+    text = first_bytes.decode("ascii")
     assert "LAWB-WORKFLOW-RUNTIME-STARTUP-MANAGED" in text
-    assert f'-File "{ROOT}\\scripts\\start_workflow_runtime.ps1"' in text
-    assert "-WindowStyle Hidden" in text
-    assert 'start "" /b ' in text
-    assert "-MaxCycles 960 -PollIntervalSeconds 30" in text
-    assert re.search(r"(?<!\d)-MaxCycles 1(?!\d)", text) is None
-    assert "-TimeoutSeconds 600" in text
-    assert "-PanelPort 8765" in text
-    assert '-StateDir "%LOCALAPPDATA%\\LocalAIWorkbench\\BridgeOperator"' in text
-    assert "WindowsPowerShell\\v1.0\\powershell.exe" in text
+    assert "protocol=lawb.workflow_runtime_startup.v2" in text
+    assert (
+        'start "" /b "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" '
+        '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden '
+        '-ExecutionPolicy Bypass -EncodedCommand '
+    ) in text
+    encoded = re.search(r"-EncodedCommand ([A-Za-z0-9+/=]+)\r\n", text)
+    assert encoded is not None
+    decoded = base64.b64decode(encoded[1], validate=True).decode("utf-16-le")
+    launcher = str(ROOT / "scripts" / "start_workflow_runtime.ps1")
+    assert launcher not in text
+    assert decoded == (
+        "& '" + launcher.replace("'", "''") + "' "
+        "-MaxCycles 960 -PollIntervalSeconds 30 -TimeoutSeconds 600 "
+        "-PanelPort 8765 "
+        "-StateDir (Join-Path $env:LOCALAPPDATA 'LocalAIWorkbench\\BridgeOperator')"
+    )
+    run_adapter(startup, "-Disable")
+    recreated, recreated_summary = run_adapter(startup, "-Enable")
+    assert recreated.returncode == 0
+    assert recreated_summary["changed"] is True
+    assert managed.read_bytes() == first_bytes
+
+
+@requires_windows
+def test_exact_previous_v2_is_migrated_and_then_idempotent(tmp_path):
+    startup = tmp_path / "startup"
+    startup.mkdir()
+    managed = startup / MANAGED_NAME
+    original = previous_v2_bytes()
+    managed.write_bytes(original)
+
+    status, status_summary = run_adapter(startup, "-Status")
+    assert status.returncode == 0
+    assert status_summary["state"] == "previous_v2"
+    assert status_summary["changed"] is False
+    assert managed.read_bytes() == original
+    migrated, migrated_summary = run_adapter(startup, "-Enable")
+    corrected = managed.read_bytes()
+    repeated, repeated_summary = run_adapter(startup, "-Enable")
+
+    assert migrated.returncode == repeated.returncode == 0
+    assert migrated_summary["state"] == "exact_enabled"
+    assert migrated_summary["changed"] is True
+    assert migrated_summary["reason"] == "migrated_previous_v2_to_corrected_v2"
+    assert repeated_summary["changed"] is False
+    assert repeated_summary["reason"] == "already_enabled"
+    assert corrected != original
+    assert corrected.isascii()
+    assert b"-EncodedCommand " in corrected
+    assert managed.read_bytes() == corrected
+
+
+@requires_windows
+def test_exact_previous_v2_is_recognized_for_safe_disable(tmp_path):
+    startup = tmp_path / "startup"
+    startup.mkdir()
+    managed = startup / MANAGED_NAME
+    managed.write_bytes(previous_v2_bytes())
+
+    disabled, summary = run_adapter(startup, "-Disable")
+
+    assert disabled.returncode == 0
+    assert summary["state"] == "absent"
+    assert summary["changed"] is True
+    assert not managed.exists()
+
+
+@requires_windows
+def test_real_cmd_invokes_runtime_through_unicode_repository_path(tmp_path):
+    repository = tmp_path / "repo \u6e2c\u8a66 \U0001f680 ' %PATH% ! & [literal]"
+    scripts = repository / "scripts"
+    scripts.mkdir(parents=True)
+    (repository / ".git").mkdir()
+    adapter = scripts / SCRIPT.name
+    shutil.copyfile(SCRIPT, adapter)
+    (scripts / "start_bridge_operator_b3c.ps1").write_text(
+        'throw "placeholder_must_not_run"\n', encoding="ascii"
+    )
+    runtime = scripts / "start_workflow_runtime.ps1"
+    runtime.write_text(
+        "param([int]$MaxCycles, [int]$PollIntervalSeconds, "
+        "[int]$TimeoutSeconds, [int]$PanelPort, [string]$StateDir)\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        "$received = [ordered]@{ MaxCycles = $MaxCycles; "
+        "PollIntervalSeconds = $PollIntervalSeconds; "
+        "TimeoutSeconds = $TimeoutSeconds; PanelPort = $PanelPort; "
+        "StateDir = $StateDir; ScriptPath = $PSCommandPath }\n"
+        "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'received.json'), "
+        "($received | ConvertTo-Json -Compress))\n"
+        "[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'invoked.sentinel'), 'ok')\n",
+        encoding="ascii",
+    )
+    startup = tmp_path / "isolated startup"
+    startup.mkdir()
+    enabled, summary = run_adapter(startup, "-Enable", script=adapter)
+    assert enabled.returncode == 0, (enabled.stdout, enabled.stderr)
+    assert summary["state"] == "exact_enabled"
+    assert (startup / MANAGED_NAME).read_bytes().isascii()
+
+    env = os.environ.copy()
+    local_app_data = tmp_path / "local app data \u6e2c\u8a66"
+    local_app_data.mkdir()
+    env["LOCALAPPDATA"] = str(local_app_data)
+    cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+    launched = subprocess.run(
+        [str(cmd), "/d", "/c", MANAGED_NAME],
+        cwd=startup,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
+    )
+    assert launched.returncode == 0
+    sentinel = scripts / "invoked.sentinel"
+    deadline = time.monotonic() + 15
+    while not sentinel.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert sentinel.exists(), "Real cmd.exe did not invoke the Unicode-path runtime"
+    assert sentinel.read_text(encoding="utf-8") == "ok"
+    assert json.loads((scripts / "received.json").read_text(encoding="utf-8-sig")) == {
+        "MaxCycles": 960,
+        "PollIntervalSeconds": 30,
+        "TimeoutSeconds": 600,
+        "PanelPort": 8765,
+        "StateDir": str(local_app_data / "LocalAIWorkbench" / "BridgeOperator"),
+        "ScriptPath": str(runtime),
+    }
 
 
 @requires_windows
@@ -199,7 +350,9 @@ def test_exact_status_and_exact_only_disable_are_idempotent(tmp_path):
     assert repeated_summary["reason"] == "already_absent"
 
 
-@pytest.mark.parametrize("kind", ["unrecognized", "drifted"])
+@pytest.mark.parametrize(
+    "kind", ["unrecognized", "drifted", "previous_v2_drifted", "legacy_v1_drifted"]
+)
 @requires_windows
 def test_unrecognized_or_drifted_file_reports_and_blocks_enable_disable(
     tmp_path, kind
@@ -209,6 +362,10 @@ def test_unrecognized_or_drifted_file_reports_and_blocks_enable_disable(
     managed = startup / MANAGED_NAME
     if kind == "unrecognized":
         original = b"@echo off\r\necho foreign\r\n"
+    elif kind == "previous_v2_drifted":
+        original = previous_v2_bytes() + b"REM drift\r\n"
+    elif kind == "legacy_v1_drifted":
+        original = legacy_v1_bytes() + b"REM drift\r\n"
     else:
         run_adapter(startup, "-Enable")
         original = managed.read_bytes() + b"REM drift\r\n"
