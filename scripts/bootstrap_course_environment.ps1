@@ -167,7 +167,7 @@ function Invoke-SafeCommand([string]$CommandPath, [string[]]$Arguments, [string]
     $extension = [System.IO.Path]::GetExtension($CommandPath).ToLowerInvariant()
     if ($extension -in @(".cmd", ".bat")) {
         $cmd = if ($env:COMSPEC) { $env:COMSPEC } else { "cmd.exe" }
-        return & $cmd "/d" "/c" $CommandPath @Arguments 2>&1
+        return & $cmd "/d" "/s" "/c" "call" $CommandPath @Arguments 2>&1
     }
     return & $CommandPath @Arguments 2>&1
 }
@@ -207,7 +207,7 @@ function Invoke-CodexVersionProbe([string]$CommandPath, [string]$WorkingDirector
                 $extension = [System.IO.Path]::GetExtension($CommandPath).ToLowerInvariant()
                 if ($extension -in @(".cmd", ".bat")) {
                     $cmd = if ($env:COMSPEC) { $env:COMSPEC } else { "cmd.exe" }
-                    & $cmd "/d" "/c" $CommandPath "--version" 1> $stdoutPath 2> $stderrPath
+                    & $cmd "/d" "/s" "/c" "call" $CommandPath "--version" 1> $stdoutPath 2> $stderrPath
                 }
                 else {
                     & $CommandPath "--version" 1> $stdoutPath 2> $stderrPath
