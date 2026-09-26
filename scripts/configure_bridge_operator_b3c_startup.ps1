@@ -5,7 +5,7 @@ Manages the current user's hidden Workflow runtime Startup-folder entry.
 .DESCRIPTION
 Exactly one of -Enable, -Status, or -Disable is required. The adapter owns one
 deterministic file and refuses to replace or remove content it does not exactly
-recognize. It safely migrates only the exact previously managed v1 content and
+recognize. It safely migrates only exact previous v2 or legacy v1 content and
 never starts the Workflow runtime itself.
 #>
 
@@ -69,6 +69,24 @@ function ConvertTo-CmdQuotedLiteral {
 }
 
 function Get-ManagedBytes {
+    param([Parameter(Mandatory = $true)][string]$RuntimeLauncherPath)
+    # Single-quoted PowerShell literals preserve Unicode and shell metacharacters.
+    $launcher = "'" + $RuntimeLauncherPath.Replace("'", "''") + "'"
+    $command = "& $launcher -MaxCycles $MaxCycles -PollIntervalSeconds $PollIntervalSeconds -TimeoutSeconds $TimeoutSeconds -PanelPort $PanelPort -StateDir (Join-Path `$env:LOCALAPPDATA 'LocalAIWorkbench\BridgeOperator')"
+    $encodedCommand = [Convert]::ToBase64String(
+        [System.Text.Encoding]::Unicode.GetBytes($command)
+    )
+    $lines = @(
+        "@echo off",
+        "REM $OwnershipMarker",
+        "REM managed-file-name=$ManagedFileName",
+        "start `"`" /b `"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`" -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encodedCommand",
+        ""
+    )
+    return [System.Text.Encoding]::ASCII.GetBytes(($lines -join "`r`n"))
+}
+
+function Get-PreviousV2ManagedBytes {
     param([Parameter(Mandatory = $true)][string]$RuntimeLauncherPath)
     $powerShellPath = Join-Path $env:SystemRoot `
         "System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -179,6 +197,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $repoRoot ".git")) -or
 
 try {
     $expectedBytes = Get-ManagedBytes -RuntimeLauncherPath $runtimeLauncherPath
+    $previousV2Bytes = Get-PreviousV2ManagedBytes `
+        -RuntimeLauncherPath $runtimeLauncherPath
     $legacyBytes = Get-LegacyManagedBytes `
         -OperatorLauncherPath $operatorLauncherPath
     if (-not (Test-Path -LiteralPath $managedPath)) {
@@ -191,6 +211,9 @@ try {
         $actualBytes = [System.IO.File]::ReadAllBytes($managedPath)
         if (Test-ExactBytes -Left $actualBytes -Right $expectedBytes) {
             $observedState = "exact_enabled"
+        }
+        elseif (Test-ExactBytes -Left $actualBytes -Right $previousV2Bytes) {
+            $observedState = "previous_v2"
         }
         elseif (Test-ExactBytes -Left $actualBytes -Right $legacyBytes) {
             $observedState = "legacy_v1"
@@ -222,7 +245,7 @@ try {
                 -Changed $false -Reason "already_enabled" -ManagedPath $managedPath
             exit 0
         }
-        if ($observedState -notin @("absent", "legacy_v1")) {
+        if ($observedState -notin @("absent", "previous_v2", "legacy_v1")) {
             Write-Summary -Operation $operation -State $observedState `
                 -Changed $false -Reason "existing_file_not_exact" `
                 -ManagedPath $managedPath
@@ -243,6 +266,9 @@ try {
         $reason = if ($observedState -eq "legacy_v1") {
             "migrated_v1_to_v2"
         }
+        elseif ($observedState -eq "previous_v2") {
+            "migrated_previous_v2_to_corrected_v2"
+        }
         else {
             "enabled"
         }
@@ -256,7 +282,7 @@ try {
             -Reason "already_absent" -ManagedPath $managedPath
         exit 0
     }
-    if ($observedState -notin @("exact_enabled", "legacy_v1")) {
+    if ($observedState -notin @("exact_enabled", "previous_v2", "legacy_v1")) {
         Write-Summary -Operation $operation -State $observedState `
             -Changed $false -Reason "existing_file_not_exact" `
             -ManagedPath $managedPath
