@@ -524,6 +524,21 @@ try {
         throw "canonical_control_runtime_invalid"
     }
 
+    if (-not (Test-Path -LiteralPath $resolvedStateDir -PathType Container)) {
+        if (Test-Path -LiteralPath $resolvedStateDir) {
+            throw "state_directory_not_directory"
+        }
+        try {
+            [void][System.IO.Directory]::CreateDirectory($resolvedStateDir)
+        }
+        catch {
+            throw "state_directory_creation_failed"
+        }
+        if (-not (Test-Path -LiteralPath $resolvedStateDir -PathType Container)) {
+            throw "state_directory_unavailable"
+        }
+    }
+
     if (-not (Test-PanelPortFree)) {
         $panelAction = "blocked"
         Write-Summary -Result "blocked" -Reason "panel_port_occupied" `
