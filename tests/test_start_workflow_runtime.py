@@ -198,6 +198,88 @@ def test_clean_canonical_control_checkout_proceeds(tmp_path: Path):
     assert summary["operator_session_window_seconds"] == 28800
 
 
+@pytest.mark.parametrize("post_launch_state", ["", "owned"])
+def test_missing_state_root_is_created_before_downstream_launch(
+    tmp_path: Path, post_launch_state: str
+):
+    script, _ = make_control_repo(tmp_path)
+    state_dir = tmp_path / "local app data" / "LocalAIWorkbench" / "BridgeOperator"
+    assert not state_dir.parent.exists()
+
+    result, summary = run_runtime(
+        script, tmp_path, state_dir=state_dir, post_launch_state=post_launch_state
+    )
+
+    assert result.returncode == 0
+    assert summary["result"] == "ready"
+    assert summary["operator_action"] == "would_start"
+    assert summary["panel_action"] == (
+        "would_start_verified" if post_launch_state else "would_start"
+    )
+    assert summary["processes_started"] is False
+    assert Path(str(summary["state_dir"])) == state_dir
+    assert state_dir.is_dir()
+    assert list(state_dir.iterdir()) == []
+
+
+def test_existing_state_root_contents_are_preserved(tmp_path: Path):
+    script, _ = make_control_repo(tmp_path)
+    state_dir = tmp_path / "state"
+    nested = state_dir / "existing"
+    nested.mkdir(parents=True)
+    (state_dir / "pause.flag").write_bytes(b"preserve pause\n")
+    (nested / "record.bin").write_bytes(b"\x00\xffexisting state\r\n")
+    before = {
+        path.relative_to(state_dir): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in state_dir.rglob("*")
+        if path.is_file()
+    }
+    entries = set(state_dir.rglob("*"))
+
+    result, summary = run_runtime(
+        script, tmp_path, state_dir=state_dir, post_launch_state="owned"
+    )
+
+    assert result.returncode == 0
+    assert summary["operator_action"] == "would_start"
+    assert summary["processes_started"] is False
+    assert set(state_dir.rglob("*")) == entries
+    assert {
+        path.relative_to(state_dir): (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in state_dir.rglob("*")
+        if path.is_file()
+    } == before
+
+
+@pytest.mark.parametrize("parent_collision", [False, True])
+def test_state_directory_collision_fails_closed_without_replacement(
+    tmp_path: Path, parent_collision: bool
+):
+    script, _ = make_control_repo(tmp_path)
+    collision = tmp_path / "state"
+    collision.write_bytes(b"preserve existing file\x00\xff")
+    before = (collision.read_bytes(), collision.stat().st_mtime_ns)
+    state_dir = collision / "child" if parent_collision else collision
+
+    result, summary = run_runtime(
+        script, tmp_path, state_dir=state_dir, post_launch_state="owned"
+    )
+
+    assert result.returncode == 2
+    assert summary["result"] == "blocked"
+    assert summary["reason"] == (
+        "state_directory_creation_failed"
+        if parent_collision
+        else "state_directory_not_directory"
+    )
+    assert summary["panel_action"] == "not_started"
+    assert summary["operator_action"] == "not_started"
+    assert summary["processes_started"] is False
+    assert collision.is_file()
+    assert (collision.read_bytes(), collision.stat().st_mtime_ns) == before
+    assert not state_dir.is_dir()
+
+
 @pytest.mark.parametrize("pollution", ["dirty", "staged", "untracked"])
 def test_polluted_control_checkout_blocks_before_panel_execution(
     tmp_path: Path, pollution: str
@@ -215,6 +297,7 @@ def test_polluted_control_checkout_blocks_before_panel_execution(
 
     assert result.returncode == 2
     assert summary["reason"] == "control_repository_worktree_dirty"
+    assert not (tmp_path / "state").exists()
     assert summary["panel_action"] == "not_started"
     assert summary["operator_action"] == "not_started"
     assert summary["processes_started"] is False
@@ -228,6 +311,7 @@ def test_wrong_control_origin_blocks_before_panel_execution(tmp_path: Path):
 
     assert result.returncode == 2
     assert summary["reason"] == "control_repository_origin_mismatch"
+    assert not (tmp_path / "state").exists()
     assert summary["panel_action"] == "not_started"
     assert summary["operator_action"] == "not_started"
 
@@ -238,6 +322,7 @@ def test_non_root_control_checkout_blocks_before_panel_execution(tmp_path: Path)
 
     assert result.returncode == 2
     assert summary["reason"] == "control_repository_root_mismatch"
+    assert not (tmp_path / "state").exists()
     assert summary["panel_action"] == "not_started"
     assert summary["operator_action"] == "not_started"
 
@@ -249,6 +334,7 @@ def test_detached_control_checkout_blocks_before_panel_execution(tmp_path: Path)
 
     assert result.returncode == 2
     assert summary["reason"] == "control_repository_branch_unreadable"
+    assert not (tmp_path / "state").exists()
     assert summary["panel_action"] == "not_started"
     assert summary["operator_action"] == "not_started"
     assert summary["processes_started"] is False
@@ -487,6 +573,14 @@ def test_source_has_one_routing_authority_and_no_panel_reuse_or_supervisor():
     )
     assert "CommandLineToArgvW" in body
     assert main.index("Assert-ControlRuntimeIntegrity") < main.index("Test-PanelPortFree")
+    assert (
+        main.index("Assert-ControlRuntimeIntegrity")
+        < main.index("[System.IO.Directory]::CreateDirectory($resolvedStateDir)")
+        < main.index("Test-PanelPortFree")
+        < main.index('if ($testOverrideRequested -and')
+        < main.index("$panelArguments = (")
+        < main.index("$operatorArguments = (")
+    )
     assert '"status", "--porcelain=v1", "--untracked-files=all"' in body
     assert '"remote", "get-url", "origin"' in body
     assert '"rev-parse", "HEAD"' in body
