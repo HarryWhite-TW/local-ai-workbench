@@ -96,6 +96,7 @@ def run_runtime(
     panel_command: str | None = None,
     panel_lineage: Path | None = None,
     operator_arguments: list[str] | None = None,
+    creationflags: int = 0,
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
     env = os.environ.copy()
     if enable_guard:
@@ -134,6 +135,7 @@ def run_runtime(
         capture_output=True,
         text=True,
         encoding="utf-8-sig",
+        creationflags=creationflags,
         check=False,
     )
     return result, json.loads(result.stdout)
@@ -196,6 +198,27 @@ def test_clean_canonical_control_checkout_proceeds(tmp_path: Path):
     assert summary["panel_port"] == 8765
     assert summary["panel_lifetime_seconds"] == 43200
     assert summary["operator_session_window_seconds"] == 28800
+
+
+def test_hidden_host_with_unicode_control_path_proceeds(tmp_path: Path):
+    create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if not create_no_window:
+        pytest.skip("Windows no-console process creation is required")
+    script, repository = make_control_repo(tmp_path / "桌面")
+
+    result, summary = run_runtime(
+        script,
+        tmp_path,
+        creationflags=create_no_window,
+    )
+
+    assert result.returncode == 0
+    assert summary["result"] == "ready"
+    assert summary["reason"] == "test_plan_only"
+    assert Path(str(summary["control_repo_root"])) == repository
+    assert summary["panel_action"] == "would_start"
+    assert summary["operator_action"] == "would_start"
+    assert summary["processes_started"] is False
 
 
 @pytest.mark.parametrize("post_launch_state", ["", "owned"])
