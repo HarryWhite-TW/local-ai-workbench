@@ -87,6 +87,58 @@ STATE_PROTOCOL = "lawb.bridge_operator_b3_state.v1"
 OBSERVATION_PROTOCOL = "lawb.bridge_operator_b3_dry_run_observation.v1"
 PROCESSED_REQUEST_PROTOCOL = "lawb.bridge_operator_b3_processed_request.v1"
 FAILURE_PROTOCOL = "lawb.bridge_operator_b3_failure.v1"
+DISPATCHER_FAILURE_DIAGNOSTIC_PROTOCOL = "lawb.dispatcher_failure_diagnostic.v1"
+DISPATCHER_FAILURE_DIAGNOSTIC_MAX_CHARS = 1024
+DISPATCHER_FAILURE_DIAGNOSTIC_MARKER = re.compile(
+    r"^LAWBDISPATCHER-FAILURE protocol=lawb\.dispatcher_failure_diagnostic\.v1 "
+    r"stage=([a-z_]+)$"
+)
+DISPATCHER_PRE_RUNNER_FAILURE_STAGES = frozenset(
+    {
+        "dispatcher_initialization",
+        "relay_validation",
+        "accepted_action_preamble",
+        "runner_script_discovery",
+        "runner_tool_resolution_preflight",
+        "reviewed_codex_path_resolution",
+        "powershell_host_resolution",
+        "unknown_pre_runner",
+    }
+)
+DISPATCHER_DIAGNOSTIC_REDACTIONS = (
+    (
+        re.compile(
+            r"(?i)\b(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+|"
+            r"sk(?:-proj)?-[A-Za-z0-9_-]{8,})\b"
+        ),
+        "[REDACTED]",
+    ),
+    (
+        re.compile(r"(?i)(Authorization\s*:\s*(?:Bearer|Basic|token)\s+)[^\s,;]+"),
+        r"\1[REDACTED]",
+    ),
+    (
+        re.compile(
+            r"(?i)\b((?:password|passwd|pwd|secret|token|api[_-]?key)\s*[=:]\s*)"
+            r"(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+        ),
+        r"\1[REDACTED]",
+    ),
+    (
+        re.compile(r"(?i)(-RelayRequestBase64(?:\s+|=))[A-Za-z0-9+/=_-]+"),
+        r"\1[REDACTED_BASE64]",
+    ),
+    (
+        re.compile(
+            r"(?<![A-Za-z0-9+/=_-])"
+            r"(?=[A-Za-z0-9+/]{80,}={0,2}(?![A-Za-z0-9+/=_-]))"
+            r"(?=[A-Za-z0-9+/]*[A-Z])(?=[A-Za-z0-9+/]*[a-z])"
+            r"(?=[A-Za-z0-9+/]*[0-9])[A-Za-z0-9+/]{80,}={0,2}"
+        ),
+        "[REDACTED_BASE64]",
+    ),
+    (re.compile(r"(?im)^[A-Za-z_][A-Za-z0-9_]*=.*$"), "[REDACTED_ENV]"),
+)
 REVIEW_CANDIDATE_FILENAME = "review_candidate.json"
 ROUTING_FILENAME = "repository_routing.json"
 ROUTING_PROTOCOL_V1 = "lawb.bridge_operator_local_routing.v1"
@@ -1282,6 +1334,7 @@ def _base_summary(
         "dispatcher_missing": False,
         "dispatcher_stdout": "",
         "dispatcher_stderr": "",
+        "dispatcher_failure_diagnostic": None,
         "dispatcher_execution_reach": None,
         "dispatcher_process_identity": None,
         "dispatcher_process_status": "not_observed",
@@ -2728,6 +2781,13 @@ def _delegate_b3_request(
         or (DISPATCHER_RUNNER_MAY_HAVE_STARTED if invocation.timed_out else None)
     )
     summary["dispatcher_process_identity"] = invocation.process_identity
+    if (
+        invocation.returncode == DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE
+        and summary["dispatcher_execution_reach"] == DISPATCHER_FAILED_BEFORE_RUNNER
+    ):
+        summary["dispatcher_failure_diagnostic"] = _dispatcher_failure_diagnostic(
+            invocation
+        )
     if invocation.process_identity is not None:
         in_flight = updated_in_flight_payload(
             in_flight,
@@ -3299,6 +3359,7 @@ def _reset_request_execution_visibility(summary: dict[str, Any]) -> None:
             "dispatcher_missing": False,
             "dispatcher_stdout": "",
             "dispatcher_stderr": "",
+            "dispatcher_failure_diagnostic": None,
             "dispatcher_execution_reach": None,
             "dispatcher_process_identity": None,
             "dispatcher_process_status": "not_observed",
@@ -3525,8 +3586,77 @@ def _request_lifecycle_visibility(summary: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _dispatcher_failure_diagnostic(
+    invocation: DispatcherInvocationResult,
+) -> dict[str, Any]:
+    """Return a bounded local-only projection without retaining raw streams."""
+    fallback = {
+        "protocol": DISPATCHER_FAILURE_DIAGNOSTIC_PROTOCOL,
+        "exit_code": invocation.returncode,
+        "failure_stage": "unknown_pre_runner",
+        "diagnostic_message": "[invalid dispatcher diagnostic]",
+        "diagnostic_source": "invalid",
+        "diagnostic_input_valid": False,
+        "stdout_present": False,
+        "stderr_present": False,
+        "truncated": False,
+        "max_diagnostic_chars": DISPATCHER_FAILURE_DIAGNOSTIC_MAX_CHARS,
+    }
+    try:
+        stdout = invocation.stdout
+        stderr = invocation.stderr
+        stdout_valid = isinstance(stdout, str)
+        stderr_valid = isinstance(stderr, str)
+        stdout_present = bool(stdout) if stdout_valid else stdout is not None
+        stderr_present = bool(stderr) if stderr_valid else stderr is not None
+        if not stderr_valid:
+            return {
+                **fallback,
+                "stdout_present": stdout_present,
+                "stderr_present": stderr_present,
+            }
+
+        stage = "unknown_pre_runner"
+        diagnostic_lines: list[str] = []
+        for line in stderr.splitlines():
+            marker = DISPATCHER_FAILURE_DIAGNOSTIC_MARKER.fullmatch(line.strip())
+            if marker is not None:
+                candidate_stage = marker.group(1)
+                if candidate_stage in DISPATCHER_PRE_RUNNER_FAILURE_STAGES:
+                    stage = candidate_stage
+                continue
+            diagnostic_lines.append(line)
+
+        message = "\n".join(diagnostic_lines).strip()
+        diagnostic_source = "stderr" if message else "none"
+        if not message:
+            message = "[no dispatcher stderr diagnostic]"
+        message = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "�", message)
+        for pattern, replacement in DISPATCHER_DIAGNOSTIC_REDACTIONS:
+            message = pattern.sub(replacement, message)
+        truncated = len(message) > DISPATCHER_FAILURE_DIAGNOSTIC_MAX_CHARS
+        if truncated:
+            message = message[:DISPATCHER_FAILURE_DIAGNOSTIC_MAX_CHARS]
+
+        return {
+            "protocol": DISPATCHER_FAILURE_DIAGNOSTIC_PROTOCOL,
+            "exit_code": invocation.returncode,
+            "failure_stage": stage,
+            "diagnostic_message": message,
+            "diagnostic_source": diagnostic_source,
+            "diagnostic_input_valid": stdout_valid and stderr_valid,
+            "stdout_present": stdout_present,
+            "stderr_present": stderr_present,
+            "truncated": truncated,
+            "max_diagnostic_chars": DISPATCHER_FAILURE_DIAGNOSTIC_MAX_CHARS,
+        }
+    except Exception:
+        return fallback
+
+
 def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
     return {
+        "operator_session_id": summary.get("operator_session_id"),
         "request_id": summary.get("request_id"),
         "issue_number": summary.get("target_issue"),
         "lifecycle": _request_lifecycle_visibility(summary),
@@ -3537,6 +3667,9 @@ def _current_run_visibility(summary: dict[str, Any]) -> dict[str, Any]:
         ),
         "dispatcher_invoked": bool(summary.get("dispatcher_invoked")),
         "dispatcher_execution_reach": summary.get("dispatcher_execution_reach"),
+        "dispatcher_failure_diagnostic": summary.get(
+            "dispatcher_failure_diagnostic"
+        ),
         "dispatcher_process_identity": summary.get("dispatcher_process_identity"),
         "dispatcher_process_status": summary.get("dispatcher_process_status"),
         "dispatcher_descendant_status": summary.get("dispatcher_descendant_status"),
@@ -3660,6 +3793,7 @@ def _record_failure(state_dir: Path, summary: dict[str, Any], reason: str, now: 
         "repo": summary["repository"],
         "inbox_issue": summary["configured_inbox_issue"],
         "request_id": summary.get("request_id"),
+        "operator_session_id": summary.get("operator_session_id"),
         "dispatcher_reached": bool(summary.get("dispatcher_invoked")),
         "dispatcher_execution_reach": summary.get("dispatcher_execution_reach"),
         "dispatcher_result_writeback_reached": bool(
@@ -3701,6 +3835,7 @@ def _write_log(state_dir: Path, event: str, reason: str, summary: dict[str, Any]
         "repo": summary["repository"],
         "inbox_issue": summary["configured_inbox_issue"],
         "request_id": summary.get("request_id"),
+        "operator_session_id": summary.get("operator_session_id"),
         "inbox_comment_id": summary.get("inbox_comment_id"),
         "expires": summary.get("expires"),
         "evaluated_at_utc": summary.get("evaluated_at_utc"),

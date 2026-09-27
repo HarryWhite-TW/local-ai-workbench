@@ -62,8 +62,10 @@ $DispatcherRunnerReachUncertainExitCode = 21
 $DispatcherFailedBeforeRunnerExitCode = 22
 $DispatcherFailureKindDataKey = "lawb.dispatcher.failure_kind"
 $DispatcherDeterministicAdmissionRejectionKind = "deterministic_admission_rejection"
+$DispatcherFailureDiagnosticProtocol = "lawb.dispatcher_failure_diagnostic.v1"
 $script:RunnerMayHaveStarted = $false
 $script:ExplicitDispatchFailureExitEnabled = $false
+$script:PreRunnerFailureStage = "dispatcher_initialization"
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..")).Path
 $targetRepoRootVariable = Get-Variable -Name TargetRepoRoot -ErrorAction SilentlyContinue
 if ($null -eq $targetRepoRootVariable -or [string]::IsNullOrWhiteSpace([string]$targetRepoRootVariable.Value)) {
@@ -1614,6 +1616,7 @@ function Invoke-ReviewBundle {
         [int]$Issue
     )
 
+    $script:PreRunnerFailureStage = "accepted_action_preamble"
     $status = Get-GitStatusShort
     $continuationParentCommentId = ""
     if (-not [string]::IsNullOrWhiteSpace($status)) {
@@ -1624,8 +1627,10 @@ function Invoke-ReviewBundle {
         Assert-SameNodeContinuationParentPresent -ParentCommentId $continuationParentCommentId
     }
 
+    $script:PreRunnerFailureStage = "runner_script_discovery"
     $runnerScript = Get-RunnerScriptPath
     $codexPathBinding = Resolve-ReviewBundleCodexPathBinding
+    $script:PreRunnerFailureStage = "powershell_host_resolution"
     $powerShellHost = Resolve-CurrentPowerShellHostPath
     $dispatchRequestId = ""
     $selectedProperty = $Selection.PSObject.Properties["Selected"]
@@ -1998,10 +2003,12 @@ function Test-ReviewedCodexPathShape {
 }
 
 function Resolve-ReviewBundleCodexPathBinding {
+    $script:PreRunnerFailureStage = "runner_tool_resolution_preflight"
     $runnerPreflight = Invoke-RunnerToolResolutionPreflight
     if (-not [string]::Equals((Get-ObjectPropertyText -Object $runnerPreflight -PropertyName "result"), "success", [System.StringComparison]::Ordinal)) {
         throw "runner_preflight_blocked"
     }
+    $script:PreRunnerFailureStage = "reviewed_codex_path_resolution"
     $selectedCodexPath = Get-RunnerCodexSelectedPath -RunnerPreflight $runnerPreflight
     $reviewedPath = Get-ReviewedCodexPathValue
     if ([string]::IsNullOrWhiteSpace($reviewedPath)) {
@@ -2257,6 +2264,7 @@ function Invoke-PollOnce {
         -not [string]::IsNullOrWhiteSpace($RelayRequestBase64)
     )
 
+    $script:PreRunnerFailureStage = "relay_validation"
     if ($IssueNumber -lt 1) {
         Throw-DeterministicAdmissionRejection -Message "PollOnce requires -IssueNumber <N> and scans only that issue."
     }
@@ -2274,6 +2282,7 @@ function Invoke-PollOnce {
             -IssueNumber $IssueNumber `
             -ExpectedRequestId $ExpectedDispatchRequestId
     }
+    $script:PreRunnerFailureStage = "accepted_action_preamble"
     Invoke-AcceptedDispatchAction -Selection $selection -Issue $IssueNumber -ModeName "PollOnce" -SafetyBoundary $PollOnceSafetyBoundary
 }
 
@@ -2341,6 +2350,11 @@ function Exit-DispatcherFailure {
 
     $exitCode = Get-DispatcherFailureExitCode -ErrorRecord $ErrorRecord
     try {
+        if ($exitCode -eq $DispatcherFailedBeforeRunnerExitCode) {
+            [Console]::Error.WriteLine(
+                "LAWBDISPATCHER-FAILURE protocol=$DispatcherFailureDiagnosticProtocol stage=$($script:PreRunnerFailureStage)"
+            )
+        }
         [Console]::Error.WriteLine([string]$ErrorRecord.Exception.Message)
     }
     finally {
