@@ -190,9 +190,19 @@ function Invoke-ControlGitRead {
         [Parameter(Mandatory = $true)][string]$GitPath,
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
-    $output = @(& $GitPath -C $ControlRepoRoot @Arguments 2>$null)
+    $previousOutputEncoding = [Console]::OutputEncoding
+    try {
+        # Git for Windows writes UTF-8, while a hidden Windows PowerShell host
+        # can default native stdout decoding to the active OEM code page.
+        [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+        $output = @(& $GitPath -C $ControlRepoRoot @Arguments 2>$null)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        [Console]::OutputEncoding = $previousOutputEncoding
+    }
     return [pscustomobject]@{
-        exit_code = $LASTEXITCODE
+        exit_code = $exitCode
         stdout = ($output -join [Environment]::NewLine)
     }
 }
