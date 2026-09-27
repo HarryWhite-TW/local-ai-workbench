@@ -936,6 +936,11 @@ def test_dispatcher_entrypoint_returns_transient_pre_runner_failure_code(tmp_pat
 
     assert result.returncode == 22
     assert "simulated transient GitHub read failure" in result.stdout + result.stderr
+    assert (
+        "LAWBDISPATCHER-FAILURE "
+        "protocol=lawb.dispatcher_failure_diagnostic.v1 stage=relay_validation"
+        in result.stderr
+    )
 
 
 def test_dispatcher_entrypoint_preserves_uncertainty_after_runner_start(tmp_path):

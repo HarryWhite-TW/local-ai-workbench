@@ -1052,6 +1052,7 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
     assert summary["target_result_verified"] is True
     assert summary["operator_direct_execution_performed"] is True
     assert summary["current_run"] == {
+        "operator_session_id": summary["operator_session_id"],
         "request_id": "b3a-151-20260616T080000Z",
         "issue_number": 151,
         "lifecycle": {
@@ -1064,6 +1065,7 @@ def test_b3b_maybe_status_check_invokes_dispatcher_once_and_processes_request(tm
         "operator_dispatcher_invocation_performed": True,
         "dispatcher_invoked": True,
         "dispatcher_execution_reach": None,
+        "dispatcher_failure_diagnostic": None,
         "dispatcher_process_identity": None,
         "dispatcher_process_status": "not_observed",
         "dispatcher_descendant_status": "not_observed",
@@ -2458,6 +2460,121 @@ def test_b3c_transient_pre_runner_failure_allows_later_independent_retry(tmp_pat
     assert second["result"] == "success"
     assert second["processed_request_written"] is True
     assert len(second_calls) == 1
+
+
+def test_b3c_pre_runner_failure_persists_sanitized_exact_session_diagnostic(tmp_path):
+    relay_payload = base64.b64encode(b"relay-payload" * 20).decode("ascii")
+    stderr = (
+        "LAWBDISPATCHER-FAILURE "
+        "protocol=lawb.dispatcher_failure_diagnostic.v1 "
+        "stage=runner_tool_resolution_preflight\n"
+        "tool failed with ghp_SECRET_SENTINEL_12345678; "
+        "Authorization: Bearer bearer-secret; "
+        "password=password-secret; "
+        f"-RelayRequestBase64 {relay_payload}\n"
+        "PATH=C:\\secret\\bin"
+    )
+    summary = run_b3c(
+        tmp_path,
+        dispatcher_invoker=lambda **_: DispatcherInvocationResult(
+            returncode=DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE,
+            stdout="dispatcher progress that must not be persisted",
+            stderr=stderr,
+            execution_reach=DISPATCHER_FAILED_BEFORE_RUNNER,
+            process_identity=fake_process_identity(),
+        ),
+        operator_session_id=SESSION_A,
+        process_identity=fake_process_identity(),
+    )
+
+    assert summary["blocked_reasons"] == ["dispatcher_pre_runner_transient_failure"]
+    failure = read_json(tmp_path / "last_failure.json")
+    log = read_log_events(tmp_path / "operator.log")[-1]
+    for durable in (failure, log):
+        assert durable["request_id"] == "b3a-151-20260616T080000Z"
+        assert durable["operator_session_id"] == SESSION_A
+        current_run = durable["current_run"]
+        assert current_run["operator_session_id"] == SESSION_A
+        assert current_run["request_id"] == "b3a-151-20260616T080000Z"
+        diagnostic = current_run["dispatcher_failure_diagnostic"]
+        assert diagnostic["protocol"] == "lawb.dispatcher_failure_diagnostic.v1"
+        assert diagnostic["exit_code"] == 22
+        assert diagnostic["failure_stage"] == "runner_tool_resolution_preflight"
+        assert diagnostic["diagnostic_source"] == "stderr"
+        assert diagnostic["diagnostic_input_valid"] is True
+        assert diagnostic["stdout_present"] is True
+        assert diagnostic["stderr_present"] is True
+        assert diagnostic["truncated"] is False
+        assert diagnostic["max_diagnostic_chars"] == 1024
+        assert "[REDACTED]" in diagnostic["diagnostic_message"]
+        assert "[REDACTED_BASE64]" in diagnostic["diagnostic_message"]
+        assert "[REDACTED_ENV]" in diagnostic["diagnostic_message"]
+        serialized = json.dumps(durable)
+        for forbidden in (
+            "ghp_SECRET_SENTINEL_12345678",
+            "bearer-secret",
+            "password-secret",
+            relay_payload,
+            "C:\\secret\\bin",
+            "dispatcher progress that must not be persisted",
+            "dispatcher_stdout",
+            "dispatcher_stderr",
+        ):
+            assert forbidden not in serialized
+
+
+def test_b3c_pre_runner_failure_diagnostic_is_bounded_and_marks_truncation(tmp_path):
+    summary = run_b3c(
+        tmp_path,
+        dispatcher_invoker=lambda **_: DispatcherInvocationResult(
+            returncode=DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE,
+            stderr=(
+                "LAWBDISPATCHER-FAILURE "
+                "protocol=lawb.dispatcher_failure_diagnostic.v1 "
+                "stage=powershell_host_resolution\n" + "x" * 4096
+            ),
+            execution_reach=DISPATCHER_FAILED_BEFORE_RUNNER,
+        ),
+        operator_session_id=SESSION_A,
+    )
+
+    diagnostic = summary["current_run"]["dispatcher_failure_diagnostic"]
+    assert diagnostic["failure_stage"] == "powershell_host_resolution"
+    assert diagnostic["truncated"] is True
+    assert len(diagnostic["diagnostic_message"]) == 1024
+    failure = read_json(tmp_path / "last_failure.json")
+    assert failure["current_run"]["dispatcher_failure_diagnostic"] == diagnostic
+
+
+def test_b3c_malformed_pre_runner_diagnostic_does_not_break_failure_persistence(
+    tmp_path,
+):
+    summary = run_b3c(
+        tmp_path,
+        dispatcher_invoker=lambda **_: DispatcherInvocationResult(
+            returncode=DISPATCHER_FAILED_BEFORE_RUNNER_EXIT_CODE,
+            stdout=None,
+            stderr={"unexpected": "shape"},
+            execution_reach=DISPATCHER_FAILED_BEFORE_RUNNER,
+        ),
+        operator_session_id=SESSION_A,
+    )
+
+    assert summary["blocked_reasons"] == ["dispatcher_pre_runner_transient_failure"]
+    failure = read_json(tmp_path / "last_failure.json")
+    diagnostic = failure["current_run"]["dispatcher_failure_diagnostic"]
+    assert diagnostic == {
+        "protocol": "lawb.dispatcher_failure_diagnostic.v1",
+        "exit_code": 22,
+        "failure_stage": "unknown_pre_runner",
+        "diagnostic_message": "[invalid dispatcher diagnostic]",
+        "diagnostic_source": "invalid",
+        "diagnostic_input_valid": False,
+        "stdout_present": False,
+        "stderr_present": True,
+        "truncated": False,
+        "max_diagnostic_chars": 1024,
+    }
 
 
 def test_b3c_uncertain_dispatcher_reach_remains_nonterminal_and_fail_closed(tmp_path):
