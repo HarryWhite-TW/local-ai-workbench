@@ -71,6 +71,26 @@ exit /b 0
     )
 
 
+def fake_runtime_python(
+    bin_dir: Path,
+    *,
+    version="3.14.3",
+    imports_ready=True,
+    diagnostics_output='{"status":"READY","status_reasons":["ready"]}',
+) -> None:
+    import_exit = "0" if imports_ready else "1"
+    write_cmd(
+        bin_dir / "python.cmd",
+        f'''@echo off
+echo python %~1>> "%LAW_BOOTSTRAP_COMMAND_LOG%"
+if "%~1"=="--version" echo Python {version}& exit /b 0
+if "%~1"=="-c" exit /b {import_exit}
+if "%~1"=="-m" echo {diagnostics_output}& exit /b 0
+exit /b 0
+''',
+    )
+
+
 def fake_python_with_secret_ensurepip_failure(bin_dir: Path, secret_line: str) -> None:
     write_cmd(
         bin_dir / "python.cmd",
@@ -520,6 +540,123 @@ def test_unsupported_python_version_is_blocked(tmp_path):
 
     assert result.returncode == 2
     assert "python_unsupported" in payload["blockers"]
+
+
+def test_unusable_python_alias_does_not_hide_later_supported_host(tmp_path):
+    repo = make_repo(tmp_path)
+    alias_dir = tmp_path / "alias"
+    usable_dir = tmp_path / "usable"
+    alias_dir.mkdir()
+    usable_dir.mkdir()
+    log = command_log(tmp_path)
+    write_cmd(
+        alias_dir / "python.cmd",
+        '@echo off\necho alias %*>> "%LAW_BOOTSTRAP_COMMAND_LOG%"\nexit /b 9009\n',
+    )
+    fake_git(usable_dir)
+    fake_runtime_python(usable_dir)
+    fake_node_npm(usable_dir)
+    fake_gh(usable_dir, authenticated=True)
+    fake_codex(usable_dir)
+    seed_working_venv(repo, usable_dir)
+    env = make_env(tmp_path, alias_dir, log)
+    env["PATH"] += os.pathsep + str(usable_dir)
+
+    result, payload = run_bootstrap(repo, env)
+
+    assert result.returncode == 0
+    assert payload["overall_status"] == "READY", payload["attention"]
+    assert payload["detected"]["python"]["path"] == str(usable_dir / "python.cmd")
+    assert payload["venv"]["version"] == "Python 3.14.3"
+    assert "alias --version" in log.read_text(encoding="utf-8")
+
+
+def test_supported_reviewed_venv_is_ready_without_host_python(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    venv_source = tmp_path / "venv-source"
+    bin_dir.mkdir()
+    venv_source.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_node_npm(bin_dir)
+    fake_gh(bin_dir, authenticated=True)
+    fake_codex(bin_dir)
+    fake_runtime_python(venv_source)
+    seed_working_venv(repo, venv_source)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env)
+
+    assert result.returncode == 0
+    assert payload["overall_status"] == "READY", payload["attention"]
+    assert payload["detected"]["python"]["path"] is None
+    assert payload["venv"]["status"] == "usable"
+    assert payload["venv"]["version"] == "Python 3.14.3"
+    assert payload["dependencies"]["ready"] is True
+
+
+def test_invalid_reviewed_diagnostics_json_reports_attention(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    venv_source = tmp_path / "venv-source"
+    bin_dir.mkdir()
+    venv_source.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_node_npm(bin_dir)
+    fake_gh(bin_dir, authenticated=True)
+    fake_codex(bin_dir)
+    fake_runtime_python(venv_source, diagnostics_output="not-json")
+    seed_working_venv(repo, venv_source)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env)
+
+    assert result.returncode == 0
+    assert payload["overall_status"] == "ATTENTION"
+    assert "diagnostics_json_unreadable" in payload["attention"]
+
+
+def test_unsupported_reviewed_venv_still_blocks_with_supported_host(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    venv_source = tmp_path / "venv-source"
+    bin_dir.mkdir()
+    venv_source.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_python(bin_dir)
+    fake_runtime_python(venv_source, version="3.9.13")
+    seed_working_venv(repo, venv_source)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env)
+
+    assert result.returncode == 2
+    assert payload["venv"]["status"] == "unsupported"
+    assert "venv_python_unsupported" in payload["blockers"]
+
+
+def test_reviewed_venv_import_failure_is_not_masked_by_supported_host(tmp_path):
+    repo = make_repo(tmp_path)
+    bin_dir = tmp_path / "bin"
+    venv_source = tmp_path / "venv-source"
+    bin_dir.mkdir()
+    venv_source.mkdir()
+    log = command_log(tmp_path)
+    fake_git(bin_dir)
+    fake_python(bin_dir)
+    fake_runtime_python(venv_source, imports_ready=False)
+    seed_working_venv(repo, venv_source)
+    env = make_env(tmp_path, bin_dir, log)
+
+    result, payload = run_bootstrap(repo, env)
+
+    assert result.returncode == 0
+    assert payload["overall_status"] == "ATTENTION"
+    assert payload["dependencies"]["ready"] is False
+    assert "dependencies_missing_or_unverified" in payload["attention"]
 
 
 def test_missing_node_npm_prevents_codex_install_without_corrupting_other_tools(tmp_path):

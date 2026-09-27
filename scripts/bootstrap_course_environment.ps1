@@ -324,6 +324,28 @@ function Test-ExactVersion([string]$Text, [string]$Expected) {
     return $parsed -and ($parsed -eq ([version]$Expected))
 }
 
+function Resolve-SupportedPython([string]$WorkingDirectory, [string]$Minimum) {
+    $seen = @()
+    $first = $null
+    foreach ($name in @("python.exe", "python.cmd", "python.bat", "python")) {
+        foreach ($command in @(Get-Command $name -All -CommandType Application -ErrorAction SilentlyContinue)) {
+            $path = [string]$command.Source
+            if (-not $path -or $seen -contains $path) { continue }
+            $seen += $path
+            $version = Get-VersionLine -CommandPath $path -WorkingDirectory $WorkingDirectory
+            $candidate = [ordered]@{
+                path = $path
+                version = $version
+                supported = (Test-MinVersion -Text $version -Minimum $Minimum)
+            }
+            if ($candidate.supported) { return $candidate }
+            if ($null -eq $first) { $first = $candidate }
+        }
+    }
+    if ($null -ne $first) { return $first }
+    return [ordered]@{ path = $null; version = $null; supported = $false }
+}
+
 function Resolve-VenvPython([string]$VenvRoot) {
     foreach ($name in @("python.exe", "python.cmd", "python.bat")) {
         $candidate = Join-Path $VenvRoot "Scripts\$name"
@@ -515,7 +537,9 @@ try {
     $requirementsPath = Join-Path $ResolvedRepoRoot $Manifest.requirements
 
     $gitPath = Resolve-CommandPath @("git.exe", "git.cmd", "git.bat", "git")
-    $pythonPath = Resolve-CommandPath @("python.exe", "python.cmd", "python.bat", "python")
+    $pythonFacts = Resolve-SupportedPython -WorkingDirectory $ResolvedRepoRoot `
+        -Minimum $Manifest.python.minimum_version
+    $pythonPath = $pythonFacts.path
     $nodeFallback = if ($env:LAWB_BOOTSTRAP_NODE_FALLBACK) { $env:LAWB_BOOTSTRAP_NODE_FALLBACK } else { $Manifest.paths.node_fallback }
     $nodePath = Resolve-CommandPath @("node.exe", "node.cmd", "node.bat", "node") @($nodeFallback)
     $npmPath = Resolve-CommandPath @("npm.cmd", "npm.exe", "npm.bat", "npm") @($nodeFallback)
@@ -528,16 +552,10 @@ try {
         Add-Unique $Summary.blockers "git_missing"
     }
 
-    $Summary.detected.python = [ordered]@{ path = $pythonPath; version = $null; minimum_supported = $Manifest.python.minimum_version }
-    if ($pythonPath) {
-        $pythonVersion = Get-VersionLine -CommandPath $pythonPath -WorkingDirectory $ResolvedRepoRoot
-        $Summary.detected.python.version = $pythonVersion
-        if (-not (Test-MinVersion -Text $pythonVersion -Minimum $Manifest.python.minimum_version)) {
-            Add-Unique $Summary.blockers "python_unsupported"
-        }
-    }
-    else {
-        Add-Unique $Summary.blockers "python_missing"
+    $Summary.detected.python = [ordered]@{
+        path = $pythonPath
+        version = $pythonFacts.version
+        minimum_supported = $Manifest.python.minimum_version
     }
 
     $Summary.detected.node = [ordered]@{ path = $nodePath; version = $null }
@@ -562,21 +580,31 @@ try {
     }
 
     $venvPython = Resolve-VenvPython $venvRoot
+    $venvVersion = Get-VersionLine -CommandPath $venvPython -WorkingDirectory $ResolvedRepoRoot
+    $venvVersionSupported = Test-MinVersion -Text $venvVersion -Minimum $Manifest.python.minimum_version
     $Summary.venv = [ordered]@{
         path = $venvRoot
         exists = (Test-Path -LiteralPath $venvRoot)
         python = $venvPython
+        version = $venvVersion
         pip_ready = $false
         pip_output = $null
         status = "missing"
     }
-    if (-not $venvPython -and $Apply -and $pythonPath -and $Summary.blockers.Count -eq 0) {
+    # Host Python is needed to create a missing venv, not to run a supported one.
+    if (-not $pythonFacts.supported -and -not $venvVersionSupported) {
+        Add-Unique $Summary.blockers $(if ($pythonPath) { "python_unsupported" } else { "python_missing" })
+    }
+    if (-not $venvPython -and $Apply -and $pythonFacts.supported -and $Summary.blockers.Count -eq 0) {
         Add-Unique $Summary.actions_planned "create_venv"
         $result = Invoke-CapturedCommand -CommandPath $pythonPath -Arguments @("-m", "venv", $venvRoot) -WorkingDirectory $ResolvedRepoRoot
         if ($result.exit_code -eq 0) {
             Add-Unique $Summary.actions_performed "created_venv"
             $venvPython = Resolve-VenvPython $venvRoot
+            $venvVersion = Get-VersionLine -CommandPath $venvPython -WorkingDirectory $ResolvedRepoRoot
+            $venvVersionSupported = Test-MinVersion -Text $venvVersion -Minimum $Manifest.python.minimum_version
             $Summary.venv.python = $venvPython
+            $Summary.venv.version = $venvVersion
             $Summary.venv.exists = $true
             $Summary.venv.status = if ($venvPython) { "usable" } else { "missing_python_after_create" }
         }
@@ -624,6 +652,10 @@ try {
         $Summary.venv.status = "pip_unusable"
         Add-Unique $Summary.attention "venv_pip_unusable"
     }
+    if ($venvPython -and -not $venvVersionSupported) {
+        $Summary.venv.status = "unsupported"
+        Add-Unique $Summary.blockers "venv_python_unsupported"
+    }
 
     $depsReady = if ($Summary.venv.pip_ready) {
         Test-ImportsReady -PythonPath $venvPython -RepoRootPath $ResolvedRepoRoot
@@ -640,7 +672,8 @@ try {
     if ($depsReady.ready) {
         Add-Unique $Summary.actions_skipped_reused "reused_python_dependencies"
     }
-    elseif ($Apply -and $venvPython -and $Summary.venv.pip_ready -and (Test-Path -LiteralPath $requirementsPath)) {
+    elseif ($Apply -and $venvPython -and $Summary.venv.pip_ready -and
+        $Summary.blockers.Count -eq 0 -and (Test-Path -LiteralPath $requirementsPath)) {
         Add-Unique $Summary.actions_planned "install_requirements_course"
         $installResult = Invoke-CapturedCommand -CommandPath $venvPython -Arguments @("-m", "pip", "install", "-r", $requirementsPath) -WorkingDirectory $ResolvedRepoRoot
         if ($installResult.exit_code -eq 0) {
