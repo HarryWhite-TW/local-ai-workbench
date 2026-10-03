@@ -7,9 +7,10 @@ These rules automatically govern work under `src/local_runner_bridge/`.
 Root `AGENTS.md` continues to govern repository-wide safety. If these scoped
 rules are more specific for bridge work, follow them within this folder.
 
-Root `AGENTS.md` also requires bridge, dispatcher, runner, Task Packet, Bridge
-Operator, and ChatGPT-to-Codex workflow tasks in other paths to use this file as
-the bridge-specific governance reference.
+Root `AGENTS.md` also requires tasks using or changing the incumbent Bridge,
+Dispatcher, Runner, Task Packet, or Bridge Operator in other paths to use this
+file as the bridge-specific governance reference. Native Codex execution alone
+does not select this route; work on files in this folder still follows these rules.
 
 This file cannot weaken root repository-wide safety.
 
@@ -22,8 +23,23 @@ This file cannot weaken root repository-wide safety.
 ## Current Direction
 
 - ChatGPT remains the primary user interface.
-- GitHub remains the auditable task and result surface.
-- Manual copy/paste and manual `PollOnce` are fallback or recovery paths.
+- Ordinary local engineering follows root `AGENTS.md`'s Native-first Work route
+  when native capabilities satisfy the task. Independent ChatGPT final technical
+  review of the exact candidate, diff, and evidence against the approved task is
+  required; executor completion is not acceptance.
+- When ChatGPT Work is the execution surface, same-conversation review is
+  preferred to avoid manual relay, not a permanent architectural requirement.
+  Supervising ChatGPT or a future Companion/control surface may perform that
+  independent final review. The user must not become the routine technical
+  relay between execution and review.
+- Bridge / Operator / Dispatcher / Runner remains specialised governance,
+  compatibility, recovery, or fallback infrastructure, not mandatory transport
+  for ordinary engineering. Its governing authorities above continue to apply
+  when using or changing this route.
+- For the Bridge route, GitHub remains the auditable task and result surface;
+  this does not require GitHub mutation for every native local task.
+- Manual copy/paste and manual `PollOnce` are Bridge fallback or recovery paths,
+  not a requirement that the user relay ordinary engineering prompts or results.
 - Current Roadmap sequencing and the active or next node must come from the applicable current plan and active task, tracker, or node source when the work actually requires a sequencing, activation, closeout, or authority decision.
 - This scoped rule file does not own, freeze, or activate the current or next Roadmap phase or node.
 

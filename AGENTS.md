@@ -6,10 +6,11 @@ These rules apply across the entire repository. More-specific nested
 `AGENTS.md` files govern their own folder scope while inheriting these
 repository-wide safety rules.
 
-Any bridge, dispatcher, runner, Task Packet, Bridge Operator, or ChatGPT-to-Codex
-workflow task must also read and follow `src/local_runner_bridge/AGENTS.md` as
+Any task using or changing the incumbent Bridge, Dispatcher, Runner, Task
+Packet, or Bridge Operator must also read and follow `src/local_runner_bridge/AGENTS.md` as
 the bridge-specific governance reference, whether the touched files are under
 `src/`, `scripts/`, `tests/`, or `docs/`.
+Native Codex execution alone does not select the custom Bridge route.
 
 Any Workflow acceptance, closeout, final-status adjudication, or acceptance-
 integrity incident task must also read and follow
@@ -35,6 +36,32 @@ integrity incident task must also read and follow
 - Do not create unauthorized autonomous multi-agent chaining or approval chaining.
 - The bounded ChatGPT-to-Codex bridge approved by `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md` and `docs/BRIDGE_OPERATOR_V0_SPEC.md` is not prohibited by the autonomous multi-agent chaining rule, but any implementation still requires a separately approved task and must not expand Bridge authority.
 - Do not add new features, milestones, authority, side effects, or scope that the user did not request.
+
+## Native-First Daily Engineering
+
+- ChatGPT owns the outcome, authority boundaries, and final technical review.
+- When native capabilities satisfy the task, ordinary local engineering prefers
+  `ChatGPT Work -> native Codex execution environment -> local repo/tools -> result returned to the same Work conversation`.
+- Work may use Codex technology internally without requiring a separate Codex
+  view or thread. The user is not a technical relay for prompts or results.
+- Bridge / Operator / Dispatcher / Runner remains incumbent specialised
+  governance, compatibility, recovery, or fallback infrastructure. It is not
+  mandatory transport for every engineering task and has not been fully replaced.
+  Its route-specific governance remains binding when that route is used or changed.
+- Executor completion is not final acceptance. Independent ChatGPT final
+  technical review of the exact candidate, diff, and evidence against the
+  approved task is required before declaring technical acceptance.
+- When ChatGPT Work is the execution surface, same-conversation review is
+  preferred because it avoids manual relay. It is not a permanent architectural
+  requirement: supervising ChatGPT or a future Companion/control surface may
+  perform that independent final review. The user must not become the routine
+  technical relay between execution and review.
+- Stage, commit, push, PR creation, merge, and other remote, irreversible, or
+  high-risk actions require separate explicit authority; local execution or
+  technical acceptance does not grant publication authority.
+- Do not build duplicate custom terminals, diff viewers, file explorers,
+  browsers, generic queues, memory systems, or multi-agent frameworks merely
+  to reproduce available platform capabilities.
 
 ## Human-Readable Execution Card Mode
 
