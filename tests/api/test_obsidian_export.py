@@ -311,6 +311,78 @@ def test_post_obsidian_export_writes_markdown_file_after_approval(client, tmp_pa
     assert audit_events[0]["event_payload"]["has_decisions"] is True
 
 
+def test_unicode_survives_scan_summary_preview_export_and_strict_utf8_readback(client, tmp_path: Path):
+    source_text = (
+        "# 專案驗收結果\n\n"
+        "這份文件記錄專案驗收結果，確保繁體中文完整保留。\n\n"
+        "- 流程：掃描 → 摘要 → 預覽 → 核准匯出。\n"
+        "- 標點使用 em dash — 並保留 café。\n"
+    )
+    source_bytes = source_text.encode("utf-8")
+    root = tmp_path / "documents"
+    root.mkdir()
+    source_path = root / "專案驗收結果.md"
+    source_path.write_bytes(source_bytes)
+
+    put_response = client.put("/settings/root-folder", json={"root_folder": str(root)})
+    assert put_response.status_code == 200
+    scan_response = client.post("/documents/scan")
+    assert scan_response.status_code == 200
+    document = client.get("/documents").json()[0]
+    document_id = document["id"]
+
+    summary_response = client.post(f"/documents/{document_id}/summary")
+    assert summary_response.status_code == 200
+    summary_text = summary_response.json()["summary_text"]
+    expected_unicode = (
+        "專案驗收結果",
+        "這份文件記錄專案驗收結果，確保繁體中文完整保留。",
+        "掃描 → 摘要 → 預覽 → 核准匯出。",
+        "em dash — 並保留 café。",
+    )
+    for expected in expected_unicode:
+        assert expected in summary_text
+
+    preview_response = client.get(f"/documents/{document_id}/obsidian-preview")
+    assert preview_response.status_code == 200
+    preview_markdown = preview_response.json()["markdown"]
+    for expected in expected_unicode:
+        assert expected in preview_markdown
+    assert "summary_generated" in preview_markdown
+
+    export_folder = tmp_path / "obsidian"
+    export_folder.mkdir()
+    export_response = client.post(
+        f"/documents/{document_id}/obsidian-export",
+        json={"export_folder": str(export_folder), "approved": True},
+    )
+
+    assert export_response.status_code == 200
+    export_result = export_response.json()
+    export_path = Path(export_result["export_path"])
+    exported_bytes = export_path.read_bytes()
+    exported_text = exported_bytes.decode("utf-8", errors="strict")
+    assert export_result["filename"].startswith("專案驗收結果-")
+    assert export_result["bytes_written"] == len(exported_bytes)
+    for expected in expected_unicode:
+        assert expected in exported_text
+    assert "summary_generated" in exported_text
+    assert "obsidian_export_written" not in exported_text
+    assert "?" not in exported_text
+    assert "\ufffd" not in exported_text
+
+    audit_events = client.get("/audit").json()
+    assert audit_events[0]["event_type"] == "obsidian_export_written"
+    assert audit_events[0]["event_payload"] == {
+        "document_id": document_id,
+        "export_path": str(export_path),
+        "filename": export_result["filename"],
+        "has_summary": True,
+        "has_decisions": False,
+    }
+    assert source_path.read_bytes() == source_bytes
+
+
 def test_web_summary_uses_safe_text_node_with_multiline_wrapping():
     app_source = (Path(__file__).resolve().parents[2] / "web" / "src" / "App.tsx").read_text(encoding="utf-8")
 
