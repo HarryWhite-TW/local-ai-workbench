@@ -110,6 +110,8 @@ def test_projector_allowlists_facts_and_omits_sensitive_content():
         "item_id": "cmd-1",
         "status": "completed",
         "command_name": "pytest.exe",
+        "activity_kind": "test",
+        "test_framework": "pytest",
         "exit_code": 7,
     }
     persisted = json.dumps([message, reasoning, command], ensure_ascii=False)
@@ -117,6 +119,103 @@ def test_projector_allowlists_facts_and_omits_sensitive_content():
     assert "chain of thought" not in persisted
     assert "supersecret" not in persisted
     assert "private-output" not in persisted
+
+
+@pytest.mark.parametrize("command", [
+    "pytest -q tests/test_safe.py",
+    "pytest -vv tests/test_safe.py",
+    "pytest --setup-show tests/test_safe.py",
+    "pytest --cache-clear tests/test_safe.py",
+    '"C:\\Tools\\pytest.exe" -q',
+    "python -m pytest -q",
+    "python3.10 -B -u -m pytest tests/test_safe.py",
+    "pwsh.exe -NoProfile -Command \"python -m pytest -q\"",
+    "powershell.exe -Command \"& '.\\.venv-course\\Scripts\\python.exe' -B -m pytest -q\"",
+    "cmd.exe /d /s /c \"python -m pytest -q\"",
+    '''"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "$env:PYTHONDONTWRITEBYTECODE='1'; $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD='1'; & '.\\.venv-course\\Scripts\\python.exe' -B -m pytest -p no:cacheprovider -o addopts= --noconftest -q tests/local_runner_bridge/test_workflow_observability.py -k 'projector or unknown_malformed_and_oversized_source_events' -x; $testExit=$LASTEXITCODE; Write-Output ('TEST_EXIT_CODE={0}' -f $testExit); exit $testExit"''',
+])
+@pytest.mark.parametrize("phase,exit_code", [("started", None), ("completed", 0), ("completed", 7)])
+def test_safe_test_semantics_survive_start_and_completion(command, phase, exit_code):
+    item = {"id": "test-item", "type": "command_execution", "command": command,
+            "status": "in_progress" if phase == "started" else "completed", "exit_code": exit_code,
+            "aggregated_output": "secret-output"}
+    event = projected({"type": "item." + phase, "item": item})
+    assert event["payload"]["activity_kind"] == "test"
+    assert event["payload"]["test_framework"] == "pytest"
+    assert event["kind"] == ("codex.command.failed" if exit_code == 7 else "codex.command." + phase)
+    assert "secret-output" not in json.dumps(event)
+    assert "command" not in event["payload"]
+
+
+@pytest.mark.parametrize("command", [
+    "echo pytest", "Write-Output 'pytest -q'", "python example.py pytest", "python -c 'import pytest'",
+    "python -m unrelated pytest", "python --unknown -m pytest", "node pytest", "cat tests/pytest.txt",
+    "# pytest -q", "pwsh -Command \"Write-Output 'pytest -q'\"",
+    "pwsh -Command \"# pytest -q\"", "pwsh -Command \"'pytest -q'\"",
+    "pwsh -Command \"'python' '-m' 'pytest'\"",
+    "pwsh -Command \"if ($false) { pytest }\"",
+    "pwsh -Command \"$text='pytest -q'; Write-Output $text\"",
+    "pwsh -Command \"& $tool -m pytest\"", "pwsh -EncodedCommand cHl0ZXN0",
+    "pwsh -File pytest.ps1", "cmd /c \"echo pytest\"", "cmd /c \"false && pytest\"",
+    "pwsh -Command \"pytest; unrelated-command\"", "pytest && unrelated-command",
+    "pwsh -Command \"Get-Content 'pytest'; python script.py\"",
+    "pytest --listTests", "pytest -N", "pytest\nWrite-Output unrelated",
+    '''python -m "'pytest'"''',
+])
+def test_arbitrary_text_and_unsupported_syntax_never_supply_test_semantics(command):
+    event = projected({"type": "item.completed", "item": {
+        "type": "command_execution", "id": "unknown-item", "command": command,
+        "activity_kind": "test", "test_framework": "pytest", "aggregated_output": "pytest passed",
+    }})
+    assert event["payload"]["activity_kind"] == "command"
+    assert "test_framework" not in event["payload"]
+
+
+def test_semantic_projection_does_not_persist_arguments_or_sensitive_paths():
+    event = projected({"type": "item.completed", "item": {"type": "command_execution", "id": "safe-item",
+        "command": '''pwsh -Command "& 'C:\\private-directory\\python.exe' -m pytest --token secret-value 'private-test-path'"''',
+        "aggregated_output": "secret-output", "exit_code": 0}})
+    assert event["payload"] == {"item_id": "safe-item", "command_name": "pwsh", "activity_kind": "test",
+                                "test_framework": "pytest", "exit_code": 0}
+
+
+@pytest.mark.parametrize("command", [
+    "ctest --show-only=json-v1", "ctest --print-labels", "vitest list",
+    "vitest --standalone", "vitest --clearCache", "jest --showConfig", "jest --clearCache",
+    "ctest", "ctest.exe", "vitest run", "jest",
+])
+@pytest.mark.parametrize("wrapper", ["{}", 'pwsh.exe -Command "{}"', 'cmd.exe /d /c "{}"'])
+@pytest.mark.parametrize("phase", ["started", "completed"])
+def test_unsupported_frameworks_never_emit_authoritative_test_semantics(command, wrapper, phase):
+    event = projected({"type": "item." + phase, "item": {
+        "type": "command_execution", "id": "unsupported-test-tool",
+        "command": wrapper.format(command), "status": "in_progress" if phase == "started" else "completed",
+        "exit_code": None if phase == "started" else 0,
+    }})
+    assert event["payload"]["activity_kind"] == "command"
+    assert "test_framework" not in event["payload"]
+
+
+@pytest.mark.parametrize("invocation", ["pytest", "python -m pytest"])
+@pytest.mark.parametrize("option", [
+    "--help", "-h", "--version", "-V", "-VV", "-VVV", "-V -V", "--version --version",
+    "--collect-only", "--collectonly", "--co", "--markers", "--fixtures", "--funcargs",
+    "--fixtures-per-test", "--cache-show", "--cache-show=*", "--cache-show=cache/*",
+    "--setup-only", "--setuponly", "--setup-plan", "--setupplan",
+])
+@pytest.mark.parametrize("wrapper", ["{}", 'pwsh.exe -Command "{}"', 'cmd.exe /d /c "{}"'])
+@pytest.mark.parametrize("phase", ["started", "completed"])
+def test_pytest_core_no_run_modes_never_supply_test_semantics(invocation, option, wrapper, phase):
+    event = projected({"type": "item." + phase, "item": {
+        "type": "command_execution", "id": "pytest-core-no-run",
+        "command": wrapper.format(invocation + " " + option),
+        "status": "in_progress" if phase == "started" else "completed",
+        "exit_code": None if phase == "started" else 0,
+    }})
+    assert event["payload"]["activity_kind"] == "command"
+    assert "test_framework" not in event["payload"]
+    if invocation == "pytest" and wrapper == "{}":
+        assert event["payload"]["command_name"] == "pytest"
 
 
 def test_projector_preserves_safe_unicode_file_facts_without_absolute_paths():

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Personal AI Sanctuary</title><link rel="icon" href="/sanctuary.svg" type="image/svg+xml"><link rel="stylesheet" href="/sanctuary.css"></head>
+<body>
+<header class="shell-header"><a class="brand" href="/sanctuary"><span class="brand-icon" aria-hidden="true">⬡</span><span>Personal AI Sanctuary<small>LIFE ON THE SURFACE. TRUTH UNDERNEATH.</small></span></a><nav aria-label="產品層級"><span class="current-view">基地世界</span><button id="expert-open">Expert Console <span aria-hidden="true">↗</span></button></nav><span id="connection" class="connection" role="status">正在連接本機來源</span></header>
+<main class="shell-main">
+ <section class="world-view" aria-label="Living World">
+  <div class="scene-heading"><p class="eyebrow">YOUR PRIVATE AI HABITAT</p><h1 id="world-title">基地正在等候訊號。</h1><p id="world-description">正在讀取 Workflow 的目前證據。</p></div>
+  <canvas id="living-world" aria-label="連通的 Command Core、Library、Research Wing、Workshop、Test Bench 與 Review Bay。角色及成果位置由目前 Workflow 證據決定。"></canvas>
+  <div id="human-callout" class="human-callout" hidden><span aria-hidden="true">◎</span><div><strong>需要你決定下一步</strong><p>審查尚未接受成果。請在 ChatGPT 確認後續。</p></div><button id="human-details">查看原因 →</button></div>
+  <div class="world-floor-note"><span>六個空間 · 一個真實的工作來源</span><span class="ambient-key"><i></i> 小型巡檢機器人為環境動態</span></div>
+ </section>
+ <aside class="context-panel" aria-label="目前工作與人類決策資訊">
+  <div class="context-top"><span class="eyebrow">CURRENT WORK</span><span class="readonly">唯讀</span></div>
+  <p id="task-label" class="task-label">正在核對任務</p><h2 id="context-title">目前工作</h2><span id="result-badge" class="result-badge">尚未確認</span><p id="context-summary">基地只會呈現已提供的證據。</p>
+  <div class="artifact-preview" id="artifact-preview" aria-hidden="true"><svg viewBox="0 0 160 105"><ellipse cx="80" cy="86" rx="44" ry="12"/><path d="M80 18 110 35 110 69 80 87 50 69 50 35Z"/><path d="M50 35 80 53 110 35M80 53V87"/><path class="accepted-check" d="M66 48 77 59 96 37"/></svg></div>
+  <section class="context-block"><h3>現在發生什麼事</h3><p id="what">等待來源。</p></section>
+  <section class="context-block"><h3>為什麼停在這裡</h3><p id="why">等待目前任務的證據。</p></section>
+  <section class="human-context" id="human-context" tabindex="-1"><div class="eyebrow">NEXT OWNER · READ ONLY</div><p id="next-owner" role="status"></p><h3 id="human-what">目前不需要操作</h3><p id="human-why"></p><dl><dt>下一步操作</dt><dd id="human-operation">尚無可核對的提案。</dd><dt>目標與範圍</dt><dd id="human-scope">尚未提供。</dd></dl><a id="evidence-link" hidden target="_blank" rel="noopener noreferrer">查看對應審查證據 ↗</a><p id="evidence-missing" class="subtle">目前沒有可核對的證據連結。</p></section>
+  <p class="authority-note">此處不會批准、拒絕、重試或啟動工作。決策仍在 ChatGPT 與既有 Workflow 中進行。</p>
+ </aside>
+</main>
+<footer class="shell-footer"><div class="zone-nav" aria-label="檢視工作區"><button data-zone="core">Command Core</button><button data-zone="library">Library</button><button data-zone="research">Research Wing</button><button data-zone="workshop">Workshop</button><button data-zone="test">Test Bench</button><button data-zone="review">Review Bay</button></div><button id="refresh">重新讀取</button></footer>
+<dialog id="expert-dialog" aria-labelledby="inspector-title"><div class="expert-heading"><div><p class="eyebrow">EXPERT INSPECTOR · READ ONLY</p><h2 id="inspector-title">目前任務與證據</h2></div><button id="expert-close" aria-label="關閉 Expert Inspector">✕</button></div>
+<p id="expert-freshness" role="status">尚未取得來源</p>
+<section class="inspector-summary" aria-label="任務摘要"><h3 id="expert-task"></h3><p id="expert-purpose"></p><dl id="expert-facts"></dl></section>
+<p id="selection-context" role="status">選取世界中的工作區，或下方的事件。</p>
+<section aria-label="活動時間線"><h3>此 run 的活動</h3><p class="subtle">依事件序號排列；歷史活動不代表目前仍在執行。</p><ol id="activity-timeline"></ol><p id="timeline-empty"></p><div id="event-detail" tabindex="-1" aria-label="選取的活動證據"></div></section>
+<section aria-label="成果與審查證據"><h3>成果與審查</h3><dl id="review-facts"></dl><button id="locate-artifact">定位成果區</button></section>
+<details id="expert-diagnostics"><summary>來源診斷與原始資料</summary><p id="diagnostic-summary"></p><div class="expert-identities"><span id="expert-request"></span><span id="expert-run"></span><span id="expert-stage"></span></div><details><summary>Workflow snapshot</summary><pre id="expert-snapshot"></pre></details><details><summary>目前 request / run 事件</summary><pre id="expert-events"></pre></details><details><summary>Projection 與顯示狀態</summary><pre id="expert-projection"></pre></details><a class="panel-link" href="/" target="_blank" rel="noopener">深度診斷：既有 Workflow Panel ↗</a></details></dialog>
+<script src="/sanctuary_world.js" defer></script><script src="/sanctuary.js" defer></script>
+</body></html>

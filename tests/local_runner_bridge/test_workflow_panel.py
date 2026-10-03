@@ -1279,6 +1279,8 @@ def test_temporary_fixture_panel_http_static_snapshot_sse_and_read_only_methods(
             "item_id": "command-1",
             "status": "completed",
             "command_name": "python",
+            "activity_kind": "test",
+            "test_framework": "pytest",
             "exit_code": 0,
         }
         assert "private output" not in json.dumps(replay)
