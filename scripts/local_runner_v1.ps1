@@ -2594,8 +2594,12 @@ function Write-WorkflowObservationCodexLine {
         return
     }
     try {
-        $Context.Process.StandardInput.WriteLine("codex`t$Line")
-        $Context.Process.StandardInput.Flush()
+        # .NET Framework / Windows PowerShell 5.1 has no StandardInputEncoding;
+        # its default StreamWriter may be Big5. Write this UTF-8 wire protocol
+        # explicitly, without changing console encoding or the child environment.
+        $bytes = [System.Text.UTF8Encoding]::new($false, $true).GetBytes("codex`t$Line`n")
+        $Context.Process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+        $Context.Process.StandardInput.BaseStream.Flush()
     }
     catch {
         $Context.Active = $false
@@ -2642,8 +2646,9 @@ function Complete-WorkflowObservationSink {
                 timed_out = $TimedOut
                 duration_ms = $duration
             } | ConvertTo-Json -Compress
-            $Context.Process.StandardInput.WriteLine("runner`t$completion")
-            $Context.Process.StandardInput.Flush()
+            $bytes = [System.Text.UTF8Encoding]::new($false, $true).GetBytes("runner`t$completion`n")
+            $Context.Process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+            $Context.Process.StandardInput.BaseStream.Flush()
         }
         $Context.Process.StandardInput.Close()
     }

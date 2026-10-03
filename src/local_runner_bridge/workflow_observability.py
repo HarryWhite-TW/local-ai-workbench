@@ -8,6 +8,7 @@ control operation.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ import socket
 import sys
 import threading
 import time
+from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -118,6 +120,88 @@ def _command_name(command: Any) -> str | None:
     token = next((group for group in match.groups() if group), "")
     token = token.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
     return _safe_name(token)
+
+
+# A deliberately small invocation grammar, not a shell interpreter. Only a
+# literal executable/module position can supply semantics. Unsupported shell
+# syntax stays unknown; raw text and arguments never enter the durable event.
+_LITERAL_ARGUMENT = r'''(?:'[^'\r\n]*'|"[^"$`\r\n]*"|[^\s'";&|<>(){}$`#]+)'''
+_LITERAL_COMMAND = re.compile(rf"\s*({_LITERAL_ARGUMENT})(?:\s+{_LITERAL_ARGUMENT})*\s*")
+_ARGUMENTS = re.compile(_LITERAL_ARGUMENT)
+# Bounded pytest-core no-run/display modes (including core aliases), per
+# https://pytest.org/en/stable/reference/reference.html . This is not a CLI
+# parser or a contract for unknown/plugin options. --setup-show, --cache-clear,
+# and lowercase verbosity flags still execute tests and are not excluded.
+_PYTEST_CORE_NO_RUN_OPTIONS = frozenset({
+    "--help", "-h", "--version", "-V", "--collect-only", "--collectonly", "--co",
+    "--markers", "--fixtures", "--funcargs", "--fixtures-per-test",
+    "--cache-show", "--setup-only", "--setuponly", "--setup-plan", "--setupplan",
+})
+_POWERSHELL_COMMAND = re.compile(
+    rf"\s*(?:\$env:[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:'[^'\r\n]*'|\"[^\"$`\r\n]*\")\s*;\s*)*"
+    rf"(?P<call>&\s*)?(?P<invocation>{_LITERAL_ARGUMENT}(?:\s+{_LITERAL_ARGUMENT})*)\s*"
+    # The dogfood wrapper reports and propagates the native exit code. Arbitrary
+    # suffix commands/conditionals are not admitted as evidence of a test exit.
+    r"(?:;\s*\$testExit\s*=\s*\$LASTEXITCODE\s*;\s*"
+    r"Write-Output\s*\('TEST_EXIT_CODE=\{0\}'\s+-f\s+\$testExit\)\s*;\s*exit\s+\$testExit)?\s*;?\s*",
+    re.IGNORECASE,
+)
+
+
+def _test_framework(command: Any, *, depth: int = 0) -> str | None:
+    if (not isinstance(command, str) or len(command) > MAX_SOURCE_LINE_BYTES or depth > 2
+            or "\n" in command or "\r" in command):
+        return None
+    first = _COMMAND_TOKEN_PATTERN.match(command)
+    if first is None:
+        return None
+    executable = (_command_name(command) or "").lower()
+    rest = command[first.end():].strip()
+    if executable in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}:
+        wrapper = re.fullmatch(
+            r"(?:(?:-NoProfile|-NonInteractive|-NoLogo)\s+)*-Command\s+(.+)",
+            rest, re.IGNORECASE | re.DOTALL,
+        )
+        if wrapper is None:
+            return None
+        body = wrapper[1].strip()
+        if body[:1] in {"'", '"'} and body[-1:] == body[:1]:
+            body = body[1:-1]
+        match = _POWERSHELL_COMMAND.fullmatch(body)
+        if match is None or (match['invocation'][:1] in {"'", '"'} and not match['call']):
+            return None
+        return _test_framework(match['invocation'], depth=depth + 1)
+    if executable in {"cmd", "cmd.exe"}:
+        wrapper = re.fullmatch(r"(?:(?:/d|/s)\s+)*/c\s+(.+)", rest, re.IGNORECASE)
+        if wrapper is None:
+            return None
+        body = wrapper[1].strip()
+        if body.startswith('"') and body.endswith('"'):
+            body = body[1:-1]
+        return _test_framework(body, depth=depth + 1)
+    if not _LITERAL_COMMAND.fullmatch(command):
+        return None
+    arguments = [m[0][1:-1] if m[0][:1] in {"'", '"'} else m[0]
+                 for m in _ARGUMENTS.finditer(rest)]
+    # Version is a count option (-VV, -VVV, ...); cache display takes an
+    # optional pattern. These bounded forms never establish test execution.
+    if any(a in _PYTEST_CORE_NO_RUN_OPTIONS or re.fullmatch(r"-V{2,}", a)
+           or a.startswith("--cache-show=") for a in arguments):
+        return None
+    # Preserve existing conservative rejections; these are not pytest-core
+    # modes and do not extend the contract to another tool or plugin grammar.
+    if any(a in {"--listTests", "-N"} for a in arguments):
+        return None
+    # Only pytest has a bounded invocation contract here. Other test-tool names
+    # alone cannot prove that their invocation executes tests.
+    if executable in {"pytest", "pytest.exe"}:
+        return "pytest"
+    if re.fullmatch(r"python(?:[23](?:\.\d+)?)?(?:\.exe)?", executable):
+        while arguments and arguments[0] in {"-B", "-u", "-I", "-s", "-S", "-E"}:
+            arguments.pop(0)
+        if arguments[:2] == ["-m", "pytest"]:
+            return "pytest"
+    return None
 
 
 def _safe_relative_path(value: Any) -> str | None:
@@ -352,10 +436,14 @@ def project_codex_line(
         )
 
     if item_type == "command_execution":
+        payload["activity_kind"] = "command"
         command_name = _command_name(item.get("command"))
+        framework = _test_framework(item.get("command"))
         exit_code = _safe_integer(item.get("exit_code"), minimum=-(2**31), maximum=2**31 - 1)
         if command_name is not None:
             payload["command_name"] = command_name
+        if framework is not None:
+            payload.update(activity_kind="test", test_framework=framework)
         if exit_code is not None:
             payload["exit_code"] = exit_code
         kind = f"codex.command.{phase}"
@@ -473,6 +561,23 @@ def _serialized_record(record: dict[str, Any]) -> bytes:
     return encoded + b"\n"
 
 
+def _observation_time(value: Any) -> datetime | None:
+    """Parse runner/PowerShell ISO times on Python 3.10 (including 7 digits).
+
+    Observation ordering is sequence-based; sub-microsecond precision is not
+    used to grant authority. Normalize only the fractional seconds for parsing.
+    """
+    if not isinstance(value, str):
+        return None
+    normalized = re.sub(r"\.(\d+)(?=Z$|[+-]\d{2}:\d{2}$)",
+                        lambda match: "." + match[1][:6].ljust(6, "0"), value)
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    except ValueError:
+        return None
+
+
 def _valid_record(value: Any) -> bool:
     if not isinstance(value, dict) or value.get("schema") != EVENT_SCHEMA:
         return False
@@ -580,6 +685,22 @@ class EventStore:
 
         events: list[dict[str, Any]] = []
         diagnostics: list[str] = []
+        for record in self._records(diagnostics):
+            if record["sequence"] <= after_sequence:
+                continue
+            if request_id is not None and record["request_id"] != request_id:
+                continue
+            if run_id is not None and record["run_id"] != run_id:
+                continue
+            events.append(record)
+            if len(events) >= limit:
+                break
+        return events, list(dict.fromkeys(diagnostics))
+
+    def _records(self, diagnostics: list[str]) -> Iterable[dict[str, Any]]:
+        """Validated forward records; callers decide paging versus full scan."""
+        if not self.path.exists():
+            return
         last_sequence = 0
         for line, complete, oversized in _iter_bounded_lines(self.path):
             if not complete:
@@ -604,16 +725,73 @@ class EventStore:
                 diagnostics.append("non_monotonic_record_ignored")
                 continue
             last_sequence = sequence
-            if sequence <= after_sequence:
+            yield record
+
+    def read_current(self, request_id: str | None) -> dict[str, Any]:
+        """One whole-file scan, bounded event retention. Does not change SSE paging.
+
+        A runner start establishes a newer run. Late records from an older run
+        cannot supersede it. Multiple runs without a start are ambiguous.
+        Completion is retained even when it falls outside the visible tail.
+        """
+        if request_id is not None:
+            validate_request_id(request_id)
+        events: deque[dict[str, Any]] = deque(maxlen=MAX_REPLAY_EVENTS)
+        diagnostics: list[str] = []
+        run_id = None
+        retired_runs: set[str] = set()
+        latest_start: datetime | None = None
+        started = completed = ambiguous = False
+        count = latest = 0
+        source_id = "empty"
+        for record in self._records(diagnostics):
+            if count == 0:
+                source_id = hashlib.sha256(_serialized_record(record)).hexdigest()
+            count += 1
+            latest = record["sequence"]
+            if request_id is None or record["request_id"] != request_id:
                 continue
-            if request_id is not None and record["request_id"] != request_id:
+            is_start = (record["kind"] == "execution.started"
+                        and record["source"] == "runner"
+                        and record["payload"].get("interface") == "codex_exec_jsonl")
+            if is_start:
+                start_time = _observation_time(record["observed_at_utc"])
+                if start_time is None or (latest_start is not None and start_time < latest_start):
+                    diagnostics.append("run_start_time_ambiguous")
+                    ambiguous = True
+                    continue
+                latest_start = start_time
+            if is_start and record["run_id"] != run_id:
+                if record["run_id"] in retired_runs:
+                    diagnostics.append("retired_run_restart_ignored")
+                    continue
+                if run_id is not None:
+                    retired_runs.add(run_id)
+                run_id = record["run_id"]
+                events.clear()
+                started, completed, ambiguous = True, False, False
+            elif run_id is None:
+                run_id = record["run_id"]
+                started = is_start
+            elif record["run_id"] != run_id:
+                # Only known retired runs can be safely ignored. An unseen run
+                # without its runner start makes the current identity ambiguous.
+                if record["run_id"] not in retired_runs:
+                    ambiguous = True
                 continue
-            if run_id is not None and record["run_id"] != run_id:
-                continue
+            elif is_start:
+                started = True
             events.append(record)
-            if len(events) >= limit:
-                break
-        return events, list(dict.fromkeys(diagnostics))
+            if record["kind"] == "process.completed" and record["source"] == "runner":
+                completed = True
+        if ambiguous:
+            diagnostics.append("current_run_identity_ambiguous")
+            run_id, completed = None, False
+            events.clear()
+        return {"events": list(events), "diagnostics": list(dict.fromkeys(diagnostics)),
+                "run_id": run_id, "run_completed": completed, "run_started": started and not ambiguous,
+                "latest_sequence": latest or None, "event_count": min(count, MAX_REPLAY_EVENTS),
+                "source_id": source_id}
 
 
 class ObservationHTTPServer(ThreadingHTTPServer):

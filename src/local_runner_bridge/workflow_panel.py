@@ -7,6 +7,7 @@ import json
 import os
 import threading
 import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,13 +32,13 @@ from local_runner_bridge.bridge_operator_lifecycle_state import (
 )
 from local_runner_bridge.workflow_observability import (
     EVENT_PROTOCOL,
-    MAX_REPLAY_EVENTS,
     EventStore,
     ObservationError,
     ObservationHTTPServer,
     ObservationRequestHandler,
     validate_request_id,
 )
+from local_runner_bridge.sanctuary_projection import project_sanctuary
 
 
 PANEL_PROTOCOL = "lawb.workflow_panel.v1"
@@ -62,6 +63,11 @@ _ASSET_ROUTES = {
     "/": ("workflow_panel.html", "text/html; charset=utf-8"),
     "/workflow_panel.js": ("workflow_panel.js", "text/javascript; charset=utf-8"),
     "/workflow_panel.css": ("workflow_panel.css", "text/css; charset=utf-8"),
+    "/sanctuary": ("sanctuary.html", "text/html; charset=utf-8"),
+    "/sanctuary.svg": ("sanctuary.svg", "image/svg+xml"),
+    "/sanctuary.css": ("sanctuary.css", "text/css; charset=utf-8"),
+    "/sanctuary.js": ("sanctuary.js", "text/javascript; charset=utf-8"),
+    "/sanctuary_world.js": ("sanctuary_world.js", "text/javascript; charset=utf-8"),
 }
 
 
@@ -700,6 +706,7 @@ def build_workflow_snapshot(
     store: EventStore,
     *,
     now: datetime | None = None,
+    events_out: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a bounded projection without treating missing evidence as completion."""
 
@@ -769,9 +776,6 @@ def build_workflow_snapshot(
     except LifecycleEvidenceError:
         in_flight_status = "invalid"
         diagnostics.append("in_flight_evidence_invalid")
-
-    events, event_diagnostics = store.read(limit=MAX_REPLAY_EVENTS)
-    diagnostics.extend(f"observation_store:{item}" for item in event_diagnostics)
 
     processed_record = _latest_terminal_record(processed_records)
 
@@ -1005,13 +1009,17 @@ def build_workflow_snapshot(
         lifecycle = _final_review_lifecycle(final_verdict)
         updated_at_utc = final_verdict["reviewed_at_utc"]
 
-    request_events = [event for event in events if event["request_id"] == request_id]
+    window = store.read_current(request_id)
+    diagnostics.extend(f"observation_store:{item}" for item in window["diagnostics"])
+    request_events = window["events"]
     latest_event = request_events[-1] if request_events else None
     matching_events = (
         [event for event in request_events if event["run_id"] == latest_event["run_id"]]
         if latest_event is not None
         else []
     )
+    if events_out is not None:
+        events_out.extend(matching_events)
     warning = _warning_projection(applicable_failure, request_events)
     applicable_final_verdict = (
         final_verdict
@@ -1024,7 +1032,6 @@ def build_workflow_snapshot(
         warning,
         applicable_final_verdict,
     )
-    global_latest_event = events[-1] if events else None
     system = _system_projection(
         operator_health=operator_health,
         lifecycle_stage=lifecycle["stage"],
@@ -1087,10 +1094,13 @@ def build_workflow_snapshot(
         },
         "observability": {
             "protocol": EVENT_PROTOCOL,
-            "event_count": len(events),
+            "event_count": window["event_count"],
             "request_event_count": len(matching_events),
-            "latest_sequence": global_latest_event["sequence"] if global_latest_event else None,
-            "run_id": latest_event["run_id"] if latest_event else None,
+            "latest_sequence": window["latest_sequence"],
+            "run_id": window["run_id"],
+            "run_completed": window["run_completed"],
+            "run_started": window["run_started"],
+            "source_id": window["source_id"],
             "stream_url": f"/events?{urlencode({'follow': '1'})}",
         },
         "review": review,
@@ -1122,6 +1132,9 @@ class WorkflowPanelHTTPServer(ObservationHTTPServer):
     ) -> None:
         self.state_dir = state_dir
         self.asset_dir = asset_dir
+        self.viewer_session = uuid.uuid4().hex
+        self.viewer_sequence = 0
+        self.viewer_lock = threading.Lock()
         super().__init__(
             server_address,
             store,
@@ -1159,11 +1172,25 @@ class WorkflowPanelRequestHandler(ObservationRequestHandler):
 
     def _handle_get(self, *, head_only: bool) -> None:
         path = urlsplit(self.path).path
-        if path in {"/api/state", "/api/snapshot"}:
+        if path in {"/api/state", "/api/snapshot", "/api/sanctuary"}:
+            events: list[dict[str, Any]] = []
             snapshot = build_workflow_snapshot(
                 self.panel_server.state_dir,
                 self.panel_server.store,
+                events_out=events,
             )
+            if path == "/api/sanctuary":
+                # Ephemeral transport ordering, never Workflow identity or state.
+                with self.panel_server.viewer_lock:
+                    self.panel_server.viewer_sequence += 1
+                    delivery = {"session": self.panel_server.viewer_session,
+                                "sequence": self.panel_server.viewer_sequence}
+                snapshot = {
+                    "snapshot": snapshot,
+                    "world": project_sanctuary(snapshot, events),
+                    "events": events,
+                    "delivery": delivery,
+                }
             body = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode(
                 "utf-8"
             )

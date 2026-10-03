@@ -436,3 +436,53 @@ def test_reviewbundle_uses_json_events_and_restores_final_message_stdout():
     assert "-WorkflowObservation $workflowObservation" in launch
     assert "$codexResult.Stdout = $codexFinalMessage.TrimEnd()" in launch
     assert "$codexResult.LastStdoutLine = Get-LastNonEmptyLine" in launch
+
+
+@pytest.mark.parametrize("shell_name", ["powershell.exe", "pwsh.exe"])
+def test_runner_transports_genuine_utf8_without_loss(tmp_path, shell_name):
+    shell = shutil.which(shell_name)
+    if shell is None:
+        pytest.skip(f"{shell_name} is unavailable")
+    emitter = tmp_path / "utf8_emitter.py"
+    source = {"type": "item.completed", "item": {
+        "id": "unicode-file", "type": "file_change", "status": "completed",
+        "changes": [{"path": "docs/繁體中文測試.md"}],
+        "content": "私人內容不得保存",
+    }}
+    command = '''pwsh.exe -Command "$env:PYTHONDONTWRITEBYTECODE='1'; & '.\\.venv-course\\Scripts\\python.exe' -B -m pytest -q 'private-test-path'; $testExit=$LASTEXITCODE; Write-Output ('TEST_EXIT_CODE={0}' -f $testExit); exit $testExit"'''
+    started = {"type": "item.started", "item": {"id": "short-test", "type": "command_execution",
+               "command": command, "status": "in_progress"}}
+    completed = {"type": "item.completed", "item": {**started["item"], "status": "completed", "exit_code": 0,
+                 "aggregated_output": "私人輸出不得保存"}}
+    wire = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in [source, started, completed]).encode("utf-8")
+    assert b"\\u" not in wire and "繁體中文".encode("utf-8") in wire
+    emitter.write_text(f"import sys\nsys.stdout.buffer.write({wire!r})\nsys.stdout.buffer.flush()\n", encoding="utf-8")
+    store = tmp_path / "utf8-events.jsonl"
+    harness = tmp_path / "utf8.ps1"
+    result_path = tmp_path / "result.json"
+    write_harness(harness, emitter=emitter, store_path=store, timeout_seconds=10,
+                  result_path=result_path)
+    # Record the actual .NET transport encoding separately from the public store.
+    text = harness.read_text(encoding="utf-8-sig")
+    text = text.replace("$context.Process = $sinkProcess", "$context.Process = $sinkProcess\n"
+        + f"[IO.File]::WriteAllText({str(tmp_path / 'encoding.txt')!r}, "
+        + "($PSVersionTable.PSVersion.ToString() + ' stdin=' + $sinkProcess.StandardInput.Encoding.WebName))")
+    harness.write_text(text, encoding="utf-8-sig")
+    result = subprocess.run([shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness)],
+                            capture_output=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result_path.read_text(encoding="utf-8"))["ExitCode"] == 0
+    events, diagnostics = EventStore(store).read()
+    assert not diagnostics
+    files = [e for e in events if e["kind"] == "codex.file.completed"]
+    assert files and files[0]["payload"]["paths"] == ["docs/繁體中文測試.md"], (
+        (tmp_path / "encoding.txt").read_text(), events)
+    assert not any(e["kind"] == "observability.source_warning" for e in events)
+    assert "私人內容" not in store.read_text(encoding="utf-8")
+    assert "私人輸出" not in store.read_text(encoding="utf-8")
+    assert "private-test-path" not in store.read_text(encoding="utf-8")
+    tests = [e for e in events if e["payload"].get("activity_kind") == "test"]
+    assert [e["kind"] for e in tests] == ["codex.command.started", "codex.command.completed"]
+    assert all(e["payload"]["test_framework"] == "pytest" for e in tests)
+    assert tests[-1]["payload"]["exit_code"] == 0
+    assert len({(e["request_id"], e["run_id"]) for e in events}) == 1
