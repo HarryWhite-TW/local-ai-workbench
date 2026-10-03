@@ -223,10 +223,6 @@ def project_sanctuary(
     age = _age(last["observed_at_utc"], now)
     if age is None or age > ACTIVITY_MAX_AGE_SECONDS:
         return uncertain("activity_evidence_stale", "最近沒有新的執行訊號")
-    if last["kind"] in {"codex.error", "codex.turn.completed", "codex.turn.failed", "codex.command.failed"}:
-        result.update(pose="settled", artifact="result", title="這段活動已停止",
-                      description="僅呈現已觀察到的活動結束；Workflow 狀態仍以來源為準。")
-        return result
     open_commands: dict[str, dict[str, Any]] = {}
     for event in relevant:
         kind, payload = event["kind"], event["payload"]
@@ -243,6 +239,12 @@ def project_sanctuary(
         if kind in {"codex.command.completed", "codex.command.failed"}:
             open_commands.pop(item_id, None)
     active_command = max(open_commands.values(), key=lambda e:e["sequence"], default=None)
+    if last["kind"] in {"codex.error", "codex.turn.completed", "codex.turn.failed"} or (
+        last["kind"] == "codex.command.failed" and active_command is None
+    ):
+        result.update(pose="settled", artifact="result", title="這段活動已停止",
+                      description="僅呈現已觀察到的活動結束；Workflow 狀態仍以來源為準。")
+        return result
     if not active_command and last["kind"] == "codex.command.completed" and _test_command(last["payload"]):
         result.update(pose="settled", station="test", title="測試指令已結束",
                       description="Test Bench 保留已完成的指令證據；exit code 不等於完整測試報告或最終接受。")

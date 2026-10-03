@@ -1,6 +1,7 @@
 """Real Store -> Panel -> Shell boundaries; no runner or remote work is invoked."""
 import copy
 import json
+from datetime import timedelta
 from urllib.request import Request, urlopen
 
 import pytest
@@ -85,6 +86,25 @@ def test_multiple_runs_without_start_are_unknown_and_retired_start_cannot_return
     assert "retired_run_restart_ignored" in store.read_current(base.REQUEST_ID)["diagnostics"]
 
 
+def test_retired_run_older_late_start_preserves_current_run(tmp_path):
+    old_start = record("execution.started", run="old-run-001")
+    old_start["observed_at_utc"] = (base.NOW-timedelta(seconds=20)).isoformat()
+    current_start = record("execution.started")
+    current_start["observed_at_utc"] = (base.NOW-timedelta(seconds=10)).isoformat()
+    delayed_old_start = copy.deepcopy(old_start)
+    store = write_events(tmp_path / "events.jsonl", [
+        old_start, current_start, record(), delayed_old_start,
+    ])
+
+    window = store.read_current(base.REQUEST_ID)
+
+    assert window["run_id"] == base.RUN_ID
+    assert [event["sequence"] for event in window["events"]] == [2, 3]
+    assert "retired_run_restart_ignored" in window["diagnostics"]
+    assert "run_start_time_ambiguous" not in window["diagnostics"]
+    assert "current_run_identity_ambiguous" not in window["diagnostics"]
+
+
 def test_source_truncation_and_malformed_or_duplicate_records_fail_closed(tmp_path):
     running_state(tmp_path)
     path = tmp_path / "events.jsonl"
@@ -132,6 +152,48 @@ def test_windows_runner_fractional_timestamps_keep_real_run_visible(tmp_path, fr
     events = []
     snapshot = base.build_workflow_snapshot(tmp_path, store, now=base.NOW, events_out=events)
     assert project_sanctuary(snapshot, events, now=base.NOW)["pose"] == "settled"
+
+
+@pytest.mark.parametrize("observed_at_utc", [
+    "0001-01-01T00:00:00+23:59",
+    "9999-12-31T23:59:59-23:59",
+])
+def test_out_of_range_runner_start_time_degrades_to_ambiguous(tmp_path, observed_at_utc):
+    start = record("execution.started")
+    start["observed_at_utc"] = observed_at_utc
+    store = write_events(tmp_path / "events.jsonl", [start])
+
+    window = store.read_current(base.REQUEST_ID)
+
+    assert window["run_id"] is None
+    assert window["events"] == []
+    assert "run_start_time_ambiguous" in window["diagnostics"]
+    assert "current_run_identity_ambiguous" in window["diagnostics"]
+
+
+def test_failed_overlapping_command_closes_only_that_command(tmp_path):
+    running_state(tmp_path)
+    start = record("execution.started")
+    start["observed_at_utc"] = (base.NOW-timedelta(seconds=4)).isoformat()
+    command_a = record()
+    command_a["observed_at_utc"] = (base.NOW-timedelta(seconds=3)).isoformat()
+    command_a["payload"].update(item_id="command-a", command_name="git")
+    command_b = record()
+    command_b["observed_at_utc"] = (base.NOW-timedelta(seconds=2)).isoformat()
+    command_b["payload"].update(item_id="command-b", command_name="python")
+    failed_b = record("codex.command.failed")
+    failed_b["observed_at_utc"] = (base.NOW-timedelta(seconds=1)).isoformat()
+    failed_b["payload"].update(item_id="command-b", command_name="python", status="failed")
+    store = write_events(tmp_path / "events.jsonl", [start, command_a, command_b, failed_b])
+    events = []
+    snapshot = base.build_workflow_snapshot(tmp_path, store, now=base.NOW, events_out=events)
+
+    world = project_sanctuary(snapshot, events, now=base.NOW)
+
+    assert world["pose"] == "working"
+    assert world["activity"] == "command"
+    assert world["actor"] == "builder"
+    assert world["semantic_motion"] is True
 
 
 def test_shell_single_read_and_panel_identity_match_and_sse_reconnect(tmp_path, monkeypatch):

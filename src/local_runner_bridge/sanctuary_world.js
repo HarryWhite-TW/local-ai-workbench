@@ -143,7 +143,7 @@ class SanctuaryWorld {
     for(const [x,y]of[[2.1,5.7],[10,14.3]])add(x,y,()=>this.chair(x,y));
     for(const [x,y,size]of[[1.5,6.5,1.3],[6.5,2,1],[6.6,6.5,1.2],[9.5,6.5,1],[14.4,6.5,1.2],[22.6,6.5,1.2],[17.4,6.5,.9],[1.5,16.6,1.2],[6.5,16.5,1.2],[9.5,15.3,1.2],[14.4,15.2,1.4],[17.5,16.5,1],[22.6,16.6,1.2],[7.8,19,1.1],[16,19,1.1]])add(x,y,()=>this.plant(x,y,size));
     for(const [x,y]of[[2,5.4],[6.6,2.5],[14.4,2],[1.5,14],[13.8,15.3],[22.4,10.8],[5.8,18.7]])add(x,y,()=>this.lamp(x,y));
-    add(...this.actor,()=>this.worker());
+    if(this.world.actor==="builder")add(...this.actor,()=>this.worker());
     const bot=[8,9.3+(Math.sin(t*.13)+1)*4.2];add(...bot,()=>{const p=this.point(...bot);this.ellipse(...p,10,5,"#061724");this.rect(p[0]-9,p[1]-16,18,13,"#91a4aa",5);this.rect(p[0]-6,p[1]-12,12,5,"#263d4c",2);this.line([[p[0]-3,p[1]-10],[p[0]+3,p[1]-10]],"#afcaca",2);this.ellipse(p[0]-6,p[1]-1,3,3,"#1c3444");this.ellipse(p[0]+6,p[1]-1,3,3,"#1c3444");});
     objects.sort((a,b)=>a.depth-b.depth).forEach(o=>o.draw());
   }

@@ -574,7 +574,7 @@ def _observation_time(value: Any) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
         return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
-    except ValueError:
+    except (OverflowError, ValueError):
         return None
 
 
@@ -754,6 +754,9 @@ class EventStore:
             is_start = (record["kind"] == "execution.started"
                         and record["source"] == "runner"
                         and record["payload"].get("interface") == "codex_exec_jsonl")
+            if is_start and record["run_id"] in retired_runs:
+                diagnostics.append("retired_run_restart_ignored")
+                continue
             if is_start:
                 start_time = _observation_time(record["observed_at_utc"])
                 if start_time is None or (latest_start is not None and start_time < latest_start):
@@ -762,9 +765,6 @@ class EventStore:
                     continue
                 latest_start = start_time
             if is_start and record["run_id"] != run_id:
-                if record["run_id"] in retired_runs:
-                    diagnostics.append("retired_run_restart_ignored")
-                    continue
                 if run_id is not None:
                     retired_runs.add(run_id)
                 run_id = record["run_id"]
