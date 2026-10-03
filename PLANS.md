@@ -37,8 +37,38 @@ upper-level gate for Workflow continuation.
 
 Product runtime and development-workflow tooling remain separate.
 
-The accepted Phase 0 Final Daily-Use Acceptance is the current Workflow
-baseline. Its supported scope is the visible, localhost, single-user daily path
+The daily engineering baseline is Native-first Hybrid. When native capabilities
+satisfy the task, the preferred route is:
+
+`ChatGPT Work -> native Codex execution environment -> local repo/tools -> result returned to the same Work conversation`
+
+This route has been demonstrated on the user's Windows environment for local
+repository/source inspection, edits, Python tests, JavaScript checks, Chrome
+rendering verification, diff/readback, and same-conversation result return.
+Internal Codex technology does not require the user to manage a separate Codex
+view/thread or relay prompts/results. ChatGPT owns the outcome and authority
+boundaries. Independent ChatGPT final technical review of the exact candidate,
+diff, and evidence against the approved task is required. When ChatGPT Work is
+the execution surface, same-conversation review is preferred because it avoids
+manual relay; it is not a permanent architectural requirement. Supervising
+ChatGPT or a future Companion/control surface may perform that independent
+final review. The user must not become the routine technical relay between
+execution and review.
+Executor completion remains distinct from final acceptance. Stage, commit,
+push, PR creation, merge, and other remote, irreversible, or high-risk actions
+remain separately authority-gated.
+
+Bridge / Operator / Dispatcher / Runner remains incumbent specialised
+governance, compatibility, recovery, or fallback infrastructure. It has not
+been fully replaced; its governance applies whenever that route is used or
+changed. It is not mandatory transport for every engineering task. Do not
+build a duplicate custom terminal, diff viewer, file explorer, browser, generic
+queue, memory system, or multi-agent framework merely to reproduce platform
+capability. This route choice does not change the product runtime or activate
+new custom infrastructure.
+
+The accepted Phase 0 Final Daily-Use Acceptance remains the incumbent Bridge
+baseline. Its supported scope is the visible, localhost, single-user Bridge path
 already present on canonical `master`: ChatGPT remains the primary UI; GitHub
 remains the auditable Task and Result Surface; the managed local Workflow and
 Human View expose request-bound progress, terminal result, and final-review
@@ -52,20 +82,23 @@ preserves unresolved final-review truth across requests, does not claim that a
 dispatcher was reached before the durable dispatch transition succeeds, and
 separates local Workflow readiness from external model execution availability.
 
-This acceptance remains bounded. Local Workflow readiness does not prove that
+This Bridge acceptance remains bounded. Local Workflow readiness does not prove that
 external model execution is available; that is known only when an actual
 execution is attempted. Continuous end-to-end telemetry through every
 Dispatcher, Runner, and Codex transition is not claimed. The accepted baseline
 does not add a service, tray, VM executor, repository extraction, new external
 API, broader trusted actors, automatic publication, or approval chaining.
 
-No active implementation node exists. PRT items remain optional
+No subsequent Product or Workflow node activates automatically. The current
+active engineering outcome must come from fresh project control or explicit
+user direction, not this static planning paragraph. PRT items remain optional
 reality-validation assets, not a mandatory numbered execution queue. MCP /
-ChatGPT App, Desktop Agent, VM executor, service, tray, and repository extraction
-remain future or separately gated work. No Product or Workflow node activates
+ChatGPT App integrations, custom Desktop Agent, VM executor, service, tray, and
+repository extraction remain future or separately gated work. This restriction
+does not defer use of the proven native Work capabilities above. No Product or Workflow node activates
 automatically.
 
-### Final Regression Gate and Freeze
+### Incumbent Bridge Final Regression Gate and Freeze
 
 The Phase 0 baseline may be declared regression-frozen only after one separately
 authorized final-regression run at an exact, freshly verified canonical
@@ -76,7 +109,7 @@ cross-request lifecycle/readiness distinctions, and receive independent durable
 result readback. This documentation reconciliation defines the gate; its
 docs-only `git diff --check` does not satisfy the runtime regression gate.
 
-After that freeze, Workflow implementation may thaw only through a separately
+After that freeze, incumbent Bridge implementation may thaw only through a separately
 approved task with an explicit objective, scope, authority, and verification
 plan, prompted by a reproducible regression or security defect, material
 platform drift, or an explicitly approved product outcome. Thaw work must start
@@ -84,6 +117,10 @@ from freshly verified state, rerun impacted checks plus the final-regression
 gate, and resynchronize durable truth if any current claim changes. An Issue,
 roadmap ordering, optional PRT item, or stale document alone cannot thaw the
 baseline or activate a next node.
+
+These runtime regression and freeze rules govern the incumbent Bridge baseline;
+they do not require routing ordinary native engineering through Bridge or running
+its full suite for governance-only changes.
 
 ## Canonical Ecosystem Forward Plan
 
@@ -100,10 +137,11 @@ or high-risk authority without separate review and approval.
 
 ### Local AI Workbench
 
-- canonical daily engineering runtime and reference host;
-- owns current Bridge, Dispatcher, Runner, Codex, and GitHub result/status path;
+- reference host for the incumbent specialised Bridge execution route;
+- owns the repository's custom Bridge, Dispatcher, Runner, and GitHub
+  result/status path; native Work execution uses platform-provided capabilities;
 - remains the Local Document-to-Knowledge Workbench product repository;
-- must not be duplicated by a second daily runtime.
+- must not grow a duplicate custom daily runtime to reproduce platform capability.
 
 ### Human-Governed Workflow
 
@@ -187,7 +225,7 @@ phase. Roadmap ordering never grants authority.
 - Bridge-specific governance: `src/local_runner_bridge/AGENTS.md`;
 - acceptance integrity: `docs/WORKFLOW_ACCEPTANCE_INTEGRITY_PROTOCOL.md`;
 - engineering record navigation: `docs/ENGINEERING_RECORDS_INDEX.md`;
-- active Bridge execution governance:
+- execution governance when using or changing the incumbent Bridge route:
   `docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md`;
 - Direction Lock: `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`;
 - Bridge Operator specification: `docs/BRIDGE_OPERATOR_V0_SPEC.md`;
