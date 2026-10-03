@@ -33,6 +33,7 @@ async function shot(name){await visibleWorld();await page.screenshot({path:path.
  await fs.mkdir(evidence,{recursive:true});server=await startServer();
  browser=await playwright.chromium.launch(process.env.PLAYWRIGHT_BROWSER_PATH?{executablePath:process.env.PLAYWRIGHT_BROWSER_PATH,headless:true}:{channel:'chrome',headless:true});
  context=await browser.newContext({viewport:{width:1600,height:1000},deviceScaleFactor:1});page=await context.newPage();page.setDefaultTimeout(10000);
+ await page.addInitScript(()=>{window.__builderDrawCount=0;const fillText=CanvasRenderingContext2D.prototype.fillText;CanvasRenderingContext2D.prototype.fillText=function(text,...args){if(text==="BUILDER")window.__builderDrawCount++;return fillText.call(this,text,...args);};});
  page.on('pageerror',e=>errors.push(String(e)));page.on('request',r=>requests.push({method:r.method(),url:r.url()}));
  await page.route('**/api/sanctuary',async route=>{
   if(fault==='offline')return route.abort('connectionrefused');
@@ -48,6 +49,7 @@ async function shot(name){await visibleWorld();await page.screenshot({path:path.
  });
  await page.goto(server.url+'/sanctuary');await visibleWorld();
  let s=await state();check('source, projection and rendered identity agree',s.source.observability.run_id===s.projection.identity.run_id&&s.rendered.identity.run_id===s.source.observability.run_id,s);
+ const visibleBuilderDraws=await page.evaluate(()=>window.__builderDrawCount);await pause(100);check('authoritative builder actor is rendered',s.projection.actor==='builder'&&await page.evaluate(count=>window.__builderDrawCount>count,visibleBuilderDraws),s.projection);
  check('initial historical position does not replay travel',!s.rendered.actorMoving&&!s.rendered.artifactMoving);
  await shot('01-current-task');
  await page.locator('#expert-open').click();
@@ -64,7 +66,8 @@ async function shot(name){await visibleWorld();await page.screenshot({path:path.
  check('artifact opens relevant inspector',await page.locator('#expert-dialog').evaluate(e=>e.open)&&await page.locator('#selection-context').innerText().then(t=>t.includes('成果')));await page.keyboard.press('Escape');
  await page.reload();await visibleWorld();s=await state();check('refresh snaps to source without replay',!s.rendered.actorMoving&&!s.rendered.artifactMoving);
  await configure('technical-repair');check('repair remains technical with no human callout',(await state()).projection.human.kind==='TECHNICAL_ACTION'&&await page.locator('#human-callout').isHidden());await shot('03-technical-action');
- await configure('waiting-review');check('ChatGPT owns review',(await state()).projection.human.kind==='CHATGPT_REVIEW');
+ await configure('waiting-review');s=await state();check('ChatGPT owns review',s.projection.human.kind==='CHATGPT_REVIEW');
+ const absentBuilderDraws=await page.evaluate(()=>window.__builderDrawCount);await pause(100);check('null actor does not render Builder',s.projection.actor===null&&await page.evaluate(count=>window.__builderDrawCount===count,absentBuilderDraws),s.projection);
  await page.locator('#expert-open').click();check('missing summaries and proposal stay unavailable',await page.locator('#review-facts').innerText().then(t=>t.includes('unavailable')&&t.includes('Test summary')));await page.keyboard.press('Escape');
  await configure('accepted');check('accepted result static',(await state()).rendered.pose==='accepted'&&!(await state()).rendered.semanticMotion);
  await configure('process-completed');check('process completion not final acceptance',(await state()).rendered.pose==='settled'&&(await state()).source.current_task.lifecycle.stage==='RUNNING');
