@@ -6,8 +6,8 @@ import pytest
 
 from src.companion_core.codex import CodexRuntime, POLICY, SETTINGS, _Rpc
 from src.companion_core.core import Companion
-from src.companion_core.domain import Authority
-from src.companion_core.runtime import EventKind, Request
+from src.companion_core.domain import Authority, Failure
+from src.companion_core.runtime import EventKind, Request, RuntimeFailure
 
 
 REQUEST = Request("Inspect", ".", Authority.READ_ONLY)
@@ -68,8 +68,9 @@ def test_adapter_translates_and_binds_only_matching_events():
     (POLICY, "on-request")])
 def test_policy_downgrade_never_starts_turn(sandbox, approval):
     rpc = FakeRpc(sandbox=sandbox, approval=approval)
-    with pytest.raises(PermissionError):
+    with pytest.raises(RuntimeFailure) as caught:
         list(CodexRuntime("unused", "model", lambda: "synthetic")._execute(rpc, REQUEST, "synthetic"))
+    assert caught.value.reason == Failure.POLICY
     assert "turn/start" not in dict(rpc.calls)
 
 
@@ -152,3 +153,41 @@ def test_transport_errors_and_unknown_requests_fail_closed():
     with pytest.raises(RuntimeError, match="Runtime request failed"):
         rpc.call("initialize", {})
     assert any(m.get("id") == 40 and "error" in m for m in process.stdin.sent)
+
+
+@pytest.mark.parametrize("lines,reason", [([], Failure.CONNECTION),
+    (["private invalid JSON"], Failure.PROTOCOL), (["[]"], Failure.PROTOCOL)])
+def test_transport_failure_reasons_do_not_expose_body(lines, reason):
+    class Process:
+        stdout = iter(lines)
+    rpc = _Rpc(Process())
+    with pytest.raises(RuntimeFailure) as caught:
+        rpc.receive(1)
+    assert caught.value.reason == reason
+    assert "private" not in str(caught.value)
+
+
+def test_transport_timeout_has_explicit_reason():
+    import queue
+    rpc = object.__new__(_Rpc)
+    rpc.messages = queue.Queue()
+    with pytest.raises(RuntimeFailure) as caught:
+        rpc.receive(0)
+    assert caught.value.reason == Failure.TIMEOUT
+
+
+@pytest.mark.parametrize("credential", [lambda: "", lambda: "sk-synthetic"])
+def test_unavailable_plan_credential_is_not_echoed(credential):
+    with pytest.raises(RuntimeFailure) as caught:
+        list(CodexRuntime("never-launched", "model", credential).run(REQUEST))
+    assert caught.value.reason == Failure.AUTHENTICATION
+    assert "synthetic" not in str(caught.value)
+
+
+def test_credential_callback_failure_does_not_expose_body():
+    def broken():
+        raise ValueError("Cookie: private-credential")
+    with pytest.raises(RuntimeFailure) as caught:
+        list(CodexRuntime("never-launched", "model", broken).run(REQUEST))
+    assert caught.value.reason == Failure.AUTHENTICATION
+    assert "private" not in str(caught.value)

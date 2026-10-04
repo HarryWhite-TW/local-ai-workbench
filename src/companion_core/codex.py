@@ -14,8 +14,8 @@ import threading
 import time
 from typing import Callable
 
-from .domain import Authority
-from .runtime import EventKind, Request, RuntimeEvent
+from .domain import Authority, Failure
+from .runtime import EventKind, Request, RuntimeEvent, RuntimeFailure
 
 
 POLICY = {"type": "readOnly", "networkAccess": False}
@@ -47,6 +47,8 @@ class _Rpc:
         try:
             for line in self.process.stdout:
                 self.messages.put(json.loads(line))
+        except (json.JSONDecodeError, UnicodeError):
+            self.messages.put(RuntimeFailure(Failure.PROTOCOL))
         except Exception:
             pass
         finally:
@@ -59,9 +61,16 @@ class _Rpc:
     def receive(self, timeout):
         deadline = time.monotonic() + timeout
         while True:
-            message = self.messages.get(timeout=max(0, deadline - time.monotonic()))
+            try:
+                message = self.messages.get(timeout=max(0, deadline - time.monotonic()))
+            except queue.Empty:
+                raise RuntimeFailure(Failure.TIMEOUT) from None
+            if isinstance(message, RuntimeFailure):
+                raise message
+            if message is None:
+                raise RuntimeFailure(Failure.CONNECTION)
             if not isinstance(message, dict):
-                raise RuntimeError("Runtime connection closed")
+                raise RuntimeFailure(Failure.PROTOCOL)
             if "id" in message and "method" in message:
                 # Never approve a capability escalation, external tool or input request.
                 self.send({"id": message["id"], "error": {
@@ -79,6 +88,8 @@ class _Rpc:
             if message.get("id") == ident:
                 if "error" in message:
                     raise RuntimeError("Runtime request failed")
+                if "result" not in message:
+                    raise RuntimeFailure(Failure.PROTOCOL)
                 return message["result"]
             self.saved.append(message)
 
@@ -105,9 +116,12 @@ class CodexRuntime:
     def run(self, request: Request):
         if request.authority is not Authority.READ_ONLY:
             raise PermissionError("Only read-only execution is supported")
-        token = self._credential()
+        try:
+            token = self._credential()
+        except Exception:
+            raise RuntimeFailure(Failure.AUTHENTICATION) from None
         if not token or token.startswith("sk-"):
-            raise PermissionError("ChatGPT-plan credential required")
+            raise RuntimeFailure(Failure.AUTHENTICATION)
         env = {k: v for k, v in os.environ.items() if k.upper() in {
             "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "USERPROFILE",
             "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "PROGRAMFILES",
@@ -115,7 +129,7 @@ class CodexRuntime:
         # A fresh home avoids inherited provider, plugin and MCP configuration.
         with tempfile.TemporaryDirectory(prefix="companion-codex-") as state:
             if Path(state).resolve().is_relative_to(Path(request.workspace).resolve()):
-                raise PermissionError("Runtime state must be outside the workspace")
+                raise RuntimeFailure(Failure.POLICY)
             env.update(CODEX_HOME=state, ACCESS_TOKEN=token, RUST_LOG="off")
             command = [self.executable, "app-server", "--listen", "stdio://"]
             for setting in SETTINGS:
@@ -151,10 +165,10 @@ class CodexRuntime:
         sandbox = started.get("sandbox", {})
         if (sandbox.get("type") != "readOnly" or sandbox.get("networkAccess", False) is not False
                 or started.get("approvalPolicy") != "never"):
-            raise PermissionError("Read-only policy was not confirmed")
+            raise RuntimeFailure(Failure.POLICY)
         session = started.get("thread", {}).get("id")
         if not isinstance(session, str) or not session:
-            raise RuntimeError("Missing runtime session")
+            raise RuntimeFailure(Failure.PROTOCOL)
         yield RuntimeEvent(EventKind.SESSION, session_id=session)
         turn = rpc.call("turn/start", {"threadId": session, "cwd": request.workspace,
             "approvalPolicy": "never", "sandboxPolicy": dict(POLICY),

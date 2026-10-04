@@ -3,7 +3,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterator, Protocol
 
-from .domain import Authority
+from .domain import Authority, Failure
+
+
+class RuntimeFailure(RuntimeError):
+    """Adapter-derived reason only; never a provider response body."""
+
+    def __init__(self, reason: Failure):
+        self.reason = reason
+        super().__init__(reason.value)
 
 
 class EventKind(str, Enum):

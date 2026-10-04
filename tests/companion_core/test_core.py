@@ -3,7 +3,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from src.companion_core.core import Companion
-from src.companion_core.domain import Acceptance, Authority, Execution
+from src.companion_core.domain import Acceptance, Authority, Execution, Failure
 from src.companion_core.runtime import EventKind, RuntimeEvent
 
 
@@ -125,5 +125,53 @@ def test_keyboard_interrupt_and_cleanup(tmp_path):
                 self.closed = True
     runtime = Interrupted([])
     core = Companion(runtime, "Inspect", str(tmp_path), Authority.READ_ONLY)
-    assert core.run().state == "CANCELLED"
+    assert core.run().state == "FAILED"
+    assert core.task.failure == Failure.INTERRUPTED
     assert runtime.closed
+
+
+@pytest.mark.parametrize("stage", ["task_created", "working", "session_bound",
+    "inspecting_repository", "receiving_result", "execution_complete", "pending_review"])
+@pytest.mark.parametrize("error", [RuntimeError, BrokenPipeError, KeyboardInterrupt, SystemExit])
+def test_observer_failure_cannot_change_execution_or_acceptance(tmp_path, stage, error):
+    runtime = FakeRuntime(completed())
+    core = Companion(runtime, "Inspect", str(tmp_path), Authority.READ_ONLY)
+
+    def broken(event):
+        if event.stage == stage:
+            raise error("private observer detail")
+
+    task = core.run(broken)
+    assert task.state == "RESULT_PENDING_REVIEW"
+    assert task.result == "observed result"
+    assert task.acceptance == Acceptance.UNREVIEWED and task.reviewer is None
+    assert runtime.calls == 1 and runtime.closed
+    with pytest.raises(ValueError):
+        core.run()
+
+
+def test_observer_cannot_reenter_lifecycle_or_review(tmp_path):
+    core = Companion(FakeRuntime(completed()), "Inspect", str(tmp_path), Authority.READ_ONLY)
+    attempts = []
+
+    def observer(event):
+        for action in (core.run, core.cancel,
+                       lambda: core.review(accepted=True, reviewer="renderer")):
+            with pytest.raises(ValueError):
+                action()
+            attempts.append(event.stage)
+
+    assert core.run(observer).state == "RESULT_PENDING_REVIEW"
+    assert len(attempts) == 21
+    assert core.task.acceptance == Acceptance.UNREVIEWED
+
+
+def test_cleanup_failure_is_not_reported_ready_for_review(tmp_path):
+    class BrokenCleanup(FakeRuntime):
+        def run(self, request):
+            yield from completed()
+            raise RuntimeError("private cleanup detail")
+    events = []
+    core = Companion(BrokenCleanup([]), "Inspect", str(tmp_path), Authority.READ_ONLY)
+    assert core.run(events.append).state == "FAILED"
+    assert "pending_review" not in [event.stage for event in events]
