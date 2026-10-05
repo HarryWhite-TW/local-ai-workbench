@@ -174,11 +174,14 @@ class ReviewStore:
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             raise ReviewError() from None
 
-    def pending(self) -> list[ReviewTarget]:
+    def targets(self) -> list[ReviewTarget]:
+        """Reload durable receipts, including closed reviews; no cached UI truth."""
         self._location()
-        targets = [self.get(p.name.removesuffix(".result.json"))
-                   for p in sorted(self.directory.glob("*.result.json"))]
-        return [t for t in targets if t.task.state == "RESULT_PENDING_REVIEW"]
+        return [self.get(p.name.removesuffix(".result.json"))
+                for p in sorted(self.directory.glob("*.result.json"))]
+
+    def pending(self) -> list[ReviewTarget]:
+        return [t for t in self.targets() if t.task.state == "RESULT_PENDING_REVIEW"]
 
     def decide(self, task_id: str, result_id: str, action: str, *, reviewer: str,
                revision_intent: str | None = None) -> ReviewTarget:

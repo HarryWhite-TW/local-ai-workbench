@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Companion · 唯讀工作</title>
+  <link rel="stylesheet" href="/surface.css"><script src="/surface.js" defer></script>
+</head>
+<body>
+<main>
+  <header><div><p class="eyebrow">LOCAL · HUMAN-GOVERNED</p><h1>Companion</h1></div>
+    <nav aria-label="顯示模式"><button id="companion-mode">Companion 模式</button><button id="mixed-mode" aria-pressed="true">Mixed 模式</button></nav>
+  </header>
+  <p class="boundary">唯讀 READ_ONLY · 接受結果不授予寫檔、Git 或發布權限。</p>
+  <p id="connection" role="status">正在連接本機工作端…</p>
+  <section class="mixed" aria-labelledby="run-heading">
+    <h2 id="run-heading">交代一個唯讀工作</h2>
+    <p>限定工作目錄：<span id="workspace"></span></p>
+    <p class="muted">僅限此 repo 的非敏感內容；不提供個人資料夾存取。唯讀不代表任意讀取範圍已受隔離。</p>
+    <form id="run-form"><label for="intent">想了解什麼？</label>
+      <textarea id="intent" rows="3" maxlength="4000" required placeholder="例如：閱讀 README，說明這個專案的公開產品名稱與用途。"></textarea>
+      <button id="start" type="submit" disabled>開始唯讀工作</button>
+    </form>
+    <p id="active" role="status"></p><ul id="progress" aria-live="polite"></ul><p id="notice" role="status"></p>
+  </section>
+  <section aria-labelledby="selection-heading">
+    <h2 id="selection-heading">選擇要查看的工作</h2>
+    <label for="tasks">已保存的結果</label><select id="tasks"><option value="">請選擇工作，不會自動批准最新結果</option></select>
+    <p id="selected-status" role="status">尚未選擇工作</p>
+    <button id="open-review" disabled>開啟結果／審查</button>
+  </section>
+  <section id="review-panel" class="mixed" aria-labelledby="review-heading" hidden>
+    <h2 id="review-heading">結果與明確審查</h2>
+    <p id="review-intent"></p><pre id="result"></pre><p id="review-state" role="status"></p>
+    <p>執行完成不代表已接受。以下按鈕只處理眼前這份結果。</p>
+    <div class="actions"><button id="accept" disabled>接受此結果</button><button id="reject" disabled>拒絕此結果</button></div>
+    <label for="revision-intent">需要調整？請明確描述新工作</label>
+    <textarea id="revision-intent" rows="2" maxlength="4000"></textarea><button id="revise" disabled>要求調整（不自動執行）</button>
+    <p id="revision"></p><p id="decision-message" role="status"></p>
+  </section>
+  <footer>重新整理或關閉畫面不會取消工作。若本機端已退出，沒有已保存結果不代表工作已取消；未完成的狀態可能無法確認。</footer>
+</main>
+</body></html>
