@@ -119,7 +119,8 @@ def test_cli_actual_entry_uses_human_output(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "CodexRuntime", runtime)
     monkeypatch.setattr(sys, "stdin", io.StringIO("synthetic-host-token\n"))
     monkeypatch.setattr(sys, "argv", ["companion", "--codex", "test", "--model", "test",
-        "--workspace", str(tmp_path), "--intent", "檢視專案", "--details"])
+        "--workspace", str(tmp_path), "--intent", "檢視專案", "--details",
+        "--review-dir", str(tmp_path.parent / (tmp_path.name + "-reviews"))])
     assert cli.main() == 0
     output = capsys.readouterr()
     assert "RESULT_PENDING_REVIEW" in output.out and "專案驗收結果" in output.out

@@ -19,6 +19,7 @@ class Acceptance(str, Enum):
     UNREVIEWED = "UNREVIEWED"
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
+    REVISION_REQUESTED = "REVISION_REQUESTED"
 
 
 class Failure(str, Enum):
