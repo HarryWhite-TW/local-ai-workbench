@@ -1,0 +1,20 @@
+:root { color-scheme: light; font-family: system-ui, "Microsoft JhengHei", sans-serif; color: #17312d; background: #f1f5f2; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 960px; margin: 32px auto; padding: 0 24px; }
+header, nav, .actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+header { justify-content: space-between; }
+h1 { margin: 0; font-size: 32px; } h2 { font-size: 20px; }
+.eyebrow { font-size: 11px; letter-spacing: 2px; }
+section { border: 1px solid #cddbd3; border-radius: 14px; background: #fff; padding: 22px; margin: 18px 0; }
+label { display: block; font-weight: 600; margin: 12px 0 7px; }
+textarea, select { width: 100%; font: inherit; padding: 12px; border: 1px solid #a5b9af; border-radius: 7px; background: white; color: inherit; }
+button { font: inherit; padding: 10px 16px; border: 1px solid #22634e; border-radius: 7px; background: #22634e; color: white; cursor: pointer; margin: 8px 0; }
+button:disabled { cursor: default; opacity: .45; } button:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid #bd8737; outline-offset: 2px; }
+nav button { background: transparent; color: #22634e; } nav button[aria-pressed="true"] { background: #dcebe3; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.7; background: #f5f8f5; padding: 18px; border-left: 3px solid #759b81; }
+.boundary { background: #deebe3; padding: 12px; border-radius: 8px; }
+.muted, footer { color: #546b62; font-size: 14px; line-height: 1.6; } #workspace { overflow-wrap: anywhere; }
+#connection, #notice, #decision-message { color: #785214; } #review-state { font-weight: 700; }
+[hidden], body.companion .mixed { display: none; }
+@media (max-width: 600px) { main { padding: 0 12px; margin: 18px auto; } section { padding: 16px; } }
