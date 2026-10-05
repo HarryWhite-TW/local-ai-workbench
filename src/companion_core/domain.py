@@ -21,6 +21,16 @@ class Acceptance(str, Enum):
     REJECTED = "REJECTED"
 
 
+class Failure(str, Enum):
+    UNKNOWN = "unknown"
+    AUTHENTICATION = "authentication_unavailable"
+    TIMEOUT = "runtime_timeout"
+    PROTOCOL = "protocol_incompatibility"
+    POLICY = "policy_mismatch"
+    CONNECTION = "runtime_connection_loss"
+    INTERRUPTED = "local_interruption_unconfirmed"
+
+
 @dataclass(frozen=True)
 class Task:
     id: str
@@ -33,6 +43,7 @@ class Task:
     result: str | None = None
     acceptance: Acceptance = Acceptance.UNREVIEWED
     reviewer: str | None = None
+    failure: Failure | None = None
 
     @property
     def state(self) -> str:
