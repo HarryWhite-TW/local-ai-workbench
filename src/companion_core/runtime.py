@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterator, Protocol
+from threading import Event
 
 from .domain import Authority, Failure
 
@@ -21,6 +22,7 @@ class EventKind(str, Enum):
     COMPLETED = "execution_complete"
     FAILED = "execution_failed"
     CANCELLED = "execution_cancelled"
+    INTERRUPTED = "provider_interrupted"
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class Request:
     intent: str
     workspace: str
     authority: Authority
+    cancel_requested: Event | None = None
 
 
 @dataclass(frozen=True)

@@ -142,7 +142,7 @@ def test_failure_and_cancelled_views_do_not_claim_pending_or_accepted(tmp_path):
     output = []
     view = HumanView(output.append)
     view.result(core.cancel())
-    assert "已取消" in "\n".join(output)
+    assert "已確認取消" in "\n".join(output)
     assert "RESULT_PENDING_REVIEW" not in "\n".join(output)
     assert "ACCEPTED" not in "\n".join(output)
 

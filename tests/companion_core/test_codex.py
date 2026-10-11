@@ -75,11 +75,18 @@ def test_policy_downgrade_never_starts_turn(sandbox, approval):
 
 
 @pytest.mark.parametrize("status,kind", [("failed", EventKind.FAILED),
-    ("interrupted", EventKind.CANCELLED), ("unknown", EventKind.FAILED)])
+    ("unknown", EventKind.FAILED)])
 def test_adapter_terminal_translation(status, kind):
     events = list(CodexRuntime("unused", "model", lambda: "synthetic")._execute(FakeRpc(status), REQUEST, "synthetic"))
     assert events[-1].kind == kind
     assert events[-1].text is None
+
+
+def test_spontaneous_interrupted_is_not_human_cancellation():
+    with pytest.raises(RuntimeFailure) as caught:
+        list(CodexRuntime("unused", "model", lambda: "synthetic")._execute(
+            FakeRpc("interrupted"), REQUEST, "synthetic"))
+    assert caught.value.reason == Failure.CANCELLATION
 
 
 def test_no_authority_no_credential_or_process():

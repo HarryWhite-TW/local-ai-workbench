@@ -2,7 +2,7 @@
 
 Run via the existing OAuth host: python -m src.companion_core.surface --help.
 This is separate from the document workbench Web app. No credential HTTP API,
-workspace picker, execution queue, running cancellation or publication action.
+workspace picker, execution queue or publication action.
 """
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -37,7 +37,8 @@ class Surface:
             self.lines.append(text)
 
     def start(self, intent):
-        if not isinstance(intent, str) or not intent.strip() or len(intent) > 4000 or safe_text(intent) != intent:+            raise ReviewError()
+        if not isinstance(intent, str) or not intent.strip() or len(intent) > 4000 or safe_text(intent) != intent:
+            raise ReviewError()
         with self.lock:
             if self.worker and self.worker.is_alive():
                 raise ReviewError()
@@ -57,6 +58,17 @@ class Surface:
                 # Keep the valid Core result; a persistence error isn't acceptance.
                 with self.lock:
                     self.notice = "執行已有結果，但未能安全保存待審記錄；請勿視為審查成功。"
+
+    def cancel(self, body):
+        if (not isinstance(body, dict) or set(body) != {"task_id"}
+                or not isinstance(body["task_id"], str)):
+            raise ReviewError()
+        with self.lock:
+            if (not self.active or body["task_id"] != self.active.task.id
+                    or self.active.task.execution not in
+                    (Execution.RUNNING, Execution.CANCEL_REQUESTED)):
+                raise ReviewError()
+            return self._summary(self.active.cancel())
 
     def _scoped(self, target):
         if Path(target.task.workspace).resolve() != Path(self.workspace):
@@ -156,13 +168,23 @@ def make_server(surface):
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 0 < length <= 32768:
                     raise ReviewError()
-                body = json.loads(self.rfile.read(length))
+                def unique_fields(pairs):
+                    data = {}
+                    for key, value in pairs:
+                        if key in data:
+                            raise ReviewError()
+                        data[key] = value
+                    return data
+                body = json.loads(self.rfile.read(length),
+                    object_pairs_hook=unique_fields if self.path == "/api/cancel" else None)
                 if self.path == "/api/start" and isinstance(body, dict) and set(body) == {"intent"}:
                     result = surface.start(body["intent"])
                 elif self.path == "/api/target" and isinstance(body, dict) and set(body) == {"task_id"}:
                     result = surface.target(body["task_id"])
                 elif self.path == "/api/review":
                     result = surface.decide(body)
+                elif self.path == "/api/cancel":
+                    result = surface.cancel(body)
                 else:
                     raise ReviewError()
                 self._reply(200, result)

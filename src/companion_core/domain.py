@@ -10,6 +10,7 @@ class Authority(str, Enum):
 class Execution(str, Enum):
     CREATED = "CREATED"
     RUNNING = "RUNNING"
+    CANCEL_REQUESTED = "CANCEL_REQUESTED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
@@ -30,6 +31,7 @@ class Failure(str, Enum):
     POLICY = "policy_mismatch"
     CONNECTION = "runtime_connection_loss"
     INTERRUPTED = "local_interruption_unconfirmed"
+    CANCELLATION = "cancellation_unconfirmed"
 
 
 @dataclass(frozen=True)

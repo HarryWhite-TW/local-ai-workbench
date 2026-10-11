@@ -1,9 +1,12 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const labels = {CREATED: "正在準備", RUNNING: "正在執行", COMPLETED: "執行已完成",
+  CANCEL_REQUESTED: "已請求停止，尚未確認取消",
   RESULT_PENDING_REVIEW: "結果等待審查", ACCEPTED: "結果已接受", REJECTED: "結果已拒絕",
   REVISION_REQUESTED: "已要求調整，新工作尚未執行", FAILED: "執行失敗", CANCELLED: "已確認取消"};
 let selected = "", target = null, selectionVersion = 0, deciding = false, starting = false, connected = false;
+let activeTask = null;
+const stopSubmitted = new Set();
 function reviewButtons() {
   const ready = connected && !deciding && target && target.task_id === selected && target.state === "RESULT_PENDING_REVIEW";
   for (const id of ["accept", "reject", "revise"]) $(id).disabled = !ready;
@@ -20,6 +23,7 @@ function disconnected() {
   $("connection").textContent = "連線或記錄目前不可確認；不代表取消或接受。請重新讀取。";
   $("selected-status").textContent = "目前狀態未確認";
   $("start").disabled = true;
+  $("stop").disabled = true;
   reviewButtons();
 }
 function mode(companion) {
@@ -54,6 +58,13 @@ async function refresh() {
     $("connection").textContent = "已連接本機端 · 唯讀工作與審查各自保持明確界線";
     $("workspace").textContent = state.workspace;
     $("start").disabled = state.busy || starting;
+    activeTask = state.active;
+    $("stop").hidden = !activeTask || !["RUNNING", "CANCEL_REQUESTED"].includes(activeTask.state);
+    $("stop").disabled = !activeTask || activeTask.state !== "RUNNING" || stopSubmitted.has(activeTask.task_id);
+    $("stop-status").textContent = activeTask && activeTask.state === "CANCEL_REQUESTED"
+      ? "已請求停止，正在確認執行端收尾；尚未確認取消。"
+      : activeTask && activeTask.state === "RUNNING" && stopSubmitted.has(activeTask.task_id)
+        ? "停止要求已送出；狀態尚待確認，不會自動重試。" : "";
     $("active").textContent = state.active ? `${state.active.intent} · ${labels[state.active.state] || "狀態未確認"}` : "尚未啟動工作；已保存的結果可由下方選擇。";
     $("progress").replaceChildren(...state.progress.map(text => { const li = document.createElement("li"); li.textContent = text; return li; }));
     $("notice").textContent = state.notice;
@@ -78,6 +89,17 @@ $("tasks").onchange = () => {
   $("open-review").disabled = !selected; reviewButtons();
 };
 $("open-review").onclick = () => { mode(false); openTarget(); };
+$("stop").onclick = async () => {
+  if (!connected || !activeTask || activeTask.state !== "RUNNING"
+      || $("stop").disabled || stopSubmitted.has(activeTask.task_id)) return;
+  const exactId = activeTask.task_id;
+  stopSubmitted.add(exactId);
+  $("stop").disabled = true;
+  $("stop-status").textContent = "停止要求已送出；尚未確認取消。";
+  try { await api("/api/cancel", {task_id: exactId}); }
+  catch { disconnected(); }
+  await refresh();
+};
 $("run-form").onsubmit = async event => {
   event.preventDefault();
   if (starting || $("start").disabled) return;

@@ -20,7 +20,10 @@
       <textarea id="intent" rows="3" maxlength="4000" required placeholder="例如：閱讀 README，說明這個專案的公開產品名稱與用途。"></textarea>
       <button id="start" type="submit" disabled>開始唯讀工作</button>
     </form>
-    <p id="active" role="status"></p><ul id="progress" aria-live="polite"></ul><p id="notice" role="status"></p>
+    <p id="active" role="status"></p>
+    <button id="stop" type="button" hidden disabled>停止此工作</button>
+    <p id="stop-status" role="status"></p>
+    <ul id="progress" aria-live="polite"></ul><p id="notice" role="status"></p>
   </section>
   <section aria-labelledby="selection-heading">
     <h2 id="selection-heading">選擇要查看的工作</h2>

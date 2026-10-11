@@ -72,7 +72,8 @@ def test_surface_reuses_core_projection_and_durable_review(surface):
 
 @pytest.mark.parametrize("action,state", [("accept", "ACCEPTED"), ("reject", "REJECTED")])
 def test_decision_reload_and_multiple_pending_are_exact(surface, action, state):
-    first, second = done(surface, "第一件工作"), done(surface, "第二件工作")+    wrong = decision(second, action)
+    first, second = done(surface, "第一件工作"), done(surface, "第二件工作")
+    wrong = decision(second, action)
     wrong["result_id"] = first["result_id"]
     with pytest.raises(ReviewError):
         surface.decide(wrong)
@@ -226,9 +227,9 @@ def test_http_disconnect_leaves_execution_running_then_pending(server, surface):
     assert surface.store.get(surface.active.task.id).task.state == "RESULT_PENDING_REVIEW"
 
 
-def test_no_stop_or_arbitrary_file_route(server, surface):
+def test_no_implicit_stop_or_arbitrary_file_route(server, surface):
     for path in ("/stop", "/cancel", "/../review.py", "/api/start?intent=Inspect"):
         status, _, _ = request(server, path=path)
         assert status == 404 and surface.active is None
     html = request(server, path="/")[2].decode("utf-8")
-    assert 'type="file"' not in html and 'id="stop"' not in html
+    assert 'type="file"' not in html and 'id="stop" type="button" hidden disabled' in html
