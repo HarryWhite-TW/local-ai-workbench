@@ -1,5 +1,8 @@
 # Post-RV2-03 Workflow Optimization Closeout
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Status
 
 This is an interim closeout through OPT-05. OPT-06 is not authorized. REC-01 is not fully completed by this document. RV2-04 is not authorized.

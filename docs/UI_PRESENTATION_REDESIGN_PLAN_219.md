@@ -1,5 +1,8 @@
 # UI Presentation Redesign Plan (#219)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This document records the next UI direction for Local AI Workbench after the export destination intelligence and export result visibility work.

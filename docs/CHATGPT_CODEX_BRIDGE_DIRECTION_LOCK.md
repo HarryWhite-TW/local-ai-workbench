@@ -8,6 +8,16 @@ status: Active
 owner: 駿弘
 scope: Future ChatGPT-Codex bridge, relay, runner, operator, connector, Roadmap v2, and approved repository-separation work using this repository as the first validated reference host.
 
+## Applicability note — NEXUS consolidation, 2026-11-01
+
+The ChatGPT-primary-interface and no-replacement-chat statements below govern
+the incumbent Bridge route. They do not define the separately user-selected
+NEXUS product blueprint or veto its future primary-entry intent. Current NEXUS
+status/sequence is in root `PLANS.md`; only Node 01 consolidation is active.
+This navigation clarification changes no Bridge dispatch, credential, approval,
+trusted-actor, startup or side-effect contract. Native execution alone does not
+select Bridge; NEXUS is not now wired to the Bridge route by this note.
+
 ## Primary Goal
 
 The target workflow is a ChatGPT-centered bridge:

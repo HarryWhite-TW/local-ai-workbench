@@ -1,5 +1,8 @@
 # REC-02 Operational Field Evidence — Course Host Quick Restore After Reset
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Status
 
 `ACCEPTED FIELD EVIDENCE`

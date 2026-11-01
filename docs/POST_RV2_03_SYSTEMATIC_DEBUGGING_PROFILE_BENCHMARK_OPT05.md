@@ -1,5 +1,8 @@
 # OPT-05 LAWB Systematic Debugging Profile Benchmark
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 OPT-05 evaluates whether a systematic debugging profile should be used for later Local Document-to-Knowledge Workbench project work.

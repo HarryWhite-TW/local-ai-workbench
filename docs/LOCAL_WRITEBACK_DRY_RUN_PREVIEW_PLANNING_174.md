@@ -1,5 +1,8 @@
 # Local Writeback Dry-Run Preview Planning (#174)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This document defines #174 Local Writeback Dry-Run Preview Planning.

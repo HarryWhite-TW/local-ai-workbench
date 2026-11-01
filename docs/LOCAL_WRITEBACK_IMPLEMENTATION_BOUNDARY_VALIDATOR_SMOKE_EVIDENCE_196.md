@@ -1,5 +1,8 @@
 # Local Writeback Implementation Boundary Validator Smoke Evidence (#196)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This document records #196 Local Writeback Implementation Boundary Validator Smoke Evidence.

@@ -1,37 +1,153 @@
 # PLANS.md
 
-## Project Goal
+## NEXUS Node 01 — Current Consolidation Candidate
 
-Build a controlled local document-to-knowledge workbench with a single Web
-entrypoint. The system is read-first and approval-gated for write-like product
-actions.
+Updated 2026-11-01. This section owns the current local NEXUS direction and
+Node 01 scope. Earlier document-only submissions were insufficient for the
+user's expanded final outcome. The final consolidation adds a complete document
+register, historical isolation, simpler root navigation and an executable
+project-only capability entry that reuses existing requirement extraction.
+Node 01 local consolidation is technically ACCEPTED by independent ChatGPT review.
+[PR #362](https://github.com/HarryWhite-TW/local-ai-workbench/pull/362) publishes
+the candidate on `codex/node01-consolidated-candidate-20261101`; at publication
+it was awaiting merge to master. The PR tracks its current merge state. Real
+daily-use acceptance remains outstanding; Node 02 is not activated.
 
-## Current Product Position
+The source identities, uncommitted-file descriptions and verification counts
+below record the pre-publication local snapshot, not the publication state of
+this candidate branch. The PR records publication checks and its exact head SHA.
 
-Local AI Workbench is a localhost, single-user, local-first prototype and public
-portfolio project for document-to-knowledge workflows. Its current product
-identity includes:
+### Direction and Authority
 
-- local document ingestion through a configured root folder;
-- SQLite indexing for supported local documents;
-- local search by title, relative path, and extracted content;
-- deterministic single-document summaries;
-- Obsidian-ready Markdown export after preview;
-- export destination intelligence for Vault roots, Vault subfolders, normal
-  Markdown folders, missing folders, and non-folder paths.
+The user selected: Node 01 consolidation -> Node 02 single official product
+blueprint -> Node 03 NEXUS single-entry engineering/self-iteration -> Node 04
+real daily-use acceptance. Only Node 01 is authorized here. No later node is
+automatically activated, and this sequence defines no new runtime permission.
 
-The public product mainline remains the **Local Document-to-Knowledge
-Workbench**. It is not a SaaS product, background automation platform, or
-chat-first product.
+NEXUS is intended to become the user's primary personal AI entrypoint for chat,
+planning, delegation, results, previews and revisions. Work, Codex, document
+services and other tools are potential capability sources behind that entry.
+This intent does not claim current single-entry engineering integration.
+The repository's canonical public showcase identity remains **Local
+Document-to-Knowledge Workbench**. Any formal identity or safety-contract change
+needs a concrete proposal and separate user approval; AGENTS remains unchanged.
 
-Phase 5.1–5.3 product-validation evidence is recorded in
-`docs/LOCAL_AI_WORKBENCH_PRODUCT_VALIDATION_PHASE5_1_TO_5_3.md` with verdict:
+The 2026-11-01 Independent Review is a dated research input, not a second plan.
+Its recommendation to keep NEXUS optional does not override the user's selected
+long-term direction. Existing Recoverable Baseline work is retained; this node
+does not recreate backup, recovery engineering or a new roadmap system.
 
-`PASS WITH SMALL GAPS — BOUNDED FOLLOW-UP JUSTIFIED`
+### Candidate and Version Binding
 
-The five-minute continuous timing claim remains unproven; summary usefulness and
-encoding/rendering remain bounded gaps. Phase 5.4 is not active and is not an
-upper-level gate for Workflow continuation.
+- Pre-publication working directory: the local Windows NEXUS candidate checkout.
+- Local branch: `codex/lc-workux01-observation-reader`.
+- Local HEAD: `6c1eac3e8be6f2b6efc5ba58e5289db5972a1f71`.
+- GitHub `master`, freshly read for this node:
+  `661f2b77a6f4d42d8583eb10e396e2a91a35a571` (PR #361).
+- The local HEAD adds running cancellation and the M2-C4 syntax correction.
+  At that snapshot master had the `surface.py:40` SyntaxError. The affected master
+  Companion entry is not launchable; this does not invalidate unrelated
+  document or Bridge acceptance.
+- Starting tree: 10 tracked modifications, 67 untracked files, no staged files
+  (`git status --porcelain=v1 --untracked-files=all`). The daily launcher, chat,
+  resources and native reader are part of this uncommitted candidate, not master.
+- Continuation starting tree: 13 tracked modifications, the same 67 untracked
+  files, zero staged. Local `master` is stale at `4c38c672f09a25f5fa3754b2265afe4a110b63ca`;
+  it must not be used as the remote-master or daily-candidate identity.
+- Final consolidation starts at 17 tracked modifications / 67 untracked / zero
+  staged, with prior fingerprint `68613aadca30d009a2c29d23a589d2170ad0b355967365d9eca798f640d510a9`.
+  It archives only explicitly unreferenced old records, marks retained history,
+  adds `src/project_capabilities.py` and focused tests, and clarifies two existing
+  host module descriptions. Existing NEXUS algorithms/assets/tests are retained.
+  No Git publication, recovery rebuild, safety-contract or showcase rename occurs.
+
+At the pre-publication snapshot, local HEAD alone could not reproduce the
+candidate without its uncommitted sources and Node 01 documentation diff.
+PR #362 now carries the complete candidate; its merge state is tracked there.
+Version observations are dated snapshots, not permanent branch assertions.
+
+### Capability Disposition
+
+The source/call/version ledger and complete document register in
+`docs/ENGINEERING_RECORDS_INDEX.md` own detailed lookup. They are evidence, not
+a second roadmap. Relative to the daily NEXUS candidate:
+
+- 現役: daily/chat/project/text resources/fixed work/review/continuity/Native Reader.
+- 待接入: existing document API and legacy read-only Codex adapter; integration choice remains Node 02.
+- 獨立／備用: document showcase, Bridge execution/notification/observation family, HGW/HAG and visual prototypes.
+- 歷史／已替代: prior activation queues, legacy relay assumptions, OPT07 adoption and superseded planning.
+
+Document labels are CURRENT (effective entry/rules), REUSABLE (existing reusable
+interfaces/assets), SPECIALIZED (valid scoped systems/contracts), HISTORICAL
+(recorded prior claims only), UNCERTAIN (preserved draft/placeholder). A test
+reference can require retaining a historical path without making it current
+product authority. See the register for per-file references and dispositions.
+
+### Source Relationships and Reuse Decisions
+
+The [source connection and version ledger](docs/ENGINEERING_RECORDS_INDEX.md#node-01-source-connections-and-reuse)
+is the evidence locator for the classification above. It records actual callers,
+entrypoints, state ownership, applicable source versions, historical branches,
+and tests. Finding an implementation there means reuse must be considered before
+proposing new development; it does not mean the implementation is wired into NEXUS.
+
+- The daily work path already connects chat proposals to Surface/Core/ReviewStore,
+  then can explicitly preview a saved work result back into chat. Project context
+  includes the same Surface snapshot; it is not a second work-state implementation.
+- The older Codex adapter and Native Reader both use app-server transport, but
+  have different process homes, login sources and contracts. Preserve both for
+  their respective roles; do not connect their credentials or sessions implicitly.
+- Document Web/API owns extraction/index/artifacts/export; NEXUS resources own
+  bounded source preview and chat handoff. These overlap in reading needs but do
+  not share the document pipeline. Reuse the existing API service if the blueprint
+  selects richer document integration; do not describe PDF/DOCX as nonexistent.
+- Core/ReviewStore is reused by the legacy Companion host and daily work. HGW
+  contracts and HAG proposals are independent implementations for different
+  boundaries; no HGW/HAG runtime migration is required for this candidate.
+- Panel/Sanctuary/Unified Shell are already connected within the Bridge observer
+  family. Preserve their shared truth source. NEXUS uses its own Surface snapshot,
+  not those Bridge stores; Native Reader status cannot replace either authority.
+
+No daily runtime repair is selected. The final consolidation adds a developer-only
+capability entry and clarifies host descriptions; existing algorithms stay in place. The daily composition,
+route dispatch, UI action callers and served static assets have matching source
+edges. The missing connections (general engineering, rich document API, native
+completion notification, OS overlay) are absent end-to-end product contracts,
+not disconnected imports or a missing invocation in an existing approved flow.
+Adding those would require choosing executor/data/authority contracts in Node 02.
+Legacy `surface.main` requires a trusted credential host and shares today's UI;
+its presence is not a claim that it is a complete SIWC daily entry. The test
+launchers intentionally run synthetic fixtures and must not become the real entry.
+
+### Evidence Limits and Node 02 Inputs
+
+Confirmed source facts: daily.py wires ProjectWork rather than CodexRuntime;
+chat invokes Responses without tools; resources are bounded text rather than
+the showcase index; Native Reader only reads history; review remains explicit.
+The first-submission runtime checks and continuation static/source checks are
+recorded in `docs/ENGINEERING_RECORDS_INDEX.md`.
+
+Still unverified: full real-SIWC plus native-history end-to-end acceptance,
+correct deep-link navigation in the desktop app, cross-process live state,
+Windows game-time notification/focus behaviour, and applicability of the
+unread 10/28 MXC archive to this changing candidate. Existing synthetic tests
+and historical test counts do not close these questions. None is silently
+promoted to a Node 01 daily-use acceptance claim.
+
+Node 02 must decide: the single-entry task/executor boundary; whether to reuse
+the existing Codex adapter or platform capability; how document services enter
+NEXUS; task/result/reviewer ownership; navigation/notification needs; and which
+UI assets serve real data. A formal showcase rename or broader execution/write
+contract requires separate approval. Node 01 implements none of these decisions.
+
+## Document Showcase Position
+
+The formal public product remains Local Document-to-Knowledge Workbench:
+localhost, single-user, local-first document indexing, review and approved
+Markdown export. Its setup/features are in README; the existing validation
+record is `docs/LOCAL_AI_WORKBENCH_PRODUCT_VALIDATION_PHASE5_1_TO_5_3.md`
+(`PASS WITH SMALL GAPS — BOUNDED FOLLOW-UP JUSTIFIED`). That historical verdict
+does not activate Phase 5.4 or accept the NEXUS candidate.
 
 ## Development Workflow Position
 
@@ -122,102 +238,12 @@ These runtime regression and freeze rules govern the incumbent Bridge baseline;
 they do not require routing ordinary native engineering through Bridge or running
 its full suite for governance-only changes.
 
-## Canonical Ecosystem Forward Plan
+## Historical Ecosystem Context
 
-Cross-repository completion history and separately reviewed future planning are
-maintained in:
-
-[`WORKFLOW_HAG_ECOSYSTEM_ROADMAP_v2.0.md`](https://github.com/HarryWhite-TW/human-governed-workflow/blob/main/docs/WORKFLOW_HAG_ECOSYSTEM_ROADMAP_v2.0.md)
-
-That roadmap is not a current activation queue. It does not supersede the
-Phase 0 baseline and freeze rules above or grant a next node, runtime expansion,
-or high-risk authority without separate review and approval.
-
-## Repository Roles
-
-### Local AI Workbench
-
-- reference host for the incumbent specialised Bridge execution route;
-- owns the repository's custom Bridge, Dispatcher, Runner, and GitHub
-  result/status path; native Work execution uses platform-provided capabilities;
-- remains the Local Document-to-Knowledge Workbench product repository;
-- must not grow a duplicate custom daily runtime to reproduce platform capability.
-
-### Human-Governed Workflow
-
-- published pure authority, Task Surface, Result Surface, deterministic reviewer,
-  and zh-TW renderer layer;
-- non-executing and not cut over;
-- N4+ and independent runtime work remain inactive unless separately justified.
-
-### Human Approval Automation Gateway
-
-- bounded human-approval product and reference target;
-- does not dispatch Codex or own Workflow runtime;
-- HAG-04 fake execution safety semantics are done and published;
-- HAG-05 minimal local API and approval surface is done and published, with a
-  fake-only loopback foreground approval surface.
-
-## Current HAG Status
-
-HAG-01 through HAG-05, exception-boundary stabilization, and RequestEvaluation
-invariant recovery are published on HAG `main`.
-
-- `HAG-04 DONE / PUBLISHED`;
-- `HAG-05 DONE / PUBLISHED`.
-
-The HAG-05 loopback foreground local approval surface remains fake-only. HAG
-has no real credential, LLM, GitHub mutation, worker, queue, service, deployment,
-or Workflow-runtime authority.
-
-## Historical Path to ECO-CP1
-
-The original fixed path remains historical sequencing. Its HAG portion is now
-complete:
-
-1. `HAG-04-SECOND-REPAIR-01` — completed;
-2. `HAG-04-INDEPENDENT-FINAL-REVIEW-02` — completed;
-3. `HAG-04-PUBLICATION-01` — `HAG-04 DONE / PUBLISHED`;
-4. `HAG-05A-CURRENT-TRUTH-AND-CONTRACT-LOCK` — completed;
-5. `HAG-05B-MINIMAL-LOCAL-SURFACE` — completed;
-6. `HAG-05C-ACCEPTANCE-AND-PUBLICATION` — `HAG-05 DONE / PUBLISHED`;
-7. `WORKFLOW-DISPLAY-PILOT-CLOSEOUT-01` — its documentation package was
-   published through LAWB PR #267, Issue #264 was subsequently completed, and
-   the later supervising ChatGPT source review and acceptance adjudication
-   established `DONE / ACCEPTED / PUBLISHED / DURABLY CLOSED`;
-8. `ECO-CP1-DURABLE-CLOSEOUT-01` — accepted and durably synchronized across
-   canonical LAWB, HGW, and HAG.
-
-The published HAG-05 implementation preserves the accepted product contract:
-
-`HAG-05 — Minimal Local API and Approval Surface`
-
-A CLI-only substitute would be a product-contract change. HAG-05 must not
-silently add a real LLM, credentials, real GitHub mutation, production
-authentication, n8n, background workers, a broad UI framework, or deployment.
-
-The historical durable verdict is:
-
-`ECO-CP1 ACCEPTED — STABLE STOP POINT`
-
-It is retained as history, not as a current activation queue. The current
-Phase 0 state and limitations are recorded above. No later node activates
-automatically.
-
-## Historical Stop Lines
-
-Before ECO-CP1, do not activate:
-
-- Independent HGW runtime or N4+;
-- HAG-06, HAG-07, or HAG-08;
-- real LLM access, credentials, or real GitHub mutation;
-- queue, isolated worktree, shadow mode, or cutover;
-- n8n, hidden background service, tray, MCP, deployment, or additional startup
-  authority beyond the accepted visible login-triggered path;
-- automatic commit, push, PR, merge, Issue close, or approval chaining.
-
-After ECO-CP1, pause by default and choose at most one separately approved next
-phase. Roadmap ordering never grants authority.
+The retained cross-repository roles, HAG/ECO-CP1 publication history and old
+stop-line narrative are in [the archived checkpoint](docs/archive/PLANS_ECOSYSTEM_CHECKPOINT.md).
+Current component owners are in the engineering index; the Bridge regression
+and freeze rules immediately above remain effective and were not moved.
 
 ## Current Governance and Evidence Pointers
 
@@ -229,7 +255,7 @@ phase. Roadmap ordering never grants authority.
   `docs/BRIDGE_ROADMAP_V2_EXECUTION_SPEC.md`;
 - Direction Lock: `docs/CHATGPT_CODEX_BRIDGE_DIRECTION_LOCK.md`;
 - Bridge Operator specification: `docs/BRIDGE_OPERATOR_V0_SPEC.md`;
-- ecosystem strategy: `docs/ECOSYSTEM_CURRENT_STRATEGY_CHECKPOINT.md`;
+- historical ECO-01 strategy: `docs/ECOSYSTEM_CURRENT_STRATEGY_CHECKPOINT.md` (current NEXUS direction is the Node 01 section above);
 - native-capability overlap review:
   `docs/WF_REENTRY_NATIVE_CAPABILITY_OVERLAP_REVIEW.md`.
 
@@ -249,6 +275,10 @@ The original M1 baseline remains historical:
 Its historical status does not activate product or Workflow work.
 
 ## Change Log
+
+- 2026-11-01: Node 01 local consolidation candidate: aligned current NEXUS
+  ownership and version limits with README and the engineering index; preserved
+  showcase identity, historical acceptance and authority; activated no later node.
 
 - 2026-09-22: Reconciled the accepted Phase 0 Final Daily-Use baseline with
   completed Grand Audit R1/R2 remediation, preserved bounded supported-scope

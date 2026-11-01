@@ -1,5 +1,8 @@
 # CODEX Task Template
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 每次要交給 Codex 的任務，請盡量填完這份模板。空白可保留，但 `允許修改`、`禁止修改`、`完成標準` 最好明確。
 
 ## 任務類型

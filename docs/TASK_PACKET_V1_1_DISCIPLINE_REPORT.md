@@ -1,5 +1,8 @@
 # Task Packet v1.1 Discipline Report
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 Task Packet v1.1 turns the Codex task discipline described in `AGENTS.md` into verifiable task packet fields.

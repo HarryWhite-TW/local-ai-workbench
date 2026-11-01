@@ -1,5 +1,8 @@
 # Phase 3 Live Fetch Probe Decision Note (#154)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This note summarizes Phase 3 live fetch probe evidence from #149 through #153 and records the next bounded decision.

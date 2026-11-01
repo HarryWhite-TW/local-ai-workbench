@@ -1,5 +1,8 @@
 # OPT-04 UI Mockup-First Small Benchmark
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 OPT-04 evaluates whether a mockup-first workflow should be used for later UI-related nodes in the Local Document-to-Knowledge Workbench.

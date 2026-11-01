@@ -1,5 +1,8 @@
 # Bridge Direction Rebaseline 126
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 This document rebaselines the bridge direction after drift was detected in planning language.

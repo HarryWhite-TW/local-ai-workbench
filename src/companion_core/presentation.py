@@ -14,7 +14,9 @@ def safe_text(text: str) -> str:
                  r"\b(?:access_token|refresh_token|id_token)\b", text, re.IGNORECASE):
         # Conservative withholding also covers wrapped/multiline values.
         return "[private field withheld]"
-    text = re.sub(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]+",
+    # A provider key starts a token, not the suffix of task-/mask-/desk-.
+    # Use an ASCII boundary so keys next to Chinese text are still withheld.
+    text = re.sub(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?<![A-Za-z0-9_])sk-[A-Za-z0-9_-]+",
                   "[credential redacted]", text)
     text = re.sub(r"(?i)\bBearer\s+\S+", "[credential redacted]", text)
     return text
@@ -28,6 +30,7 @@ FAILURES = {
     Failure.POLICY: "執行端未符合唯讀政策，工作未獲准繼續。",
     Failure.CONNECTION: "與執行端的連線中斷；不代表已確認取消。",
     Failure.INTERRUPTED: "本機等待已中斷；未確認執行端取消或完成。",
+    Failure.CANCELLATION: "取消或執行收尾未能確認；請勿視為已取消。",
 }
 
 
@@ -73,7 +76,9 @@ class HumanView:
                 # Review can only have been supplied separately by the trusted host.
                 self._write("獨立審查狀態：" + task.state)
         elif task.execution == Execution.CANCELLED:
-            self._write("工作已取消（未開始，或執行端已回報中止）。")
+            self._write("工作已確認取消（未開始，或中止與執行端收尾均已確認）。")
+        elif task.execution == Execution.CANCEL_REQUESTED:
+            self._write("已請求停止，正在確認執行端收尾；尚未確認取消。")
         elif task.execution == Execution.FAILED:
             self._write(FAILURES.get(task.failure, FAILURES[Failure.UNKNOWN]))
         else:

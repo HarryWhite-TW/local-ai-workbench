@@ -1,5 +1,8 @@
 # Explicit GitHub Task Surface Fetch Plan (#144)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 #144 defines a docs-only Fast Lane plan for a future explicit GitHub task surface fetch step.

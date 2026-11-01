@@ -1,5 +1,8 @@
 # Approval-only End-to-end Smoke 134
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 This document defines #134 Approval-only End-to-end Smoke.

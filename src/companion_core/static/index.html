@@ -1,42 +1,252 @@
 <!doctype html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Companion · 唯讀工作</title>
-  <link rel="stylesheet" href="/surface.css"><script src="/surface.js" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>NEXUS — AI Workbench</title>
+  <script src="/reading.js" defer></script>
+  <link rel="stylesheet" href="/surface.css">
+  <script src="/surface.js" defer></script>
+  <link rel="stylesheet" href="/chat.css">
+  <script src="/chat.js" defer></script>
+  <link rel="stylesheet" href="/nexus.css">
+  <script src="/nexus.js" defer></script>
+  <link rel="stylesheet" href="/native-codex.css">
+  <script src="/native-codex.js" defer></script>
 </head>
-<body>
-<main>
-  <header><div><p class="eyebrow">LOCAL · HUMAN-GOVERNED</p><h1>Companion</h1></div>
-    <nav aria-label="顯示模式"><button id="companion-mode">Companion 模式</button><button id="mixed-mode" aria-pressed="true">Mixed 模式</button></nav>
+<body data-theme="obsidian" data-view="glance" data-motion="full" data-quality="high" data-chat-enabled="false" data-work-enabled="false" data-native-codex="false" data-space="chat">
+  <svg class="icon-library" aria-hidden="true"><defs>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-6 6M10 19H5v-5M5 19l6-6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12h4l3-7 5 14 3-7h5"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5m6-6-6 6 6 6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5L19 7"/></symbol>
+    <symbol id="i-tune" viewBox="0 0 24 24"><path d="M4 7h6m4 0h6M4 17h10m4 0h2"/><circle cx="12" cy="7" r="2"/><circle cx="16" cy="17" r="2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-paper" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3Zm8 0v5h4M9 12h6M9 16h6"/></symbol>
+  </defs></svg>
+  <a id="skip-main" class="skip" href="#task-title">跳至目前工作</a>
+  <aside id="nexus-sidebar" class="nexus-sidebar" hidden aria-label="工作台導覽">
+    <div class="nexus-identity"><span class="nexus-mark">N</span><div class="nexus-brand"><strong>NEXUS</strong><small>PERSONAL AI WORKBENCH</small></div><button id="nexus-sidebar-toggle" class="icon-button" aria-label="收合左側導覽" aria-expanded="true" aria-controls="nexus-sidebar" title="收合左側導覽">◧</button></div>
+    <span class="nexus-kicker">WORKSPACE</span>
+    <nav id="nexus-navigation" aria-label="主要導覽">
+      <button data-route="overview"><span aria-hidden="true">▦</span>總覽</button>
+      <button data-route="chat"><span aria-hidden="true">◌</span>對話</button>
+      <button data-route="work"><span aria-hidden="true">▣</span>工作</button>
+      <button data-route="execute"><span aria-hidden="true">▷</span>執行</button>
+      <button data-route="monitor"><span aria-hidden="true">⌁</span>監控<small>未連接</small></button>
+      <button data-route="documents"><span aria-hidden="true">▤</span>文件<small>未連接</small></button>
+      <button data-route="links"><span aria-hidden="true">↗</span>連結<small>未連接</small></button>
+      <button data-route="navigator"><span aria-hidden="true">◎</span>星系導覽<small>概念</small></button>
+    </nav>
+    <div class="nexus-pinned"><span class="nexus-kicker">PINNED PROJECT</span><button data-route="project"><span class="project-mark">W</span><span><strong id="nexus-project">目前工作區</strong><small>啟動時指定 · 本機</small></span></button></div>
+    <div class="nexus-sidebar-foot"><span class="nexus-mark small">C</span><div><strong>Companion</strong><small>對話 · 提案 · 閱讀 · 審查</small></div></div>
+  </aside>
+  <button id="nexus-scrim" hidden aria-label="關閉導覽"></button>
+  <header id="nexus-topbar" hidden><button id="nexus-menu" class="icon-button" aria-label="開啟導覽" aria-expanded="false" aria-controls="nexus-sidebar">☰</button><div class="nexus-crumb">個人空間 <span>/</span> <strong id="nexus-location">總覽</strong></div><span class="nexus-local">LOCAL WORKSPACE</span><button id="nexus-focus" class="text-button" aria-pressed="false">專注模式</button></header>
+  <main id="nexus-overview" class="nexus-page" hidden aria-labelledby="nexus-home-title">
+    <p class="nexus-kicker">PERSONAL COMMAND CENTER</p>
+    <div class="nexus-page-heading"><div><h1 id="nexus-home-title" tabindex="-1">一個空間，管理所有 AI 工作。</h1><p>從想法、對話、專案到執行與觀測，讓每件事都有清楚的去處。</p></div><div class="nexus-home-actions"><button class="secondary-button" id="nexus-recent-shortcut">查看近期工作 ↓</button><button class="primary-button" data-route="chat">開始對話 ↗</button></div></div>
+    <aside id="nexus-resume" class="nexus-panel" aria-label="可接續的內容" hidden><span>上次停留</span><strong id="nexus-resume-title"></strong><p id="nexus-resume-copy" role="status"></p></aside>
+    <div class="nexus-modules">
+      <button class="nexus-module" data-route="chat"><span class="module-symbol" aria-hidden="true">◌</span><small>01 / CONVERSE</small><h2>一般對話</h2><p>自然討論、整理想法。需要執行工作時，再把討論轉成提案。</p><span class="module-bottom">可使用 · 對話與歷史紀錄 <b>↗</b></span></button>
+      <button class="nexus-module" data-route="work"><span class="module-symbol" aria-hidden="true">▣</span><small>02 / ORGANIZE</small><h2>工作區</h2><p>集中工作目標、真實結果與審查。深入查看時才展開證據。</p><span class="module-bottom">可使用 · 工作與結果閱讀 <b>↗</b></span></button>
+      <button class="nexus-module" data-route="execute"><span class="module-symbol" aria-hidden="true">▷</span><small>03 / EXECUTE</small><h2>執行區</h2><p>查看受限工作的進度、阻擋與待處理事項，不與工作列表重複。</p><span class="module-bottom">已接通 · 有限唯讀工作 <b>↗</b></span></button>
+      <button class="nexus-module" data-route="monitor"><span class="module-symbol" aria-hidden="true">⌁</span><small>04 / OBSERVE</small><h2>監控區</h2><p>未來可集中呈現整體健康與事件；現階段不展示虛構數值。</p><span class="module-bottom">尚未接通 · 設計位置 <b>↗</b></span></button>
+      <button class="nexus-module" data-route="documents"><span class="module-symbol" aria-hidden="true">▤</span><small>05 / KNOWLEDGE</small><h2>文件區</h2><p>資料索引與預覽，未來依明確授權參與對話與工作。</p><span class="module-bottom">尚未接通 · 設計位置 <b>↗</b></span></button>
+      <button class="nexus-module" data-route="links"><span class="module-symbol" aria-hidden="true">↗</span><small>06 / CONNECTIONS</small><h2>連結區</h2><p>整合專案、工具與外部服務入口，清楚區分關聯和授權。</p><span class="module-bottom">尚未接通 · 設計位置 <b>↗</b></span></button>
+      <button class="nexus-module" data-route="navigator"><span class="module-symbol" aria-hidden="true">◎</span><small>07 / UNIVERSE</small><h2>星系導覽 ✦</h2><p>以空間方式理解專案和資源關係；與文字列表互補，不取代主要工作流程。</p><span class="module-bottom">概念預覽 · 尚未接真實專案 <b>↗</b></span></button>
+    </div>
+    <div class="nexus-overview-grid" id="nexus-recent-section"><section class="nexus-panel"><div class="nexus-panel-title"><h2>近期工作</h2><button class="text-button" data-route="work">查看全部 ↗</button></div><p id="nexus-state-notice" role="status">正在讀取本機狀態…</p><p>選取工作，查看摘要；完整內容與證據保留在工作區。</p><div id="nexus-recent"></div></section><section class="nexus-panel" id="nexus-work-peek" aria-labelledby="nexus-peek-heading"><div class="nexus-panel-title"><h2 id="nexus-peek-heading">目前選取</h2><span class="nexus-footnote">本機工作摘要</span></div><h3 id="nexus-peek-title">尚未選取工作</h3><p id="nexus-peek-state"></p><div class="nexus-peek-copy" aria-live="polite"><h4>目前可確認</h4><p id="nexus-peek-confirmed">正在讀取目前可見的工作。</p><h4>確認範圍與限制</h4><p id="nexus-peek-limit">工作狀態不代表成果內容已通過核對；請進入工作閱讀結論與原始證據。</p></div><button id="nexus-peek-open" class="secondary-button" disabled>進入此工作 ↗</button></section></div>
+  </main>
+  <main id="nexus-project-page" class="nexus-page" hidden aria-labelledby="project-title">
+    <p class="nexus-kicker">PROJECT CONTEXT</p>
+    <div class="nexus-page-heading"><div><h1 id="project-title" tabindex="-1">目前專案</h1><p>目前啟動的本機工作區；工作、對話與來源授權分開管理。</p></div><div class="nexus-home-actions"><button class="secondary-button" data-route="overview">← 回總覽</button><button class="primary-button" data-route="chat">前往對話 ↗</button></div></div>
+    <p id="project-notice" role="status">正在確認專案身分…</p>
+    <div class="project-protection"><div><strong id="project-viewing">正在確認目前查看的專案</strong><span>瀏覽脈絡 ≠ 對話關聯 ≠ 模型資料授權</span></div><details><summary>查看差別</summary><p>查看專案只改變導航；對話關聯需另外確認並保存；檔案與工作成果仍須在對話中選取、預覽，按傳送時才提供模型。</p></details></div>
+    <div class="project-grid">
+      <section class="nexus-panel project-overview"><p class="nexus-kicker">PROJECT SPACE</p><h2>本機工作區</h2><p id="project-workspace">尚未確認</p><p>從這裡找到目前帳戶可查看的工作與已明確關聯的對話。</p><span id="project-availability" class="nexus-footnote">尚未取得工作狀態</span></section>
+      <section class="nexus-panel project-current"><p class="nexus-kicker">CURRENT CONTEXT</p><dl><div><dt>正在查看</dt><dd id="project-current-name">未確認</dd></div><div><dt>目前對話關聯</dt><dd id="project-current-chat">尚未讀取</dd></div><div><dt>本次待分享資料</dt><dd id="project-current-sources">未選取</dd></div></dl></section>
+    </div>
+    <div class="project-grid">
+      <section class="nexus-panel"><div class="nexus-panel-title"><h2>這個專案的相關工作</h2><span class="nexus-footnote">目前帳戶可見</span></div><div id="project-tasks"></div><button class="text-button" data-route="work">前往完整工作區 ↗</button></section>
+      <div class="project-stack"><section class="nexus-panel"><div class="nexus-panel-title"><h2>相關對話</h2><span class="nexus-footnote">明確保存的關聯</span></div><div id="project-chats"></div><button class="secondary-button" data-route="chat">前往對話 · 自行確認關聯 ↗</button></section><section class="nexus-panel"><h2>相關文件與連結</h2><p>未連接文件索引、連結目錄或其他專案。沒有自動讀取檔案。</p><button class="text-button" data-route="documents">查看文件區狀態 ↗</button></section></div>
+    </div>
+  </main>
+  <main id="nexus-execute" class="nexus-page" hidden aria-labelledby="nexus-execute-title"><p class="nexus-kicker">03 / EXECUTION</p><div class="nexus-page-heading"><div><h1 id="nexus-execute-title" tabindex="-1">每一步，都有可核對的狀態。</h1><p>僅顯示目前帳戶可見的本機工作。待審成果不等於已接受。</p></div><button class="secondary-button" data-route="chat">回到對話建立提案</button></div><p id="nexus-execution-notice" role="status"></p><div id="nexus-execution-list" class="nexus-panel"></div></main>
+  <main id="nexus-documents" class="nexus-page resource-page" hidden aria-labelledby="documents-title">
+    <p class="nexus-kicker">05 — PROJECT RESOURCES / DOCUMENTS</p>
+    <div class="nexus-page-heading"><div><h1 id="documents-title" tabindex="-1">閱讀與討論</h1><p>選取一段原文，在旁邊討論。</p></div><div class="resource-actions"><button class="secondary-button" data-route="project">← 返回專案</button><button class="secondary-button" data-route="links">查看連結 ↗</button></div></div>
+    <div class="resource-context"><div><strong data-resource-project>正在確認目前專案</strong><small>目前工作區 / 文件</small></div><span id="documents-status" role="status">尚未讀取</span></div>
+    <div class="resource-doc-layout">
+      <details id="documents-index" class="nexus-panel resource-index" open><summary>文件清單</summary><div class="resource-panel-heading"><div><h2>尋找文件</h2><small id="documents-scope"></small></div><button id="documents-refresh" class="text-button">重新整理</button></div><label class="resource-search">搜尋文件<input id="documents-search" type="search" placeholder="搜尋名稱或相對位置" maxlength="100"></label><div class="resource-filters" aria-label="文件分類"><button data-document-filter="all" aria-pressed="true">全部</button><button data-document-filter="documentation" aria-pressed="false">說明文件</button><button data-document-filter="boundary" aria-pressed="false">專案邊界</button></div><div id="documents-list" class="resource-list"></div></details>
+      <article class="nexus-panel resource-detail" id="document-detail"><p class="nexus-kicker">文件閱讀</p><h2 id="document-title">選取一份文件</h2><p id="document-relative"></p><details class="document-metadata"><summary>文件資訊與來源狀態</summary><div class="resource-meta"><div><span>所屬專案</span><strong id="document-project">尚未確認</strong></div><div><span>類型</span><strong id="document-type">—</strong></div><div><span>來源狀態</span><strong id="document-source">尚未選取</strong></div></div></details><h3 class="document-reading-label">原文</h3><p id="document-notice" role="status">從左側索引選取文件，再明確開啟唯讀預覽。</p><pre id="document-content" tabindex="0" hidden aria-label="文件文字內容，唯讀"></pre><div class="resource-actions"><button id="document-preview" class="primary-button" disabled>開啟唯讀預覽</button><button id="document-chat-toggle" class="secondary-button" type="button" hidden>繼續對話 →</button><button id="document-return-location" class="secondary-button" type="button" hidden>定位原節錄</button><button class="secondary-button" data-route="work">查看工作</button><button id="document-discuss" class="primary-button" disabled>與 Companion 討論 ↗</button></div><p class="nexus-footnote">可先選取預覽文字，帶入整行節錄。預覽與選取只供閱讀；確認範圍後，按對話的「傳送訊息」才分享本次資料。</p></article>
+    </div>
+  </main>
+  <dialog id="document-source-review" class="chat-auxiliary" aria-labelledby="document-source-title">
+    <header class="dialog-header"><h2 id="document-source-title">確認要討論的內容</h2><button class="icon-button" data-close aria-label="取消文件授權">×</button></header>
+    <div class="chat-aux-body"><strong id="document-source-name"></strong><p class="source-review-intro">核對下方內容。確認後可輸入問題，按「傳送訊息」才會提供給模型。</p><p class="source-content-label">本次討論內容</p><pre id="document-source-content" class="chat-source-text" tabindex="0"></pre>
+      <p id="document-selection-note" role="status" hidden></p>
+      <details id="document-source-adjust"><summary>調整分享範圍</summary><fieldset id="document-source-options"><legend>分享內容</legend>
+        <label><input type="radio" name="document-scope" value="name" checked>僅名稱：只提供文件名稱，不提供內文</label>
+        <label><input type="radio" name="document-scope" value="excerpt">明確可見節錄：只提供下方顯示的原文</label>
+      </fieldset>
+      <div id="document-excerpt-controls" hidden><label>起始行<input id="document-excerpt-start" type="number" min="1" value="1"></label><label>結束行<input id="document-excerpt-end" type="number" min="1" value="20"></label><p>連續 1–40 行，最多 8 KiB。</p></div>
+      </details><details class="source-technical"><summary>版本與分享限制</summary><p id="document-source-identity"></p><p id="document-source-chat"></p>
+      <p>只限目前帳戶、工作區、文件版本與這段對話的下一次送出，五分鐘內有效。這份資料不授予工具權限。</p></details><p id="document-source-error" role="status"></p>
+    </div><footer class="chat-aux-footer"><button class="secondary-button" data-close>取消</button><button id="document-source-confirm" class="primary-button">使用這份內容討論 →</button></footer>
+  </dialog>
+  <main id="nexus-links" class="nexus-page resource-page" hidden aria-labelledby="links-title">
+    <p class="nexus-kicker">06 — PROJECT RESOURCES / CONNECTIONS</p><div class="nexus-page-heading"><div><h1 id="links-title" tabindex="-1">連結，先說清楚用途。</h1><p>參考網址、專案導覽與外部工具分開管理。</p></div><div class="resource-actions"><button class="secondary-button" data-route="project">← 返回專案</button><button id="link-add" class="primary-button">＋ 新增參考連結</button></div></div>
+    <div class="resource-context"><div><strong data-resource-project>正在確認目前專案</strong><small>連結不會授予服務或工具操作權限</small></div><span id="links-status" role="status">尚未讀取</span></div>
+    <div class="resource-links-layout"><section class="nexus-panel"><div class="resource-panel-heading"><div><h2>專案連結</h2><small>參考捷徑與外部整合分開管理</small></div><button id="links-refresh" class="text-button">重新整理</button></div><div class="resource-filters" aria-label="連結分類"><button data-link-filter="all" aria-pressed="true">全部</button><button data-link-filter="project" aria-pressed="false">專案</button><button data-link-filter="reference" aria-pressed="false">參考網址</button><button data-link-filter="tool" aria-pressed="false">工具與服務</button></div><div id="links-list" class="resource-link-grid"></div></section>
+      <aside class="nexus-panel resource-detail" id="link-detail"><p class="nexus-kicker">LINK DETAILS</p><h2 id="link-title">選取一個連結</h2><p id="link-description"></p><dl class="resource-link-meta"><div><dt>連結類型</dt><dd id="link-type">—</dd></div><div><dt>主要用途</dt><dd id="link-purpose">—</dd></div><div><dt>資料讀取</dt><dd>未授權</dd></div><div><dt>自動執行</dt><dd>未授權</dd></div></dl><div class="resource-actions"><button id="link-open" class="primary-button" disabled>選取連結</button><button class="secondary-button" data-route="documents">查看文件</button></div><p id="link-notice" class="nexus-footnote" role="status"></p></aside></div>
+    <section id="link-add-panel" class="nexus-panel resource-add" hidden><div class="resource-panel-heading"><h2>新增參考網址</h2><button id="link-add-close" class="text-button">關閉 ✕</button></div><p>只保存目前帳戶的專案參考位置，不會存取網站、登入或同步。</p><form id="reference-form"><label>顯示名稱<input id="reference-name" required maxlength="80" autocomplete="off"></label><label>網址<input id="reference-url" type="url" required maxlength="2048" placeholder="https://example.com" autocomplete="off"></label><button class="primary-button">預覽保存內容</button></form><p id="reference-notice" role="status"></p></section>
+  </main>
+  <dialog id="resource-confirm" class="chat-auxiliary" aria-labelledby="resource-confirm-title"><header class="dialog-header"><h2 id="resource-confirm-title">確認參考網址</h2><button class="icon-button" data-close aria-label="取消確認">×</button></header><div class="chat-aux-body"><h3 id="resource-confirm-name"></h3><p id="resource-confirm-url"></p><p id="resource-confirm-copy"></p><p id="resource-confirm-error" role="status"></p></div><footer class="chat-aux-footer"><button class="secondary-button" data-close>取消</button><button id="reference-save" class="primary-button">確認保存</button><a id="reference-open" class="primary-button" target="_blank" rel="noopener noreferrer" hidden>確認開啟外部網頁 ↗</a></footer></dialog>
+  <main id="nexus-concept" class="nexus-page" hidden aria-labelledby="nexus-concept-title"><p class="nexus-kicker">CONCEPT / NOT CONNECTED</p><div class="nexus-page-heading"><div><h1 id="nexus-concept-title" tabindex="-1"></h1><p id="nexus-concept-description"></p></div><span class="nexus-badge">未連接 · 概念預覽</span></div><section class="nexus-concept-canvas"><div id="nexus-concept-art" aria-hidden="true"></div><h2>這個空間，還沒有連接資料。</h2><p id="nexus-concept-boundary"></p><button class="secondary-button" data-route="chat">回到可使用的對話 ↗</button></section><p class="nexus-footnote">此入口不授予新權限，不代表已掃描檔案、連接服務或啟用背景監控。</p></main>
+  <header class="app-header">
+    <div class="brand"><span class="brand-symbol" aria-hidden="true">c.</span><span>companion<span class="brand-caption">CERAMIC STUDIO</span></span></div>
+    <span class="experiment-label"><span class="pin"></span><span id="runtime-label">正在連接本機 Companion</span></span>
+    <nav id="space-nav" class="space-nav" aria-label="主要空間" hidden><button id="open-chat" type="button" aria-pressed="true" aria-controls="chat-space">對話</button><button id="open-workspace" type="button" aria-pressed="false" aria-controls="work-space">工作空間</button></nav><div class="header-actions"><button id="help" class="text-button">操作指南 <span class="key">?</span></button><button id="preferences" class="icon-button" aria-label="材質與動態偏好"><svg><use href="#i-tune"/></svg></button></div>
   </header>
-  <p class="boundary">唯讀 READ_ONLY · 接受結果不授予寫檔、Git 或發布權限。</p>
-  <p id="connection" role="status">正在連接本機工作端…</p>
-  <section class="mixed" aria-labelledby="run-heading">
-    <h2 id="run-heading">交代一個唯讀工作</h2>
-    <p>限定工作目錄：<span id="workspace"></span></p>
-    <p class="muted">僅限此 repo 的非敏感內容；不提供個人資料夾存取。唯讀不代表任意讀取範圍已受隔離。</p>
-    <form id="run-form"><label for="intent">想了解什麼？</label>
-      <textarea id="intent" rows="3" maxlength="4000" required placeholder="例如：閱讀 README，說明這個專案的公開產品名稱與用途。"></textarea>
-      <button id="start" type="submit" disabled>開始唯讀工作</button>
+  <main id="work-space" class="studio">
+    <button id="project-work-return" class="text-button" data-route="project">← 返回專案</button>
+    <button id="work-origin" class="text-button" hidden>返回原對話</button>
+    <button id="companion-ask" class="secondary-button" hidden aria-haspopup="dialog" aria-controls="companion-panel">詢問 Companion</button>
+    <div class="workspace-bar"><div class="workspace-name"><span class="tiny-label">LOCAL WORKSPACE</span><h1>我的工作台<span class="fine-dot">.</span></h1></div><nav class="view-switch" aria-label="工作物件檢視"><span class="switch-indicator" aria-hidden="true"></span><button data-view="glance" aria-pressed="true">一瞥 <kbd>1</kbd></button><button data-view="expanded" aria-pressed="false">展開 <kbd>2</kbd></button><button data-view="observe" aria-pressed="false">觀察 <kbd>3</kbd></button></nav></div>
+    <p id="work-availability" class="operation-notice" role="status" hidden></p>
+    <section id="stage" class="stage" aria-label="連續工作物件">
+      <div class="studio-note" id="studio-note"><span class="note-line"></span><p class="tiny-label">WORKSPACE</p><p id="companion-note"><span id="workspace-summary">正在讀取工作與成果…</span></p><span class="note-foot">1 一瞥 · 2 展開 · 3 觀察<br>Esc 收合目前檢視</span></div>
+      <article id="vessel" class="vessel" aria-labelledby="task-title">
+        <div class="material-light" aria-hidden="true"></div>
+        <div class="vessel-header"><span class="task-number" id="task-number">READ-ONLY WORK</span><span class="state-pill" id="state-pill"><span class="status-dot"></span><span id="status-label">正在讀取</span></span><button id="return" class="icon-button return-button" aria-label="收合至一瞥" hidden><svg><use href="#i-back"/></svg></button></div>
+        <div id="vessel-intro" class="vessel-intro"><div class="intro-copy"><p class="overline" id="project-label">LOCAL COMPANION</p><h2 id="task-title" tabindex="-1">交代一項工作</h2><p id="task-description" class="task-description">閱讀公開內容，整理重點與待確認事項。</p></div>
+          <svg class="ceramic-fold" viewBox="0 0 280 260" aria-hidden="true"><defs><linearGradient id="fold-front" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--fold-hi)"/><stop offset=".18" stop-color="var(--fold-mid)"/><stop offset=".48" stop-color="var(--fold-dark)"/><stop offset=".77" stop-color="var(--fold-mid)"/><stop offset="1" stop-color="var(--fold-hi)"/></linearGradient><linearGradient id="fold-edge" x1="0" y1="1" x2="1" y2="0"><stop stop-color="var(--fold-dark)"/><stop offset=".65" stop-color="var(--fold-mid)"/><stop offset="1" stop-color="var(--fold-hi)"/></linearGradient><filter id="fold-shadow" x="-50%" y="-30%" width="200%" height="200%"><feDropShadow dx="0" dy="16" stdDeviation="13" flood-opacity=".4"/></filter></defs><g filter="url(#fold-shadow)"><path d="M52 158C22 97 84 43 152 57c31 7 65 37 51 66-10 23-45 16-61 4-24-19-49-28-71-6-27 28-13 59 27 69 57 14 93-6 109-39 9-19 9-36 14-44 14 6 29 26 24 52-10 54-81 76-139 57-27-9-42-28-54-58Z" fill="url(#fold-front)"/><path d="M52 158C22 97 84 43 152 57c31 7 65 37 51 66-9 20-29 18-45 10 34-9 21-46-13-53-47-10-89 31-80 72 9 46 62 63 103 44-43 33-97 11-116-38Z" fill="url(#fold-edge)"/><path d="M50 134c-6-39 27-75 70-78m87 100c-20 34-76 52-118 23" fill="none" stroke="var(--fold-hi)" stroke-width="1.1" opacity=".7"/></g></svg>
+        </div>
+        <div id="glance-content" class="glance-content"><div class="scope-mark"><svg><use href="#i-shield"/></svg><span>唯讀探索<span class="muted"></span></span></div><div class="glance-note"><span class="note-dot"></span><span id="glance-status">正在整理專案脈絡，尚無可確認的完成比例。</span></div></div>
+        <div id="expanded-content" class="expanded-content" hidden>
+          <div class="detail-sidebar" tabindex="0" role="region" aria-label="工作身分與狀態"><span class="tiny-label">WORK STATUS</span><dl><dt>執行狀態</dt><dd id="execution-label">正在讀取</dd><dt>成果審查</dt><dd id="review-label">尚未取得成果</dd></dl><details class="identity"><summary>工作識別資訊</summary><p>Task ID</p><code id="task-id">尚未建立</code><p>Result ID</p><code id="result-id">尚未建立</code></details><p class="boundary"><svg><use href="#i-shield"/></svg>唯讀執行<br>審查不授予外部權限</p></div>
+          <div id="detail-main" class="detail-main" tabindex="0" role="region" aria-label="工作內容與成果，使用方向鍵捲動"><nav class="content-tabs" aria-label="工作內容"><button id="brief-tab" aria-selected="true">工作內容</button><button id="result-tab" aria-selected="false" disabled>成果 <span id="result-indicator"></span></button></nav>
+            <div id="brief-content"><p class="section-index">01 — INTENTION</p><h3 id="detail-heading">工作範圍</h3><p id="detail-text">從公開文件釐清專案用途、核心模組與資料流。這是一個可以停下、觀察與審查的工作物件。</p><div class="deliverable"><svg><use href="#i-paper"/></svg><div><span class="tiny-label">EXPECTED OUTPUT</span><p id="expected-output">一份附有已知與未確認事項的文件摘要。</p></div></div><p id="task-notice" class="operation-notice" role="status"></p></div>
+            <div id="result-content" hidden><div class="result-heading"><span class="section-index">02 — RESULT</span><button id="open-reader" class="secondary-button" disabled><svg><use href="#i-expand"/></svg>展開閱讀</button><button id="reload-result" class="text-button">重新讀取成果</button></div><h3 id="result-title">專案文件摘要</h3><div id="result-text" class="result-text"></div><div class="review-actions" id="review-actions"><p>成果尚未審查。</p><div><button id="accept" class="primary-button"><svg><use href="#i-check"/></svg>接受成果</button><button id="revise" class="secondary-button">要求調整</button><button id="reject" class="text-button">拒絕</button></div></div><div id="review-receipt" class="review-receipt" hidden><svg><use href="#i-check"/></svg><div><strong id="receipt-label"></strong><p id="revision-receipt"></p><p>決定已保存至本機審查記錄，不授予外部操作權限。</p></div></div></div>
+          </div>
+        </div>
+        <footer class="vessel-footer"><div class="footer-identity"><span class="status-dot"></span><span id="footer-status">正在讀取</span></div><div class="vessel-actions"><button id="stop" type="button" hidden disabled class="stop-button">要求停止</button><button id="observe" class="secondary-button" hidden aria-expanded="false" aria-controls="monitor"><svg><use href="#i-wave"/></svg><span>展開觀察</span></button><button id="expand" class="primary-button">進入工作空間 <svg><use href="#i-arrow"/></svg></button></div></footer>
+      </article>
+      <aside id="monitor" class="monitor" aria-labelledby="monitor-heading" hidden>
+        <div class="monitor-heading"><div><span class="tiny-label">OBSERVATION</span><h3 id="monitor-heading" tabindex="-1">執行觀察</h3></div><div class="monitor-controls"><button id="observation-preferences" class="icon-button" aria-label="觀察材質與動態偏好"><svg><use href="#i-tune"/></svg></button><button id="expand-observation" class="icon-button" aria-label="展開觀察閱讀" aria-expanded="false" aria-controls="monitor"><svg><use href="#i-expand"/></svg></button><button id="close-monitor" class="icon-button" aria-label="收合觀察"><svg><use href="#i-close"/></svg></button></div></div>
+        <div class="monitor-identity"><span class="monitor-id" id="monitor-id">目前工作</span><p id="monitor-task" class="monitor-task"></p></div>
+        <div class="connection-state"><span class="status-dot"></span><span id="connection-label">正在連接</span><button id="refresh" class="text-button">重新讀取</button></div>
+        <div class="monitor-state" aria-live="polite" aria-atomic="true"><span class="tiny-label">目前工作狀態</span><strong id="monitor-state">正在讀取</strong><div class="state-facts"><span id="monitor-execution"></span><span id="monitor-review"></span></div><p id="monitor-copy">尚無可確認的完成比例。</p><small id="monitor-origin"></small></div>
+        <nav class="observation-tabs" aria-label="觀察內容"><button id="observation-summary" aria-pressed="true" aria-controls="observation-summary-panel">摘要</button><button id="observation-details" aria-pressed="false" aria-controls="observation-detail-panel">詳細事件</button></nav>
+        <div id="observation-scroll" class="observation-scroll" tabindex="0" role="region" aria-label="已回報的歷程事件，使用方向鍵或 Page Down 閱讀">
+          <section id="observation-summary-panel" aria-label="執行摘要"><h4>已回報歷程 <span>階段訊號</span></h4><ol id="event-list"></ol></section>
+          <section id="observation-detail-panel" aria-label="已回報事件詳情" hidden><h4>已回報歷程 <span>確認層級</span></h4><p id="observation-availability" class="observation-note"></p><ol id="detail-events" class="detail-events"></ol><p id="observation-error" class="operation-notice"></p></section>
+        </div>
+        <p class="monitor-boundary">歷程不代表目前仍在執行。僅呈現已回報事件，不推定工具成功或完成比例。</p>
+      </aside>
+      <div class="stage-caption"><span class="caption-dot"></span><span>LIQUID CERAMIC / <span id="material-name">OBSIDIAN</span></span><span id="motion-label">空間轉場 · 標準</span></div>
+    </section>
+    <section class="task-tray" aria-label="工作選取"><div class="tray-label"><span class="tiny-label">TASK SELECTION</span><p>選取已有工作，<br>或交代一項工作。</p></div><div class="task-items" id="task-items"></div><button id="new-task" class="new-task" aria-label="新增工作"><svg><use href="#i-plus"/></svg><span>新增工作</span></button></section>
+    <footer class="app-footer"><span>LOCAL COMPANION <span class="footer-separator">／</span> READ ONLY</span><span id="preference-storage">偏好僅儲存在此瀏覽器</span><span id="connection-banner" role="status">正在連接本機端</span></footer>
+  </main>
+
+  <dialog id="reader" class="reader" aria-labelledby="reader-title" aria-describedby="reader-context">
+    <header id="reader-handle" class="reader-header" tabindex="0" aria-label="成果閱讀視窗，方向鍵移動，Shift 加速">
+      <div class="reader-heading"><span class="tiny-label">RESULT READER</span><h2 id="reader-title">工作成果</h2></div>
+      <div class="reader-controls"><button id="reader-preferences" class="icon-button" aria-label="閱讀材質與動態偏好"><svg><use href="#i-tune"/></svg></button><button id="reader-focus" class="secondary-button" aria-pressed="false">專注閱讀</button><button id="reader-close" class="icon-button" aria-label="關閉成果閱讀"><svg><use href="#i-close"/></svg></button></div>
+    </header>
+    <div class="reader-context"><p id="reader-context"></p><details class="identity"><summary>成果識別資訊</summary><p>Task ID <code id="reader-task-id"></code></p><p>Result ID <code id="reader-result-id"></code></p></details></div>
+    <div id="reader-body" class="reader-body" role="region" aria-label="完整成果，方向鍵或 Page Down 捲動" tabindex="0"><div id="reader-text"></div></div>
+    <footer class="reader-footer"><p id="reader-status" role="status"></p><button id="reader-return" class="primary-button">返回工作與審查 <svg><use href="#i-back"/></svg></button></footer>
+    <button id="reader-resize" class="reader-resize" aria-label="調整閱讀空間，方向鍵縮放，Shift 加速"><svg><use href="#i-expand"/></svg></button>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <dialog id="settings-dialog" class="settings-dialog"><div class="dialog-header"><div><span class="tiny-label">APPEARANCE</span><h2>材質與動態</h2></div><button class="icon-button" data-close aria-label="關閉偏好"><svg><use href="#i-close"/></svg></button></div><fieldset><legend>陶瓷材質</legend><div class="material-options"><button data-theme="obsidian" aria-pressed="true"><span class="swatch obsidian"></span><strong>黑曜</strong><small>冷光、深色釉面</small></button><button data-theme="umber" aria-pressed="false"><span class="swatch umber"></span><strong>煙茶</strong><small>暖銅、細膩砂面</small></button><button data-theme="porcelain" aria-pressed="false"><span class="swatch porcelain"></span><strong>月白</strong><small>柔光、溫潤瓷面</small></button></div></fieldset><label class="preference-row" for="motion-setting"><span><strong>動態節奏</strong><small>低動態會關閉空間彈性與指標反光。</small></span><select id="motion-setting"><option value="auto">跟隨系統</option><option value="full">標準</option><option value="reduced">低動態</option></select></label><label class="preference-row" for="quality-setting"><span><strong>表面光線</strong><small>靜態模式關閉指標反光、景深模糊與懸浮位移。</small></span><select id="quality-setting"><option value="high">細緻</option><option value="low">靜態</option></select></label><p class="settings-foot">只保存材質與動態偏好。工作成果與審查由本機端保存。</p></dialog>
+  <dialog id="new-dialog"><div class="dialog-header"><div><span class="tiny-label">NEW TASK</span><h2>建立唯讀工作</h2></div><button class="icon-button" data-close aria-label="關閉新工作"><svg><use href="#i-close"/></svg></button></div><form id="new-form"><label for="new-intent">工作內容</label><textarea id="new-intent" rows="3" maxlength="4000" required placeholder="例如：整理一份公開文件的重點"></textarea><p class="muted">提交後會立即開始唯讀工作。請使用非敏感內容，並確認頁面上方顯示的執行環境。</p><p id="start-message" class="operation-notice" role="status"></p><button id="start" type="submit" class="primary-button">建立並開始工作 <svg><use href="#i-arrow"/></svg></button></form></dialog>
+  <dialog id="revision-dialog"><div class="dialog-header"><div><span class="tiny-label">RESULT REVISION</span><h2>記錄調整方向</h2></div><button class="icon-button" data-close aria-label="關閉調整"><svg><use href="#i-close"/></svg></button></div><form id="revision-form"><p id="revision-target" class="muted"></p><label for="revision-intent">調整方向</label><textarea id="revision-intent" rows="3" maxlength="4000" required placeholder="描述需要保留、補充或重新整理的內容"></textarea><p class="muted">記錄調整方向，保留原成果；不執行另一項工作。</p><p id="revision-message" class="operation-notice" role="status"></p><button id="revision-submit" class="primary-button" type="submit">保存調整方向 <svg><use href="#i-arrow"/></svg></button></form></dialog>
+  <dialog id="help-dialog"><div class="dialog-header"><div><span class="tiny-label">OPERATION GUIDE</span><h2>操作指南</h2></div><button class="icon-button" data-close aria-label="關閉指南"><svg><use href="#i-close"/></svg></button></div><ol class="help-steps"><li><strong>打開同一個工作</strong><p>一瞥 → 展開 → 觀察。也可用數字鍵 1、2、3。快速切換可中斷並接續轉場。</p></li><li><strong>建立工作與審查成果</strong><p>觀察可切換摘要與可信詳細事件。新增工作後讀取後端進度。成果保存後，再接受、拒絕或提出調整。停止要求仍需執行端確認取消。</p></li><li><strong>調整材質與動態</strong><p>成果可展開閱讀、拖動標題及右下角調整空間；專注閱讀填滿瀏覽器。方向鍵可移動／調整，Esc 關閉。右上角切換黑曜、煙茶、月白與動態偏好。觀察指標反光和靜態模式的差異。</p></li></ol><p class="muted">已保存的成果與審查可重新讀取。未保存的執行進度不能在重啟後恢復。Esc 可關閉觀察或對話框。Windows 精確讀取範圍限制（M2-C5）尚未解決。</p></dialog>
+  <main id="chat-space" class="chat-space" aria-labelledby="chat-title">
+    <section id="companion-context" hidden aria-label="目前查看的工作">
+      <span class="tiny-label">目前查看的工作 · 畫面關聯</span>
+      <strong id="companion-task-name"></strong><span id="companion-task-state"></span>
+      <div class="companion-context-actions"><button id="companion-share-result" class="text-button" disabled>選取此工作成果並預覽</button><button id="companion-return" class="text-button">返回此工作</button></div>
+      <p id="companion-sharing" role="status">本次未加入工作資料。普通聊天不能據此確認最新成果。</p>
+    </section>
+    <header class="chat-heading">
+      <div><span class="tiny-label">YOUR COMPANION</span><h1 id="chat-title">一起想，一起聊。</h1><p id="chat-ready" role="status">正在連接 Companion…</p></div>
+      <button id="chat-settings-open" class="text-button" aria-haspopup="dialog">帳戶與模型</button>
+    </header>
+    <section id="project-chat-strip" class="project-chat-strip" aria-label="目前對話的專案關聯" hidden><div><span class="nexus-kicker">專案情境</span><strong id="project-chat-binding">尚未讀取關聯</strong><small id="project-chat-help">查看專案不會自動變更對話關聯或分享資料。</small></div><div class="project-chat-actions"><button id="project-chat-link" type="button" class="secondary-button" disabled>關聯目前專案</button><button id="project-chat-unlink" type="button" class="text-button" hidden>解除關聯</button><button id="project-chat-back" type="button" class="text-button" data-route="project">查看專案 ↗</button></div></section>
+    <div class="chat-history-bar"><label for="chat-history">對話紀錄</label><select id="chat-history" aria-label="已保存對話"><option value="">新對話</option></select><button id="chat-new" class="secondary-button" type="button">新對話</button></div>
+    <section id="document-chat-context" class="document-chat-context" hidden aria-label="本次文件來源"><strong id="document-chat-name"></strong><p id="document-chat-scope"></p><details id="document-chat-excerpt"><summary>查看待送出的內容</summary><pre id="document-chat-content" class="chat-source-text" tabindex="0"></pre></details><p class="source-send-note">隨下一則訊息送出</p><div><button id="document-chat-return" class="text-button" type="button">定位原文</button><button id="document-chat-clear" class="text-button" type="button">移除這次的來源</button></div></section>
+    <div id="chat-signin" class="chat-signin" hidden><span id="chat-recovery-copy">登入 ChatGPT 後即可開始對話。</span><button id="chat-signin-open" class="primary-button" type="button">登入 ChatGPT</button><button id="chat-recover" class="secondary-button" type="button" hidden>重新讀取模型</button></div>
+    <div id="chat-messages" tabindex="0" role="region" aria-label="對話訊息，使用方向鍵或 Page Down 閱讀"></div>
+    <form id="chat-form" class="chat-composer">
+      <label class="chat-input-label" for="chat-question">你的訊息</label>
+      <textarea id="chat-question" rows="2" maxlength="4000" required placeholder="想聊些什麼？"></textarea>
+      <p id="chat-save-status" class="chat-draft-status" role="status" aria-live="polite"></p><button id="chat-save-retry" class="text-button" type="button" hidden>重新確認保存</button><button id="chat-save-recover" class="text-button" type="button" hidden>核對已保存版本</button>
+      <div class="chat-compose-actions"><button id="chat-source-open" type="button" class="secondary-button" aria-haspopup="dialog">加入專案資料</button><span id="chat-source-status" class="muted"></span><button id="chat-send" type="submit" class="primary-button" disabled>傳送訊息 <svg><use href="#i-arrow"/></svg></button></div>
+      <p id="chat-notice" role="status" aria-live="polite">可直接聊天，需要專案資料時再加入。</p>
+      <p class="chat-disclosure">訊息會傳送至 OpenAI，使用你授權的 ChatGPT 方案額度。<span>Ctrl / ⌘ + Enter 傳送</span></p>
     </form>
-    <p id="active" role="status"></p><ul id="progress" aria-live="polite"></ul><p id="notice" role="status"></p>
-  </section>
-  <section aria-labelledby="selection-heading">
-    <h2 id="selection-heading">選擇要查看的工作</h2>
-    <label for="tasks">已保存的結果</label><select id="tasks"><option value="">請選擇工作，不會自動批准最新結果</option></select>
-    <p id="selected-status" role="status">尚未選擇工作</p>
-    <button id="open-review" disabled>開啟結果／審查</button>
-  </section>
-  <section id="review-panel" class="mixed" aria-labelledby="review-heading" hidden>
-    <h2 id="review-heading">結果與明確審查</h2>
-    <p id="review-intent"></p><pre id="result"></pre><p id="review-state" role="status"></p>
-    <p>執行完成不代表已接受。以下按鈕只處理眼前這份結果。</p>
-    <div class="actions"><button id="accept" disabled>接受此結果</button><button id="reject" disabled>拒絕此結果</button></div>
-    <label for="revision-intent">需要調整？請明確描述新工作</label>
-    <textarea id="revision-intent" rows="2" maxlength="4000"></textarea><button id="revise" disabled>要求調整（不自動執行）</button>
-    <p id="revision"></p><p id="decision-message" role="status"></p>
-  </section>
-  <footer>重新整理或關閉畫面不會取消工作。若本機端已退出，沒有已保存結果不代表工作已取消；未完成的狀態可能無法確認。</footer>
-</main>
-</body></html>
+  </main>
+  <dialog id="companion-panel" aria-labelledby="companion-panel-title">
+    <header id="companion-window-header" class="companion-panel-header"><h2 id="companion-panel-title" tabindex="0" role="button" aria-label="移動 Companion，方向鍵移動，Shift 加速">Companion</h2><button id="companion-read-document" class="secondary-button" type="button" hidden>閱讀文件</button><button id="companion-expand" class="text-button">完整對話</button><button id="companion-minimize" class="icon-button" aria-label="最小化 Companion">−</button><button id="companion-maximize" class="icon-button" aria-label="原頁面放大或還原 Companion">□</button><button id="companion-close" class="icon-button" aria-label="關閉 Companion">×</button></header>
+    <div class="companion-modebar"><label for="companion-window-mode">視窗</label><select id="companion-window-mode"><option value="floating">自由浮動</option><option value="dock-left">左側停靠</option><option value="dock-right">右側停靠</option><option value="split-left">左側並排</option><option value="split-right">右側並排</option><option value="reading">原頁放大閱讀</option></select><span id="companion-window-status" role="status"></span></div>
+    <div id="companion-unlinked" hidden><p id="companion-unlinked-task"></p><p id="companion-link-notice" role="status"></p><button id="companion-start-new" class="secondary-button">以新對話開始普通聊天</button></div>
+    <div id="companion-panel-body"></div>
+    <button id="companion-window-resize" class="companion-resize" aria-label="調整 Companion 寬高，拖曳或使用方向鍵，Shift 加速">↘</button>
+  </dialog>
+  <div id="companion-mini" hidden role="region" aria-label="已最小化的 Companion">
+    <button id="companion-mini-move" class="text-button" aria-label="移動最小化控制，拖曳或使用方向鍵，Shift 加速">⠿ Companion</button><button id="companion-restore" class="secondary-button">還原</button><button id="companion-mini-close" class="icon-button" aria-label="關閉最小化的 Companion">×</button><button id="companion-mini-resize" class="companion-resize" aria-label="調整最小化控制寬高，拖曳或使用方向鍵，Shift 加速">↘</button>
+  </div>
+  <dialog id="work-proposal" class="chat-auxiliary" aria-labelledby="work-proposal-title">
+    <header class="dialog-header"><h2 id="work-proposal-title">確認唯讀工作提案</h2><button class="icon-button" data-close aria-label="返回對話"><svg><use href="#i-close"/></svg></button></header>
+    <div class="chat-aux-body">
+      <p id="work-scope"></p>
+      <label for="work-goal">工作目標</label><textarea id="work-goal" rows="3" maxlength="4000"></textarea>
+      <label for="work-expected">預期結果／模型協助整理（可修改，不是執行證據）</label><textarea id="work-expected" rows="5" maxlength="4000"></textarea>
+      <fieldset id="work-files"><legend>允許讀取的程式檔案</legend></fieldset>
+      <p>此執行器只產生檔案雜湊、Python 定義與入口呼叫的行號紀錄。不能執行測試、任意命令或修改專案；模型不取得本機工具權限。</p>
+      <button id="work-preview" class="secondary-button">預覽範圍</button>
+      <div id="work-manifest"></div><p id="work-notice" role="status"></p>
+    </div>
+    <footer class="chat-aux-footer"><button id="work-confirm" class="primary-button" disabled>確認唯讀範圍並開始</button></footer>
+  </dialog>
+  <dialog id="project-confirm" class="chat-auxiliary" aria-labelledby="project-confirm-title"><header class="dialog-header"><h2 id="project-confirm-title">確認專案關聯</h2><button type="button" class="icon-button" data-close aria-label="取消專案關聯確認">×</button></header><div class="chat-aux-body"><p id="project-confirm-copy"></p><p>只保存這段對話的專案標記；不會附加檔案、工作成果或觸發模型請求。</p><p id="project-confirm-notice" role="status"></p></div><footer class="chat-aux-footer"><button type="button" class="secondary-button" data-close>取消</button><button id="project-confirm-save" type="button" class="primary-button">確認並保存</button></footer></dialog>
+  <dialog id="chat-settings" class="chat-auxiliary" aria-labelledby="chat-settings-title">
+    <div class="dialog-header"><h2 id="chat-settings-title">帳戶與模型</h2><button class="icon-button" data-close aria-label="關閉帳戶與模型"><svg><use href="#i-close"/></svg></button></div>
+    <div class="chat-aux-body" id="chat-account">
+      <label for="chat-accounts">ChatGPT 帳戶</label><select id="chat-accounts"><option value="">新增帳戶</option></select>
+      <div class="chat-toolbar"><button id="chat-login" class="primary-button" type="button">Continue with ChatGPT</button><button id="chat-logout" class="text-button" type="button">登出</button></div>
+      <p id="chat-auth-notice" role="status"></p>
+      <label for="chat-model">對話模型</label><select id="chat-model" aria-label="對話模型"></select><button id="chat-models-refresh" class="text-button" type="button">重新讀取模型</button>
+      <p><a href="https://chatgpt.com/#settings/Usage" target="_blank" rel="noreferrer">查看 ChatGPT 用量設定</a></p>
+    </div>
+    <footer class="chat-aux-footer"><button class="primary-button" type="button" data-close>返回原畫面</button></footer>
+  </dialog>
+  <dialog id="chat-continuity" class="chat-auxiliary" aria-labelledby="chat-continuity-title">
+    <header class="dialog-header"><h2 id="chat-continuity-title">核對本機已保存的草稿</h2><button class="icon-button" data-close aria-label="返回保留本分頁草稿">×</button></header>
+    <div class="chat-aux-body"><p>下方是目前帳戶與工作區的已保存版本。「使用已保存版本」會取代本分頁尚未保存的草稿與設定；需要保留時，請先返回複製。此操作不會傳送訊息或恢復資料來源授權。</p><pre id="chat-continuity-saved" class="chat-source-text"></pre></div>
+    <footer class="chat-aux-footer"><button class="secondary-button" type="button" data-close>返回保留目前草稿</button><button id="chat-continuity-use" class="primary-button" type="button">使用已保存版本</button></footer>
+  </dialog>
+  <dialog id="chat-knowledge" class="chat-auxiliary" aria-labelledby="chat-knowledge-title">
+    <div class="dialog-header"><h2 id="chat-knowledge-title">加入這則訊息的資料</h2><button class="icon-button" data-close aria-label="返回對話"><svg><use href="#i-close"/></svg></button></div>
+    <div class="chat-aux-body">
+      <p class="muted">只分享明確選定並已預覽的資料；按「傳送訊息」時才與問題一起送出。傳送後取消選取。</p>
+      <div id="chat-sources"></div><button id="chat-preview" type="button" class="secondary-button">預覽選定資料</button>
+      <p id="chat-preview-notice" role="status"></p><div id="chat-source-preview"></div>
+    </div>
+    <footer class="chat-aux-footer"><button id="chat-clear-sources" class="text-button" type="button">移除資料</button><button id="chat-knowledge-done" class="primary-button" type="button" data-close>返回對話</button></footer>
+  </dialog>
+  <dialog id="chat-source-dialog" class="chat-auxiliary" aria-labelledby="chat-source-title">
+    <div class="dialog-header"><h2 id="chat-source-title">這一輪的來源快照</h2><button class="icon-button" data-close aria-label="返回對話"><svg><use href="#i-close"/></svg></button></div>
+    <div id="chat-source-records" class="chat-aux-body"></div>
+    <footer class="chat-aux-footer"><button class="primary-button" type="button" data-close>返回對話</button></footer>
+  </dialog>
+</body>
+</html>

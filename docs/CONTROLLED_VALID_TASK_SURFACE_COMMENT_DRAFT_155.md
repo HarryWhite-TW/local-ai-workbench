@@ -1,5 +1,8 @@
 # Controlled Valid Task Surface Comment Draft (#155)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This task prepares a controlled valid Task Surface comment body only.

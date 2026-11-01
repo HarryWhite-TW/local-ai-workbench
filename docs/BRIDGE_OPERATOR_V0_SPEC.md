@@ -10,6 +10,16 @@
 - scope: Near-zero-touch ChatGPT-to-Codex development workflow tooling
 - product boundary: Development workflow tooling only; not Local Document-to-Knowledge Workbench runtime
 
+## Applicability note — NEXUS consolidation, 2026-11-01
+
+The ChatGPT-primary-interface and no-replacement-chat statements below govern
+the incumbent Bridge route. They do not define the separately user-selected
+NEXUS product blueprint or veto its future primary-entry intent. Current NEXUS
+status/sequence is in root `PLANS.md`; only Node 01 consolidation is active.
+This navigation clarification changes no Bridge dispatch, credential, approval,
+trusted-actor, startup or side-effect contract. Native execution alone does not
+select Bridge; NEXUS is not now wired to the Bridge route by this note.
+
 ## Current Status Reconciliation — Operating V1
 
 Phase B3's historical `no login startup yet` boundary remains correct: B3 did

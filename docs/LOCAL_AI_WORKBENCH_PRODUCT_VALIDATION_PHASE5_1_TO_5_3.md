@@ -1,5 +1,8 @@
 # Local AI Workbench Product Validation — Phase 5.1 to Phase 5.3
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 Status: ACCEPTED WITH SMALL GAPS
 Record: ECO-02
 Scope: product-validation evidence, not ecosystem-wide priority authority

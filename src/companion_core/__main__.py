@@ -1,7 +1,7 @@
-"""Run: python -m src.companion_core --help.
+"""Specialized trusted-host CLI: python -m src.companion_core --help.
 
 A trusted OAuth host supplies one validated ChatGPT-plan access token on stdin;
-never place credentials in command arguments. Review invocations need no credentials.
+never paste credentials. Daily entry: src.companion_core.daily; review needs no credentials.
 """
 import argparse
 import sys

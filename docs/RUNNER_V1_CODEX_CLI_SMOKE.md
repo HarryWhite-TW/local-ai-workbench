@@ -1,5 +1,8 @@
 # Runner v1 Codex CLI Smoke
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 This file is a smoke artifact for Issue #120.
 
 It exists only to prove that `local_runner_v1` can invoke Codex CLI in

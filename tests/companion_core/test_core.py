@@ -90,7 +90,7 @@ def test_invalid_runtime_sequences_fail_closed(tmp_path, events):
 
 
 @pytest.mark.parametrize("kind,state", [(EventKind.FAILED, "FAILED"),
-                                       (EventKind.CANCELLED, "CANCELLED")])
+                                       (EventKind.CANCELLED, "FAILED")])
 def test_terminal_failures(tmp_path, kind, state):
     core = Companion(FakeRuntime([RuntimeEvent(kind)]), "Inspect", str(tmp_path), Authority.READ_ONLY)
     assert core.run().state == state

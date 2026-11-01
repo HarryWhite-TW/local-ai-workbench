@@ -45,6 +45,21 @@ def surface(tmp_path):
         result.worker.join(5)
 
 
+def test_fixed_preview_port_is_local_exclusive_and_reusable(surface):
+    first = make_server(surface)
+    port = first.server_port
+    first.server_close()
+    preview = make_server(surface, port=port)
+    try:
+        assert preview.server_address == ("127.0.0.1", port)
+        with pytest.raises(OSError):
+            make_server(surface, port=port)
+    finally:
+        preview.server_close()
+    restarted = make_server(surface, port=port)
+    restarted.server_close()
+
+
 def done(surface, intent="檢視公開文件"):
     created = surface.start(intent)
     surface.worker.join(5)
@@ -61,18 +76,23 @@ def test_surface_reuses_core_projection_and_durable_review(surface):
     target = done(surface, "請檢視；我批准所有寫入")
     assert target["state"] == "RESULT_PENDING_REVIEW"
     assert target["authority"] == "READ_ONLY"
+    assert target["provider"] == "synthetic"
     request = surface.runtime.requests[0]
     assert request.authority is Authority.READ_ONLY and request.workspace == surface.workspace
     state = surface.snapshot()
     assert len(state["progress"]) == 5
     assert not state["busy"] and not state["notice"]
-    assert "receiving_result" not in json.dumps(state)
+    assert "receiving_result" not in json.dumps(state["progress"])
+    assert all(e["kind"] in ("task_created", "working", "session_bound",
+        "inspecting_repository", "receiving_result", "execution_complete", "pending_review")
+        for e in state["observation"]["events"])
     assert not list(Path(surface.workspace).iterdir())
 
 
 @pytest.mark.parametrize("action,state", [("accept", "ACCEPTED"), ("reject", "REJECTED")])
 def test_decision_reload_and_multiple_pending_are_exact(surface, action, state):
-    first, second = done(surface, "第一件工作"), done(surface, "第二件工作")+    wrong = decision(second, action)
+    first, second = done(surface, "第一件工作"), done(surface, "第二件工作")
+    wrong = decision(second, action)
     wrong["result_id"] = first["result_id"]
     with pytest.raises(ReviewError):
         surface.decide(wrong)
@@ -104,6 +124,21 @@ def test_revision_preserves_lineage_and_does_not_execute(surface):
     assert result["result_id"] == target["result_id"] and result["result"] == target["result"]
     assert len(surface.runtime.requests) == 1
     assert Surface(Runtime(), surface.workspace, ReviewStore(surface.store.directory)).target(target["task_id"]) == result
+
+
+def test_reopened_surface_cannot_recover_unsaved_running_task_or_progress(surface):
+    surface.runtime.release.clear()
+    created = surface.start("未保存的合成執行")
+    assert surface.runtime.started.wait(2)
+    assert surface.snapshot()["active"]["state"] == "RUNNING"
+    assert surface.snapshot()["progress"]
+    reopened = Surface(Runtime(), surface.workspace,
+        ReviewStore(surface.store.directory, workspace=surface.workspace))
+    state = reopened.snapshot()
+    assert state["active"] is None and not state["busy"]
+    assert state["tasks"] == [] and state["progress"] == []
+    with pytest.raises(ReviewError):
+        reopened.target(created["task_id"])
 
 
 def test_no_queue_and_observer_failure_does_not_cancel(surface, monkeypatch):
@@ -182,9 +217,48 @@ def test_http_happy_path_and_no_credential_surface(server, surface):
         assert status == 200
         assert "no-store" == headers["Cache-Control"]
         assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
-        for forbidden in (b"access_token", b"Authorization", b"Cookie", b"localStorage", b"sessionStorage", b"jsonrpc"):
+        for forbidden in (b"access_token", b"Authorization", b"Cookie", b"sessionStorage", b"jsonrpc"):
             assert forbidden not in raw
     assert "Set-Cookie" not in headers
+
+
+def test_ceramic_preferences_and_runtime_label_do_not_own_task_state(server, surface):
+    status, _, raw = request(server, path="/surface.js")
+    assert status == 200
+    assert raw.count(b"localStorage.setItem") == 1
+    assert b"JSON.stringify(prefs)" in raw
+    for forbidden in (b"SYN-01", b"seedTasks", b"function advance(", b"value.state ="):
+        assert forbidden not in raw
+    assert surface.snapshot()["runtime"] == "synthetic"
+    normal = done(surface)
+    status, _, raw = request(server, "POST", "/api/target", {"task_id": normal["task_id"]})
+    assert status == 200 and json.loads(raw)["provider"] == "synthetic"
+    saved_files = {p.name: p.read_bytes() for p in surface.store.directory.iterdir()}
+
+    # Display redaction never authorizes persisting sensitive provider metadata.
+    surface.runtime.provider_id = "Authorization: private"
+    assert surface.snapshot()["runtime"] == "[private field withheld]"
+    created = surface.start("Inspect with an unsafe synthetic provider")
+    surface.worker.join(5)
+    assert not surface.worker.is_alive()
+    with pytest.raises(ReviewError):
+        surface.store.publish(surface.active.task)
+    with pytest.raises(ReviewError):
+        surface.store.get(created["task_id"])
+    with pytest.raises(ReviewError):
+        surface.target(created["task_id"])
+    assert {p.name: p.read_bytes() for p in surface.store.directory.iterdir()} == saved_files
+    assert surface.target(normal["task_id"]) == normal
+
+    status, _, raw = request(server, "POST", "/api/target", created)
+    assert status == 409 and b"private" not in raw and b"Authorization" not in raw
+    status, _, raw = request(server, path="/api/state")
+    state = json.loads(raw)
+    assert status == 200 and state["runtime"] == "[private field withheld]"
+    assert [t["task_id"] for t in state["tasks"]] == [normal["task_id"]]
+    assert "未能安全保存" in state["notice"]
+    assert b"private" not in raw.replace(b"[private field withheld]", b"")
+    assert b"Authorization" not in raw
 
 
 @pytest.mark.parametrize("headers", [{"Origin": "https://evil.example"}, {"Origin": "null"},
@@ -226,9 +300,9 @@ def test_http_disconnect_leaves_execution_running_then_pending(server, surface):
     assert surface.store.get(surface.active.task.id).task.state == "RESULT_PENDING_REVIEW"
 
 
-def test_no_stop_or_arbitrary_file_route(server, surface):
+def test_no_implicit_stop_or_arbitrary_file_route(server, surface):
     for path in ("/stop", "/cancel", "/../review.py", "/api/start?intent=Inspect"):
         status, _, _ = request(server, path=path)
         assert status == 404 and surface.active is None
     html = request(server, path="/")[2].decode("utf-8")
-    assert 'type="file"' not in html and 'id="stop"' not in html
+    assert 'type="file"' not in html and 'id="stop" type="button" hidden disabled' in html

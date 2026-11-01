@@ -1,5 +1,8 @@
 # Semi-automated Workflow v1 Operating Model
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 This document defines the operating model for Semi-automated workflow v1.

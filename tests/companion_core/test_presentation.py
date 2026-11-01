@@ -101,6 +101,21 @@ def test_display_redacts_credentials(text, secret):
     assert secret not in safe_text(text)
 
 
+@pytest.mark.parametrize("text", [
+    "Read task-report and mask-layer notes",
+    "C:/public/task-notes/desk-notes.md",
+    "/tmp/codex-task-public/workspace",
+])
+def test_ordinary_words_and_workspace_paths_are_not_credentials(text):
+    assert safe_text(text) == text
+
+
+@pytest.mark.parametrize("prefix", ["", "key=", '"', "(", "/", "金鑰：", "金鑰", "\n", "\x1b"])
+def test_provider_key_is_withheld_at_text_and_path_boundaries(prefix):
+    secret = "sk-proj-synthetic-not-a-real-key"
+    assert secret not in safe_text(prefix + secret)
+
+
 def test_result_controls_and_raw_protocol_are_not_presented(tmp_path):
     task = Companion(Runtime(), "Inspect", str(tmp_path), Authority.READ_ONLY).run()
     output = []
@@ -142,7 +157,7 @@ def test_failure_and_cancelled_views_do_not_claim_pending_or_accepted(tmp_path):
     output = []
     view = HumanView(output.append)
     view.result(core.cancel())
-    assert "已取消" in "\n".join(output)
+    assert "已確認取消" in "\n".join(output)
     assert "RESULT_PENDING_REVIEW" not in "\n".join(output)
     assert "ACCEPTED" not in "\n".join(output)
 

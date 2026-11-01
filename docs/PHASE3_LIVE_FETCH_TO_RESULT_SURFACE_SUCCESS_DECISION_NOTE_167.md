@@ -1,5 +1,8 @@
 # Phase 3 Live Fetch To Result Surface Success Decision Note (#167)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This note records that the authenticated explicit live fetch to Result Surface readback path succeeded in #166, defines what is now proven, preserves the current approval boundary, and sets the next bounded planning step.

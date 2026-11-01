@@ -1,5 +1,8 @@
 # No-copy / No-paste Bridge Smoke 133
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 This document defines #133 No-copy / No-paste Bridge Smoke.

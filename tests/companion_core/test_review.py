@@ -45,6 +45,20 @@ def test_restart_exact_decision_and_duplicate_closed(setup, action, state):
     assert restarted.pending() == []
 
 
+@pytest.mark.parametrize("field", ["intent", "workspace", "provider", "session_id", "result"])
+def test_task_named_metadata_and_results_survive_restart(setup, tmp_path, field):
+    store, task = setup
+    workspace = tmp_path / "task-notes"
+    workspace.mkdir()
+    value = str(workspace) if field == "workspace" else "Public task-report"
+    task = replace(task, **{field: value})
+    target = store.publish(task)
+    restarted = ReviewStore(store.directory)
+    assert restarted.get(task.id) == target
+    assert getattr(restarted.get(task.id).task, field) == value
+    assert restarted.get(task.id).task.state == "RESULT_PENDING_REVIEW"
+
+
 def test_multiple_pending_wrong_unknown_and_stale_result_identity(setup):
     store, first = setup
     second = replace(first, id=str(uuid4()), result="另一份結果")
