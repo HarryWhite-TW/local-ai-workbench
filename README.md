@@ -18,11 +18,11 @@ blueprint does not rename the public showcase or grant execution authority.
 
 ## Effective Version and Architecture
 
-This **Draft PR candidate**, on `codex/node01-consolidated-candidate-20261101`,
-contains the retained NEXUS sources and Node 01 consolidation. It is not merged
-into master or a released daily-use product. The pre-publication source was HEAD
+The candidate published in [PR #362](https://github.com/HarryWhite-TW/local-ai-workbench/pull/362)
+contains the retained NEXUS sources and Node 01 consolidation. The PR records
+its merge state; real daily-use acceptance remains outstanding. The pre-publication source was HEAD
 `6c1eac3e8be6f2b6efc5ba58e5289db5972a1f71` plus retained working-tree sources.
-HEAD alone omits the daily/chat/resources/native-reader work. GitHub master was
+That pre-publication HEAD alone omits the daily/chat/resources/native-reader work. GitHub master was
 last observed at `661f2b77a6f4d42d8583eb10e396e2a91a35a571`; its Companion
 surface has the known syntax defect corrected in local HEAD. These are dated
 source identities, not a claim that a published release contains the candidate.
@@ -118,7 +118,8 @@ New capability checks:
 Known HTTP `WinError 10013` and atomic-hardlink `WinError 5` restrictions remain;
 static checks and pure capability tests do not establish full real daily use.
 Execution, technical acceptance and publication permission remain separate.
-Node 01 ends at READY_FOR_REVIEW; Node 02 and publishing require subsequent
-explicit authority. Historical roadmaps, examples and completion records do
+Node 01 local consolidation is technically ACCEPTED. [PR #362](https://github.com/HarryWhite-TW/local-ai-workbench/pull/362)
+publishes the candidate; its merge state is tracked by the PR. Node 02 requires
+separate explicit authority. Historical roadmaps, examples and completion records do
 not activate work. The [engineering index](docs/ENGINEERING_RECORDS_INDEX.md)
 keeps source-level evidence and verification limits.

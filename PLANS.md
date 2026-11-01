@@ -7,11 +7,11 @@ Node 01 scope. Earlier document-only submissions were insufficient for the
 user's expanded final outcome. The final consolidation adds a complete document
 register, historical isolation, simpler root navigation and an executable
 project-only capability entry that reuses existing requirement extraction.
-The user reports independent ChatGPT technical acceptance of the final Node 01
-consolidation. Publication is authorized only as a candidate branch and Draft PR:
-`codex/node01-consolidated-candidate-20261101`. The exact published candidate
-still requires independent review; master is unchanged, real daily-use acceptance
-is outstanding, and Node 02 is not activated.
+Node 01 local consolidation is technically ACCEPTED by independent ChatGPT review.
+[PR #362](https://github.com/HarryWhite-TW/local-ai-workbench/pull/362) publishes
+the candidate on `codex/node01-consolidated-candidate-20261101`; at publication
+it was awaiting merge to master. The PR tracks its current merge state. Real
+daily-use acceptance remains outstanding; Node 02 is not activated.
 
 The source identities, uncommitted-file descriptions and verification counts
 below record the pre-publication local snapshot, not the publication state of
@@ -39,13 +39,13 @@ does not recreate backup, recovery engineering or a new roadmap system.
 
 ### Candidate and Version Binding
 
-- Working directory: `C:\Users\harry\Desktop\local-ai-workbench-lc-workux01`.
+- Pre-publication working directory: the local Windows NEXUS candidate checkout.
 - Local branch: `codex/lc-workux01-observation-reader`.
 - Local HEAD: `6c1eac3e8be6f2b6efc5ba58e5289db5972a1f71`.
 - GitHub `master`, freshly read for this node:
   `661f2b77a6f4d42d8583eb10e396e2a91a35a571` (PR #361).
 - The local HEAD adds running cancellation and the M2-C4 syntax correction.
-  Current master still has the `surface.py:40` SyntaxError. The affected master
+  At that snapshot master had the `surface.py:40` SyntaxError. The affected master
   Companion entry is not launchable; this does not invalidate unrelated
   document or Bridge acceptance.
 - Starting tree: 10 tracked modifications, 67 untracked files, no staged files
@@ -61,10 +61,10 @@ does not recreate backup, recovery engineering or a new roadmap system.
   host module descriptions. Existing NEXUS algorithms/assets/tests are retained.
   No Git publication, recovery rebuild, safety-contract or showcase rename occurs.
 
-HEAD alone cannot reproduce this candidate. Review must include the existing
-uncommitted sources and the Node 01 documentation diff; no commit, merge or
-remote closure is claimed. Version observations are dated snapshots, not a
-permanent assertion about mutable branches.
+At the pre-publication snapshot, local HEAD alone could not reproduce the
+candidate without its uncommitted sources and Node 01 documentation diff.
+PR #362 now carries the complete candidate; its merge state is tracked there.
+Version observations are dated snapshots, not permanent branch assertions.
 
 ### Capability Disposition
 

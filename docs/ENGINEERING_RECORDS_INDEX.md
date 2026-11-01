@@ -1,11 +1,13 @@
 # Engineering Records Index
 
 > Publication scope: `codex/node01-consolidated-candidate-20261101` carries the
-> complete retained NEXUS/Node 01 candidate for Draft PR review, not a master
-> release. Status, H/M identities and "uncommitted" descriptions below are dated
-> pre-publication evidence. The user reports Node 01 consolidation accepted;
-> exact PR review and real daily-use acceptance remain outstanding. PLANS owns
-> current direction; no later node is activated.
+> complete retained NEXUS/Node 01 candidate published through PR #362. Status,
+> H/M identities and "uncommitted" descriptions below are dated
+> pre-publication evidence. Node 01 local consolidation is technically ACCEPTED.
+> [PR #362](https://github.com/HarryWhite-TW/local-ai-workbench/pull/362) publishes
+> the candidate; its current merge state is tracked there. Real daily-use
+> acceptance remains outstanding. PLANS owns current direction; no later node
+> is activated.
 
 ## Purpose
 
@@ -118,11 +120,13 @@ retried. API format extraction import is blocked by missing `python-docx`; no
 installation or success claim was substituted. This did not block the selected
 stdlib capability. No full real-login, game-time or daily-use acceptance is claimed.
 
-Final executor disposition: **READY_FOR_REVIEW — Node 01 final consolidation
+Historical executor disposition, before independent technical acceptance:
+**READY_FOR_REVIEW — Node 01 final consolidation
 and project capability library**. The expanded scope is evidenced by root
 navigation, complete register, history separation, actual callable reuse and
 preservation checks above. Node 02 still owns future UI/executor integration and
-any new authority; final technical ACCEPTED remains an independent decision.
+any new authority. Independent technical acceptance of the local consolidation
+was subsequently reported by the user.
 
 ## NEXUS Node 01 Consolidation — 2026-11-01
 
@@ -310,11 +314,11 @@ These are source observations, not nine successful HTTP fetches or UI tests.
 | 6. Latest local work preserved | VERIFIED by start/end SHA-256 comparison across all git-listed tracked/untracked nonignored files; only seven existing documents changed; no file added/deleted, HEAD/index unchanged |
 | 7. Node 02 decisions separated | VERIFIED as planning input: PLANS lists only executor contract, rich-document integration, state/reviewer ownership, notifications/navigation, UI-data and any formal identity/authority choice; this continuation resolves the prior source/branch lookup gaps |
 
-Executor disposition: **READY_FOR_REVIEW — Node 01 consolidation candidate**.
+Historical continuation executor disposition: **READY_FOR_REVIEW — Node 01 consolidation candidate**.
 The first submission's premature overall completion is superseded by the
-criterion-level evidence above. Independent final review must assess this exact
-candidate; no final ACCEPTED, runtime restoration, publication or Node 02
-activation is claimed. HTTP/hardlink restrictions and real-login/game-time
+criterion-level evidence above. At that time independent final review was pending;
+no final ACCEPTED, runtime restoration, publication or
+Node 02 activation was claimed. HTTP/hardlink restrictions and real-login/game-time
 unknowns remain limitations of product verification, not hidden passes.
 
 In that earlier continuation no executable behaviour changed, so its
