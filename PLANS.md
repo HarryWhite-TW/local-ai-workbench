@@ -1,9 +1,153 @@
 # PLANS.md
 
-## NEXUS Node 01 — Current Consolidation Candidate
+## NEXUS Node 02 — Single-Entry Product Blueprint (Gate C Candidate)
 
-Updated 2026-11-01. This section owns the current local NEXUS direction and
-Node 01 scope. Earlier document-only submissions were insufficient for the
+Status as of 2026-11-01: Node 01 is technically ACCEPTED and merged to
+`master` via [PR #362](https://github.com/HarryWhite-TW/local-ai-workbench/pull/362)
+(merge commit `aa7e8581bb64dc65fc1d771fbc4ee8c369739859`).
+Node 02 Gate A's product intent is agreed; Gate B's bounded research received
+independent ChatGPT **CONDITIONAL GO**. This Gate C blueprint is a publication
+candidate pending final technical review and merge, not a claim of implemented
+integration or real daily-use acceptance. Node 03 is NOT activated.
+
+### Product Contract — One User-Facing Entry
+
+NEXUS aims to be the user's primary Windows AI operating entry: natural
+conversation leading to scoped work on local files, applications, websites,
+documents and software projects, with progress, preview, decisions, results
+and revisions returned to the same conversation context. The user should not
+have to switch between ChatGPT, Codex, a browser, a Workflow dashboard or other
+tools merely to relay prompts, progress, evidence and reviewer feedback.
+Contextual panels and views within NEXUS may be used when useful, but ordinary
+work should not require a tour of separate pages. Execution tools are allowed
+to remain separate behind NEXUS; one entry does not mean one model or one
+runtime. A usable companion and low-interruption proactive assistance are
+long-term experience goals, not presently accepted runtime features.
+
+Representative journeys: (1) select files, inspect content, preview an
+organization plan and only then approve a bounded reversible output;
+(2) describe a project issue, delegate to Codex, inspect actual evidence,
+receive independent review and revise in the same conversation;
+(3) leave a task running while using other applications, then recover its
+real status and next action without a manual relay. These are product journeys
+and future acceptance targets, not current feature claims.
+
+The public portfolio showcase identity stays **Local Document-to-Knowledge
+Workbench**. Changing that identity, adding write authority or expanding
+trusted actors requires separate user approval; this blueprint does not amend
+`AGENTS.md` or authorise deployment, installs, paid APIs or background work.
+
+### Architecture Decision — Reuse Before Building
+
+- **User surface:** retain the existing NEXUS local HTML/CSS/JS shell,
+  account/workspace-scoped SIWC conversations, resource previews, work
+  proposal links, continuity and result/review presentation. Prefer an inline
+  work card and contextual detail, not a second mandatory control console.
+- **Engineering executor:** Codex App Server is the leading integration route
+  for new, explicitly authorized engineering threads, turns, events and
+  cancellation. Existing `codex.py` is read-only and has a temporary home;
+  it is evidence/reuse material, NOT a durable writable executor as-is.
+  `native_codex.py` remains a workspace-scoped history observer, not a
+  hidden controller or a trustworthy live-status oracle.
+- **Ordinary computer work:** integrate small host-enforced, scoped file and
+  system capabilities first; reuse existing document services for richer
+  extraction and export. Consider structured native app APIs when needed;
+  reserve Windows UI Automation for app-specific gaps. Foreground visual
+  desktop control is NOT assumed safe or compatible with simultaneous gaming.
+- **Chat/tools:** retain SIWC for chat and, only if supported and authorized,
+  narrowly specified custom-tool calls. Do not assume SIWC exposes ChatGPT's
+  entire tool set or that NEXUS can control existing Work sessions.
+- **Workflow fallback:** preserve governed Bridge/Operator/Dispatcher/Runner
+  and existing notifications as independent specialized/fallback paths.
+  No general-purpose new runtime, task queue, terminal, diff viewer,
+  file manager, memory platform or multi-agent framework by default.
+
+### Ownership, Safety and Review
+
+The NEXUS conversation owns the user's request and explicit source selection.
+The host binds approval to a specific scope/manifest and work identity;
+the executor owns its actual events and terminal result; Git plus file
+identities own code-candidate truth; actual test outputs own test facts;
+the independent ChatGPT reviewer owns final technical ACCEPTED. ReviewStore
+records the applicable decision and evidence linkage, not an executor's
+self-assigned acceptance. Remote publication remains separately authorized.
+
+Reuse existing Conversations/work_proposals, Surface/Core/ReviewStore and
+the executor's own history. Add only minimal provider/thread/turn,
+candidate-identity and evidence references when implementation proves needed;
+do not invent another global state authority. A dirty worktree requires
+diff/changed-file identities, not HEAD alone. Cancellation REQUESTED is not
+termination; termination is not rollback of already-applied side effects;
+disconnect and missing evidence mean UNKNOWN, never success. No retry of
+writes without fresh reconciliation. The existing approve-only-local-status
+contract does NOT authorize creating, moving or deleting user files.
+Future reversible output requires a separate, explicit write contract.
+
+Independent reviewer return is the critical unresolved integration boundary:
+an App Server executor/reviewer response does not, by itself, acquire this
+project's ChatGPT final-acceptance authority. Until a trusted no-relay review
+path is demonstrated, NEXUS must display PENDING_REVIEW; manual relay is a
+fallback, not a passing single-entry result.
+
+### Conditional Gates and Stop-Loss
+
+Before treating Node 03's first loop as validated, confirm only:
+1. A real already-authorized account/model plus narrowly permitted tools
+   can complete a small request without automatic token repair, purchased
+   credits, hidden permission expansion or an added recurring service.
+2. The installed Windows/Codex combination preserves exact thread/turn
+   identity, scope, terminal/cancellation truth and recoverable evidence
+   across interruption and restart. If not, stop; do not compensate with UI.
+3. An independent ChatGPT reviewer can reject a fixed inadequate candidate,
+   and the trusted verdict reaches its originating NEXUS work without the
+   user routinely transporting evidence. If unavailable, retain PENDING_REVIEW
+   and do not claim full single-entry acceptance.
+
+One bounded Gate B research pass has already been completed. At most one
+focused follow-up is justified for a decision-changing unknown; no renewed
+ecosystem survey or further blueprint/framework round is required. Gate C
+is complete for planning purposes when the product contract, main integration
+choice, authority, first bounded outcome, evidence and stop conditions are
+clear; it does not require all future tools or visual systems to be designed.
+
+### Node 03 Handoff — Not Yet Authorized
+
+Proposed first complete engineering outcome (N03-01): from the NEXUS
+conversation, create one REAL scoped READ_ONLY Codex engineering diagnosis
+that goes beyond the current seven-file AST audit; observe progress and
+verified terminal status; safely request cancellation and resume/reconcile;
+return grounded findings to the originating work; obtain independent review
+and perform one revision of the diagnosis in the same conversation.
+No source writes, commits, PRs, deployment, paid API, new background service
+or general OS-control authority are included in this proposed first outcome.
+Technical acceptance requires real-account evidence plus honest evidence
+and review return; a synthetic run or manual relay is not a substitute.
+
+A subsequent separate outcome should prove one bounded non-engineering local
+file task so that NEXUS does not devolve into a Codex-only front end. If
+Codex integration fails a hard stop, ChatGPT must re-adjudicate a smaller
+native file-based first outcome; it must not silently start that alternative.
+Broad visual computer use, voice, OS overlays, 3D navigation, proactive
+autonomy, general memory and visual polish are DEFERRED implementation topics,
+not deleted product ambitions.
+
+Node 03 implementation requires its own explicit scope and authority approval;
+Node 04 alone judges real daily-use value, including user relay burden,
+foreground-focus disruption and willingness to keep NEXUS as the main entry.
+
+---
+
+## NEXUS Node 01 — Historical Consolidation Record (merged 2026-11-01)
+
+> The material in this section is dated Node 01 scope, engineering and
+> pre-publication evidence. The CURRENT NEXUS direction is the Node 02 Gate C
+> section above. References here to a candidate, uncommitted files, historical
+> master SHAs or inactive later nodes describe their original observation
+> dates, not the current GitHub publication state or new authority.
+
+
+Updated 2026-11-01. This section records the Node 01 pre-publication
+consolidation scope and evidence. Earlier document-only submissions were insufficient for the
 user's expanded final outcome. The final consolidation adds a complete document
 register, historical isolation, simpler root navigation and an executable
 project-only capability entry that reuses existing requirement extraction.
