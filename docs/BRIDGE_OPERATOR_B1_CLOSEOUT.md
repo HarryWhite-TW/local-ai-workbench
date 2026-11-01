@@ -1,5 +1,8 @@
 # Bridge Operator B1 Closeout
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Document Identity
 
 ```text

@@ -1,5 +1,8 @@
 # Bridge Operator Acceleration and Phase 3 Roadmap 143
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 This document records the current ChatGPT / Codex bridge operator rules, workflow acceleration policy, and Phase 3 roadmap.

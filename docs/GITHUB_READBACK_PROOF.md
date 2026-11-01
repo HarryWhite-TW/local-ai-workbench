@@ -1,5 +1,8 @@
 # GitHub Readback Proof
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 This document records the proof that ChatGPT can review GitHub-visible workflow results without requiring the user to paste long Codex output.

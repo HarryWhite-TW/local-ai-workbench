@@ -1,5 +1,8 @@
 # Read-only Validator Implementation Plan 137
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 This document defines #137 Read-only Validator Implementation Plan.

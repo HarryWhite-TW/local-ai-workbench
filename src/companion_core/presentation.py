@@ -14,7 +14,9 @@ def safe_text(text: str) -> str:
                  r"\b(?:access_token|refresh_token|id_token)\b", text, re.IGNORECASE):
         # Conservative withholding also covers wrapped/multiline values.
         return "[private field withheld]"
-    text = re.sub(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]+",
+    # A provider key starts a token, not the suffix of task-/mask-/desk-.
+    # Use an ASCII boundary so keys next to Chinese text are still withheld.
+    text = re.sub(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?<![A-Za-z0-9_])sk-[A-Za-z0-9_-]+",
                   "[credential redacted]", text)
     text = re.sub(r"(?i)\bBearer\s+\S+", "[credential redacted]", text)
     return text

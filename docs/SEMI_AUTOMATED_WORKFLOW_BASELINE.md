@@ -1,5 +1,8 @@
 # Semi-Automated Workflow Operational Baseline
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 > **Historical status banner:** This file is an RV2-03-era operational baseline snapshot. It is not current normative authority. Its embedded phase and current-status language is historical and must not be used as current Workflow v1 completion truth. Current durable status is governed by applicable user approval and task-local scope, `AGENTS.md`, applicable scoped `AGENTS.md`, `PLANS.md`, and current domain specifications; after final canonical acceptance, `docs/WORKFLOW_V1_FINAL_CLOSEOUT.md` becomes the primary final Workflow v1 record. Historical commands and evidence remain useful where still applicable, but repository, environment, authentication, tool, and authority assumptions require fresh verification.
 
 ## Document Identity

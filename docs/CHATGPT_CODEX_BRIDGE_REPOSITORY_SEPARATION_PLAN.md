@@ -1,5 +1,8 @@
 # ChatGPT-Codex Bridge Repository Separation Plan
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Decision Context
 
 The ChatGPT-Codex bridge is intended to become reusable cross-project development infrastructure. `local-ai-workbench` is the first validated host and reference host, not the permanent repository boundary.

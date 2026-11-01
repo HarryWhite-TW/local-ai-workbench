@@ -344,7 +344,8 @@ for line in sys.stdin:
         assert surface.store.targets() == []
         assert list(workspace.iterdir()) == []
         state = json.dumps(surface.snapshot())
-        assert "synthetic" not in state and "session" not in state
+        assert "synthetic" not in state and '"session"' not in state and '"session_id"' not in state
+        # A public phase name ("session_bound") is not the private session value.
         assert all(p.poll() is not None for p in children)
     finally:
         # Test-only cleanup, never used as a passing cancellation oracle.

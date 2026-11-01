@@ -1,5 +1,8 @@
 # Reviewer Demo Smoke Checklist (#201)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This note records a manual reviewer-facing demo smoke check for Local AI Workbench after the README and demo flow updates.

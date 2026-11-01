@@ -1,5 +1,8 @@
 # Course Machine Environment Setup Runbook (#152)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This runbook records a repeatable setup flow for course machines, shared lab machines, and other temporary Windows environments used to run Codex tasks for this repository.

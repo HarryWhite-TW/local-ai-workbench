@@ -1,5 +1,8 @@
 # Writeback Target Contract Validator Success Decision Note (#173)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This document records the #173 Writeback Target Contract Validator Success Decision Note.

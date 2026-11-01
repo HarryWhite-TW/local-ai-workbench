@@ -1,8 +1,21 @@
 # Ecosystem Current Strategy Checkpoint
 
-Status: CURRENT STRATEGY CHECKPOINT
-Authority: durable strategy record; mutable priorities require fresh review
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
+Status: HISTORICAL ECO-01 STRATEGY CHECKPOINT
+Authority: retained strategy evidence; current local NEXUS direction/status is owned by root PLANS.md
 Recorded scope: ECO-01
+
+## Applicability reconciliation — 2026-11-01
+
+The dated priorities, primary-UI assumptions and `no active implementation node`
+wording below describe the retained ECO-01 / 2026-08-24 checkpoint. They do not
+state the current NEXUS node or prohibit the separately user-selected NEXUS
+long-term entrypoint direction. Root `PLANS.md` owns that current direction and
+Node 01 scope. Historical acceptance, repository roles and safety restrictions
+remain evidence within their original scope; no runtime cutover or later node
+is activated by this notice.
 
 ## Ecosystem identity
 

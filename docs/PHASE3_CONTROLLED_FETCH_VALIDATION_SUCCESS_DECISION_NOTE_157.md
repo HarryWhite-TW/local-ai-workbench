@@ -1,5 +1,8 @@
 # Phase 3 Controlled Fetch Validation Success Decision Note (#157)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This note records that Phase 3 controlled valid Task Surface live fetch reached validation success.

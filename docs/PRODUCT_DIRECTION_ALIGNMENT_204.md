@@ -1,5 +1,8 @@
 ﻿# Product Direction Alignment (#204)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This note records the product direction alignment after the Local Workbench baseline became runnable and reviewable.

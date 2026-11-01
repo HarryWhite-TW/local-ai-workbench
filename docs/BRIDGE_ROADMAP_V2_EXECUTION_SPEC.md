@@ -14,6 +14,14 @@
 
 Version v1.1 records the approved `RV2-P1-SYNC` Workflow v1 completion-boundary rebaseline as the current sequencing truth while preserving the original v1.0 activation and historical node order. It does not broaden authority or activate deferred scope.
 
+## Applicability note — 2026-11-01
+
+This is the incumbent Bridge Roadmap v2 execution specification. Its RV2 node
+names and historical sequencing are not the NEXUS Node 01/02/03/04 product
+sequence. Root `PLANS.md` and explicit task authority own current NEXUS status.
+This clarification activates no Bridge node and changes no tracker, task
+packet, review, dispatch or side-effect requirement within the Bridge route.
+
 ## Governing Documents And Precedence
 
 This specification is subordinate to:

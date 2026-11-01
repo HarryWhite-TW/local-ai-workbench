@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "fixture": "synthetic-v1",
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "os": "10.0.26200",
+    "browser": "146.0.7680.178",
+    "playwright": "1.57.0",
+    "pixelmatch": "7.1.0",
+    "pngjs": "7.0.0",
+    "locale": "zh-TW",
+    "timezone": "Asia/Taipei",
+    "dpr": 1,
+    "softwareRendering": true,
+    "fonts": [
+      {
+        "name": "segoeui.ttf",
+        "sha256": "8134dbcd09e7b123c9a7f229d49cffbcb01352cc72ea5e1076b65d0dca9f73cd"
+      },
+      {
+        "name": "seguisb.ttf",
+        "sha256": "2d9b22d71f72de2823fee5d9c8bc1b0fc32b2577c4c27b9ec6abdbb8df0e1731"
+      },
+      {
+        "name": "msjh.ttc",
+        "sha256": "1fd5fc7046e0eea753988ee06d1a5a731df68475614e2174fbba9b4800f392ac"
+      },
+      {
+        "name": "msjhbd.ttc",
+        "sha256": "7d55cd4801102131d991630cea74534dcf73a9fabf4a33e54fe05dfb4f5aa790"
+      }
+    ]
+  },
+  "pixelTolerance": {
+    "threshold": 0.12,
+    "maxChangedRatio": 0.001
+  },
+  "masks": [
+    "#project-workspace (temporary path)",
+    ".chat-time (wall clock)"
+  ],
+  "images": {
+    "overview-1650-expanded.png": "efc0fcb543145dfd55fa2153526dbe8b224495084027710f59f8a05f010e5c14",
+    "overview-1650-collapsed.png": "7f28e2c888b57a0f46cf36ce7a8bd1a419d27e9d1e71a991efdb56a56e708215",
+    "overview-1440-expanded.png": "dd31d041ca54c0442698ec68c7b62b31d30fba571949fd2606d6d08f961ccf4a",
+    "overview-1440-collapsed.png": "bcadbcd32ef514aec6266c24a5342b9d283ad237e7c6a0ef4ab4aad005393e8f",
+    "overview-390-collapsed.png": "8a4a2ab09731102a09855ad0801601fba7be5e9804631642045c4de0683f4b44",
+    "overview-360-collapsed.png": "2f1e265dcbcac05d4847f6a85f03e53b8964558af676a5cd9f1f65db5cbb9727",
+    "project-1650.png": "2080d01ee50f323453ed393c9e2e636fbb15f2b07b4d1f22cdaffca568535a5b",
+    "project-1440.png": "25ea4407f72237f0d580b25a6a3f445e4ade6be9c8d19dc335452a1fcd245b42",
+    "project-390.png": "8d35b316c6e5875cde7076b052cfbda00652e7675ad2c10471dc007cc2cce4ab",
+    "project-360.png": "5401108c0141dac0710dbe7fcfdc5e38be860e985fac8acbc48be54d52b7bc39",
+    "companion-1440-split-right.png": "d3b94b1dc70d41679a20b1922d6625039d39c1eb7b2b0cb3588740654ced543d",
+    "companion-1440-split-left.png": "298e09b96098ecb5ad0b09aaa7a172d82fd2a204b57c3f4c32262821c39d1434",
+    "companion-390-floating.png": "8e2307f8713daf937325a35845e1a2cb7fbf6cb27a965fd747422cf77c255bc6",
+    "companion-360-floating.png": "7edebaad3e79c09a3dc66d4f86541532e0cb79d9bfa3a811f3febbbc76bde053"
+  }
+}

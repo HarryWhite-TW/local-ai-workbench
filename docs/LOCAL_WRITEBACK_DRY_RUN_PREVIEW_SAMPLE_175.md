@@ -1,5 +1,8 @@
 # Local Writeback Dry-Run Preview Sample (#175)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This document defines #175 Local Writeback Dry-Run Preview Sample.

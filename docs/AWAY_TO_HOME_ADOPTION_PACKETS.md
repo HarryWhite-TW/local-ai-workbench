@@ -1,5 +1,8 @@
 # Away-to-Home Adoption Packets
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## Purpose
 
 This document defines how Away-IDE candidate work should be converted into Home Mode official adoption work.

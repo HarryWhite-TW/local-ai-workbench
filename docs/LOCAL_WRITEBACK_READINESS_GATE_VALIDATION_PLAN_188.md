@@ -1,5 +1,8 @@
 # Local Writeback Readiness Gate Validation Plan (#188)
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 1. Purpose
 
 This document defines #188 Local Writeback Readiness Gate Validation Plan.

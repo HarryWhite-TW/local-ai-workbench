@@ -1,5 +1,8 @@
 # CODEX Workflow
 
+> HISTORICAL RECORD: retained evidence/design only; current product decisions and task authority are in root `PLANS.md`. Original claims below apply to their recorded scope, not current activation.
+
+
 ## 使用情境
 - Local 適合低風險、明確、可快速檢查的小修改。
 - Branch 適合會留下正式 diff 的任務，例如 docs、tests、README 同步、小型 bug fix。
