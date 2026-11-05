@@ -106,7 +106,26 @@ body[data-work-enabled="true"] #work-origin { margin-top:16px; }
 #work-files { margin:16px 0; border:1px solid var(--line); min-width:0; }
 #work-files label { display:flex; gap:8px; align-items:center; overflow-wrap:anywhere; }
 #work-files input { width:auto; flex-shrink:0; }
-#work-manifest p { font:12px/1.8 Consolas,monospace; overflow-wrap:anywhere; }
+#work-manifest small { font:12px/1.8 Consolas,monospace; overflow-wrap:anywhere; }
+.chat-work-proposal { flex-shrink:0; max-height:52vh; overflow:auto; margin:12px 0; padding:16px; border:1px solid var(--line-strong); border-radius:16px; background:var(--surface); color:var(--reading-ink); }
+.chat-work-proposal[hidden],.work-chat-context[hidden] { display:none; }
+.chat-work-proposal header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.chat-work-proposal h2 { margin:0 0 10px; font-size:18px; }
+.chat-work-proposal p,.chat-work-proposal label { font-size:14px; line-height:1.7; }
+.chat-work-proposal textarea { box-sizing:border-box; padding:10px; color:var(--reading-ink); background:var(--surface-bottom); border:1px solid var(--line-strong); border-radius:8px; }
+.chat-work-proposal summary,.chat-work-card summary,.work-chat-context summary { padding:8px 0; cursor:pointer; color:var(--reading-ink); line-height:1.6; }
+.chat-work-proposal summary:focus-visible,.chat-work-card summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+#work-confirm { margin-top:10px; }
+#work-manifest .chat-source-text { max-height:220px; overflow:auto; }
+.native-result-summary section { margin-top:16px; }
+.native-result-summary h4 { margin:0 0 6px; font-size:15px; color:var(--ink); }
+.native-result-summary p,.native-result-summary li { font-size:14px; line-height:1.8; color:var(--reading-ink); }
+.native-result-summary ul { padding-left:20px; margin:6px 0; }
+.native-full-result pre { max-height:360px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:1.8; color:var(--reading-ink); }
+.work-chat-context { flex-shrink:0; padding:12px 16px; margin:8px 0; border:1px solid var(--line-strong); border-radius:12px; background:var(--surface); color:var(--reading-ink); }
+.work-chat-context p { font-size:13px; line-height:1.6; }
+.work-chat-context pre { max-height:160px; overflow:auto; }
+@media(max-width:600px) { .chat-work-proposal { max-height:48vh; padding:12px; } }
 .document-chat-context { padding:12px; border:1px solid var(--line, #7775); border-radius:12px; margin:8px 0; }
 .document-chat-context pre { max-height:140px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
 #document-source-options label { display:block; margin:12px 0; }

@@ -73,6 +73,9 @@ class Companion:
                         raise RuntimeFailure(Failure.PROTOCOL)
                     self._update(result=event.text)
                     terminal = True
+                elif event.kind == EventKind.UNKNOWN:
+                    self._update(execution=Execution.UNKNOWN, result=None)
+                    terminal = True
                 elif event.kind in (EventKind.FAILED, EventKind.CANCELLED):
                     if event.kind == EventKind.CANCELLED and not self._cancel_requested.is_set():
                         raise RuntimeFailure(Failure.CANCELLATION)

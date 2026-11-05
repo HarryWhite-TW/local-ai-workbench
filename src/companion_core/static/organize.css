@@ -1,0 +1,26 @@
+#organize-panel { margin-top:10px; padding:14px; border:1px solid var(--line-strong); border-radius:12px; background:var(--surface); color:var(--reading-ink); }
+#organize-panel[hidden] { display:none; }
+.organize-selection-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+#organize-panel p { margin:8px 0; font-size:13px; line-height:1.7; color:var(--reading-ink); }
+#organize-selection { display:flex; flex-wrap:wrap; gap:6px; max-height:84px; overflow:auto; margin-top:8px; }
+.organize-file { padding:5px 9px; border:1px solid var(--line-strong); border-radius:8px; font-size:12px; overflow-wrap:anywhere; max-width:100%; }
+#organize-panel summary { font-size:12px; }
+#organize-panel #organize-notice:empty { display:none; }
+#organize-start { margin-top:10px; }
+#chat-form[data-organizing="true"] #chat-send,#chat-form[data-organizing="true"] #chat-source-open,#chat-form[data-organizing="true"] #organize-open { display:none; }
+.organize-card { margin:16px 0; padding:18px; border:1px solid var(--line-strong,#c2d3ca); border-radius:12px; background:var(--surface,#f4f8f5); color:var(--reading-ink,#20382c); overflow-wrap:anywhere; }
+.organize-card h3 { margin:0 0 8px; font-size:18px; }
+.organize-group { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:0 12px; padding:8px 0; border-bottom:1px solid var(--line-strong); }
+.organize-group h4 { margin:0; font-size:15px; font-weight:600; color:var(--ink); }
+.chat-message .organize-group > p { font-size:14px; line-height:1.5; margin:0; }
+.organize-group > details { grid-column:1 / -1; }
+.organize-card summary { cursor:pointer; padding:6px 0; color:var(--reading-ink); line-height:1.6; }
+.organize-card summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; border-radius:4px; }
+.organize-card ul { padding-left:20px; }
+.organize-card li { margin:12px 0; }
+.organize-card blockquote { margin:8px 0; padding-left:12px; border-left:3px solid var(--accent); white-space:pre-wrap; }
+.organize-card small,.organize-card code { display:block; overflow-wrap:anywhere; }
+.organize-card button { margin:10px 8px 0 0; }
+.organize-identity { margin-top:10px; font-size:12px; }
+.organize-card [role="status"]:empty { display:none; }
+@media(max-width:600px) { .organize-card { padding:14px; } .organize-group { grid-template-columns:minmax(0,1fr); } #organize-start { width:100%; } }

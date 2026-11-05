@@ -3,8 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from docx import Document as DocxDocument
-from pypdf import PdfReader
 
 CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
 INLINE_WHITESPACE_PATTERN = re.compile(r"[^\S\n]+")
@@ -25,6 +23,7 @@ def normalize_extracted_text(text: str) -> str:
 
 
 def extract_pdf_text(file_path: Path) -> str:
+    from pypdf import PdfReader
     reader = PdfReader(str(file_path))
     page_texts: list[str] = []
 
@@ -38,6 +37,7 @@ def extract_pdf_text(file_path: Path) -> str:
 
 
 def extract_docx_text(file_path: Path) -> str:
+    from docx import Document as DocxDocument
     document = DocxDocument(str(file_path))
     paragraphs = [normalize_extracted_text(paragraph.text) for paragraph in document.paragraphs]
     return normalize_extracted_text("\n\n".join(paragraph for paragraph in paragraphs if paragraph))

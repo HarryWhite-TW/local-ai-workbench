@@ -53,6 +53,7 @@ def capture(workspace, selection):
 class ProjectWork:
     provider_id = "bounded-python-source-audit-v1"
     requires_proposal = True
+    capture = staticmethod(capture)
 
     def __init__(self, chat):
         self.chat, self.surface = chat, None
@@ -112,7 +113,7 @@ class ProjectWork:
             if p['task_id']:
                 raise ChatError("已確認的工作不能修改或重複執行。")
             goal, expected = self._text(body['goal'], 4000), self._text(body['expected'], 4000)
-            records = capture(self.chat.workspace, body['selection'])
+            records = self.capture(self.chat.workspace, body['selection'])
             manifest = [{k: r[k] for k in ('key', 'name', 'bytes', 'sha256')} for r in records]
             approval = str(uuid4())
             with self.chat.connect() as db:
@@ -130,7 +131,7 @@ class ProjectWork:
             if self.surface is None or self.surface.runtime is not self:
                 raise ChatError("受限專案查核執行器目前不可用。")
             manifest = json.loads(p['preview'])
-            current = capture(self.chat.workspace, p['selection'])
+            current = self.capture(self.chat.workspace, p['selection'])
             if [r['sha256'] for r in current] != [r['sha256'] for r in manifest]:
                 raise ChatError("來源已變更，請重新預覽並確認。")
 
@@ -163,7 +164,7 @@ class ProjectWork:
             raise RuntimeFailure(Failure.POLICY)
         yield RuntimeEvent(EventKind.SESSION, session_id=task_id)
         yield RuntimeEvent(EventKind.INSPECTING)
-        records = capture(self.chat.workspace, p['selection'])
+        records = self.capture(self.chat.workspace, p['selection'])
         if [r['sha256'] for r in records] != [r['sha256'] for r in manifest]:
             raise RuntimeFailure(Failure.POLICY)
         lines = ['可信本機唯讀查核紀錄（非模型摘要）', f'工作：{task_id}', f'提案：{p["id"]}',

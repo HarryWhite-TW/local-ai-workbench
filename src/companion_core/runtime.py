@@ -21,6 +21,7 @@ class EventKind(str, Enum):
     RECEIVING = "receiving_result"
     COMPLETED = "execution_complete"
     FAILED = "execution_failed"
+    UNKNOWN = "execution_unknown"
     CANCELLED = "execution_cancelled"
     INTERRUPTED = "provider_interrupted"
 

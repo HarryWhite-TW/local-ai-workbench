@@ -1,7 +1,7 @@
 """Foreground daily Companion: python -m src.companion_core.daily --workspace PATH.
 
-Uses only its own SIWC credentials. The incumbent engineering launcher and
-ReviewStore remain supported; this entrypoint grants no autonomous tool access.
+SIWC conversations and native Codex diagnosis use separate existing logins.
+ReviewStore remains supported; this entrypoint grants no autonomous tool access.
 """
 import argparse
 import os
@@ -14,8 +14,9 @@ from .review import ReviewStore
 from .runtime import RuntimeFailure
 from .siwc import ChatError, SignIn, Vault
 from .surface import Surface, make_server
-from .work import ProjectWork
+from .native_work import NativeWork
 from .native_codex import NativeCodex
+from .organize import DocumentOrganizer
 
 
 class WorkNotConnected:
@@ -29,6 +30,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--data-dir")
+    parser.add_argument("--pilot-workspace", help="Fixed non-sensitive isolated engineering sample only.")
+    parser.add_argument("--codex", help="Existing native codex.exe; uses its own ChatGPT login.")
     parser.add_argument("--review-dir")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--port", type=int, default=0,
@@ -45,9 +48,17 @@ def main():
         vault = Vault(directory, workspace)
         auth = SignIn(vault)
         chat = Conversations(workspace, directory, auth)
-        work = ProjectWork(chat)
+        # Reuse the exact installed runtime that passed the user's N03-01 host run.
+        # Never select a different App build merely because its mtime is newer.
+        codex = args.codex or str(Path(os.environ.get("APPDATA", "")) /
+            "npm/node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe")
+        work = NativeWork(chat, executable=codex)
         surface = Surface(work, workspace, ReviewStore(args.review_dir, workspace=str(workspace)))
         chat.work, work.surface = work, surface
+        chat.organizer = DocumentOrganizer(chat, executable=codex)
+        if args.pilot_workspace:
+            from .engineering_pilot import EngineeringPilot
+            chat.engineering_pilot = EngineeringPilot(chat, args.pilot_workspace, codex)
         server = make_server(surface, chat, work, port=args.port, native_codex=NativeCodex(chat))
         url = f"http://127.0.0.1:{server.server_port}/"
         print("Companion: " + url, flush=True)
@@ -63,8 +74,13 @@ def main():
         if server:
             server.server_close()
         if chat and chat.work and chat.work.surface.worker:
+            active = chat.work.surface.active
+            if active and active.task.execution.value in ("RUNNING", "CANCEL_REQUESTED"):
+                active.cancel()
             chat.work.surface.worker.join()
         if chat:
+            if getattr(chat, "organizer", None):
+                chat.organizer.close()
             if chat.worker:
                 chat.worker.join()
             chat.auth.http.close()

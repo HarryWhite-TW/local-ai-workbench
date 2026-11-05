@@ -151,7 +151,7 @@ function buildTaskTray() {
   }
 }
 function readyForReview() {
-  return !offline && !deciding && target?.task_id === selected && target?.state === "RESULT_PENDING_REVIEW"
+  return !target?.independent_review_required && !offline && !deciding && target?.task_id === selected && target?.state === "RESULT_PENDING_REVIEW"
     && task()?.state === target.state && !reviewUncertain.has(selected);
 }
 function render() {

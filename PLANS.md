@@ -1,5 +1,24 @@
 # PLANS.md
 
+## NEXUS MVP + fixed engineering pilot source publication — 2026-11-05
+
+The user explicitly authorizes one commit and non-force push to the existing
+`nexus-mvp-engineering-20261105` branch from historical base
+`7714aca3aec96a45fd27ee1d568557bd1e8a6f69`. This publishes the local MVP/pilot
+source and portable Windows setup; it does not change master, create a PR,
+deploy, grant arbitrary repository writes, or activate ENG-01.
+
+The local MVP/pilot outcomes were exercised before publication. The publication
+checkout is independent of the dirty original tree and the sealed candidates.
+Public-only adjustments use a local venv/current interpreter, the operator's
+own official logins, and a fixed external sample under the new local data root.
+No original account/database/DPAPI or runtime binaries are published. The
+original READ_ONLY and ReviewStore authority remain unchanged; the new sample
+write preview/confirmation is a distinct route. Full second-computer native
+validation and independent ChatGPT technical acceptance are not asserted here.
+README owns setup and actual limitations. Older status below is historical.
+
+
 ## NEXUS Node 02 — Single-Entry Product Blueprint (Gate C Candidate)
 
 Status as of 2026-11-01: Node 01 is technically ACCEPTED and merged to

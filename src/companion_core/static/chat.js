@@ -11,6 +11,7 @@
   let authChanging=false,authEpoch=0;
   let catalogLoading=false,catalogError='';
   const workEnabled=document.body.dataset.workEnabled==='true';
+  const organizeEnabled=document.body.dataset.organizeEnabled==='true';
   let workspace='',sessionKey='',sessionReady=false,sessionSaved=false;
   let continuityReady=false,continuityLoading=false,continuityRevision=0,continuitySerial='',continuityError='';
   let continuityPending=false,continuitySaving=null,continuityTimer=null,continuityGeneration=0,authPreparing=false;
@@ -20,6 +21,9 @@
   let requestedChat=location.hash.startsWith('#chat?')?initialParams.get('chat'):null;
   let workOrigin=null, proposal=null, approval=null;
   let floating=null,returnWork=null,contextEpoch=0,workFacts={tasks:[],offline:true};
+  const reconcileFeedback=new Map();
+  const nativeResults=new Map(),nativeLoading=new Map();
+  let proposalOwner=null,proposalVersion=0;
   const windowKey='companion.nexus.window.v1';
   const windowModes=['floating','dock-left','dock-right','split-left','split-right','reading'];
   let windowMode='floating',windowRect=null,miniRect=null,windowGesture=null;
@@ -267,11 +271,12 @@
     }
   }
   function updateSend() {
+    if(el('organize-open')){el('organize-open').hidden=!organizeEnabled;el('organize-open').disabled=!workspace||!connected||sending||authChanging||authPreparing||!!state?.busy||!state?.auth.active||!!state?.auth.pending;}
     const hasSource=chosen().length>0;
     const model=state?.models.find(m=>m.slug===el('chat-model').value);
     const needsLogin=!state?.auth.active||state.auth.accounts.find(a=>a.id===state.auth.active)?.signed_in===false;
     el('chat-send').disabled=!connected||sending||authChanging||authPreparing||!!state?.busy||!state?.auth.active||state?.auth.pending||
-      needsLogin||catalogLoading||!model||(hasSource&&!preview);
+      needsLogin||catalogLoading||!model||(hasSource&&!preview)||!!window.NexusOrganize?.active();
     el('chat-question').disabled=sending||authChanging||authPreparing||!connected||(workEnabled&&!sessionReady&&!!state?.continuity);
     el('chat-new').disabled=el('chat-history').disabled=sending||authChanging||authPreparing||(workEnabled&&!sessionReady&&!!state?.continuity);
     el('chat-source-status').textContent=hasSource?chosen().length+' 項資料'+(preview?' · 已預覽':' · 待預覽'):'';
@@ -296,6 +301,9 @@
     renderProjectBinding();
   }
   function clearSources() {
+    window.NexusConversation?.clearConsent();
+    if(el('work-chat-context'))el('work-chat-context').hidden=true;
+    el('work-chat-preview')?.replaceChildren();
     clearDocumentConsent();
     sourceVersion++;
     for(const input of el('chat-sources').querySelectorAll('input'))input.checked=false;
@@ -330,10 +338,12 @@
     }
   }
   function openAux(id,focus) {
+    if(window.NexusConversation?.openExisting(id,focus))return;
     el(id).showModal();
     if(focus)el(focus).focus();
   }
   function fitInput() {
+    if(window.NexusConversation?.fitInput())return;
     const input=el('chat-question');input.style.height='auto';
     input.style.height=Math.min(input.scrollHeight,Math.max(60,Math.min(150,innerHeight*.2)))+'px';
   }
@@ -350,6 +360,7 @@
       window:{mode:windowMode,window:windowRect,mini:miniRect}}};
   }
   function writeTab() {
+    if(window.nexusComparisonLayout)return;
     if(!sessionKey||!sessionReady)return;
     const value=continuityValue();if(state?.continuity)delete value.drafts;
     try{sessionStorage.setItem(sessionKey,JSON.stringify({...value,returnWork,
@@ -357,6 +368,11 @@
   }
   function saveStatus() {
     const node=el('chat-save-status'),hasDraft=!!el('chat-question').value.length;
+    if(window.nexusComparisonLayout){
+      node.dataset.state='saved';node.textContent='UX-02 版面比較：草稿與版面偏好不回存，不會覆蓋新版。';
+      el('chat-save-retry').hidden=true;el('chat-save-recover').hidden=true;
+      return;
+    }
     node.dataset.state=continuityError?'error':continuityPending||continuitySaving?'saving':'saved';
     const message=!state?.continuity?(hasDraft?'草稿僅保留於此分頁。':''):
       !state.auth.active||state.auth.pending?'':continuityLoading?'正在讀取本機接續資料…':
@@ -413,6 +429,7 @@
     return continuityLoading;
   }
   async function flushContinuity(keepalive=false) {
+    if(window.nexusComparisonLayout)return true;
     clearTimeout(continuityTimer);
     if(continuitySaving){await continuitySaving;return continuityPending&&!continuityError?flushContinuity(keepalive):!continuityPending;}
     if(!continuityReady||!state?.continuity||state.auth.pending||authChanging||continuityError)return false;
@@ -435,6 +452,7 @@
     saveStatus();await continuitySaving;return !continuityPending&&!continuityError;
   }
   function persistChat() {
+    if(window.nexusComparisonLayout)return;
     if(!workEnabled||!sessionReady||!sessionKey)return;
     if(inChat()&&renderedChat===selected)positions.set(selected,el('chat-messages').scrollTop);
     if(state?.continuity&&continuityReady){
@@ -465,6 +483,9 @@
     persistChat();
   }
   function switchConversation(next,replace=false) {
+    window.NexusConversation?.resetContext();
+    dismissProposal();
+    window.NexusOrganize?.reset();
     if(sending)return;
     ++contextEpoch;
     if(!visibleChat(next)){next='';notice('此對話不在目前帳戶可選取的紀錄中。');}
@@ -502,7 +523,13 @@
     const conversation=await api('get',{chat:id});
     const proposals=workEnabled?await api('work-state',{chat:id}):[];
     if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active||state?.auth.pending)return;
-    const signature=JSON.stringify([conversation,proposals]);if(signature===rendered&&renderedChat===id)return;
+    const organizations=organizeEnabled?await api('organize-state',{chat:id}):[];
+    if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active||state?.auth.pending)return;
+    await Promise.all(proposals.filter(p=>p.kind==='native_codex'&&p.result_id).map(p=>loadNativeResult(p)));
+    if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active||state?.auth.pending)return;
+    const pilots=window.NexusPilot?await window.NexusPilot.state(id):[];
+    if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active)return;
+    const signature=JSON.stringify([conversation,proposals,organizations,pilots,proposals.map(p=>nativeResults.get(nativeResultKey(p)))]);if(signature===rendered&&renderedChat===id)return;
     const same=renderedChat===id,top=scroller.scrollTop,nearEnd=scroller.scrollHeight-scroller.clientHeight-top<90;
     rendered=signature;renderedChat=id;
     const nodes=[];
@@ -525,12 +552,27 @@
         refs.onclick=()=>{sourceView(turn.sources,el('chat-source-records'));openAux('chat-source-dialog');};
         answer.append(refs);
       }
-      if(workEnabled&&turn.status==='complete') {
-        const propose=text('button','將這輪討論整理成工作提案');propose.type='button';propose.className='text-button chat-source-link';
-        propose.onclick=()=>action(async()=>{const p=await api('work-create',{chat:id,turn:turn.id});editProposal(p);rendered='';});
-        answer.append(propose);
+      if(workEnabled&&turn.status==='complete'&&!organizations.some(o=>o.turn===turn.id)) {
+        const linked=proposals.find(p=>p.turn===turn.id&&p.kind==='native_codex'&&!p.parent&&p.task_id)
+          ||proposals.find(p=>p.turn===turn.id&&p.kind==='native_codex'&&!p.parent);
+        const propose=text('button',linked?.task_id?'查看這次診斷':linked?'繼續現有診斷草稿':'建立唯讀 Codex 診斷');
+        propose.type='button';propose.className='text-button chat-source-link';
+        propose.onclick=async()=>{if(propose.disabled)return;propose.disabled=true;
+          try{await action(async()=>{const owner=state?.auth.active;const p=await api('work-create',{chat:id,turn:turn.id});
+            if(selected!==id||state?.auth.active!==owner||state?.auth.pending||authChanging)return;
+            if(p.task_id){rendered='';await read();
+              if(selected===id&&state?.auth.active===owner&&!state?.auth.pending&&!authChanging){
+                el('chat-messages').querySelector('[data-work="'+p.id+'"]')?.scrollIntoView?.({block:'nearest'});
+                notice('這次討論已有診斷工作；已保留原身分，沒有重複啟動。');
+              }
+            }else{editProposal(p);rendered='';}
+          });}finally{propose.disabled=false;}
+        };
+        answer.append(propose,text('small','聊天不會自動執行工程工作。請在提案中預覽來源，確認後才交給原生 Codex。'));
       }
       for(const p of proposals.filter(p=>p.turn===turn.id))answer.append(workCard(p));
+      for(const o of organizations.filter(o=>o.turn===turn.id))answer.append(window.NexusOrganize.card(o,()=>{rendered='';void refresh();},()=>selected===id&&state?.auth.active===account&&!state?.auth.pending&&!authChanging));
+      for(const pilot of pilots.filter(p=>p.turn===turn.id))answer.append(window.NexusPilot.card(pilot));
       box.append(question,answer);nodes.push(box);
     }
     scroller.replaceChildren(...nodes);
@@ -541,6 +583,9 @@
     if(last)notice(last.status==='complete'?(last.sources.some(s=>s.scope)?'回答與當時的來源已保存。追問可沿用對話；核對文件目前內容時，請重新選取與預覽。':'回答已保存，可以繼續聊。'):last.status==='pending'?'正在等待模型完整回答…':last.error||'未取得完整回答，可重新提問。');
   }
   function invalidateAccount(account) {
+    window.NexusConversation?.resetContext();
+    dismissProposal();nativeResults.clear();nativeLoading.clear();
+    window.NexusOrganize?.reset();
     ++authEpoch;
     ++continuityGeneration;clearTimeout(continuityTimer);continuityReady=false;continuityLoading=false;
     continuitySaving=null;continuityPending=false;continuityRevision=0;continuitySerial='';continuityError='';
@@ -560,6 +605,7 @@
   }
   async function changeAccount(path,body) {
     if(authChanging||authPreparing)return;
+    window.NexusConversation?.resetContext();
     authPreparing=true;updateSend();saveDraft();
     if(state?.continuity&&continuityReady){
       await flushContinuity();
@@ -624,52 +670,207 @@
   async function action(work){try{await work();await refresh();}catch(e){notice(e.message);el('chat-auth-notice').textContent=e.message;}}
   function workCard(p) {
     const card=text('section','');card.className='chat-work-card';card.dataset.work=p.id;card.dataset.task=p.task_id||'';card.dataset.state=p.state;
+    if(p.kind==='native_codex'&&p.draft_hidden&&p.can_hide_draft&&!p.task_id){
+      const folded=text('details',''),restore=text('button','展開並繼續草稿');
+      folded.append(text('summary','已收起的未執行草稿 · '+p.goal));
+      restore.type='button';restore.className='secondary-button';
+      restore.onclick=async()=>{const owner=state?.auth.active;restore.disabled=true;
+        try{const draft=await api('work-draft-visibility',{id:p.id,hidden:false});
+          if(selected===p.chat&&state?.auth.active===owner&&!state?.auth.pending&&!authChanging){
+            editProposal(draft);rendered='';await refresh();
+          }
+        }catch(e){if(selected===p.chat&&state?.auth.active===owner)notice(e.message);}
+        finally{restore.disabled=false;}
+      };
+      folded.append(restore);card.append(folded);return card;
+    }
     const names={AWAITING_AUTHORIZATION:'等待你的授權',CREATED:'準備中',RUNNING:'執行中',CANCEL_REQUESTED:'停止待確認',CANCELLED:'已取消',FAILED:'執行失敗／中斷',RESULT_PENDING_REVIEW:'執行完成 · 等待審查',ACCEPTED:'人類已接受成果',REJECTED:'人類已拒絕成果',REVISION_REQUESTED:'已記錄調整方向'};
     card.append(text('strong',names[p.state]||'狀態未確認'),text('p',p.goal));
     const details=text('details','');details.append(text('summary','技術與驗收資訊'),text('small',p.state+' · '+p.technical_acceptance));card.append(details);
-    const button=text('button',p.task_id?'查看工作與證據':'編輯提案與確認範圍');button.className='secondary-button';button.type='button';
+    const button=text('button',p.task_id?'查看工作與證據':p.kind==='native_codex'?'設定並預覽診斷':'編輯提案與確認範圍');button.className='secondary-button';button.type='button';
     button.onclick=()=>p.task_id?action(async()=>{workOrigin=p;if(window.nexusOpenWork)await window.nexusOpenWork(p.task_id);else{showSpace('work');await window.openCompanionWork(p.task_id);}}):editProposal(p);
-    card.append(button);
+    if(p.kind==='native_codex'&&p.task_id)details.append(button);else card.append(button);
+
+    if(p.kind==='native_codex'){
+      details.append(text('p','原生 Codex · '+p.review_status+' · '+p.capability));
+      card.append(text('p',p.result_id?'唯讀診斷已完成，尚待獨立技術審查。':p.task_id?'進度會在這裡更新，不需要切換頁面。':'先核對來源，再由你確認開始。'));
+      if(!p.task_id)card.append(text('p','設定目標與來源 → 預覽 → 確認 READ_ONLY 後啟動。'));
+      if(p.failure_summary){
+        const failure=text('p',(p.failure_stage||'啟動檢查')+' · '+p.failure_summary
+          +(p.failure_code!==null&&p.failure_code!==undefined?'（RPC '+p.failure_code+'）':''));
+        failure.setAttribute('role','status');card.append(failure);
+        card.append(text('small',p.start_outcome==='REJECTED'?'Codex 明確拒絕啟動；沒有自動重送。':
+          p.start_outcome==='NOT_SENT'?'診斷尚未送出，前置階段已停止。':
+          '請求可能已送出，不能推定未執行；請保留工作並對帳。'));
+      }
+      if(p.parent)card.append(text('small','本次為一次後續診斷；保留同一 thread 的先前已授權內容。'));
+      const evidence=text('details','');
+      evidence.append(text('summary','工作身分與實際事件'),text('p','Thread: '+(p.thread_id||'尚未取得')+' / Turn: '+(p.turn_id||'尚未取得')),
+        text('p','來源指紋: '+(p.candidate_id||'尚未預覽')));
+      for(const e of p.events||[])evidence.append(text('p',e.at+' · '+({connecting:'正在連接原生 Codex',session_bound:'原生 thread 已回傳',
+        turn_bound:'原生 turn 已回傳',receiving_result:'收到模型內容事件',cancel_requested:'已請求停止，等待終態',
+        completed:'執行完成',failed:'執行失敗',cancelled:'已確認停止',unknown:'終態未確認',reconciled:'已嘗試核對原生紀錄'}[e.kind]||'事件')));
+      card.append(evidence);
+      const feedback=text('p',reconcileFeedback.get(p.id)||'');
+      feedback.setAttribute('role','status');feedback.setAttribute('aria-live','polite');
+      feedback.hidden=!feedback.textContent;card.append(feedback);
+      const showFeedback=message=>{reconcileFeedback.set(p.id,message);feedback.textContent=message;feedback.hidden=false;};
+      const owner=state?.auth.active,chatId=p.chat;
+      const current=()=>selected===chatId&&state?.auth.active===owner&&!state?.auth.pending&&!authChanging;
+      const control=(label,operation,explain)=>{
+        const b=text('button',label);b.type='button';b.className='secondary-button';
+        b.onclick=async()=>{b.disabled=true;try{
+          const response=await operation();if(current()){
+            if(explain)showFeedback(explain(response));
+            rendered='';await refresh();
+          }
+        }catch(e){if(current()){
+          if(explain)showFeedback('對帳請求未完成：'+e.message+'。此工作沒有重新執行。');
+          else notice(e.message);
+        }}finally{b.disabled=false;}};
+        card.append(b);return b;
+      };
+      if(p.can_hide_draft&&!p.task_id)control('收起未執行草稿',()=>api('work-draft-visibility',{id:p.id,hidden:true}));
+      if(['RUNNING','CANCEL_REQUESTED'].includes(p.state)){
+        const stop=control('停止這項診斷',()=>api('work-stop',{id:p.id}));
+        stop.disabled=p.state==='CANCEL_REQUESTED';
+      }
+      if(p.task_id&&p.state==='UNKNOWN')control('讀取原生狀態對帳',()=>api('work-reconcile',{id:p.id}),r=>{
+        if(r?.result_id)return '已找到保存成果；請使用「查看工作與證據」核對。';
+        if(r?.state==='UNKNOWN')return !r.thread_id||!r.turn_id
+          ? '已嘗試對帳，但缺少完整的 Codex thread／turn 身分，仍無法確認結果。沒有重新執行工作。'
+          : '已嘗試讀取 Codex 紀錄，仍無可信終態。狀態保持未確認，沒有重新執行工作。';
+        if(r?.state==='FAILED')return '原生紀錄顯示執行失敗；請查看工作與證據。';
+        if(r?.state==='CANCELLED')return '原生紀錄確認工作已取消。';
+        return '已回傳工作狀態：'+(r?.state||'未確認')+'。請查看工作與證據。';
+      });
+      if(p.result_id){
+        const cached=nativeResults.get(nativeResultKey(p));
+        if(cached?.data)renderNativeResult(card,cached.data);
+        else card.append(text('p',cached?.error||'正在讀取已保存的診斷結果，不會重新執行。'));
+        const reload=control('在此讀取診斷結果',async()=>{await loadNativeResult(p,true);});
+        details.append(reload);
+      }
+      if(p.can_revise){
+        const section=text('details',''),feedback=document.createElement('textarea'),revise=text('button','預覽一次後續修正');
+        section.append(text('summary','接續一次診斷修正'));
+        feedback.maxLength=4000;feedback.setAttribute('aria-label','後續診斷修正內容');
+        revise.type='button';revise.className='secondary-button';
+        revise.onclick=async()=>{if(!feedback.value.trim())return;revise.disabled=true;
+          try{const child=await api('work-revise',{id:p.id,feedback:feedback.value});if(current()){editProposal(child);rendered='';await refresh();}}
+          catch(e){if(current())notice(e.message);}finally{revise.disabled=false;}};
+        section.append(feedback,revise);card.append(section);
+      }
+    }
     if(p.result_id){
-      const back=text('button','加入成果，繼續討論');back.className='text-button';back.type='button';
+      const back=text('button',p.kind==='native_codex'?'用這份診斷接著聊':'加入成果，繼續討論');back.className='text-button';back.type='button';
       back.onclick=()=>attachResult(p);card.append(back);
     }
+    window.NexusConversation?.workCard(card,p);
     return card;
   }
+  function nativeResultKey(p,owner=state?.auth.active){return JSON.stringify([owner,workspace,p.chat,p.id,p.result_id]);}
+  async function loadNativeResult(p,retry=false){
+    const owner=state?.auth.active,root=workspace,key=nativeResultKey(p,owner);
+    const current=()=>selected===p.chat&&state?.auth.active===owner&&workspace===root&&!state?.auth.pending&&!authChanging;
+    if(!current())return;
+    if(nativeLoading.has(key))return nativeLoading.get(key);
+    if(!retry&&nativeResults.has(key))return;
+    const pending=(async()=>{
+      try{
+        const result=await api('work-result',{id:p.id});
+        if(!current())return;
+        if(result.task_id!==p.task_id||result.result_id!==p.result_id||typeof result.result!=='string')throw Error('保存結果身分未確認，請重新讀取。');
+        nativeResults.set(key,{data:result});
+      }catch(e){if(current())nativeResults.set(key,{error:'保存結果暫時無法讀取：'+e.message});}
+      finally{nativeLoading.delete(key);}
+    })();
+    nativeLoading.set(key,pending);return pending;
+  }
+  function renderNativeResult(card,result){
+    if(window.NexusConversation?.diagnosis(card,result))return;
+    const summary=text('div','');summary.className='native-result-summary';
+    const view=result.presentation||{overview:result.result.slice(0,600)};
+    for(const [key,label] of [['overview','診斷結論'],['evidence','程式碼依據'],['next_steps','建議下一步']]){
+      if(!view[key])continue;
+      const section=text('section',''),body=text('div','');
+      section.append(text('h4',label));window.CompanionReading.markdown(body,view[key]);section.append(body);summary.append(section);
+    }
+    card.append(summary);
+    const full=text('details',''),raw=text('pre',result.result);full.className='native-full-result';raw.dataset.nativeResult='true';
+    full.append(text('summary','完整診斷、限制與原始證據'),raw);card.append(full);
+  }
+  function dismissProposal(){
+    window.NexusConversation?.proposalClosed();
+    proposal=null;proposalOwner=null;approval=null;proposalVersion++;
+    if(el('work-proposal'))el('work-proposal').hidden=true;
+  }
+  function proposalCurrent(){return !!proposal&&selected===proposal.chat&&state?.auth.active===proposalOwner&&!state?.auth.pending&&!authChanging;}
   function editProposal(p) {
-    proposal=p;approval=null;el('work-goal').value=p.goal;el('work-expected').value=p.expected;
+    if(selected!==p.chat||state?.auth.pending||authChanging)return;
+    window.NexusOrganize?.reset();
+    proposal=p;proposalOwner=state?.auth.active;proposalVersion++;approval=null;el('work-goal').value=p.goal;el('work-expected').value=p.expected;
     el('work-scope').textContent=p.workspace+' · '+p.capability;
     el('work-files').replaceChildren(text('legend','允許讀取的程式檔案'));
-    for(const key of ['daily','chat','surface','core','runtime','review','work']){
+    const choices=p.source_choices||['daily','chat','surface','core','runtime','review','work'].map(key=>({key,name:'src/companion_core/'+key+'.py'}));
+    for(const {key,name} of choices){
       const label=text('label',''),input=document.createElement('input');input.type='checkbox';input.value=key;input.checked=p.selection.includes(key);
-      label.append(input,document.createTextNode('src/companion_core/'+key+'.py'));el('work-files').append(label);
+      label.append(input,document.createTextNode(name));el('work-files').append(label);
     }
-    el('work-manifest').replaceChildren();el('work-notice').textContent='這只是提案，尚未開始工作。';el('work-confirm').disabled=true;
-    openAux('work-proposal');
+    el('work-manifest').replaceChildren();el('work-notice').textContent='尚未開始。請先預覽這次選定的來源。';el('work-confirm').disabled=true;
+    el('work-preview').disabled=false;el('work-proposal').hidden=false;el('work-settings').open=false;
+    if(!window.NexusConversation?.proposalOpened())el('work-proposal').scrollIntoView({block:'nearest'});
   }
-  function invalidateWork(){approval=null;el('work-confirm').disabled=true;el('work-manifest').replaceChildren();el('work-notice').textContent='提案已修改，請重新預覽範圍。';}
+  function invalidateWork(){approval=null;proposalVersion++;el('work-confirm').disabled=true;el('work-manifest').replaceChildren();el('work-notice').textContent='內容已調整，請重新預覽來源。';}
   for(const id of ['work-goal','work-expected','work-files'])el(id).addEventListener('input',invalidateWork);
+  el('work-close').onclick=dismissProposal;
   el('work-preview').onclick=async()=>{
-    el('work-preview').disabled=true;const origin=proposal.id;approval=null;el('work-confirm').disabled=true;
+    if(!proposalCurrent()||el('work-preview').disabled)return;
+    el('work-preview').disabled=true;const origin=proposal.id,mine=++proposalVersion;approval=null;el('work-confirm').disabled=true;
     const body={id:origin,goal:el('work-goal').value,expected:el('work-expected').value,selection:[...el('work-files').querySelectorAll('input:checked')].map(n=>n.value)};
     try{
       const p=await api('work-preview',body);
-      if(proposal.id!==origin||el('work-goal').value!==body.goal||el('work-expected').value!==body.expected||JSON.stringify([...el('work-files').querySelectorAll('input:checked')].map(n=>n.value))!==JSON.stringify(body.selection))return;
-      approval=p.approval;el('work-manifest').replaceChildren(...p.manifest.map(r=>text('p',r.name+' · '+r.bytes+' bytes · SHA-256 '+r.sha256)));
-      el('work-confirm').disabled=false;el('work-notice').textContent='已預覽目前範圍與指紋。按確認後才執行查核；若檔案變更會要求重新預覽。';rendered='';
-    }catch(e){el('work-notice').textContent=e.message;}finally{el('work-preview').disabled=false;}
+      if(!proposalCurrent()||proposal.id!==origin||mine!==proposalVersion||el('work-goal').value!==body.goal||el('work-expected').value!==body.expected||JSON.stringify([...el('work-files').querySelectorAll('input:checked')].map(n=>n.value))!==JSON.stringify(body.selection))return;
+      el('work-manifest').replaceChildren(text('p','本次只分享 '+p.manifest.length+' 份來源快照：'));
+      for(const r of p.manifest){
+        const source=text('details','');source.append(text('summary',r.name+' · '+r.bytes+' bytes'));
+        const snapshot=p.source_snapshots?.find(s=>s.key===r.key&&s.sha256===r.sha256);
+        if(snapshot){const content=text('pre',snapshot.text.split('\n').map((line,i)=>'L'+(i+1)+': '+line).join('\n'));content.className='chat-source-text';source.append(content);}
+        source.append(text('small','SHA-256 '+r.sha256));el('work-manifest').append(source);
+      }
+      window.NexusConversation?.previewSources(p);
+      approval=p.approval;el('work-confirm').disabled=false;
+      el('work-notice').textContent='可展開核對程式碼。按確認才送出上述快照做唯讀診斷；來源變更會要求重新預覽。';rendered='';
+    }catch(e){if(proposalCurrent()&&mine===proposalVersion)el('work-notice').textContent=e.message;}
+    finally{if(proposalCurrent()&&proposal.id===origin)el('work-preview').disabled=false;}
   };
   el('work-confirm').onclick=async()=>{
-    if(!approval)return;el('work-confirm').disabled=true;
-    try{await api('work-confirm',{id:proposal.id,approval,authority:'READ_ONLY'});approval=null;el('work-proposal').close();rendered='';await refresh();}
-    catch(e){approval=null;el('work-notice').textContent=e.message;}
+    if(!proposalCurrent()||!approval||el('work-confirm').disabled)return;
+    const ident=proposal.id,ticket=approval,mine=proposalVersion;approval=null;el('work-confirm').disabled=true;
+    try{
+      await api('work-confirm',{id:ident,approval:ticket,authority:'READ_ONLY'});
+      if(!proposalCurrent()||proposal.id!==ident||mine!==proposalVersion)return;
+      dismissProposal();rendered='';await refresh();
+    }catch(e){if(proposalCurrent()&&proposal.id===ident)el('work-notice').textContent=e.message+' 請重新核對來源；不會自動重送。';}
   };
-  function attachResult(p){
-    if(selected!==p.chat)switchConversation(p.chat);
+  async function attachResult(p){
+    if(selected!==p.chat||state?.auth.pending||authChanging)return;
+    const owner=state?.auth.active;
     clearSources();for(const n of el('chat-sources').querySelectorAll('[data-work-source]'))n.remove();
-    const label=text('label',''),input=document.createElement('input');label.dataset.workSource='true';input.type='checkbox';input.value='work:'+p.id;input.checked=true;
-    label.append(input,document.createTextNode('已保存工作成果：'+p.goal));el('chat-sources').append(label);updateSend();openAux('chat-knowledge');
+    const mine=sourceVersion,key='work:'+p.id;
+    const label=text('label',''),input=document.createElement('input');label.dataset.workSource='true';input.type='checkbox';input.value=key;input.checked=true;
+    label.append(input,document.createTextNode('已保存工作成果：'+p.goal));el('chat-sources').append(label);updateSend();
+    try{
+      const records=await api('preview',{sources:[key],chat:p.chat});
+      if(selected!==p.chat||state?.auth.active!==owner||state?.auth.pending||authChanging||mine!==sourceVersion)return;
+      if(records.length!==1||records[0].key!==key||typeof records[0].text!=='string')throw Error('成果來源身分無法確認。');
+      preview={[key]:records[0].sha256};el('work-chat-name').textContent='接著討論：'+p.goal;
+      el('work-chat-preview').textContent=records[0].text;el('work-chat-context').hidden=false;
+      if(!el('chat-question').value.trim())el('chat-question').value='請根據這份診斷，說明最值得先處理的下一步與理由。';
+      fitInput();saveDraft();updateSend();el('chat-question').focus();
+    }catch(e){if(selected===p.chat&&state?.auth.active===owner&&mine===sourceVersion){clearSources();notice(e.message);}}
   }
+  el('work-chat-clear').onclick=clearSources;
   el('work-origin').onclick=async()=>{
     try{
       const id=window.surfaceInspection().selected,account=state?.auth.active;
@@ -706,7 +907,11 @@
   el('chat-messages').onscroll=()=>{if(inChat()&&renderedChat===selected){positions.set(selected,el('chat-messages').scrollTop);persistChat();}};
   el('chat-question').oninput=()=>{saveDraft();fitInput();};
   el('chat-question').onkeydown=e=>{
-    if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&!e.isComposing){e.preventDefault();if(!el('chat-send').disabled)el('chat-form').requestSubmit();}
+    if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&!e.isComposing){
+      e.preventDefault();
+      if(window.NexusOrganize?.active()){if(!el('organize-start').disabled)void window.NexusOrganize.submit();}
+      else if(!el('chat-send').disabled)el('chat-form').requestSubmit();
+    }
   };
   el('chat-sources').onchange=()=>{
     clearDocumentConsent();
@@ -724,8 +929,18 @@
       el('chat-preview-notice').textContent='已預覽。返回對話後，按「傳送訊息」才會分享這些資料。';
     }catch(e){el('chat-preview-notice').textContent=e.message;}finally{updateSend();}
   };
+  if(el('organize-open'))el('organize-open').onclick=()=>{
+    const account=state?.auth.active,origin=selected;
+    window.NexusOrganize.open({account,workspace,chat:origin||null,
+      valid:()=>state?.auth.active===account&&!state?.auth.pending&&!authChanging&&selected===origin,
+      started:async result=>{if(state?.auth.active!==account||authChanging)return;
+        drafts.delete(draftKey(origin));el('chat-question').value='';fitInput();
+        selected=result.chat;rendered='';persistChat();selectedChanged(true);await refresh();}
+    });
+  };
   el('chat-form').onsubmit=async event=>{
-    event.preventDefault();if(el('chat-send').disabled)return;
+    event.preventDefault();if(window.NexusOrganize?.active()){await window.NexusOrganize.submit();return;}
+    if(el('chat-send').disabled)return;
     const origin=selected,question=el('chat-question').value;
     sending=true;saveDraft();updateSend();notice('正在提交訊息…');
     try{

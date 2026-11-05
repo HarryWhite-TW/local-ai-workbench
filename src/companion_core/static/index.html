@@ -4,17 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>NEXUS — AI Workbench</title>
+  <script src="/conversation-mode.js"></script>
   <script src="/reading.js" defer></script>
   <link rel="stylesheet" href="/surface.css">
   <script src="/surface.js" defer></script>
   <link rel="stylesheet" href="/chat.css">
+  <link rel="stylesheet" href="/organize.css">
+  <script src="/organize.js" defer></script>
+  <script src="/engineering-pilot.js" defer></script>
   <script src="/chat.js" defer></script>
   <link rel="stylesheet" href="/nexus.css">
   <script src="/nexus.js" defer></script>
   <link rel="stylesheet" href="/native-codex.css">
   <script src="/native-codex.js" defer></script>
+  <link rel="stylesheet" href="/conversation-workspace.css">
+  <script src="/conversation-workspace.js" defer></script>
 </head>
-<body data-theme="obsidian" data-view="glance" data-motion="full" data-quality="high" data-chat-enabled="false" data-work-enabled="false" data-native-codex="false" data-space="chat">
+<body data-pilot-enabled="false" data-theme="obsidian" data-view="glance" data-motion="full" data-quality="high" data-chat-enabled="false" data-organize-enabled="false" data-work-enabled="false" data-native-codex="false" data-space="chat">
   <svg class="icon-library" aria-hidden="true"><defs>
     <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-6 6M10 19H5v-5M5 19l6-6"/></symbol>
@@ -185,11 +191,40 @@
     <section id="document-chat-context" class="document-chat-context" hidden aria-label="本次文件來源"><strong id="document-chat-name"></strong><p id="document-chat-scope"></p><details id="document-chat-excerpt"><summary>查看待送出的內容</summary><pre id="document-chat-content" class="chat-source-text" tabindex="0"></pre></details><p class="source-send-note">隨下一則訊息送出</p><div><button id="document-chat-return" class="text-button" type="button">定位原文</button><button id="document-chat-clear" class="text-button" type="button">移除這次的來源</button></div></section>
     <div id="chat-signin" class="chat-signin" hidden><span id="chat-recovery-copy">登入 ChatGPT 後即可開始對話。</span><button id="chat-signin-open" class="primary-button" type="button">登入 ChatGPT</button><button id="chat-recover" class="secondary-button" type="button" hidden>重新讀取模型</button></div>
     <div id="chat-messages" tabindex="0" role="region" aria-label="對話訊息，使用方向鍵或 Page Down 閱讀"></div>
+    <section id="work-proposal" class="chat-work-proposal" aria-labelledby="work-proposal-title" hidden>
+      <header><h2 id="work-proposal-title">確認這次唯讀診斷</h2><button id="work-close" type="button" class="text-button">稍後再說</button></header>
+      <label for="work-goal">想釐清什麼？</label><textarea id="work-goal" rows="2" maxlength="4000"></textarea>
+      <details id="work-settings"><summary>調整預期結果與可讀取的檔案</summary>
+        <label for="work-expected">預期結果（可修改，不是執行證據）</label><textarea id="work-expected" rows="3" maxlength="4000"></textarea>
+        <fieldset id="work-files"><legend>允許讀取的程式檔案</legend></fieldset>
+      </details>
+      <p>先核對下方選定的來源；確認後才傳送程式快照與目標給已登入的原生 Codex。只做唯讀診斷，不取得 Shell、測試或修改專案的工具權限。</p>
+      <button id="work-preview" type="button" class="secondary-button">預覽這次來源</button>
+      <div id="work-manifest"></div><p id="work-notice" role="status" aria-live="polite"></p>
+      <details><summary>範圍與容量限制</summary><p id="work-scope"></p><p>每檔最多 128 KiB，合計最多 256 KiB。來源變更後須重新預覽；模型完成不代表獨立技術驗收。</p></details>
+      <button id="work-confirm" type="button" class="primary-button" disabled>確認來源並開始診斷</button>
+    </section>
+    <section id="work-chat-context" class="work-chat-context" aria-label="本次接續討論的診斷成果" hidden>
+      <strong id="work-chat-name"></strong><p>已選取並預覽這份保存結果；按「傳送訊息」才分享給聊天模型。</p>
+      <details><summary>核對將分享的成果</summary><pre id="work-chat-preview" class="chat-source-text"></pre></details>
+      <button id="work-chat-clear" type="button" class="text-button">移除這次成果</button>
+    </section>
     <form id="chat-form" class="chat-composer">
       <label class="chat-input-label" for="chat-question">你的訊息</label>
       <textarea id="chat-question" rows="2" maxlength="4000" required placeholder="想聊些什麼？"></textarea>
       <p id="chat-save-status" class="chat-draft-status" role="status" aria-live="polite"></p><button id="chat-save-retry" class="text-button" type="button" hidden>重新確認保存</button><button id="chat-save-recover" class="text-button" type="button" hidden>核對已保存版本</button>
-      <div class="chat-compose-actions"><button id="chat-source-open" type="button" class="secondary-button" aria-haspopup="dialog">加入專案資料</button><span id="chat-source-status" class="muted"></span><button id="chat-send" type="submit" class="primary-button" disabled>傳送訊息 <svg><use href="#i-arrow"/></svg></button></div>
+      <section id="organize-panel" aria-labelledby="organize-title" hidden>
+        <div class="organize-selection-heading"><strong id="organize-title">整理這些文件</strong><button id="organize-close" type="button" class="text-button">取消</button></div>
+        <input id="organize-files" type="file" accept=".txt,.md" multiple hidden>
+        <div id="organize-selection" aria-live="polite"></div>
+        <button id="organize-choose" type="button" class="text-button">選擇文件</button>
+        <p>沿用上方的整理需求；留白時依內容分類，不確定的歸為待確認。</p>
+        <p class="organize-sharing">按「開始分析」會將所選文件的完整文字與需求傳送給原生 Codex，使用其目前登入帳戶與方案額度。先看分類預覽，再由你確認建立 ZIP 副本；原始文件不變。</p>
+        <details class="organize-limits"><summary>支援格式與大小</summary><p>UTF-8 TXT／Markdown；最多 12 份，每份 128 KiB、合計 512 KiB，可分析文字合計 120,000 bytes。PDF／Word 尚未支援。</p></details>
+        <p id="organize-notice" role="status" aria-live="polite"></p>
+        <button id="organize-start" type="button" class="primary-button" disabled>開始分析</button>
+      </section>
+      <div class="chat-compose-actions"><button id="chat-source-open" type="button" class="secondary-button" aria-haspopup="dialog">加入專案資料</button><button id="organize-open" type="button" class="secondary-button" aria-controls="organize-panel" aria-expanded="false" hidden>整理文件</button><span id="chat-source-status" class="muted"></span><button id="chat-send" type="submit" class="primary-button" disabled>傳送訊息 <svg><use href="#i-arrow"/></svg></button></div>
       <p id="chat-notice" role="status" aria-live="polite">可直接聊天，需要專案資料時再加入。</p>
       <p class="chat-disclosure">訊息會傳送至 OpenAI，使用你授權的 ChatGPT 方案額度。<span>Ctrl / ⌘ + Enter 傳送</span></p>
     </form>
@@ -204,19 +239,6 @@
   <div id="companion-mini" hidden role="region" aria-label="已最小化的 Companion">
     <button id="companion-mini-move" class="text-button" aria-label="移動最小化控制，拖曳或使用方向鍵，Shift 加速">⠿ Companion</button><button id="companion-restore" class="secondary-button">還原</button><button id="companion-mini-close" class="icon-button" aria-label="關閉最小化的 Companion">×</button><button id="companion-mini-resize" class="companion-resize" aria-label="調整最小化控制寬高，拖曳或使用方向鍵，Shift 加速">↘</button>
   </div>
-  <dialog id="work-proposal" class="chat-auxiliary" aria-labelledby="work-proposal-title">
-    <header class="dialog-header"><h2 id="work-proposal-title">確認唯讀工作提案</h2><button class="icon-button" data-close aria-label="返回對話"><svg><use href="#i-close"/></svg></button></header>
-    <div class="chat-aux-body">
-      <p id="work-scope"></p>
-      <label for="work-goal">工作目標</label><textarea id="work-goal" rows="3" maxlength="4000"></textarea>
-      <label for="work-expected">預期結果／模型協助整理（可修改，不是執行證據）</label><textarea id="work-expected" rows="5" maxlength="4000"></textarea>
-      <fieldset id="work-files"><legend>允許讀取的程式檔案</legend></fieldset>
-      <p>此執行器只產生檔案雜湊、Python 定義與入口呼叫的行號紀錄。不能執行測試、任意命令或修改專案；模型不取得本機工具權限。</p>
-      <button id="work-preview" class="secondary-button">預覽範圍</button>
-      <div id="work-manifest"></div><p id="work-notice" role="status"></p>
-    </div>
-    <footer class="chat-aux-footer"><button id="work-confirm" class="primary-button" disabled>確認唯讀範圍並開始</button></footer>
-  </dialog>
   <dialog id="project-confirm" class="chat-auxiliary" aria-labelledby="project-confirm-title"><header class="dialog-header"><h2 id="project-confirm-title">確認專案關聯</h2><button type="button" class="icon-button" data-close aria-label="取消專案關聯確認">×</button></header><div class="chat-aux-body"><p id="project-confirm-copy"></p><p>只保存這段對話的專案標記；不會附加檔案、工作成果或觸發模型請求。</p><p id="project-confirm-notice" role="status"></p></div><footer class="chat-aux-footer"><button type="button" class="secondary-button" data-close>取消</button><button id="project-confirm-save" type="button" class="primary-button">確認並保存</button></footer></dialog>
   <dialog id="chat-settings" class="chat-auxiliary" aria-labelledby="chat-settings-title">
     <div class="dialog-header"><h2 id="chat-settings-title">帳戶與模型</h2><button class="icon-button" data-close aria-label="關閉帳戶與模型"><svg><use href="#i-close"/></svg></button></div>

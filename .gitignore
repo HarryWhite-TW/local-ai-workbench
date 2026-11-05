@@ -18,3 +18,10 @@ data/api_walkthrough.out.log
 data/real_docs_check_01_validation.db
 data/real_docs_check_01_validation.db-journal
 demo_docs/
+
+# Local-only NEXUS credentials, state and execution artifacts
+*.dpapi
+*.sqlite3
+*.sqlite3-*
+.env
+.env.local

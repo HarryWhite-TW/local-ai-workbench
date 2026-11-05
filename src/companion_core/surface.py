@@ -22,6 +22,8 @@ from .review import ReviewError, ReviewStore
 # Display-only allowlist. Runtime bodies, tool arguments and reasoning never enter
 # this projection. A runtime terminal report is provisional until Core finishes.
 OBSERVATIONS = {
+    "execution_unknown": ("狀態未確認", "缺少可信終態；不會自動重送，請對帳。"),
+    "unknown": ("狀態未確認", "連線或執行證據不足，不能視為成功、失敗或已取消。"),
     "task_created": ("工作已建立", "Core 已建立唯讀工作。"),
     "working": ("執行已開始", "Core 已開始執行；完成比例未提供。"),
     "session_bound": ("執行連線已建立", "執行端已回報連線身分；不公開原始連線資料。"),
@@ -136,13 +138,20 @@ class Surface:
         data.update(result_id=target.result_id, result=safe_text(target.task.result),
                     authority=target.task.authority.value, provider=safe_text(target.task.provider))
         data["revision"] = (self._summary(target.revision) if target.revision else None)
+        if (getattr(self.runtime, "independent_review_required", False)
+                and target.task.provider == self.runtime.provider_id):
+            data["independent_review_required"] = True
+            data["review_status"] = "PENDING_REVIEW"
         return data
 
     def decide(self, body):
         if (not isinstance(body, dict) or set(body) != {"task_id", "result_id", "action", "revision_intent"}
                 or not all(isinstance(body[k], str) for k in ("task_id", "result_id", "action"))):
             raise ReviewError()
-        self._scoped(self.store.get(body["task_id"]))
+        target = self._scoped(self.store.get(body["task_id"]))
+        if (getattr(self.runtime, "independent_review_required", False)
+                and target.task.provider == self.runtime.provider_id):
+            raise ReviewError()  # Local UI cannot impersonate the independent reviewer.
         self.store.decide(body["task_id"], body["result_id"], body["action"],
                           reviewer="local-human", revision_intent=body["revision_intent"])
         return self.target(body["task_id"])
@@ -236,14 +245,18 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                     with chat.lock, getattr(chat.auth, 'lock', chat.lock):
                         self._reply(200, chat.snapshot())
                 elif self.path in ("/", "/surface.js", "/surface.css", "/chat.js", "/chat.css",
-                                   "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css"):
+                                   "/organize.js", "/organize.css", "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css", "/engineering-pilot.js", "/conversation-mode.js", "/conversation-workspace.js", "/conversation-workspace.css"):
                     name = "index.html" if self.path == "/" else self.path[1:]
                     mime = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}[Path(name).suffix]
                     content = (assets / name).read_bytes()
                     if name == "index.html" and chat is not None:
                         content = content.replace(b'data-chat-enabled="false"', b'data-chat-enabled="true"', 1)
+                    if name == "index.html" and getattr(chat, "organizer", None) is not None:
+                        content = content.replace(b'data-organize-enabled="false"', b'data-organize-enabled="true"', 1)
                     if name == "index.html" and work is not None:
                         content = content.replace(b'data-work-enabled="false"', b'data-work-enabled="true"', 1)
+                    if name == "index.html" and getattr(chat, "engineering_pilot", None) is not None:
+                        content = content.replace(b'data-pilot-enabled="false"', b'data-pilot-enabled="true"', 1)
                     if name == "index.html" and native_codex is not None:
                         content = content.replace(b'data-native-codex="false"', b'data-native-codex="true"', 1)
                     self._reply(200, content, mime + "; charset=utf-8")
@@ -258,7 +271,7 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                limit = 1_100_000 if self.path == '/api/chat/continuity-save' else 32768
+                limit = 1_100_000 if self.path in ('/api/chat/continuity-save', '/api/chat/organize-start') else 32768
                 if not 0 < length <= limit:
                     raise ReviewError()
                 def unique_fields(pairs):
@@ -280,6 +293,12 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                         if action.startswith('codex-') and native_codex is not None:
                             native_codex.respond(action.removeprefix('codex-'), body,
                                                  lambda data: self._reply(200, data))
+                            return
+                        elif action.startswith('pilot-') and getattr(chat, 'engineering_pilot', None) is not None:
+                            self._reply(200, chat.engineering_pilot.respond(action.removeprefix('pilot-'), body))
+                            return
+                        elif action.startswith('organize-') and getattr(chat, 'organizer', None) is not None:
+                            chat.organizer.respond(action.removeprefix('organize-'), body, lambda data: self._reply(200, data))
                             return
                         elif action in ("login", "logout", "select"):
                             result = chat.auth_action(action, body, f"http://127.0.0.1:{self.server.server_port}")
@@ -324,6 +343,9 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                         elif action == "preview" and set(body) == {"sources", "chat"}:
                             result = chat.selected_sources(body['sources'], body['chat'])
                         elif action.startswith('work-') and work is not None:
+                            if hasattr(work, "respond"):
+                                work.respond(action, body, lambda data: self._reply(200, data))
+                                return
                             if action == 'work-state' and set(body) == {'chat'}:
                                 result = work.state(body['chat'])
                             elif action == 'work-origin' and set(body) == {'task_id'}:
