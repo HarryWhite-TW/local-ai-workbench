@@ -7,6 +7,7 @@ No arbitrary workspace picker, execution queue or publication action.
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import secrets
 from pathlib import Path
 import sys
 import threading
@@ -191,13 +192,18 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
         def _reply(self, code, data, mime="application/json; charset=utf-8"):
             if not isinstance(data, bytes):
                 data = json.dumps(data, ensure_ascii=False).encode("utf-8")
+            csp = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            if mime.startswith('text/html') and getattr(chat, 'controlled_code', None) is not None:
+                nonce = secrets.token_hex(24)
+                data = data.replace(b'<body ', ('<body data-demo-nonce="' + nonce + '" ').encode(), 1)
+                csp = csp.replace("script-src 'self'", "script-src 'self' 'nonce-" + nonce + "'") + "; frame-src 'self'"
             self.send_response(code)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+            self.send_header("Content-Security-Policy", csp)
             self.end_headers()
             try:
                 self.wfile.write(data)
@@ -245,10 +251,15 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                     with chat.lock, getattr(chat.auth, 'lock', chat.lock):
                         self._reply(200, chat.snapshot())
                 elif self.path in ("/", "/surface.js", "/surface.css", "/chat.js", "/chat.css",
-                                   "/organize.js", "/organize.css", "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css", "/engineering-pilot.js", "/conversation-mode.js", "/conversation-workspace.js", "/conversation-workspace.css"):
+                                   "/organize.js", "/organize.css", "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css", "/engineering-pilot.js", "/controlled-code.js", "/conversation-mode.js", "/conversation-workspace.js", "/conversation-workspace.css"):
                     name = "index.html" if self.path == "/" else self.path[1:]
                     mime = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}[Path(name).suffix]
                     content = (assets / name).read_bytes()
+                    controlled = getattr(chat, "controlled_code", None)
+                    if controlled is not None and name == "engineering-pilot.js":
+                        content = controlled.served_asset  # Never execute generated code in the account-bearing page.
+                    if controlled is not None and name == "index.html":
+                        content = content.replace(b'data-controlled-code="false"', b'data-controlled-code="true"', 1)
                     if name == "index.html" and chat is not None:
                         content = content.replace(b'data-chat-enabled="false"', b'data-chat-enabled="true"', 1)
                     if name == "index.html" and getattr(chat, "organizer", None) is not None:
@@ -293,6 +304,9 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                         if action.startswith('codex-') and native_codex is not None:
                             native_codex.respond(action.removeprefix('codex-'), body,
                                                  lambda data: self._reply(200, data))
+                            return
+                        elif action.startswith('code-') and getattr(chat, 'controlled_code', None) is not None:
+                            self._reply(200, chat.controlled_code.respond(action.removeprefix('code-'), body))
                             return
                         elif action.startswith('pilot-') and getattr(chat, 'engineering_pilot', None) is not None:
                             self._reply(200, chat.engineering_pilot.respond(action.removeprefix('pilot-'), body))

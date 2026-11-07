@@ -31,6 +31,8 @@ def main():
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--data-dir")
     parser.add_argument("--pilot-workspace", help="Fixed non-sensitive isolated engineering sample only.")
+    parser.add_argument("--controlled-engineering", action="store_true",
+                        help="ENG-01: fixed snapshot-only proposal and host-controlled single-file apply.")
     parser.add_argument("--codex", help="Existing native codex.exe; uses its own ChatGPT login.")
     parser.add_argument("--review-dir")
     parser.add_argument("--no-browser", action="store_true")
@@ -45,8 +47,13 @@ def main():
         workspace = Path(args.workspace).resolve(strict=True)
         if not (workspace / "AGENTS.md").is_file():
             raise ChatError("找不到指定的專案根目錄。")
-        vault = Vault(directory, workspace)
-        auth = SignIn(vault)
+        if args.controlled_engineering:
+            from .controlled_code import ExistingVault, ExistingSignIn
+            vault = ExistingVault(directory, workspace)
+            auth = ExistingSignIn(vault)
+        else:
+            vault = Vault(directory, workspace)
+            auth = SignIn(vault)
         chat = Conversations(workspace, directory, auth)
         # Reuse the exact installed runtime that passed the user's N03-01 host run.
         # Never select a different App build merely because its mtime is newer.
@@ -59,6 +66,9 @@ def main():
         if args.pilot_workspace:
             from .engineering_pilot import EngineeringPilot
             chat.engineering_pilot = EngineeringPilot(chat, args.pilot_workspace, codex)
+        if args.controlled_engineering:
+            from .controlled_code import ControlledCode
+            chat.controlled_code = ControlledCode(chat, codex)
         server = make_server(surface, chat, work, port=args.port, native_codex=NativeCodex(chat))
         url = f"http://127.0.0.1:{server.server_port}/"
         print("Companion: " + url, flush=True)
@@ -79,6 +89,8 @@ def main():
                 active.cancel()
             chat.work.surface.worker.join()
         if chat:
+            if getattr(chat, "controlled_code", None):
+                chat.controlled_code.close()
             if getattr(chat, "organizer", None):
                 chat.organizer.close()
             if chat.worker:

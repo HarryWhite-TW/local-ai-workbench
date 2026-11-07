@@ -75,16 +75,17 @@ class RpcRejected(RuntimeError):
 
 class NativeClient(_Rpc):
     """One owned stdio process; existing RPC denial and correlation semantics."""
-    def __init__(self, directory, executable=None):
+    def __init__(self, directory, executable=None, *, settings=()):
         self.directory = directory
         self.executable = executable or find_codex()
+        self.settings = tuple(settings)
         self.process = None
 
     def __enter__(self):
         if not self.executable or not Path(self.executable).is_file() or Path(self.executable).suffix.lower() != ".exe":
             raise RuntimeFailure(Failure.AUTHENTICATION)
         command = [str(self.executable), "app-server", "--listen", "stdio://"]
-        for setting in SETTINGS:
+        for setting in SETTINGS + self.settings:
             command += ["-c", setting]
         # No credential callback, copied auth file, alternate CODEX_HOME or
         # API-key environment. Native Codex owns its normal login store.

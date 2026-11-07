@@ -9,7 +9,7 @@
   let preview=null, sourceVersion=0, accountChoice, catalogAttempt=null, workScroll=0;
   let documentSource=null;
   let authChanging=false,authEpoch=0;
-  let catalogLoading=false,catalogError='';
+  let catalogLoading=false,catalogError='',authActionError='';
   const workEnabled=document.body.dataset.workEnabled==='true';
   const organizeEnabled=document.body.dataset.organizeEnabled==='true';
   let workspace='',sessionKey='',sessionReady=false,sessionSaved=false;
@@ -528,8 +528,9 @@
     await Promise.all(proposals.filter(p=>p.kind==='native_codex'&&p.result_id).map(p=>loadNativeResult(p)));
     if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active||state?.auth.pending)return;
     const pilots=window.NexusPilot?await window.NexusPilot.state(id):[];
+    const codeJobs=window.NexusControlled?await window.NexusControlled.state(id):[];
     if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active)return;
-    const signature=JSON.stringify([conversation,proposals,organizations,pilots,proposals.map(p=>nativeResults.get(nativeResultKey(p)))]);if(signature===rendered&&renderedChat===id)return;
+    const signature=JSON.stringify([conversation,proposals,organizations,pilots,codeJobs,proposals.map(p=>nativeResults.get(nativeResultKey(p)))]);if(signature===rendered&&renderedChat===id)return;
     const same=renderedChat===id,top=scroller.scrollTop,nearEnd=scroller.scrollHeight-scroller.clientHeight-top<90;
     rendered=signature;renderedChat=id;
     const nodes=[];
@@ -573,6 +574,7 @@
       for(const p of proposals.filter(p=>p.turn===turn.id))answer.append(workCard(p));
       for(const o of organizations.filter(o=>o.turn===turn.id))answer.append(window.NexusOrganize.card(o,()=>{rendered='';void refresh();},()=>selected===id&&state?.auth.active===account&&!state?.auth.pending&&!authChanging));
       for(const pilot of pilots.filter(p=>p.turn===turn.id))answer.append(window.NexusPilot.card(pilot));
+      for(const job of codeJobs.filter(p=>p.turn===turn.id))answer.append(window.NexusControlled.card(job));
       box.append(question,answer);nodes.push(box);
     }
     scroller.replaceChildren(...nodes);
@@ -605,7 +607,7 @@
   }
   async function changeAccount(path,body) {
     if(authChanging||authPreparing)return;
-    window.NexusConversation?.resetContext();
+    authActionError='';
     authPreparing=true;updateSend();saveDraft();
     if(state?.continuity&&continuityReady){
       await flushContinuity();
@@ -615,8 +617,9 @@
       }
     }
     authPreparing=false;
-    authChanging=true;invalidateAccount(body.account);connected=false;updateSend();
-    try{await api(path,body);}catch(e){notice(e.message);el('chat-auth-notice').textContent=e.message;}
+    authChanging=true;connected=false;updateSend();
+    try{await api(path,body);invalidateAccount(body.account);}
+    catch(e){authActionError=e.message;notice(e.message);el('chat-auth-notice').textContent=e.message;}
     finally{authChanging=false;await refresh();}
   }
   async function loadModels(data) {
@@ -645,7 +648,7 @@
       if(accountChanged){el('chat-question').value=drafts.get(draftKey())||'';fitInput();}
       if(accountChoice===undefined)accountChoice=data.auth.active||'';
       options(el('chat-accounts'),data.auth.accounts,accountChoice,'新增帳戶');
-      el('chat-auth-notice').textContent=data.auth.notice;
+      el('chat-auth-notice').textContent=authActionError||catalogError||data.auth.notice;
       options(el('chat-history'),data.chats.filter(c=>!c.account||c.account===data.auth.active).map(c=>({id:c.id,label:c.title})),selected,'新對話');
       void readProjectLink();
       if(selected&&!visibleChat(selected)){switchConversation('',true);returnWork=null;}
