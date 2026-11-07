@@ -1,5 +1,6 @@
 """Host-boundary tests with synthetic source, never real model acceptance."""
 import hashlib
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,7 @@ import shutil
 import subprocess
 import threading
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import tempfile
 import unittest
@@ -37,6 +38,8 @@ def make_engine(tmp_path):
     result.worker, result.key = None, secrets.token_bytes(32)
     result.node = shutil.which('node')
     result.git = Mock(return_value=BASE.encode())
+    result.runtime_source = {'root': 'synthetic-runtime', 'head': 'synthetic-wip'}
+    result.check_repositories = Mock()  # Handle tests isolate filesystem behavior.
     return result
 
 
@@ -51,6 +54,144 @@ def approval(job):
 def response(job, replacement='const original = 2;\n'):
     return json.dumps({'target': TARGET, 'source_sha256': job['source']['sha256'], 'replacement': replacement})
 
+
+class RepositoryIdentityTests(unittest.TestCase):
+    """Real Git metadata; mocked initial snapshot is NOT Windows handle proof."""
+    @classmethod
+    def setUpClass(cls):
+        cls.repo = Path(__file__).resolve().parents[2]
+        cls.temp = tempfile.TemporaryDirectory(prefix='eng01-git-')
+        cls.root = Path(cls.temp.name).resolve() / 'candidate'
+        subprocess.run(['git', '-C', str(cls.repo), 'worktree', 'add', '--detach', str(cls.root), BASE],
+                       check=True, capture_output=True)
+        cls.node = Path(cls.temp.name) / 'node.exe'
+        cls.node.write_bytes(b'not executed')
+
+    @classmethod
+    def tearDownClass(cls):
+        subprocess.run(['git', '-C', str(cls.repo), 'worktree', 'remove', str(cls.root)], check=True, capture_output=True)
+        cls.temp.cleanup()
+
+    def engine(self, root=None):
+        with patch.object(ControlledCode, 'snapshot', return_value={}):
+            return ControlledCode(MagicMock(), 'unused.exe', root=root or self.root, node=self.node)
+
+    def test_saved_wip_runtime_can_use_mvp_worktree_and_trusted_asset(self):
+        engine = self.engine()
+        self.assertEqual(engine.head, BASE)
+        self.assertNotEqual(engine.runtime_source['head'], BASE)
+        self.assertEqual(engine.runtime_source['root'], str(self.repo))
+        self.assertNotEqual(engine.runtime_source['git_dir'], engine.candidate_source['git_dir'])
+        self.assertEqual(engine.served_asset, subprocess.check_output(['git', '-C', str(self.repo), 'show', BASE+':'+TARGET]))
+        engine.check_repositories()
+
+    def test_runtime_or_candidate_git_drift_is_rejected(self):
+        for changed in (self.repo, self.root):
+            for field in ('head', 'git_dir', 'common'):
+                engine = self.engine()
+                original = engine.repository
+                def drift(root):
+                    value = original(root)
+                    if root == changed:
+                        value[field] = 'changed'
+                    return value
+                with patch.object(engine, 'repository', side_effect=drift):
+                    with self.assertRaises(ChatError): engine.snapshot()
+
+    def test_runtime_nested_and_non_root_targets_are_rejected(self):
+        for root in (self.repo, self.repo/'src', self.root/'src'):
+            with self.subTest(root=root), self.assertRaises(ChatError): self.engine(root)
+
+    def test_wip_target_head_is_rejected(self):
+        original = ControlledCode.git
+        def wrong_head(engine, *args, **kwargs):
+            if args == ('rev-parse', 'HEAD') and not kwargs.get('root'):
+                return engine.runtime_source['head'].encode()
+            return original(engine, *args, **kwargs)
+        with patch.object(ControlledCode, 'git', new=wrong_head):
+            with self.assertRaises(ChatError): self.engine()
+
+    def test_missing_explicit_target_is_rejected(self):
+        with self.assertRaises(ChatError): ControlledCode(MagicMock(), 'unused.exe')
+
+
+class PortableBoundaryTests(unittest.TestCase):
+    """Synthetic source and approvals only; never invoke a model or host writer."""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.engine = make_engine(Path(self.temp.name))
+        def snapshot():
+            raw = (self.engine.root/TARGET).read_bytes()
+            return {'target': TARGET, 'root': str(self.engine.root), 'head': BASE,
+                    'sha256': hashlib.sha256(raw).hexdigest(), 'identity': ['synthetic'],
+                    'text': raw.decode(), 'runtime': self.engine.runtime_source}
+        self.engine.snapshot = snapshot
+
+    def test_preview_readback_and_runtime_identity_are_bound_to_approval(self):
+        engine = self.engine
+        job = preview(engine)
+        self.assertEqual(engine.respond('state', {'chat':'chat'})[0], job)
+        stored = engine.get(job['id'])
+        stored['source']['runtime']['head'] = 'tampered'
+        engine.save(stored)
+        with self.assertRaises(ChatError): engine.respond('confirm', approval(job))
+        self.assertIsNone(engine.worker)
+
+    def test_static_validator_rejects_invalid_output_without_writing(self):
+        engine = self.engine
+        job = preview(engine)
+        before = (engine.root/TARGET).read_bytes()
+        for answer in (response(job, 'const broken = ;'), response(job, before.decode()),
+                       response(job).replace(TARGET, 'AGENTS.md')):
+            with self.assertRaises(ChatError): engine.validate(answer, job)
+            self.assertEqual((engine.root/TARGET).read_bytes(), before)
+        engine.validate(response(job), job)
+        self.assertEqual(job['tests']['exitCode'], 0)
+        self.assertFalse(job['tests']['generated_code_executed'])
+        self.assertEqual((engine.root/TARGET).read_bytes(), before)
+
+    def test_windows_writer_fails_closed_on_other_platforms(self):
+        if os.name == 'nt': self.skipTest('Non-Windows rejection only')
+        with self.assertRaises(ChatError):
+            with locked_target(self.engine.root): self.fail('must not open')
+
+    def test_tool_event_rejected(self):
+        rpc = SimpleNamespace(notification=lambda _: {'method':'item/started','params':{
+            'threadId':'thread','turnId':'turn','item':{'id':'tool','type':'commandExecution'}}})
+        with self.assertRaises(RuntimeFailure):
+            observe_turn(rpc,'thread','turn',threading.Event(),lambda **_:None)
+
+
+class DailyEntrypointTests(unittest.TestCase):
+    def test_controlled_flags_must_be_paired_before_any_vault_access(self):
+        from src.companion_core.daily import main
+        for flags in (['--controlled-engineering'], ['--controlled-worktree', 'unused']):
+            with patch('sys.argv', ['daily', '--workspace', '.', *flags]), patch('sys.stderr'), \
+                    patch('src.companion_core.controlled_code.ExistingVault') as vault:
+                with self.assertRaises(SystemExit) as error: main()
+                self.assertEqual(error.exception.code, 2)
+                vault.assert_not_called()
+
+    def test_daily_passes_explicit_target_separately_from_chat_workspace(self):
+        from src.companion_core import daily
+        repo = Path(__file__).resolve().parents[2]
+        with ExitStack() as stack:
+            stack.enter_context(patch('sys.argv', ['daily', '--workspace', str(repo), '--data-dir', 'unused',
+                '--controlled-engineering', '--controlled-worktree', 'explicit-candidate', '--no-browser']))
+            for name in ('ExistingVault', 'ExistingSignIn'):
+                stack.enter_context(patch('src.companion_core.controlled_code.' + name))
+            controlled = stack.enter_context(patch('src.companion_core.controlled_code.ControlledCode'))
+            mocks = {name: stack.enter_context(patch.object(daily, name)) for name in
+                     ('Conversations', 'NativeWork', 'Surface', 'ReviewStore', 'DocumentOrganizer', 'NativeCodex', 'make_server')}
+            chat = mocks['Conversations'].return_value
+            chat.worker = None
+            mocks['Surface'].return_value.worker = None
+            with patch('builtins.print'):
+                self.assertEqual(daily.main(), 0)
+            self.assertEqual(mocks['Conversations'].call_args.args[0], repo)
+            self.assertEqual(controlled.call_args.args[0], chat)
+            self.assertEqual(controlled.call_args.kwargs, {'root': 'explicit-candidate'})
 
 
 

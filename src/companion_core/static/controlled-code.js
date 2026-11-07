@@ -40,6 +40,7 @@
     const card=node('section');card.className='chat-work-card';card.dataset.controlledJob=job.id;card.dataset.state=job.state;
     card.append(node('h3','受控程式修改 · '+job.state),node('p',job.summary),node('p',job.goal));
     card.append(node('p','固定目標：'+job.source.root+'/'+job.source.target),node('p','來源 HEAD：'+job.source.head+' · SHA-256：'+job.source.sha256),node('p','固定驗證：'+job.validation));
+    if(job.source.runtime)card.append(node('p','NEXUS 執行來源：'+job.source.runtime.root+' · HEAD：'+job.source.runtime.head));
     if(job.state==='PREVIEW'){
       card.append(node('p','只分享下列來源快照及需求；模型無 Shell／檔案／瀏覽器工具。主機只替換此檔案。靜態檢查不執行生成程式；功能體驗另以無網路、無同來源權限的框架隔離。批准限本帳戶、本對話、本來源及 30 分鐘內使用一次。'));
       const source=node('details');source.open=true;source.append(node('summary','核對本次完整來源'),node('pre',job.source.text));card.append(source);

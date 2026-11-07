@@ -33,12 +33,15 @@ def main():
     parser.add_argument("--pilot-workspace", help="Fixed non-sensitive isolated engineering sample only.")
     parser.add_argument("--controlled-engineering", action="store_true",
                         help="ENG-01: fixed snapshot-only proposal and host-controlled single-file apply.")
+    parser.add_argument("--controlled-worktree", help="Explicit isolated ENG-01 target worktree at the fixed MVP HEAD.")
     parser.add_argument("--codex", help="Existing native codex.exe; uses its own ChatGPT login.")
     parser.add_argument("--review-dir")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--port", type=int, default=0,
                         help="Local preview port (0 chooses an available port).")
     args = parser.parse_args()
+    if bool(args.controlled_worktree) != args.controlled_engineering:
+        parser.error("--controlled-engineering and --controlled-worktree must be supplied together")
     if not 0 <= args.port <= 65535:
         parser.error("--port must be between 0 and 65535")
     directory = args.data_dir or str(Path(os.environ["LOCALAPPDATA"]) / "LocalAIWorkbench" / "Companion" / "daily")
@@ -68,7 +71,7 @@ def main():
             chat.engineering_pilot = EngineeringPilot(chat, args.pilot_workspace, codex)
         if args.controlled_engineering:
             from .controlled_code import ControlledCode
-            chat.controlled_code = ControlledCode(chat, codex)
+            chat.controlled_code = ControlledCode(chat, codex, root=args.controlled_worktree)
         server = make_server(surface, chat, work, port=args.port, native_codex=NativeCodex(chat))
         url = f"http://127.0.0.1:{server.server_port}/"
         print("Companion: " + url, flush=True)

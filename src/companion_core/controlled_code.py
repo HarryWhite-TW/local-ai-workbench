@@ -151,9 +151,21 @@ def locked_target(root, write=False):
 class ControlledCode:
     def __init__(self, chat, executable, *, root=None, node=None, client_factory=None):
         self.chat, self.executable = chat, executable
-        self.root = Path(root or Path(__file__).absolute().parents[2]).absolute()
+        self.runtime_root = Path(__file__).resolve().parents[2]
+        if root is None:
+            raise ChatError('必須明確指定獨立工程候選工作樹。')
+        self.root = Path(os.path.abspath(root))
+        if (self.root.resolve() != self.root or self.root == self.runtime_root
+                or self.root.is_relative_to(self.runtime_root)
+                or self.runtime_root.is_relative_to(self.root)):
+            raise ChatError('執行來源與工程候選必須是互不包含的獨立目錄。')
         if not (self.root / '.git').is_file():
             raise ChatError('受控工程只接受獨立 Git 工作樹，不能使用原克隆。')
+        self.runtime_source = self.repository(self.runtime_root)
+        self.candidate_source = self.repository(self.root)
+        if (self.candidate_source['common'] != self.runtime_source['common']
+                or self.candidate_source['git_dir'] == self.runtime_source['git_dir']):
+            raise ChatError('工程候選與執行來源必須來自同一 Git Repository。')
         self.node = str(Path(node or shutil.which('node') or '').absolute())
         if not Path(self.node).is_file() or Path(self.node).suffix.lower() != '.exe':
             raise ChatError('找不到既有的 Node.js 靜態驗證器；未安裝依賴。')
@@ -174,14 +186,30 @@ class ControlledCode:
                                summary='主機曾重新啟動；沒有重新呼叫模型或套用。')
                     db.execute('UPDATE controlled_code SET value=? WHERE id=?', (json.dumps(job), row['id']))
 
-    def git(self, *args):
-        result = subprocess.run(['git', '-c', 'core.fsmonitor=false', '-C', str(self.root), *args],
+    def git(self, *args, root=None):
+        result = subprocess.run(['git', '-c', 'core.fsmonitor=false', '-C', str(root or self.root), *args],
             capture_output=True, timeout=10, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         if result.returncode:
             raise ChatError('無法確認候選 Git 來源。')
         return result.stdout
 
+    def repository(self, root):
+        top = Path(os.fsdecode(self.git('rev-parse', '--show-toplevel', root=root)).strip()).resolve()
+        if top != root:
+            raise ChatError('指定路徑不是實際 Git 工作樹根目錄。')
+        common = self.git('rev-parse', '--path-format=absolute', '--git-common-dir', root=root)
+        git_dir = self.git('rev-parse', '--absolute-git-dir', root=root)
+        return {'root': str(top), 'head': self.git('rev-parse', 'HEAD', root=root).decode().strip(),
+                'common': str(Path(os.fsdecode(common).strip()).resolve()),
+                'git_dir': str(Path(os.fsdecode(git_dir).strip()).resolve())}
+
+    def check_repositories(self):
+        if (self.repository(self.runtime_root) != self.runtime_source
+                or self.repository(self.root) != self.candidate_source):
+            raise ChatError('執行來源或工程候選 Git 身分已變；沒有執行或套用。')
+
     def snapshot(self):
+        self.check_repositories()
         with locked_target(self.root) as (stream, identity):
             raw = stream.read(MAX_BYTES + 1)
         if not raw or len(raw) > MAX_BYTES:
@@ -190,7 +218,8 @@ class ControlledCode:
         if SENSITIVE_TEXT.search(text):
             raise ChatError('來源可能含敏感資料；未分享。')
         return {'target': TARGET, 'root': str(self.root), 'head': self.head,
-                'sha256': sha(raw), 'identity': identity, 'text': text}
+                'sha256': sha(raw), 'identity': identity, 'text': text,
+                'runtime': self.runtime_source}
 
     def token(self, job):
         manifest = {k: job[k] for k in ('id', 'chat', 'account', 'workspace', 'goal', 'source', 'expires', 'validation')}
@@ -279,6 +308,7 @@ class ControlledCode:
     def apply(self, job):
         with self.chat.lock, self.chat.auth.lock:
             self.get(job['id'])  # Recheck the original account immediately before the write.
+            self.check_repositories()
             if self.git('rev-parse', 'HEAD').decode().strip() != job['source']['head']:
                 raise ChatError('來源版本已變；沒有套用。')
             with locked_target(self.root, write=True) as (stream, identity):
