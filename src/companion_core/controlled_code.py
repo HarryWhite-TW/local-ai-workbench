@@ -223,6 +223,8 @@ class ControlledCode:
 
     def token(self, job):
         manifest = {k: job[k] for k in ('id', 'chat', 'account', 'workspace', 'goal', 'source', 'expires', 'validation')}
+        if 'source_turn' in job:
+            manifest['source_turn'] = job['source_turn']
         return hmac.new(self.key, json.dumps(manifest, sort_keys=True).encode(), 'sha256').hexdigest()
 
     def view(self, job):
@@ -247,19 +249,44 @@ class ControlledCode:
         return job
 
     def preview(self, body):
-        if (set(body) != {'chat', 'question'} or not isinstance(body['question'], str)
-                or not 1 <= len(body['question'].strip()) <= 2000 or SENSITIVE_TEXT.search(body['question'])):
-            raise ChatError('請輸入不含敏感資料的工程需求；不能指定其他目標。')
+        if not isinstance(body, dict) or set(body) not in ({'chat', 'question'}, {'chat', 'turn'}):
+            raise ChatError('請指定原對話訊息或輸入工程需求；不能指定其他目標。')
         conversation = self.chat.get(body['chat'])
-        job = {'id': str(uuid4()), 'chat': body['chat'], 'turn': str(uuid4()),
+        source_turn = None
+        if 'turn' in body:
+            turn = next((t for t in conversation['turns'] if t['id'] == body['turn']), None)
+            if not turn or turn['status'] != 'complete' or turn['model'].startswith('NEXUS ·'):
+                raise ChatError('請使用原對話中已完成的聊天需求。')
+            source_turn, question = turn['id'], turn['question']
+        else:
+            question = body['question']
+        if (not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000
+                or SENSITIVE_TEXT.search(question)):
+            raise ChatError('請輸入不含敏感資料的工程需求；不能指定其他目標。')
+        source = self.snapshot()
+        if source_turn:
+            with self.chat.connect() as db:
+                rows = db.execute('SELECT value FROM controlled_code WHERE chat=? ORDER BY rowid DESC', (body['chat'],)).fetchall()
+            previous = next((json.loads(r['value']) for r in rows
+                             if json.loads(r['value']).get('source_turn') == source_turn), None)
+            if previous:
+                previous = self.get(previous['id'])
+                if (previous['state'] not in ('PREVIEW', 'EXPIRED')
+                        or previous['state'] == 'PREVIEW' and previous['expires'] > time.time()
+                        and previous['source'] == source):
+                    return self.view(previous)
+        job = {'id': str(uuid4()), 'chat': body['chat'], 'turn': source_turn or str(uuid4()),
                'account': conversation['account'], 'workspace': self.chat.workspace,
-               'goal': body['question'].strip(), 'source': self.snapshot(), 'state': 'PREVIEW',
+               'goal': question.strip(), 'source': source, 'state': 'PREVIEW',
                'expires': time.time() + 1800, 'validation': VALIDATION, 'events': [],
                'summary': '尚未分享來源或執行；只允許替換此單一前端檔案。'}
+        if source_turn:
+            job['source_turn'] = source_turn
         job['approval_digest'] = sha(self.token(job).encode())
         with self.chat.connect() as db:
-            db.execute('INSERT INTO turns (id,chat,question,answer,sources,model,created,finished,status) VALUES (?,?,?,?,?,?,?,?,?)',
-                (job['turn'], job['chat'], job['goal'], '請核對下方受控工程來源與寫入影響。', '[]', 'NEXUS · 受控程式修改', now(), now(), 'complete'))
+            if not source_turn:
+                db.execute('INSERT INTO turns (id,chat,question,answer,sources,model,created,finished,status) VALUES (?,?,?,?,?,?,?,?,?)',
+                    (job['turn'], job['chat'], job['goal'], '請核對下方受控工程來源與寫入影響。', '[]', 'NEXUS · 受控程式修改', now(), now(), 'complete'))
             db.execute('INSERT INTO controlled_code VALUES (?,?,?)', (job['id'], job['chat'], json.dumps(job)))
         return self.view(job)
 

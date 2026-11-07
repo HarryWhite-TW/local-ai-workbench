@@ -529,7 +529,7 @@
     if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active||state?.auth.pending)return;
     const pilots=window.NexusPilot?await window.NexusPilot.state(id):[];
     const codeJobs=window.NexusControlled?await window.NexusControlled.state(id):[];
-    if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active)return;
+    if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active||state?.auth.pending)return;
     const signature=JSON.stringify([conversation,proposals,organizations,pilots,codeJobs,proposals.map(p=>nativeResults.get(nativeResultKey(p)))]);if(signature===rendered&&renderedChat===id)return;
     const same=renderedChat===id,top=scroller.scrollTop,nearEnd=scroller.scrollHeight-scroller.clientHeight-top<90;
     rendered=signature;renderedChat=id;
@@ -570,6 +570,14 @@
           });}finally{propose.disabled=false;}
         };
         answer.append(propose,text('small','聊天不會自動執行工程工作。請在提案中預覽來源，確認後才交給原生 Codex。'));
+      }
+      if(window.NexusControlled){
+        const origin=contextEpoch,current=()=>selected===id&&state?.auth.active===account&&!state?.auth.pending&&!authChanging&&contextEpoch===origin;
+        const button=window.NexusControlled.savedTurn(turn,id,codeJobs,async job=>{
+          rendered='';await read();
+          if(current())el('chat-messages').querySelector('[data-controlled-job="'+job.id+'"]')?.scrollIntoView?.({block:'nearest'});
+        },current);
+        if(button)answer.append(button);
       }
       for(const p of proposals.filter(p=>p.turn===turn.id))answer.append(workCard(p));
       for(const o of organizations.filter(o=>o.turn===turn.id))answer.append(window.NexusOrganize.card(o,()=>{rendered='';void refresh();},()=>selected===id&&state?.auth.active===account&&!state?.auth.pending&&!authChanging));

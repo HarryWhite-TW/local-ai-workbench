@@ -36,7 +36,20 @@
     dialog.onclose=()=>{removeEventListener('message',listener);dialog.remove();};
     dialog.append(close,status,frame,received);document.body.append(dialog);dialog.showModal();
   }
-  window.NexusControlled={state:chat=>api('state',{chat}),card(job){
+  window.NexusControlled={state:chat=>api('state',{chat}),savedTurn(turn,chat,jobs,changed,current){
+    if(turn.status!=='complete'||turn.model.startsWith('NEXUS ·'))return null;
+    const existing=jobs.find(job=>job.source_turn===turn.id);
+    const button=node('button',existing?'查看受控修改 · '+existing.state:'從這則需求預覽固定範例修改');
+    button.type='button';button.className='text-button chat-source-link';
+    button.onclick=async()=>{
+      if(button.disabled||!current())return;
+      button.disabled=true;
+      try{const job=await api('preview',{chat,turn:turn.id});if(current())await changed(job);}
+      catch(e){if(current())el('chat-notice').textContent=e.message;}
+      finally{button.disabled=false;}
+    };
+    return button;
+  },card(job){
     const card=node('section');card.className='chat-work-card';card.dataset.controlledJob=job.id;card.dataset.state=job.state;
     card.append(node('h3','受控程式修改 · '+job.state),node('p',job.summary),node('p',job.goal));
     card.append(node('p','固定目標：'+job.source.root+'/'+job.source.target),node('p','來源 HEAD：'+job.source.head+' · SHA-256：'+job.source.sha256),node('p','固定驗證：'+job.validation));
