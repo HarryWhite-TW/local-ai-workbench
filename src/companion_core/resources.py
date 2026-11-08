@@ -182,8 +182,13 @@ class ProjectResources:
 
     def documents(self, body):
         with self.chat.lock:
-            account = self.owner(body, set())
-            items, catalog = [], {}
+            keys = {'query'} if isinstance(body, dict) and 'query' in body else set()
+            account = self.owner(body, keys)
+            query = body.get('query', '')
+            if not isinstance(query, str) or len(query) > 100:
+                raise ChatError('搜尋關鍵字最多 100 個字元。')
+            query = query.strip().casefold()
+            items, catalog, ranks = [], {}, {}
             for relative in self.candidates():
                 ident = hashlib.sha256(relative.encode()).hexdigest()[:24]
                 item = {'id': ident, 'name': Path(relative).name, 'relative': relative,
@@ -191,13 +196,21 @@ class ProjectResources:
                         'category': 'boundary' if relative == 'AGENTS.md' else 'documentation',
                         'available': False, 'version': None}
                 try:
-                    _, item['version'], item['bytes'] = read_text(Path(self.chat.workspace), relative)
+                    content, item['version'], item['bytes'] = read_text(Path(self.chat.workspace), relative)
                     item.update(available=True, status='可唯讀預覽')
                     catalog[ident] = (account, self.chat.workspace, relative, item['version'])
+                    if query:
+                        if query in relative.casefold():
+                            ranks[ident] = 0
+                        elif query in content.casefold():
+                            ranks[ident] = 1
                 except ValueError as exc:
                     item['status'] = str(exc)
-                items.append(item)
-            if self.owner(body, set()) != account:
+                if not query or ident in ranks:
+                    items.append(item)
+            if query:
+                items.sort(key=lambda item: ranks[item['id']])  # Stable within the existing path order.
+            if self.owner(body, keys) != account:
                 raise ChatError('目前帳戶已變更，請重新讀取文件索引。')
             self.catalog = catalog
             return {'workspace': self.chat.workspace, 'account': account, 'documents': items,

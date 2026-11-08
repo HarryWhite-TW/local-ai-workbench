@@ -5,13 +5,13 @@
 const fs=require('fs'),path=require('path'),assert=require('assert/strict'),readline=require('readline'),{spawn}=require('child_process'),{pathToFileURL}=require('url');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH||'playwright');
 const out=path.resolve(process.argv[2]||fs.mkdtempSync(path.join(require('os').tmpdir(),'nexus-resources-'))),prototype=process.argv[3];fs.mkdirSync(out,{recursive:true});
-const started=performance.now(),checks=[],shots=[],comparisons=[],errors=[],requests=[],children=[];let browser,p;
+const started=performance.now(),checks=[],shots=[],comparisons=[],errors=[],requests=[],children=[],navigationProof=[];let browser,p;
 const check=(name,passed,detail)=>{checks.push({name,passed:!!passed,detail});assert.ok(passed,name+(detail?' '+JSON.stringify(detail):''));};
 async function fixture(dir,root){fs.mkdirSync(dir,{recursive:true});const child=spawn(process.env.PYTHON||'python',['-B',path.join(__dirname,'conversation_work_fixture.py'),dir,root],{windowsHide:true,env:{...process.env,PYTHONUTF8:'1'}});children.push(child);let stderr='';child.stderr.on('data',s=>stderr+=s);const lines=readline.createInterface({input:child.stdout});const ready=await new Promise((resolve,reject)=>{lines.once('line',s=>resolve(JSON.parse(s)));child.once('exit',()=>reject(Error(stderr)));});return {...ready,child,lines};}
 (async()=>{
  const root=path.join(out,'NEXUS-UX05-Project');fs.mkdirSync(path.join(root,'docs'),{recursive:true});fs.mkdirSync(path.join(root,'src','companion_core'),{recursive:true});
- const content='# UX-05 browser fixture\n\nThis is a real scoped UTF-8 file, not a model answer.\n<script>window.resourceXSS=true</script>\n';
- fs.writeFileSync(path.join(root,'README.md'),content);fs.writeFileSync(path.join(root,'AGENTS.md'),'Synthetic local boundaries.');fs.writeFileSync(path.join(root,'docs','guide.txt'),'A real scoped text guide.');fs.writeFileSync(path.join(root,'src','companion_core','daily.py'),'def status():\n    return "synthetic"\n');
+ const content='# UX-05 browser fixture\n\nThis is a real scoped UTF-8 file, not a model answer. A guide.\n<script>window.resourceXSS=true</script>\n';
+ fs.writeFileSync(path.join(root,'README.md'),content);fs.writeFileSync(path.join(root,'AGENTS.md'),'Synthetic local boundaries.');fs.writeFileSync(path.join(root,'docs','guide.txt'),'A real scoped text guide. 中文搜尋。');fs.writeFileSync(path.join(root,'src','companion_core','daily.py'),'def status():\n    return "synthetic"\n');
  const ready=await fixture(path.join(out,'isolated'),root);
  try{
   browser=await chromium.launch({channel:'chrome',headless:true,args:['--disable-gpu']});const context=await browser.newContext({viewport:{width:1440,height:1000},deviceScaleFactor:1,reducedMotion:'reduce',locale:'zh-TW'});p=await context.newPage();p.setDefaultTimeout(12000);p.on('pageerror',e=>errors.push(e.message));
@@ -19,7 +19,19 @@ async function fixture(dir,root){fs.mkdirSync(dir,{recursive:true});const child=
   p.on('request',r=>{if(r.method()==='POST')requests.push({path:new URL(r.url()).pathname,body:r.postDataJSON()});});
   const raw=(action,body)=>p.evaluate(async({action,body})=>{const r=await fetch('/api/chat/'+action,{method:'POST',headers:{'Content-Type':'application/json','X-Companion-UI':'1'},body:JSON.stringify(body)});return {status:r.status,data:await r.json()};},{action,body});
   const api=async(action,body)=>{const r=await raw(action,body);assert.equal(r.status,200,JSON.stringify(r.data));return r.data;};
-  const nav=async route=>{await p.locator('#nexus-navigation [data-route="'+route+'"]').click();await p.waitForFunction(route=>document.body.dataset.route===route,route);};
+  const nav=async route=>{
+    const target=p.locator('#nexus-navigation [data-route="'+route+'"]');
+    const inspect=async()=>({...await target.evaluate(b=>({viewport:{width:innerWidth,height:innerHeight},route:document.body.dataset.route,sidebar:document.body.dataset.sidebar,menu:document.body.dataset.menu,focus:document.body.dataset.focus||'false',moreOpen:b.closest('details')?.open??null})),visible:await target.isVisible()});
+    const before=await inspect();
+    if(before.focus==='true')await p.locator('#nexus-focus').click();
+    if(!await target.isVisible()&&await p.locator('#nexus-sidebar-toggle').getAttribute('aria-expanded')==='false'){
+      const menu=p.locator('#nexus-menu');await (await menu.isVisible()?menu:p.locator('#nexus-sidebar-toggle')).click();
+    }
+    const more=target.locator('xpath=ancestor::details');
+    if(await more.count()&&await more.getAttribute('open')===null)await more.locator('summary').click();
+    await target.waitFor({state:'visible'});navigationProof.push({target:route,before,ready:await inspect()});
+    await target.click();await p.waitForFunction(route=>document.body.dataset.route===route,route);
+  };
   const docs=async()=>{await nav('documents');await p.locator('#documents-list [data-document]').first().waitFor();};
   const links=async()=>{await nav('links');await p.locator('#links-list [data-link="project"]').waitFor();};
   const sourceFree=async()=>await p.locator('#chat-sources input:checked').count()===0;
@@ -31,8 +43,31 @@ async function fixture(dir,root){fs.mkdirSync(dir,{recursive:true});const child=
   await chooseReadme();check('selection does not read preview or grant sources',await p.locator('#document-content').isHidden()&&await sourceFree()&&!requests.some(r=>r.path==='/api/chat/resource-preview'));
   const original=fs.readFileSync(path.join(root,'README.md'));await p.locator('#document-preview').click();await p.locator('#document-content').waitFor({state:'visible'});
   check('real readonly text, safe HTML rendering',await p.locator('#document-content').textContent()===content && !(await p.evaluate(()=>window.resourceXSS)) && fs.readFileSync(path.join(root,'README.md')).equals(original));
-  check('preview remains separate from explicit Companion authorization',/未提供給模型/.test(await p.locator('#document-source').innerText())&&await p.locator('#document-discuss').isEnabled()&&await sourceFree());
-  await p.locator('#documents-search').fill('not-present');check('honest filtered empty state',await p.locator('#documents-list [data-document]').count()===0);await p.locator('#documents-search').fill('');
+  check('preview remains separate from explicit Companion authorization',/未提供給模型/.test(await p.locator('#document-source').textContent())&&await p.locator('#document-discuss').isEnabled()&&await sourceFree());
+  const search=async query=>{await p.locator('#documents-search').fill(query);await p.waitForFunction(()=>document.getElementById('documents-status').textContent.includes('有限唯讀索引'));};
+  await search('UTF-8');check('body-only English match without preview or source grant',await p.locator('#documents-list [data-document]').count()===1&&await p.locator('#documents-list').innerText().then(t=>t.includes('README.md'))&&await p.locator('#document-content').isHidden()&&await sourceFree());
+  const metadata=await api('resource-documents',{workspace:root,query:'中文搜尋'});check('search returns no body or sensitive snippets',metadata.documents.length===1&&!JSON.stringify(metadata).includes('中文搜尋')&&!('text' in metadata.documents[0]));
+  await search('中文搜尋');check('Chinese content search',await p.locator('#documents-list').innerText().then(t=>t.includes('guide.txt')));
+  await p.locator('#documents-list [data-document]').click();await p.locator('#document-preview').click();await p.locator('#document-content').waitFor({state:'visible'});check('body search opens existing readonly preview',await p.locator('#document-content').innerText().then(t=>t.includes('中文搜尋'))&&await sourceFree());
+  await search('docs/guide');check('relative path search preserved',await p.locator('#documents-list [data-document]').count()===1);
+  await search('guide');check('filename match precedes content match with stable ordering',JSON.stringify(await p.locator('#documents-list strong').allTextContents())===JSON.stringify(['guide.txt','README.md']));
+  let releaseOld,arrived;
+  const held=new Promise(resolve=>releaseOld=resolve),startedSearch=new Promise(resolve=>arrived=resolve);
+  await p.route('**/api/chat/resource-documents',async r=>{if(r.request().postDataJSON().query!=='UTF-8')return r.continue();const response=await r.fetch();arrived();await held;await r.fulfill({response});});
+  await p.locator('#documents-search').fill('UTF-8');await startedSearch;await search('中文搜尋');
+  const oldResponse=p.waitForResponse(r=>r.url().endsWith('/resource-documents')&&r.request().postDataJSON().query==='UTF-8');releaseOld();await (await oldResponse).finished();await p.evaluate(()=>new Promise(requestAnimationFrame));
+  check('late keyword response cannot overwrite newer results',JSON.stringify(await p.locator('#documents-list strong').allTextContents())===JSON.stringify(['guide.txt']));await p.unroute('**/api/chat/resource-documents');
+  let releasePage,pageArrived;
+  const pageHeld=new Promise(resolve=>releasePage=resolve),pageStarted=new Promise(resolve=>pageArrived=resolve);
+  await p.route('**/api/chat/resource-documents',async r=>{if(r.request().postDataJSON().query!=='UTF-8')return r.continue();const response=await r.fetch();pageArrived();await pageHeld;await r.fulfill({response});});
+  await p.locator('#documents-search').fill('UTF-8');await pageStarted;await links();
+  const pageResponse=p.waitForResponse(r=>r.url().endsWith('/resource-documents')&&r.request().postDataJSON().query==='UTF-8');releasePage();await (await pageResponse).finished();await p.evaluate(()=>new Promise(requestAnimationFrame));
+  check('navigation invalidates pending search and clears preview',await p.locator('#documents-list [data-document]').count()===0&&await p.locator('#document-content').isHidden());await p.unroute('**/api/chat/resource-documents');await docs();
+  await p.evaluate(()=>{window.searchTestOwner=window.companionProjectStatus;window.companionProjectStatus=()=>({...window.searchTestOwner(),workspace:'synthetic-other-workspace'});dispatchEvent(new Event('companion-project'));});
+  await p.waitForFunction(()=>document.getElementById('documents-list').textContent.includes('無法取得'));
+  check('workspace switch clears previous search results',await p.locator('#documents-list [data-document]').count()===0&&await p.locator('#document-content').isHidden());
+  await p.evaluate(()=>{window.companionProjectStatus=window.searchTestOwner;delete window.searchTestOwner;});await docs();
+  await search('not-present');check('honest filtered empty state',await p.locator('#documents-list [data-document]').count()===0&&await p.locator('#documents-list').innerText().then(t=>t.includes('沒有符合')));await search('');
   await p.locator('[data-document-filter="boundary"]').click();check('real boundary category',await p.locator('#documents-list [data-document]').count()===1);await p.locator('[data-document-filter="all"]').click();await chooseReadme();
   await p.locator('#documents-list button').first().focus();await p.keyboard.press('End');check('document keyboard list navigation',await p.locator('#documents-list button').last().evaluate(e=>e===document.activeElement));
   fs.writeFileSync(path.join(root,'README.md'),'changed after index');await p.locator('#document-preview').click();await p.waitForFunction(()=>document.getElementById('document-notice').textContent.includes('變動'));
@@ -86,6 +121,6 @@ async function fixture(dir,root){fs.mkdirSync(dir,{recursive:true});const child=
   check('no model calls, project relation changes or review decisions',!requests.some(r=>['/api/chat/send','/api/chat/project-confirm','/api/review'].includes(r.path)));
   check('no browser errors',errors.length===0,errors);
  }catch(e){if(p)await p.screenshot({path:path.join(out,'failure.png'),fullPage:true}).catch(()=>{});throw e;}
- finally{if(browser)await browser.close();for(const child of children){const ended=new Promise(resolve=>child.once('exit',resolve));child.stdin.end('{"action":"stop"}\n');await ended;}fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({checks,shots,comparisons,errors,requests,seconds:(performance.now()-started)/1000,syntheticAccount:true,realModelRequests:0,realFilesystemAndSQLite:true},null,2));}
+ finally{if(browser)await browser.close();for(const child of children){const ended=new Promise(resolve=>child.once('exit',resolve));child.stdin.end('{"action":"stop"}\n');await ended;}fs.writeFileSync(path.join(out,'checks.json'),JSON.stringify({checks,shots,comparisons,errors,requests,navigationProof,seconds:(performance.now()-started)/1000,syntheticAccount:true,realModelRequests:0,realFilesystemAndSQLite:true},null,2));}
  console.log(JSON.stringify({passed:checks.length,seconds:(performance.now()-started)/1000,out}));
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

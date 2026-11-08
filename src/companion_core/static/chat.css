@@ -135,6 +135,23 @@ body[data-work-enabled="true"] #work-origin { margin-top:16px; }
 .chat-draft-status { font-size:12px;line-height:1.6;color:var(--muted);margin:5px 0; }
 .chat-draft-status:empty { display:none; }
 .chat-draft-status[data-state="error"] { color:var(--warm); }
+/* Controlled engineering evidence stays available without displacing approval. */
+.controlled-card { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.controlled-card p { line-height:1.75; }
+.controlled-card button,.controlled-demo button { max-width:100%; white-space:normal; }
+.controlled-evidence pre { max-height:22rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:13px/1.75 Consolas,monospace; }
+.controlled-review { min-width:0; }
+.controlled-review textarea,.controlled-demo>textarea { box-sizing:border-box; width:100%; height:8em; max-height:20dvh; resize:vertical; font:13px/1.6 Consolas,monospace; }
+.controlled-copy-status { font-size:13px; line-height:1.6; margin:6px 0; }
+.controlled-copy-status:empty { display:none; }
+.controlled-copy-status[data-state="error"] { color:var(--warm); }
+dialog.controlled-demo { box-sizing:border-box; width:min(1120px,calc(100vw - 24px)); max-width:calc(100vw - 24px); height:min(900px,calc(100dvh - 24px)); max-height:calc(100dvh - 24px); padding:16px; overflow:auto; }
+dialog.controlled-demo[open] { display:flex; flex-direction:column; gap:8px; }
+.controlled-demo>button { align-self:flex-start; }
+.controlled-demo>p { margin:0; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.controlled-demo>button,.controlled-demo>p,.controlled-demo>.controlled-review { flex-shrink:0; }
+.controlled-demo iframe { box-sizing:border-box; display:block; width:100%; min-height:160px; flex:1 0 160px; border:1px solid var(--line-strong); background:white; color:black; }
+.controlled-demo summary { cursor:pointer; padding:6px 0; font-size:13px; }
 @media(max-width:760px) {
   body[data-work-enabled="true"] { padding-left:0; }
   body[data-work-enabled="true"] .app-header { flex-wrap:wrap; }

@@ -274,6 +274,7 @@
   // UX-05 shares the existing project identity and API boundary. Browsing these
   // pages never selects chat sources or sends a model request.
   let resourceEpoch=0,resourceContext=null,resourceLoading=false,documents=[],documentSelected=null;
+  let documentSearchTimer=null;
   let documentPreview=null,sourceReview=null,requestedDocument=null,documentReturn=null;
   let documentFilter='all',linkFilter='all',resourceLinks=[],linkSelected=null,referenceApproval=null;
   const resourceRoutes=new Set(['documents','links']);
@@ -290,7 +291,7 @@
     const r=await fetch('/api/chat/resource-'+action,{method:'POST',headers:{'Content-Type':'application/json','X-Companion-UI':'1'},body:JSON.stringify(body)});
     const data=await r.json();if(!r.ok)throw Error(data.error||'資源目前不可用。');return data;
   }
-  function resourceOwner(data){return resourceContext && data.workspace===resourceContext.workspace && data.account===resourceContext.account && data.account===window.companionProjectStatus?.().account;}
+  function resourceOwner(data){const owner=window.companionProjectStatus?.();return resourceContext && data.workspace===resourceContext.workspace && data.account===resourceContext.account && data.account===owner?.account && data.workspace===owner?.workspace;}
   function clearSourceReview(){
     sourceReview=null;
     for(const id of ['document-source-name','document-source-identity','document-source-chat','document-source-content','document-source-error','document-selection-note'])el(id).textContent='';
@@ -305,6 +306,8 @@
     el('document-notice').textContent='從索引選取文件，再開啟唯讀預覽。';
   }
   function resourceNavigation(next){
+    clearTimeout(documentSearchTimer);
+    if(requestedDocument)el('documents-search').value='';
     el('documents-index').open=!requestedDocument;
     const owner=window.companionProjectStatus?.();
     if(next!=='documents'||requestedDocument&&(requestedDocument.account!==owner?.account||requestedDocument.workspace!==owner?.workspace))requestedDocument=null;
@@ -325,7 +328,8 @@
       if(mine!==resourceEpoch)return;
       if(project.account!==window.companionProjectStatus?.().account)throw Error('目前帳戶尚未確認。');
       resourceContext={account:project.account,workspace:project.project.id,name:project.project.name};
-      const data=await resourceAPI(screen==='documents'?'documents':'links',{workspace:resourceContext.workspace});
+      const query=el('documents-search').value.trim();
+      const data=await resourceAPI(screen==='documents'?'documents':'links',{workspace:resourceContext.workspace,...(screen==='documents'&&query?{query}:{})});
       if(mine!==resourceEpoch)return;if(!resourceOwner(data))throw Error('專案資源身分不一致。');
       document.querySelectorAll('[data-resource-project]').forEach(e=>e.textContent=resourceContext.name);
       if(screen==='documents'){
@@ -359,15 +363,20 @@
     finally{if(mine===resourceEpoch)resourceLoading=false;}
   }
   function renderDocuments(){
-    const list=el('documents-list'),term=el('documents-search').value.toLowerCase();list.replaceChildren();
-    for(const item of documents.filter(d=>(documentFilter==='all'||d.category===documentFilter)&&(d.name+' '+d.relative).toLowerCase().includes(term))){
+    const list=el('documents-list');list.replaceChildren();
+    for(const item of documents.filter(d=>documentFilter==='all'||d.category===documentFilter)){
       const b=text('button',''),info=text('span','');b.className='resource-row';b.dataset.document=item.id;b.setAttribute('aria-pressed',String(documentSelected?.id===item.id));
       info.append(text('strong',item.name),text('small',item.relative),text('small',item.available?'可唯讀預覽':'預覽受限'));b.append(text('span','▤'),info);
       b.onclick=()=>{window.companionClearSourceConsent?.();clearDocument();documentSelected=item;el('document-title').textContent=item.name;el('document-relative').textContent=item.relative;el('document-type').textContent=item.type;el('document-source').textContent=item.available?'尚未預覽 · 未提供給模型':'無法安全預覽';el('document-notice').textContent=item.status;el('document-preview').disabled=!item.available;renderDocuments();resourceDetailFocus('document');};list.append(b);
     }
-    if(!list.children.length)list.append(text('p',documents.length?'沒有符合條件的文件。':'此工作區目前沒有可列出的文件。'));
+    if(!list.children.length)list.append(text('p',documents.length||el('documents-search').value.trim()?'沒有符合條件的文件。':'此工作區目前沒有可列出的文件。'));
   }
-  el('documents-search').oninput=renderDocuments;
+  el('documents-search').oninput=()=>{
+    ++resourceEpoch;resourceLoading=false;clearTimeout(documentSearchTimer);
+    documents=[];clearDocument();el('documents-list').replaceChildren(text('p','正在搜尋目前可讀文件…'));
+    el('documents-status').textContent='搜尋中';
+    documentSearchTimer=setTimeout(()=>{if(route==='documents')resourceNavigation('documents');},150);
+  };
   document.querySelectorAll('[data-document-filter]').forEach(b=>b.onclick=()=>{documentFilter=b.dataset.documentFilter;document.querySelectorAll('[data-document-filter]').forEach(e=>e.setAttribute('aria-pressed',String(e===b)));renderDocuments();});
   el('document-preview').onclick=async()=>{
     if(!documentSelected||!resourceContext)return;
@@ -526,7 +535,8 @@
   el('resource-confirm').addEventListener('close',()=>{referenceApproval=null;el('reference-open').removeAttribute('href');});
   el('documents-refresh').onclick=el('links-refresh').onclick=()=>resourceNavigation(route);
   window.addEventListener('companion-project',()=>{
-    if(resourceRoutes.has(route)&&(!resourceContext||resourceContext.account!==window.companionProjectStatus?.().account))resourceNavigation(route);
+    const owner=window.companionProjectStatus?.();
+    if(resourceRoutes.has(route)&&(!resourceContext||resourceContext.account!==owner?.account||resourceContext.workspace!==owner?.workspace))resourceNavigation(route);
   });
   for(const id of ['documents-list','links-list'])el(id).addEventListener('keydown',e=>{
     if(!['ArrowDown','ArrowUp','Home','End'].includes(e.key))return;const buttons=[...el(id).querySelectorAll('button')],i=buttons.indexOf(document.activeElement);if(i<0)return;e.preventDefault();buttons[e.key==='Home'?0:e.key==='End'?buttons.length-1:Math.max(0,Math.min(buttons.length-1,i+(e.key==='ArrowDown'?1:-1)))]?.focus();

@@ -136,7 +136,7 @@ async function stop(s){if(s.child.exitCode!==null)return;const ended=new Promise
   await p.locator('[data-turn="'+excerptSent.turn+'"] .chat-source-link').first().click();
   check('history shows original excerpt and full document version',await p.locator('#chat-source-records').textContent().then(v=>v.includes(used.text)&&v.includes(used.version)));
   await p.screenshot({path:path.join(out,'historical-excerpt-mobile.png'),fullPage:true});
-  await p.locator('#chat-source-dialog [data-close]').first().click();
+  await p.getByRole('button',{name:'關閉情境閱讀區'}).click();
   await p.setViewportSize({width:1440,height:1100});await preview();await review('excerpt');
   await p.evaluate(()=>{window.__openDocument=window.openDocumentCompanion;window.openDocumentCompanion=()=>{throw Error('Synthetic handoff failure');};});
   const revoked=p.waitForResponse(r=>r.url().endsWith('/api/chat/resource-source-cancel'));
@@ -157,7 +157,7 @@ async function stop(s){if(s.child.exitCode!==null)return;const ended=new Promise
   await stop(s);const restarted=await fixture();await p.goto(restarted.ready.url+'/#chat?chat='+s.ready.chat);await turn(excerptSent.turn);
   await p.locator('[data-turn="'+excerptSent.turn+'"] .chat-source-link').first().click();
   check('server restart preserves original source snapshot',await p.locator('#chat-source-records pre').textContent()==='L1: '+used.text);
-  await p.locator('#chat-source-dialog [data-close]').first().click();
+  await p.getByRole('button',{name:'關閉情境閱讀區'}).click();
   const readingLines=Array.from({length:120},(_,i)=>i===84?'PUBLIC_ANCHOR_85 <img src=x onerror="window.sourceReturnXss=true">':'Public reading line '+(i+1));
   const readingText=readingLines.join('\r\n')+'\r\n',readingPath=path.join(root,'docs','reading.md');
   fs.mkdirSync(path.dirname(readingPath),{recursive:true});fs.writeFileSync(readingPath,readingText);
