@@ -225,7 +225,7 @@
         <p id="organize-notice" role="status" aria-live="polite"></p>
         <button id="organize-start" type="button" class="primary-button" disabled>開始分析</button>
       </section>
-      <div class="chat-compose-actions"><button id="chat-source-open" type="button" class="secondary-button" aria-haspopup="dialog">加入專案資料</button><button id="organize-open" type="button" class="secondary-button" aria-controls="organize-panel" aria-expanded="false" hidden>整理文件</button><span id="chat-source-status" class="muted"></span><button id="chat-send" type="submit" class="primary-button" disabled>傳送訊息 <svg><use href="#i-arrow"/></svg></button></div>
+      <div class="chat-compose-actions"><details class="chat-compose-tools"><summary>更多操作</summary><div id="chat-compose-tools"><button id="chat-source-open" type="button" class="secondary-button" aria-haspopup="dialog">加入專案資料</button><button id="organize-open" type="button" class="secondary-button" aria-controls="organize-panel" aria-expanded="false" hidden>整理文件</button></div></details><span id="chat-source-status" class="muted"></span><button id="chat-send" type="submit" class="primary-button" disabled>傳送訊息 <svg><use href="#i-arrow"/></svg></button></div>
       <p id="chat-notice" role="status" aria-live="polite">可直接聊天，需要專案資料時再加入。</p>
       <p class="chat-disclosure">訊息會傳送至 OpenAI，使用你授權的 ChatGPT 方案額度。<span>Ctrl / ⌘ + Enter 傳送</span></p>
     </form>

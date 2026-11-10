@@ -72,7 +72,7 @@ async function measure(page,name,dialog=false){
     try{return (await cdp.send('DOMDebugger.getEventListeners',{objectId:result.objectId})).listeners.filter(l=>l.type==='message').length;}
     finally{await cdp.send('Runtime.releaseObject',{objectId:result.objectId});}
   }
-  check('controlled feature exposes one preview action',await page.getByRole('button',{name:'預覽受控程式修改',exact:true}).count()===1);
+  check('composer preview is contextual',await page.getByRole('button',{name:'預覽受控程式修改',exact:true}).count()===0);
   const readback=await page.evaluate(()=>NexusControlled.state('synthetic-chat'));await render(page,readback[0]);
   const card=page.locator('.controlled-card');
   check('technical evidence collapsed initially',await card.locator('.controlled-evidence[open]').count()===0);
@@ -180,6 +180,7 @@ async function measure(page,name,dialog=false){
   const confirms=requests.filter(r=>r.path==='/api/chat/code-confirm');check('one bounded confirmation request',confirms.length===1);
   assert.deepEqual(JSON.parse(confirms[0].body),{id:preview.id,token:preview.token,authority:'CONTROLLED_CODE_REPLACEMENT'});
   await page.evaluate(()=>{window.companionChatSelection=()=> 'synthetic-chat';document.getElementById('chat-question').value='synthetic preview goal';});
+  await page.locator('.chat-compose-tools summary').click();
   await page.getByRole('button',{name:'預覽受控程式修改',exact:true}).click();
   await page.waitForFunction(()=>document.getElementById('chat-notice').textContent.includes('預覽已保存'));
   const previews=requests.filter(r=>r.path==='/api/chat/code-preview');assert.deepEqual(JSON.parse(previews[0].body),{chat:'synthetic-chat',question:'synthetic preview goal'});

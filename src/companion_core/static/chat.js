@@ -543,6 +543,15 @@
       const body=text('div','');
       window.CompanionReading.markdown(body,turn.status==='complete'?turn.answer:turn.error||'正在等待模型完整回答。可以切換空間，稍後回來查看。');
       answer.append(text('strong',turn.status==='complete'?'Companion':turn.status==='pending'?'Companion · 等待回答':'未完成回答'),stamp,body);
+      let more;
+      const optionalAction=control=>{
+        if(!more){
+          more=text('details','');more.className='chat-message-options';
+          const summary=text('summary','更多操作');summary.setAttribute('aria-label','這則訊息的更多操作');
+          more.append(summary);answer.append(more);
+        }
+        more.append(control);
+      };
       if(turn.sources.length) {
         for(const source of turn.sources.filter(r=>r.scope)){
           const locate=text('button','定位原文 · '+source.name+(source.scope==='excerpt'?' · 第 '+source.start_line+'–'+source.end_line+' 行':''));
@@ -569,7 +578,11 @@
             }else{editProposal(p);rendered='';}
           });}finally{propose.disabled=false;}
         };
-        answer.append(propose,text('small','聊天不會自動執行工程工作。請在提案中預覽來源，確認後才交給原生 Codex。'));
+        if(linked)answer.append(propose);
+        else{
+          optionalAction(propose);
+          more.append(text('small','工程工作會先預覽來源與範圍，確認後才執行。'));
+        }
       }
       if(window.NexusControlled){
         const origin=contextEpoch,current=()=>selected===id&&state?.auth.active===account&&!state?.auth.pending&&!authChanging&&contextEpoch===origin;
@@ -577,7 +590,10 @@
           rendered='';await read();
           if(current())el('chat-messages').querySelector('[data-controlled-job="'+job.id+'"]')?.scrollIntoView?.({block:'nearest'});
         },current);
-        if(button)answer.append(button);
+        if(button){
+          if(codeJobs.some(p=>p.source_turn===turn.id||p.turn===turn.id))answer.append(button);
+          else optionalAction(button);
+        }
       }
       for(const p of proposals.filter(p=>p.turn===turn.id))answer.append(workCard(p));
       for(const o of organizations.filter(o=>o.turn===turn.id))answer.append(window.NexusOrganize.card(o,()=>{rendered='';void refresh();},()=>selected===id&&state?.auth.active===account&&!state?.auth.pending&&!authChanging));

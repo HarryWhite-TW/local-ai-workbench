@@ -99,6 +99,7 @@ test('conversation home, drafts, knowledge consent, failure and responsive contr
     assert.equal(await page.locator('#chat-question').inputValue(),'New conversation draft');
     await page.locator('#chat-question').fill('');
     await page.locator('#chat-history').selectOption('chat-1');
+    await page.locator('.chat-compose-tools summary').click();
     await page.locator('#chat-source-open').click();
     await page.locator('#chat-sources input').check();
     assert.equal(await page.locator('#chat-send').isDisabled(),true);

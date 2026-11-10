@@ -109,6 +109,6 @@
   addEventListener('DOMContentLoaded',()=>{
     const button=node('button','預覽受控程式修改');button.type='button';button.className='secondary-button';
     button.onclick=async()=>{button.disabled=true;try{const chat=window.companionChatSelection?.();if(!chat)throw Error('請先選取原對話。');await api('preview',{chat,question:el('chat-question').value});el('chat-notice').textContent='受控工程預覽已保存；請核對來源與影響並親自批准。';}catch(e){el('chat-notice').textContent=e.message;}finally{button.disabled=false;}};
-    el('chat-send').before(button);
+    el('chat-compose-tools').append(button);
   });
 })();

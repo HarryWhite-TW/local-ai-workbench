@@ -210,7 +210,7 @@ def test_cancelled_work_preserves_confirmed_state_and_owner(work,monkeypatch):
         if threading.current_thread() is not threading.main_thread():
             entered.set();assert release.wait(5)
         return capture(*args)
-    monkeypatch.setattr('src.companion_core.work.capture',waiting_capture)
+    monkeypatch.setattr(runtime,'capture',waiting_capture)
     started=confirm(runtime,p)
     try:
         assert entered.wait(3)
