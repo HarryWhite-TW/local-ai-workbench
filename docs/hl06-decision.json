@@ -1,0 +1,32 @@
+[
+  {
+    "slug": "hl05-observed",
+    "title": "HL-05 候選實測觀察與待審狀態",
+    "kind": "observation",
+    "source": "implementation",
+    "date": "2026-11-24",
+    "scope": "HL-05 交付時的隔離 Windows 工程驗證",
+    "summary": "HL-05 候選在 Windows NEXUS 完成真模型冷啟動檢索、正式裁決與歷史辨識、規劃文件交付、重啟重查、更新與撤回。該工程交付當時為待審。後續正式技術與產品接受見 2026-11-24 協調裁決。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "hl05-accepted",
+    "title": "HL-05 取得獨立技術與真人產品接受",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-24",
+    "scope": "ChatGPT 獨立審查與使用者真人規劃體驗",
+    "summary": "ChatGPT 已獨立審查 HL-05，判定 TECHNICAL ACCEPTED。使用者已完成自然專案規劃體驗，正式 PRODUCT ACCEPTED。限實際交付的真實專案知識、檢索、版本更新與撤回、規劃文件與重啟接續。較早的待審是交付時觀察，已由本正式裁決接續。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "mainline",
+    "title": "目前進度與下一步主線裁決",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-25",
+    "scope": "正式跨設備交接與工程暫停裁決",
+    "summary": "HL-05 已獲 TECHNICAL ACCEPTED 與 PRODUCT ACCEPTED，限實際交付。HL-06 保有 PARTIAL_WITH_EVIDENCE，進度停在實際診斷、待審收據及跨設備移交。現行主線暫停在此。未批准下一工程節點、模型動態目錄、通用工程寫入、自主研究或長期記憶。",
+    "visibility": "shared"
+  }
+]

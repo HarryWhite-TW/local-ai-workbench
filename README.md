@@ -2,7 +2,7 @@
 
 ## NEXUS Windows 跨設備檢查點（2026-11-25）
 
-本分支為 HL-05 已接受穩定版。
+本分支為 HL-06 開發檢查點，狀態 PARTIAL_WITH_EVIDENCE。
 
 | GitHub 分支 | 用途 | Windows 啟動器 |
 | --- | --- | --- |

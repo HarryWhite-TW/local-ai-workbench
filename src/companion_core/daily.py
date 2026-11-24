@@ -41,13 +41,17 @@ def main():
                         help="Use the fixed Windows synthetic workspace and existing Codex subscription.")
     parser.add_argument("--real-project-intelligence", action="store_true",
                         help="Use the isolated NEXUS project summary index and existing Codex subscription.")
+    parser.add_argument("--natural-engineering-collaboration", action="store_true",
+                        help="Use the isolated HL-06 workspace and bounded native Codex diagnosis.")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--port", type=int, default=0,
                         help="Local preview port (0 chooses an available port).")
     args = parser.parse_args()
-    if args.codex_subscription_trial and args.real_project_intelligence:
+    knowledge_mode = args.real_project_intelligence or args.natural_engineering_collaboration
+    if sum((args.codex_subscription_trial, args.real_project_intelligence,
+            args.natural_engineering_collaboration)) > 1:
         parser.error("Choose one isolated mode")
-    if args.codex_subscription_trial or args.real_project_intelligence:
+    if args.codex_subscription_trial or knowledge_mode:
         if (os.name != "nt" or args.workspace or args.data_dir or args.review_dir or args.codex
                 or args.real_git_job or args.pilot_workspace or args.controlled_engineering):
             parser.error("The isolated Codex mode uses its own workspace and state")
@@ -62,12 +66,16 @@ def main():
     stage = "確認工作區"
     try:
         agent = None
-        if args.codex_subscription_trial or args.real_project_intelligence:
+        if args.codex_subscription_trial or knowledge_mode:
             from .codex_trial import LocalTrialIdentity, OWNER, prepare_trial, seed_receipts
             from .codex_work_agent import CodexWorkAgent
-            if args.real_project_intelligence:
+            if knowledge_mode:
                 from .project_knowledge import OWNER, ProjectKnowledge, prepare_project
-                workspace, directory = prepare_project()
+                if args.natural_engineering_collaboration:
+                    OWNER = "nexus-hl06-project"
+                    workspace, directory = prepare_project(Path(__file__).resolve().parents[3] / "engineering-project")
+                else:
+                    workspace, directory = prepare_project()
             else:
                 workspace, directory = prepare_trial()
             args.review_dir = str(directory / "reviews")
@@ -87,7 +95,7 @@ def main():
         if agent:
             vault = Vault(directory, workspace, local_owner=OWNER)
             notice = ("本機資料限定於 NEXUS 專案摘要。只有核准分享的摘要可被模型查找。"
-                      if args.real_project_intelligence else None)
+                      if knowledge_mode else None)
             auth = LocalTrialIdentity(vault, owner=OWNER, notice=notice)
         elif args.controlled_engineering:
             from .controlled_code import ExistingVault, ExistingSignIn
@@ -98,7 +106,7 @@ def main():
             auth = SignIn(vault)
         stage = "初始化隔離對話與工作資料"
         chat = Conversations(workspace, directory, auth, codex_agent=agent)
-        if args.real_project_intelligence:
+        if knowledge_mode:
             from .real_git_job import ensure_git_index
             with chat.connect() as db:
                 ensure_git_index(db)
@@ -118,7 +126,11 @@ def main():
         # Never select a different App build merely because its mtime is newer.
         codex = args.codex or str(Path(os.environ.get("APPDATA", "")) /
             "npm/node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe")
-        work = NativeWork(chat, executable=codex)
+        if args.natural_engineering_collaboration:
+            from .native_collaboration import NativeCollaboration
+            work = NativeCollaboration(chat, codex, directory)
+        else:
+            work = NativeWork(chat, executable=codex)
         surface = Surface(work, workspace, ReviewStore(args.review_dir, workspace=str(workspace)))
         chat.work, work.surface = work, surface
         if not agent:

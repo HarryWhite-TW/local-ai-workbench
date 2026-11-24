@@ -38,16 +38,17 @@ PRIVATE = re.compile(r"(?i)[a-z]:[\\/]|\\\\|/(?:users|home|etc|mnt|var|tmp)/|[\w
 REFERENCE = re.compile(r"\[K:([a-z0-9-]+)@([0-9]+)\]")
 
 
-def prepare_project():
-    if any(path.resolve() != path for path in (ROOT, WORKSPACE, STATE)):
+def prepare_project(root=ROOT):
+    workspace, state = root / "NEXUS", root / "state"
+    if any(path.resolve() != path for path in (root, workspace, state)):
         raise ChatError("隔離專案目錄不可重新導向。")
-    WORKSPACE.mkdir(parents=True, exist_ok=True)
-    rules = WORKSPACE / "AGENTS.md"
+    workspace.mkdir(parents=True, exist_ok=True)
+    rules = workspace / "AGENTS.md"
     if rules.resolve() != rules:
         raise ChatError("隔離工作區文件不可重新導向。")
     if not rules.exists():
         rules.write_text("# NEXUS\n\n此工作區使用有來源且經核准分享的工程摘要。\n", encoding="utf-8")
-    return WORKSPACE, STATE
+    return workspace, state
 
 
 def valid_record(value):

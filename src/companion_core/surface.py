@@ -279,6 +279,9 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                         content = content.replace(b'data-organize-enabled="false"', b'data-organize-enabled="true"', 1)
                     if name == "index.html" and work is not None:
                         content = content.replace(b'data-work-enabled="false"', b'data-work-enabled="true"', 1)
+                        if getattr(work, "natural_only", False):
+                            content = content.replace(b'data-work-enabled="true"',
+                                b'data-work-enabled="true" data-natural-work="true"', 1)
                     if name == "index.html" and getattr(chat, "engineering_pilot", None) is not None:
                         content = content.replace(b'data-pilot-enabled="false"', b'data-pilot-enabled="true"', 1)
                         if getattr(chat.engineering_pilot, 'project', None):

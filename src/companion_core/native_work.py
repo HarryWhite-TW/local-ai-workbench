@@ -3,6 +3,7 @@
 No scheduler, credential bridge or reviewer authority. Metadata below only
 links the existing proposal to exact native thread/turn facts.
 """
+from contextlib import contextmanager
 import hashlib
 import json
 import re
@@ -53,14 +54,14 @@ EVENTS = {"connecting", "session_bound", "turn_bound", "receiving_result",
           "cancel_requested", "completed", "failed", "cancelled", "unknown", "reconciled"}
 
 
-def capture_sources(workspace, selection):
-    if (not isinstance(selection, list) or not selection or len(selection) > len(SOURCES)
+def capture_sources(workspace, selection, sources=SOURCES):
+    if (not isinstance(selection, list) or not selection or len(selection) > len(sources)
             or any(not isinstance(k, str) for k in selection)
-            or len(set(selection)) != len(selection) or not set(selection) <= SOURCES.keys()):
+            or len(set(selection)) != len(selection) or not set(selection) <= sources.keys()):
         raise ChatError("請選擇列出的專案來源。")
     root, records, total = Path(workspace).resolve(strict=True), [], 0
     for key in selection:
-        p = root / SOURCES[key]
+        p = root / sources[key]
         try:
             if p.resolve(strict=True) != p or not p.is_file():
                 raise ValueError()
@@ -70,7 +71,7 @@ def capture_sources(workspace, selection):
             text = raw.decode("utf-8-sig")
             if len(raw) > 131_072 or total > 262_144 or SECRET.search(text):
                 raise ValueError()
-            records.append({"key": key, "name": SOURCES[key], "bytes": len(raw),
+            records.append({"key": key, "name": sources[key], "bytes": len(raw),
                             "sha256": hashlib.sha256(raw).hexdigest(), "text": text})
         except (OSError, ValueError, UnicodeError):
             raise ChatError("來源無法安全讀取或超過範圍，請重新選擇。") from None
@@ -219,6 +220,26 @@ class NativeWork(ProjectWork):
             "PENDING_REVIEW：尚無可信的獨立 ChatGPT reviewer 回傳。",
             "", content])
 
+    @contextmanager
+    def execution_environment(self, proposal, records):
+        with self.client_factory() as rpc:
+            yield rpc, self.chat.workspace
+
+    def thread_options(self, proposal, records, root):
+        return {}
+
+    def verify_thread(self, reply, root, expected):
+        return check_thread(reply, root, expected, execution=True)
+
+    def turn_options(self, proposal, root):
+        return {"sandboxPolicy": policy(root)}
+
+    def prompt_records(self, records):
+        return records
+
+    def completed_report(self, proposal, records, result):
+        return self._report(proposal, self._meta(proposal["id"]), result)
+
     def run(self, request):
         with self.lock:
             grant, self.grant = self.grant, None
@@ -238,17 +259,17 @@ class NativeWork(ProjectWork):
         self._mark(p["id"], state="STARTING", start_outcome="NOT_SENT", event="connecting")
         p = self._get(p["id"])  # Includes the bound Core task identity.
         try:
-            with self.client_factory() as rpc:
+            with self.execution_environment(p, records) as (rpc, root):
                 # Read effective config metadata before creating a thread.
                 # Never persist/export the config payload or any environment values.
                 stage = "config/read"
-                config = rpc.call("config/read", {"cwd": self.chat.workspace, "includeLayers": False})["config"]
+                config = rpc.call("config/read", {"cwd": root, "includeLayers": False})["config"]
                 servers = config.get("mcp_servers", {})
                 if not isinstance(servers, dict):
                     raise RuntimeFailure(Failure.POLICY)
                 disabled = {name: {"enabled": False} for name in servers}
                 del config, servers
-                params = {"cwd": self.chat.workspace, "approvalPolicy": "never",
+                params = {"cwd": root, "approvalPolicy": "never",
                           "sandbox": "read-only", "modelProvider": "openai",
                           "config": {"sandbox_mode": "read-only", "approval_policy": "never",
                                      "mcp_servers": disabled},
@@ -261,6 +282,11 @@ class NativeWork(ProjectWork):
                               "以繁體中文回答，依序使用四個 Markdown 標題：結論、程式碼依據、下一步、限制。"
                               "每節最多兩點、總計 800 字內；程式碼依據須引用提供快照的檔名與行號。"
                               "無法確認的事明確說明，不把建議說成已執行或已獨立驗收。")}
+                options = self.thread_options(p, records, root)
+                if "permissions" in options:
+                    params.pop("sandbox")
+                    params["config"].pop("sandbox_mode")
+                params.update(options)
                 if parent_meta:
                     state, _ = read_turn(rpc, self.chat.workspace, parent_meta["thread_id"], parent_meta["turn_id"])
                     if state != "COMPLETED":
@@ -268,8 +294,7 @@ class NativeWork(ProjectWork):
                     params.update(threadId=parent_meta["thread_id"], excludeTurns=True)
                 stage = "thread/resume" if parent_meta else "thread/start"
                 reply = rpc.call(stage, params)
-                thread_id = check_thread(reply, self.chat.workspace,
-                    parent_meta["thread_id"] if parent_meta else None, execution=True)
+                thread_id = self.verify_thread(reply, root, parent_meta["thread_id"] if parent_meta else None)
                 self._mark(p["id"], thread_id=thread_id, event="session_bound")
                 yield RuntimeEvent(EventKind.SESSION, session_id=thread_id)
                 if request.cancel_requested.is_set():
@@ -279,13 +304,13 @@ class NativeWork(ProjectWork):
                 self._conversation(p["chat"])
                 prompt = json.dumps({"work_id": task_id, "goal": p["goal"],
                     "expected": p["expected"], "source_manifest": self._identity(p),
-                    "sources": records}, ensure_ascii=False)
+                    "sources": self.prompt_records(records)}, ensure_ascii=False)
                 stage, turn_sent = "turn/start", True
                 self._mark(p["id"], start_outcome="SENT")
                 started = rpc.call("turn/start", {"threadId": thread_id,
-                    "clientUserMessageId": task_id, "cwd": self.chat.workspace,
-                    "approvalPolicy": "never", "sandboxPolicy": policy(self.chat.workspace),
-                    "input": [{"type": "text", "text": prompt}]})
+                    "clientUserMessageId": task_id, "cwd": root,
+                    "approvalPolicy": "never", "input": [{"type": "text", "text": prompt}],
+                    **self.turn_options(p, root)})
                 turn_id = started.get("turn", {}).get("id")
                 self._mark(p["id"], turn_id=turn_id, state="RUNNING", start_outcome="BOUND", event="turn_bound")
                 if not turn_id:
@@ -302,11 +327,11 @@ class NativeWork(ProjectWork):
                                             request.cancel_requested, mark)
                 stage = "host/cleanup"
             # A failed host cleanup cannot yield a confirmed result/cancellation.
+            report = self.completed_report(p, records, result) if state == "COMPLETED" else None
             self._mark(p["id"], state=state, event=state.lower())
             if state == "COMPLETED":
                 yield RuntimeEvent(EventKind.RECEIVING)
-                yield RuntimeEvent(EventKind.COMPLETED,
-                    text=self._report(p, self._meta(p["id"]), result))
+                yield RuntimeEvent(EventKind.COMPLETED, text=report)
             elif state == "CANCELLED" and request.cancel_requested.is_set():
                 yield RuntimeEvent(EventKind.CANCELLED)
             elif state == "FAILED":

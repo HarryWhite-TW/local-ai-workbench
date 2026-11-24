@@ -30,6 +30,7 @@
   let authChanging=false,authEpoch=0;
   let catalogLoading=false,catalogError='',authActionError='';
   const workEnabled=document.body.dataset.workEnabled==='true';
+  const naturalWork=document.body.dataset.naturalWork==='true';
   const organizeEnabled=document.body.dataset.organizeEnabled==='true';
   let workspace='',sessionKey='',sessionReady=false,sessionSaved=false;
   let continuityReady=false,continuityLoading=false,continuityRevision=0,continuitySerial='',continuityError='';
@@ -732,7 +733,7 @@
         answer.append(refs);
       }
       if(turn.daily_work)answer.append(dailyCard(id,turn));
-      if(workEnabled&&turn.status==='complete'&&!organizations.some(o=>o.turn===turn.id)) {
+      if(workEnabled&&!naturalWork&&turn.status==='complete'&&!organizations.some(o=>o.turn===turn.id)) {
         const linked=proposals.find(p=>p.turn===turn.id&&p.kind==='native_codex'&&!p.parent&&p.task_id)
           ||proposals.find(p=>p.turn===turn.id&&p.kind==='native_codex'&&!p.parent);
         const propose=text('button',linked?.task_id?'查看這次診斷':linked?'繼續現有診斷草稿':'建立唯讀 Codex 診斷');
@@ -904,10 +905,12 @@
       folded.append(restore);card.append(folded);return card;
     }
     const names={AWAITING_AUTHORIZATION:'等待你的授權',CREATED:'準備中',RUNNING:'執行中',CANCEL_REQUESTED:'停止待確認',CANCELLED:'已取消',FAILED:'執行失敗／中斷',RESULT_PENDING_REVIEW:'執行完成 · 等待審查',ACCEPTED:'人類已接受成果',REJECTED:'人類已拒絕成果',REVISION_REQUESTED:'已記錄調整方向'};
-    card.append(text('strong',names[p.state]||'狀態未確認'),text('p',p.goal));
+    card.append(text('strong',p.state==='DECLINED'?'已拒絕 · 未執行':names[p.state]||'狀態未確認'),text('p',p.goal));
+    if(p.state==='DECLINED')return card;
     const details=text('details','');details.append(text('summary','技術與驗收資訊'),text('small',p.state+' · '+p.technical_acceptance));card.append(details);
     const button=text('button',p.task_id?'查看工作與證據':p.kind==='native_codex'?'設定並預覽診斷':'編輯提案與確認範圍');button.className='secondary-button';button.type='button';
     button.onclick=()=>p.task_id?action(async()=>{workOrigin=p;if(window.nexusOpenWork)await window.nexusOpenWork(p.task_id);else{showSpace('work');await window.openCompanionWork(p.task_id);}}):editProposal(p);
+    if(p.natural_offer&&!p.task_id)button.textContent='預覽唯讀 Codex 診斷';
     if(p.kind==='native_codex'&&p.task_id)details.append(button);else card.append(button);
 
     if(p.kind==='native_codex'){
@@ -950,11 +953,12 @@
         card.append(b);return b;
       };
       if(p.can_hide_draft&&!p.task_id)control('收起未執行草稿',()=>api('work-draft-visibility',{id:p.id,hidden:true}));
+      if(p.natural_offer&&!p.task_id)control('拒絕委託',()=>api('work-decline',{id:p.id}));
       if(['RUNNING','CANCEL_REQUESTED'].includes(p.state)){
         const stop=control('停止這項診斷',()=>api('work-stop',{id:p.id}));
         stop.disabled=p.state==='CANCEL_REQUESTED';
       }
-      if(p.task_id&&p.state==='UNKNOWN')control('讀取原生狀態對帳',()=>api('work-reconcile',{id:p.id}),r=>{
+      if(!p.natural_offer&&p.task_id&&p.state==='UNKNOWN')control('讀取原生狀態對帳',()=>api('work-reconcile',{id:p.id}),r=>{
         if(r?.result_id)return '已找到保存成果；請使用「查看工作與證據」核對。';
         if(r?.state==='UNKNOWN')return !r.thread_id||!r.turn_id
           ? '已嘗試對帳，但缺少完整的 Codex thread／turn 身分，仍無法確認結果。沒有重新執行工作。'
@@ -981,7 +985,7 @@
         section.append(feedback,revise);card.append(section);
       }
     }
-    if(p.result_id){
+    if(p.result_id&&!p.natural_offer){
       const back=text('button',p.kind==='native_codex'?'用這份診斷接著聊':'加入成果，繼續討論');back.className='text-button';back.type='button';
       back.onclick=()=>attachResult(p);card.append(back);
     }
@@ -1029,11 +1033,13 @@
     if(selected!==p.chat||state?.auth.pending||authChanging)return;
     window.NexusOrganize?.reset();
     proposal=p;proposalOwner=state?.auth.active;proposalVersion++;approval=null;el('work-goal').value=p.goal;el('work-expected').value=p.expected;
+    el('work-goal').readOnly=el('work-expected').readOnly=!!p.natural_offer;
     el('work-scope').textContent=p.workspace+' · '+p.capability;
     el('work-files').replaceChildren(text('legend','允許讀取的程式檔案'));
     const choices=p.source_choices||['daily','chat','surface','core','runtime','review','work'].map(key=>({key,name:'src/companion_core/'+key+'.py'}));
     for(const {key,name} of choices){
       const label=text('label',''),input=document.createElement('input');input.type='checkbox';input.value=key;input.checked=p.selection.includes(key);
+      input.disabled=!!p.natural_offer;
       label.append(input,document.createTextNode(name));el('work-files').append(label);
     }
     el('work-manifest').replaceChildren();el('work-notice').textContent='尚未開始。請先預覽這次選定的來源。';el('work-confirm').disabled=true;

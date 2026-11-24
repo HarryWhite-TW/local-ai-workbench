@@ -75,6 +75,15 @@ class RpcRejected(RuntimeError):
 
 class NativeClient(_Rpc):
     """One owned stdio process; existing RPC denial and correlation semantics."""
+    settings_base = SETTINGS
+    methods = ALLOWED
+    client_capabilities = {}
+    windows_environment = {
+        "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "USERPROFILE",
+        "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "PROGRAMFILES",
+        "PROGRAMFILES(X86)", "PROGRAMDATA",
+    }
+
     def __init__(self, directory, executable=None, *, settings=()):
         self.directory = directory
         self.executable = executable or find_codex()
@@ -85,46 +94,63 @@ class NativeClient(_Rpc):
         if not self.executable or not Path(self.executable).is_file() or Path(self.executable).suffix.lower() != ".exe":
             raise RuntimeFailure(Failure.AUTHENTICATION)
         command = [str(self.executable), "app-server", "--listen", "stdio://"]
-        for setting in SETTINGS + self.settings:
+        for setting in self.settings_base + self.settings:
             command += ["-c", setting]
         # No credential callback, copied auth file, alternate CODEX_HOME or
         # API-key environment. Native Codex owns its normal login store.
-        env = {k: v for k, v in os.environ.items() if k.upper() in {
-            "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "USERPROFILE",
-            "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "PROGRAMFILES",
-            "PROGRAMFILES(X86)", "PROGRAMDATA"}}
+        env = {k: v for k, v in os.environ.items() if k.upper() in self.windows_environment}
         self.process = subprocess.Popen(command, cwd=self.directory, env=env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, encoding="utf-8", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.messages, self.saved, self.sequence = queue.Queue(maxsize=128), [], 0
+        self.reader_stop = threading.Event()
+        self.queue_pressure = 0
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
         try:
-            self.call("initialize", {"clientInfo": {"name": "nexus_readonly_diagnosis", "version": "0.1.0"}})
+            initialization = {"clientInfo": {"name": "nexus_readonly_diagnosis", "version": "0.1.0"}}
+            if self.client_capabilities:
+                initialization["capabilities"] = self.client_capabilities
+            self.call("initialize", initialization)
             self.send({"method": "initialized", "params": {}})
             account = self.call("account/read", {"refreshToken": False}).get("account")
-            if not isinstance(account, dict) or account.get("type") != "chatgpt":
+            if not self.subscription_ok(account):
                 raise RuntimeFailure(Failure.AUTHENTICATION)
             return self
         except BaseException:
             self.__exit__(None, None, None)
             raise
 
+    @staticmethod
+    def subscription_ok(account):
+        return isinstance(account, dict) and account.get("type") == "chatgpt"
+
     def _read(self):
         try:
-            while True:
+            while not self.reader_stop.is_set():
                 line = self.process.stdout.readline(2_097_153)
                 if not line or len(line) > 2_097_152:
                     break
-                self.messages.put_nowait(json.loads(line))
-        except (OSError, ValueError, queue.Full):
+                message = json.loads(line)
+                if self.keep_message(message):
+                    self.enqueue(message)
+        except (OSError, ValueError):
             pass
         finally:
-            try:
-                self.messages.put_nowait(None)
-            except queue.Full:
-                pass
+            self.enqueue(None)
 
+    def keep_message(self, message):
+        return True
+
+    def enqueue(self, message):
+        # Backpressure is reversible. Discarding the queue on a burst can
+        # lose the terminal turn notification even when Codex finished.
+        while not self.reader_stop.is_set():
+            try:
+                self.messages.put(message, timeout=.05)
+                return
+            except queue.Full:
+                self.queue_pressure += 1
 
     def call(self, method, params):
         ident = self.begin(method, params)
@@ -142,7 +168,7 @@ class NativeClient(_Rpc):
                 raise RuntimeFailure(Failure.PROTOCOL)
 
     def begin(self, method, params):
-        if method not in ALLOWED and method != "initialize":
+        if method not in self.methods and method != "initialize":
             raise RuntimeFailure(Failure.POLICY)
         return super().begin(method, params)
 
@@ -150,12 +176,13 @@ class NativeClient(_Rpc):
         # Closing an owned host is cleanup, never proof of turn cancellation.
         if self.process is None:
             return
+        self.reader_stop.set()
         try:
             self.process.stdin.close()
             try:
                 self.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                self.process.terminate()
+                self.process.kill()
                 self.process.wait(timeout=3)
         finally:
             self.reader.join(timeout=1)

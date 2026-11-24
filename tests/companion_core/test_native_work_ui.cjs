@@ -84,9 +84,9 @@ test('first-use prior reconcile feedback remains visible when identity is incomp
   assert.ok(all(card).some(n=>n.role==='status'&&!n.hidden));
 });
 test('first-use discussion entry reuses bound work and suppresses double clicks',async()=>{
-  const e=setup();const start=source.indexOf("      if(workEnabled&&turn.status==='complete'&&!organizations.some(o=>o.turn===turn.id)) {");
+  const e=setup();const start=source.indexOf("      if(workEnabled&&!naturalWork&&turn.status==='complete'&&!organizations.some(o=>o.turn===turn.id)) {");
   const end=source.indexOf('      for(const p of proposals.filter',start);assert.ok(start>=0&&end>start);
-  e.c.workEnabled=true;e.c.id='chat';e.c.turn={id:'turn',status:'complete'};
+  e.c.workEnabled=true;e.c.naturalWork=false;e.c.id='chat';e.c.turn={id:'turn',status:'complete'};
   e.c.organizations=[];e.c.proposals=[{...e.p,turn:'turn',state:'UNKNOWN'}];
   e.c.read=async()=>{};e.c.el=()=>new Element('div');
   vm.runInContext("function turnEntry(){const answer=text('div','');"+source.slice(start,end)+"return answer;}",e.c);
@@ -98,6 +98,8 @@ test('first-use discussion entry reuses bound work and suppresses double clicks'
   release({...e.p,turn:'turn',state:'UNKNOWN'});await first;
   assert.equal(e.edits.length,0);assert.equal(e.calls[0].operation,'work-create');
   assert.equal(e.calls.some(c=>c.operation==='work-confirm'),false);
+  e.c.naturalWork=true;
+  assert.equal(button(e.c.turnEntry(),'查看這次診斷'),undefined);
 });
 
 
