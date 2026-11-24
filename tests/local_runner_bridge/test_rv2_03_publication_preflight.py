@@ -27,7 +27,7 @@ from local_runner_bridge.rv2_03_publication_preflight import (
 
 NOW = datetime(2026, 6, 27, 4, 0, 0, tzinfo=timezone.utc)
 HEAD = "b" * 40
-REPO_ROOT = r"C:\Users\harry\Desktop\local-ai-workbench"
+REPO_ROOT = r"C:\Users\example-user\Desktop\local-ai-workbench"
 
 
 def utc_basic(value):

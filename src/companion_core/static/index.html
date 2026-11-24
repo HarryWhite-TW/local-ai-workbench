@@ -21,7 +21,7 @@
   <link rel="stylesheet" href="/conversation-workspace.css">
   <script src="/conversation-workspace.js" defer></script>
 </head>
-<body data-controlled-code="false" data-pilot-enabled="false" data-theme="obsidian" data-view="glance" data-motion="full" data-quality="high" data-chat-enabled="false" data-organize-enabled="false" data-work-enabled="false" data-native-codex="false" data-space="chat">
+<body data-controlled-code="false" data-pilot-enabled="false" data-theme="obsidian" data-view="glance" data-motion="full" data-quality="high" data-chat-enabled="false" data-organize-enabled="false" data-work-enabled="false" data-native-codex="false" data-web-enabled="false" data-outputs-enabled="false" data-delegation-enabled="false" data-space="chat">
   <svg class="icon-library" aria-hidden="true"><defs>
     <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-6 6M10 19H5v-5M5 19l6-6"/></symbol>
@@ -186,12 +186,19 @@
     <header class="chat-heading">
       <div><span class="tiny-label">YOUR COMPANION</span><h1 id="chat-title">一起想，一起聊。</h1><p id="chat-ready" role="status">正在連接 Companion…</p></div>
       <button id="chat-settings-open" class="text-button" aria-haspopup="dialog">帳戶與模型</button>
+      <button id="project-knowledge-open" class="text-button" type="button" aria-haspopup="dialog" hidden>專案知識</button>
     </header>
     <section id="project-chat-strip" class="project-chat-strip" aria-label="目前對話的專案關聯" hidden><div><span class="nexus-kicker">專案情境</span><strong id="project-chat-binding">尚未讀取關聯</strong><small id="project-chat-help">查看專案不會自動變更對話關聯或分享資料。</small></div><div class="project-chat-actions"><button id="project-chat-link" type="button" class="secondary-button" disabled>關聯目前專案</button><button id="project-chat-unlink" type="button" class="text-button" hidden>解除關聯</button><button id="project-chat-back" type="button" class="text-button" data-route="project">查看專案 ↗</button></div></section>
     <div class="chat-history-bar"><label for="chat-history">對話紀錄</label><select id="chat-history" aria-label="已保存對話"><option value="">新對話</option></select><button id="chat-new" class="secondary-button" type="button">新對話</button></div>
     <section id="document-chat-context" class="document-chat-context" hidden aria-label="本次文件來源"><strong id="document-chat-name"></strong><p id="document-chat-scope"></p><details id="document-chat-excerpt"><summary>查看待送出的內容</summary><pre id="document-chat-content" class="chat-source-text" tabindex="0"></pre></details><p class="source-send-note">隨下一則訊息送出</p><div><button id="document-chat-return" class="text-button" type="button">定位原文</button><button id="document-chat-clear" class="text-button" type="button">移除這次的來源</button></div></section>
     <div id="chat-signin" class="chat-signin" hidden><span id="chat-recovery-copy">登入 ChatGPT 後即可開始對話。</span><button id="chat-signin-open" class="primary-button" type="button">登入 ChatGPT</button><button id="chat-recover" class="secondary-button" type="button" hidden>重新讀取模型</button></div>
-    <div id="chat-messages" tabindex="0" role="region" aria-label="對話訊息，使用方向鍵或 Page Down 閱讀"></div>
+    <div id="chat-reading">
+      <div id="chat-messages" tabindex="0" role="region" aria-label="對話訊息，使用方向鍵或 Page Down 閱讀"></div>
+      <aside id="chat-reading-controls" hidden>
+        <nav id="chat-turn-nav" aria-label="依訊息順序定位"></nav>
+        <button id="chat-jump-latest" type="button" title="返回最新訊息" aria-label="返回最新訊息" hidden>↓</button>
+      </aside>
+    </div>
     <section id="work-proposal" class="chat-work-proposal" aria-labelledby="work-proposal-title" hidden>
       <header><h2 id="work-proposal-title">確認這次唯讀診斷</h2><button id="work-close" type="button" class="text-button">稍後再說</button></header>
       <label for="work-goal">想釐清什麼？</label><textarea id="work-goal" rows="2" maxlength="4000"></textarea>
@@ -205,12 +212,15 @@
       <details><summary>範圍與容量限制</summary><p id="work-scope"></p><p>每檔最多 128 KiB，合計最多 256 KiB。來源變更後須重新預覽；模型完成不代表獨立技術驗收。</p></details>
       <button id="work-confirm" type="button" class="primary-button" disabled>確認來源並開始診斷</button>
     </section>
-    <section id="work-chat-context" class="work-chat-context" aria-label="本次接續討論的診斷成果" hidden>
+    <section id="work-chat-context" class="work-chat-context" aria-label="本次接續討論的工作證據" hidden>
       <strong id="work-chat-name"></strong><p>已選取並預覽這份保存結果；按「傳送訊息」才分享給聊天模型。</p>
       <details><summary>核對將分享的成果</summary><pre id="work-chat-preview" class="chat-source-text"></pre></details>
       <button id="work-chat-clear" type="button" class="text-button">移除這次成果</button>
     </section>
     <form id="chat-form" class="chat-composer">
+      <div class="chat-model-controls">      <label for="chat-model">對話模型</label><select id="chat-model" aria-label="對話模型"></select><button id="chat-models-refresh" class="text-button" type="button">重新讀取模型</button>
+      <label for="chat-effort">思考強度</label><select id="chat-effort"><option value="">由服務決定</option></select>
+      <button id="chat-stop" type="button" class="text-button" hidden>停止回答</button></div>
       <label class="chat-input-label" for="chat-question">你的訊息</label>
       <textarea id="chat-question" rows="2" maxlength="4000" required placeholder="想聊些什麼？"></textarea>
       <p id="chat-save-status" class="chat-draft-status" role="status" aria-live="polite"></p><button id="chat-save-retry" class="text-button" type="button" hidden>重新確認保存</button><button id="chat-save-recover" class="text-button" type="button" hidden>核對已保存版本</button>
@@ -225,7 +235,8 @@
         <p id="organize-notice" role="status" aria-live="polite"></p>
         <button id="organize-start" type="button" class="primary-button" disabled>開始分析</button>
       </section>
-      <div class="chat-compose-actions"><details class="chat-compose-tools"><summary>更多操作</summary><div id="chat-compose-tools"><button id="chat-source-open" type="button" class="secondary-button" aria-haspopup="dialog">加入專案資料</button><button id="organize-open" type="button" class="secondary-button" aria-controls="organize-panel" aria-expanded="false" hidden>整理文件</button></div></details><span id="chat-source-status" class="muted"></span><button id="chat-send" type="submit" class="primary-button" disabled>傳送訊息 <svg><use href="#i-arrow"/></svg></button></div>
+      <div class="chat-compose-actions"><details class="chat-compose-tools"><summary>更多操作</summary><div id="chat-compose-tools"><button id="chat-source-open" type="button" class="secondary-button" aria-haspopup="dialog">加入專案資料</button><button id="organize-open" type="button" class="secondary-button" aria-controls="organize-panel" aria-expanded="false" hidden>整理文件</button></div></details><button id="web-open" type="button" class="secondary-button" aria-haspopup="dialog" hidden>讀取指定網頁</button><span id="chat-source-status" class="muted"></span><button id="chat-send" type="submit" class="primary-button" disabled>傳送訊息 <svg><use href="#i-arrow"/></svg></button></div>
+      <button id="outputs-open" type="button" class="text-button" aria-haspopup="dialog" hidden>查詢本機成果</button>
       <p id="chat-notice" role="status" aria-live="polite">可直接聊天，需要專案資料時再加入。</p>
       <p class="chat-disclosure">訊息會傳送至 OpenAI，使用你授權的 ChatGPT 方案額度。<span>Ctrl / ⌘ + Enter 傳送</span></p>
     </form>
@@ -244,13 +255,36 @@
   <dialog id="chat-settings" class="chat-auxiliary" aria-labelledby="chat-settings-title">
     <div class="dialog-header"><h2 id="chat-settings-title">帳戶與模型</h2><button class="icon-button" data-close aria-label="關閉帳戶與模型"><svg><use href="#i-close"/></svg></button></div>
     <div class="chat-aux-body" id="chat-account">
-      <label for="chat-accounts">ChatGPT 帳戶</label><select id="chat-accounts"><option value="">新增帳戶</option></select>
-      <div class="chat-toolbar"><button id="chat-login" class="primary-button" type="button">Continue with ChatGPT</button><button id="chat-logout" class="text-button" type="button">登出</button></div>
+      <div id="chat-siwc-controls">
+        <label for="chat-accounts">ChatGPT 帳戶</label><select id="chat-accounts"><option value="">新增帳戶</option></select>
+        <div class="chat-toolbar"><button id="chat-login" class="primary-button" type="button">Continue with ChatGPT</button><button id="chat-logout" class="text-button" type="button">登出</button></div>
+      </div>
       <p id="chat-auth-notice" role="status"></p>
-      <label for="chat-model">對話模型</label><select id="chat-model" aria-label="對話模型"></select><button id="chat-models-refresh" class="text-button" type="button">重新讀取模型</button>
+
       <p><a href="https://chatgpt.com/#settings/Usage" target="_blank" rel="noreferrer">查看 ChatGPT 用量設定</a></p>
     </div>
     <footer class="chat-aux-footer"><button class="primary-button" type="button" data-close>返回原畫面</button></footer>
+  </dialog>
+  <dialog id="project-knowledge-panel" class="chat-auxiliary" aria-labelledby="project-knowledge-title">
+    <header class="dialog-header"><h2 id="project-knowledge-title">專案知識</h2><button id="project-knowledge-close" type="button" class="icon-button" aria-label="關閉專案知識">×</button></header>
+    <div class="chat-aux-body">
+      <label for="project-knowledge-list">摘要</label><select id="project-knowledge-list"><option value="">新增摘要</option></select>
+      <form id="project-knowledge-form">
+        <label for="project-knowledge-slug">識別名稱（小寫英文、數字及連字號）</label><input id="project-knowledge-slug" maxlength="48" required>
+        <label for="project-knowledge-title-input">標題</label><input id="project-knowledge-title-input" maxlength="80" required>
+        <label for="project-knowledge-kind">資料性質</label><select id="project-knowledge-kind"></select>
+        <label for="project-knowledge-source">來源類型</label><select id="project-knowledge-source"></select>
+        <label for="project-knowledge-date">來源日期</label><input id="project-knowledge-date" type="date" required>
+        <label for="project-knowledge-scope">適用範圍</label><input id="project-knowledge-scope" maxlength="120" required>
+        <label for="project-knowledge-summary">已整理的非敏感摘要</label><textarea id="project-knowledge-summary" rows="5" maxlength="680" required></textarea>
+        <label for="project-knowledge-visibility">可見性</label><select id="project-knowledge-visibility"><option value="shared">核准後允許模型查找</option><option value="local">僅本機保存</option></select>
+        <label id="project-knowledge-attest-wrap" hidden><input id="project-knowledge-attest" type="checkbox"> 我已核對這是取得的正式工程協調裁決</label>
+        <div class="chat-toolbar"><button type="submit" class="secondary-button">預覽更新</button><button id="project-knowledge-withdraw" type="button" class="text-button" disabled>撤回分享</button><button id="project-knowledge-expire" type="button" class="text-button" disabled>標記失效</button></div>
+      </form>
+      <pre id="project-knowledge-review" class="chat-source-text" hidden></pre>
+      <p id="project-knowledge-status" role="status"></p>
+    </div>
+    <footer class="chat-aux-footer"><button id="project-knowledge-cancel" type="button" class="secondary-button" hidden>取消預覽</button><button id="project-knowledge-apply" type="button" class="primary-button" hidden>確認知識變更</button></footer>
   </dialog>
   <dialog id="chat-continuity" class="chat-auxiliary" aria-labelledby="chat-continuity-title">
     <header class="dialog-header"><h2 id="chat-continuity-title">核對本機已保存的草稿</h2><button class="icon-button" data-close aria-label="返回保留本分頁草稿">×</button></header>
@@ -270,6 +304,38 @@
     <div class="dialog-header"><h2 id="chat-source-title">這一輪的來源快照</h2><button class="icon-button" data-close aria-label="返回對話"><svg><use href="#i-close"/></svg></button></div>
     <div id="chat-source-records" class="chat-aux-body"></div>
     <footer class="chat-aux-footer"><button class="primary-button" type="button" data-close>返回對話</button></footer>
+  </dialog>
+  <dialog id="web-panel" class="chat-auxiliary" aria-labelledby="web-title">
+    <header class="dialog-header"><h2 id="web-title">讀取公開網頁</h2></header>
+    <div id="web-scroll" class="chat-aux-body" tabindex="0" aria-label="網頁預覽">
+      <p id="web-status" role="status"></p>
+      <p id="web-url"></p>
+      <div id="web-delivery-option" hidden>
+        <label><input id="web-delivery" type="checkbox"> 回答完成後準備 Markdown 預覽（另行確認寫入）</label>
+      </div>
+      <details id="web-excerpt" hidden>
+        <summary>節錄與來源資訊</summary>
+        <div id="web-preview"></div>
+      </details>
+    </div>
+    <footer class="chat-aux-footer">
+      <button id="web-cancel" type="button" class="secondary-button">取消網頁取用</button>
+      <button id="web-fetch" type="button" class="primary-button" hidden>確認並讀取此頁</button>
+      <button id="web-share" type="submit" form="chat-form" class="primary-button" hidden>確認分享節錄並傳送</button>
+    </footer>
+  </dialog>
+  <dialog id="outputs-panel" class="chat-auxiliary" aria-labelledby="outputs-title">
+    <header class="dialog-header"><h2 id="outputs-title">本機成果</h2></header>
+    <div class="chat-aux-body" tabindex="0">
+      <p id="outputs-status" role="status"></p>
+      <div id="outputs-content"></div>
+    </div>
+    <footer class="chat-aux-footer">
+      <button id="outputs-close" type="button" class="secondary-button">返回對話</button>
+      <button id="outputs-list" type="button" class="secondary-button" hidden>查詢本機成果</button>
+      <button id="outputs-locate" type="button" class="primary-button" hidden>在檔案總管顯示</button>
+      <button id="outputs-save" type="button" class="primary-button" hidden>確認建立新檔</button>
+    </footer>
   </dialog>
 </body>
 </html>

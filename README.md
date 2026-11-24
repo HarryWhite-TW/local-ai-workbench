@@ -1,5 +1,62 @@
 # Local Document-to-Knowledge Workbench
 
+## NEXUS Windows 跨設備檢查點（2026-11-25）
+
+本分支為 HL-05 已接受穩定版。
+
+| GitHub 分支 | 用途 | Windows 啟動器 |
+| --- | --- | --- |
+| `nexus-hl05-accepted` | HL-05 技術與產品接受的穩定檢查點 | `Open-HL05-Project-Companion.cmd` |
+| `nexus-hl06-checkpoint` | HL-06 唯讀工程委派施工接續，保有待審結果與未完成驗證的狀態說明 | `Open-HL06-Engineering-Companion.cmd` |
+
+### 正式狀態
+
+HL-01 A 為技術與產品接受的限定研究參考，獨立程式與合成驗證在 [research/hl01](research/hl01/README.md)。HL-02 完成整合可行性審查。HL-03 的自然工作助手取得技術與核心產品接受。HL-04 的文件交付、長對話導航及限定模型切換取得技術與產品接受。HL-05 的真實專案知識、受控更新與規劃交付已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，限實際交付範圍。
+
+**HL-06 為 PARTIAL_WITH_EVIDENCE。** 第一輪真人批准的原生委派終態為 UNKNOWN。一次有界修正後，真人再次批准，原生程序完成、退出並保存唯讀診斷待審收據。診斷結果已回到原聊天。兩個後續 Companion 分析回合都失敗，代理稽核記錄 `UsageLimitExceeded`。其中一次詳文分享已批准，另一份分享確認已逾期。完成的分析與跨對話結果重查尚待驗證。正式接受以適用的獨立技術審查和真人體驗為準。
+
+主線暫停於 HL-06 收束與跨設備移交。模型動態目錄、通用工程寫入、自主研究、長期記憶與 Companion 擴展未啟動。M1 與 SIWC 停止路徑維持停止，SIWC 工具能力仍未實測。 [2026-11-25 跨設備接續裁決](docs/hl05-project-knowledge.json)
+
+### 另一台 Windows 電腦
+
+需要 Git、Windows x64、Python **3.14.6 x64**。以這段 PowerShell 取用一條分支。兩個版本若都需要，各用自己的父目錄執行一次。
+
+```powershell
+$branch = 'nexus-hl05-accepted'  # 或 nexus-hl06-checkpoint
+$destination = Join-Path (Get-Location).Path $branch
+New-Item -ItemType Directory -Path $destination -ErrorAction Stop
+git clone --single-branch --branch $branch https://github.com/HarryWhite-TW/local-ai-workbench.git (Join-Path $destination 'candidate')
+if ($LASTEXITCODE -ne 0) { throw 'Git clone failed.' }
+Set-Location (Join-Path $destination 'candidate')
+git rev-parse HEAD
+```
+
+選擇一個環境恢復方式。
+
+- **一般安裝。** 從預設官方套件來源建立並安裝鎖定版本。若 Python 不在 Windows Launcher 清單，可以本機 Python 3.14.6 x64 的完整執行檔路徑取代 `py -3.14`。
+
+  ```powershell
+  py -3.14 -c 'import sys,struct; assert sys.version_info[:3] == (3,14,6) and struct.calcsize("P") == 8'
+  if ($LASTEXITCODE -ne 0) { throw 'Python 3.14.6 x64 required.' }
+  py -3.14 -m venv ..\.venv
+  if ($LASTEXITCODE -ne 0) { throw 'Virtual environment creation failed.' }
+  & ..\.venv\Scripts\python.exe -m pip install --index-url https://pypi.org/simple -r requirements-companion-lock.txt -r requirements-companion.txt
+  if ($LASTEXITCODE -ne 0) { throw 'Pinned dependency install failed.' }
+  & ..\.venv\Scripts\python.exe -m pip check
+  ```
+
+- **離線還原。** 安全攜帶本機保全的 `runtime/site-packages.zip` 與 `runtime/runtime-lock.json`，放在 `candidate` 旁的 `runtime`。安裝相容 Python 後在 `candidate` 執行 `.\Restore-HL05-Runtime.cmd`。若 Python 不在預設使用者安裝位置，先設定 `NEXUS_PYTHON_314` 為該 Python 執行檔完整路徑。腳本會比對套件包 SHA-256，建立同層新的 `.venv` 並執行套件檢查。
+
+試用前在新電腦使用自己的正常官方 Codex 登入。Windows 原生委派驗證的版本為 `codex-cli 0.162.1`，使用現有 Node.js/npm 的標準 Windows npm 路徑。需要重建時可執行 `npm install -g @openai/codex@0.162.1`、`codex --version`，再以 `codex login` 完成官方登入。HL-06 執行委派另要求相符的原生執行檔雜湊、可用的 MXC 及 Plus，並預覽本機 Codex 自動載入的非敏感全域 `AGENTS.md`。它須是正常檔案、UTF-8 且不超過 8 KiB，既有全域覆寫檔會使本次診斷停在前置檢查。可在新電腦使用自己的非敏感協作規則。新安裝的登入、MXC 和真人委派能力要在該電腦上另行確認。
+
+執行表中啟動器。穩定版頁面為 <http://127.0.0.1:47651/#chat>，資料在 `candidate` 旁的 `real-project`。開發版頁面為 <http://127.0.0.1:47661/#chat>，資料在同層 `engineering-project`。首次啟動會建立新的本機工作區、SQLite 和專案知識種子。保存的文件位於各自的 `state/outputs`。搬遷使用本機保全的離線依賴包與必要證據即可。私人對話、既有 SQLite、機器綁定憑證與活動批准保留在原電腦，完整私人狀態的遷移需要另案決定範圍及授權。
+
+本檢查點的 Windows 還原與本機啟動前提使用隔離乾淨副本驗證。實體第二台 Windows 尚待驗證，狀態為 **CROSS_DEVICE_RESTORE_PENDING**。
+
+### 歷史發行說明
+
+以下為先前 Windows MVP 與固定範例試點發行說明，適用於其各自的歷史分支與資料。
+
 ## NEXUS MVP 與固定工程範例試點（Windows，2026-11-05）
 
 本分支保存已在本機驗證的 NEXUS MVP：一般聊天、原生 Codex 唯讀診斷、帶診斷來源的追問、UTF-8 TXT／Markdown 文件整理及 ZIP 副本輸出。來源分享與副本建立仍需要預覽及明確確認。Liquid Ceramic 對話空間保留閱讀寬度、字級、側欄及情境閱讀操作。

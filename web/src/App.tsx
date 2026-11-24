@@ -696,7 +696,7 @@ export default function App() {
                   setRootFolderMessage(null);
                   setRootFolderError(null);
                 }}
-                placeholder={"C:\\Users\\harry\\Documents\\notes"}
+                placeholder={"C:\\Users\\example-user\\Documents\\notes"}
                 disabled={isLoading || isSavingRootFolder || isScanning}
               />
               <button type="submit" className="secondary-button" disabled={!canSaveRootFolder}>
@@ -1155,7 +1155,7 @@ export default function App() {
                         className="root-folder-input"
                         value={obsidianExportFolderInput}
                         onChange={(event) => handleObsidianExportFolderChange(event.target.value)}
-                        placeholder={"C:\\Users\\harry\\Documents\\Obsidian Vault\\Inbox"}
+                        placeholder={"C:\\Users\\example-user\\Documents\\Obsidian Vault\\Inbox"}
                         disabled={isWritingObsidianExport || isCheckingObsidianDestination}
                       />
                       <button

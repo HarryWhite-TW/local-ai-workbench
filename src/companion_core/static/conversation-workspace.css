@@ -119,11 +119,11 @@ body[data-conversation-layout="true"][data-reader-focus="true"] .conversation-co
 }
 @media(max-width:600px) {
   body[data-conversation-layout="true"][data-route="chat"] #chat-space { padding:12px 10px 8px; }
-  body[data-conversation-layout="true"] .chat-heading { gap:8px; padding-bottom:12px; }
+  body[data-conversation-layout="true"] .chat-heading { gap:6px 8px; padding:0 0 8px; }
   body[data-conversation-layout="true"] .chat-heading h1 { font-size:21px; }
   body[data-conversation-layout="true"] #chat-settings-open { font-size:12px; padding:6px; }
   body[data-conversation-layout="true"] .conversation-tools { width:100%; }
-  body[data-conversation-layout="true"] .conversation-tools button { flex:1; }
+  body[data-conversation-layout="true"] .conversation-tools button { flex:1; min-height:32px; padding-block:4px; }
   body[data-conversation-layout="true"] .chat-history-bar { order:0; }
   body[data-conversation-layout="true"] .chat-work-card { padding:18px 12px; }
   body[data-conversation-layout="true"] .conversation-followup { float:none; }
@@ -133,7 +133,12 @@ body[data-conversation-layout="true"][data-reader-focus="true"] .conversation-co
   body[data-conversation-layout="true"] .chat-compose-actions { gap:4px; }
   body[data-conversation-layout="true"] .chat-compose-actions button { padding:8px; font-size:13px; }
   body[data-conversation-layout="true"] .conversation-options { justify-content:flex-start; }
-  body[data-conversation-layout="true"] .chat-composer { padding:10px 12px; }
+  body[data-conversation-layout="true"] .chat-composer { width:100%; margin-top:6px; padding:8px 10px; }
+  body[data-conversation-layout="true"] .chat-model-controls { display:grid; grid-template-columns:max-content minmax(0,1.6fr) max-content minmax(0,1fr); gap:4px 6px; }
+  body[data-conversation-layout="true"] .chat-model-controls label { font-size:11px; }
+  body[data-conversation-layout="true"] .chat-model-controls select { width:100%; min-width:0; padding:5px 4px; }
+  body[data-conversation-layout="true"] #chat-models-refresh { grid-area:2 / 1 / auto / span 2; justify-self:start; padding:3px 0; }
+  body[data-conversation-layout="true"] #chat-stop { grid-area:2 / 3 / auto / span 2; justify-self:end; padding:3px 0; }
   body[data-conversation-layout="true"] .chat-answer { padding-inline:12px; }
   body[data-conversation-layout="true"] .chat-user { padding-inline:12px; }
 }

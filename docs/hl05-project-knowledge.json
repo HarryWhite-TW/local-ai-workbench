@@ -1,0 +1,162 @@
+[
+  {
+    "slug": "project-origins",
+    "title": "產品原始意圖與公開作品範圍",
+    "kind": "historical",
+    "source": "repository",
+    "date": "2026-11-05",
+    "scope": "Repository README 的歷史定位",
+    "summary": "Repository 的公開展示定位是本機文件到知識工作台。NEXUS 則是同一產品脈絡下的 Windows 個人 AI 入口與 Companion。既有 MVP 有對話、受控知識分享、文件整理與唯讀診斷；當時的能力舉例和啟動前提不等於現行授權或日用採用。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "earlier-plan",
+    "title": "較早主線與規劃方向",
+    "kind": "historical",
+    "source": "repository",
+    "date": "2026-11-19",
+    "scope": "歷史 PLANS 記載，當日後續已由正式裁決接續",
+    "summary": "當時主線是受控工具能力擴展，記錄 E1 與 E2 技術接受。受控委派與多步工作只列規劃方向，實作與發布都需個別授權。這是舊時點的記錄，現行工程結論應對照較新的正式協調裁決。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "principles",
+    "title": "全面性準備與開工判斷原則",
+    "kind": "principle",
+    "source": "principles",
+    "date": "2026-11-23",
+    "scope": "跨專案 v1.1，有界工程與驗收",
+    "summary": "用完整使用成果定義能力鏈與成本安全門檻；只以影響方向的關鍵未知作開工判斷。分開程式測試、真模型使用及真人驗收。不要把意圖、工具或正確來源預先交給驗收；有重大失敗應查明前提與止損，優先沿用成熟能力。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "local-governance",
+    "title": "本機權限、驗收與運用邊界",
+    "kind": "principle",
+    "source": "repository",
+    "date": "2026-11-24",
+    "scope": "NEXUS 工程治理，適用候選與知識摘要",
+    "summary": "來源讀取、向模型分享、文件寫入、工程執行及發布各有權限。模型分析、摘要、建議與 DONE_READY_FOR_REVIEW 只代表相應執行證據。TECHNICAL ACCEPTED 由 ChatGPT 審查，PRODUCT ACCEPTED 由使用者體驗裁決。正式變更不能由模型、舊文件或測試推定。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "hl04-proof",
+    "title": "HL-04 真實工程驗證觀察與限制",
+    "kind": "observation",
+    "source": "evidence",
+    "date": "2026-11-24",
+    "scope": "隔離合成工作區與既有 Plus 通道",
+    "summary": "Windows 自動工程驗證完成自然委託到 Markdown 預覽、確認保存及磁碟／下載核對；長對話定位、串流保持閱讀位置及取消；同一對話 Terra Medium → Sol Low → Sol Medium 延續。回執為當次觀察，不能推定其他模型或真實專案理解已驗。隔離測試不讀取正式歷史。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "hl03-proof",
+    "title": "新版模型接入與單次證據分享觀測",
+    "kind": "observation",
+    "source": "evidence",
+    "date": "2026-11-24",
+    "scope": "HL-03 Windows 真模型、隔離合成工作區",
+    "summary": "Pydantic AI Core 使用 Codex Provider。範圍引用及 git_jobs# 完整工作參照兼容後，真人核准回合可完成保存，詳文只傳一次。拒絕、重啟重查及授權重放拒絕有對應證據。這些是架構和授權的驗證，合成 Reverb 收據不是真實 NEXUS 工程成果。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "e1-e2",
+    "title": "E1/E2 限定接受與實際契約",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-24",
+    "scope": "限既有網頁節錄及受控 Markdown 交付",
+    "summary": "E1/E2 已獲限定驗收。E1 針對已准網頁，分開下載與分享實際節錄同意。E2 以既有批准流程建立新 Markdown、核對磁碟內容，保留重放及覆寫防護。適用範圍依當時原證據，不能延伸為通用網路、文件或磁碟寫入權限。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "m1-stopped",
+    "title": "M1 停止的原自製自然語言路由",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-24",
+    "scope": "原 M1 隔離候選",
+    "summary": "原自製自然語言路由的完整產品成果未獲接受。最後真模型旅程被 SIWC 登入前提阻擋，因此未形成完整真模型產品基線。候選保留且停止該路徑投資。不得將未完成的測試說成證明模型或工具能力失敗。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "harness-study",
+    "title": "HL-01 與 HL-02 研究與可行性結果",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-24",
+    "scope": "獨立 Harness Lab 與整合審查",
+    "summary": "HL-01 A 組獲技術及真人體驗接受，證明原生工具循環與自然工作接續。B 組另有特定中斷恢復證據，未證明普遍日用收益。HL-02 完成整合可行性審查。採成熟 Pydantic AI Core 能力，後續投資以實際成果為準。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "siwc-stopped",
+    "title": "HL-03 SIWC 停止原因與未知",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-24",
+    "scope": "原 SIWC 接入路徑，與改用 Codex Provider 分開",
+    "summary": "SIWC 路徑受登入前提及身分識別差異阻擋而停止。使用者確認登入同一帳號，精確識別差異根因未知。未以有效 SIWC 狀態測得完整工具循環，不能宣稱其工具能力實測失敗。不要重啟 SIWC 修復作為本輪工程。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "hl03-accepted",
+    "title": "HL-03 Revised 技術與核心產品接受",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-24",
+    "scope": "原 NEXUS 聊天入口，受授權的工作查找和證據分析",
+    "summary": "Pydantic AI Core + Codex Provider 成功接入原 NEXUS 聊天。受控自然工作查找、證據分析、來源引用、批准和拒絕、單次證據隔離及重啟接續均屬獲技術與核心產品接受範圍。這是獨立架構決策，不代表實際專案知識或自主工程已接受。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "hl04-accepted",
+    "title": "HL-04 已技術及產品接受",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-24",
+    "scope": "隔離試用交付的文件、導航及已驗證模型切換",
+    "summary": "HL-04 已獲 TECHNICAL ACCEPTED。使用者親自確認文件交付、長對話導航與已驗證模型切換的功能及回答正常，正式 PRODUCT ACCEPTED，限實際交付範圍。先前工程包內 DONE_READY_FOR_REVIEW 是當時交付狀態，由本正式裁決補齊。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "roadmap",
+    "title": "Windows-first Companion 長期產品方向",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-24",
+    "scope": "產品方向，工程權限仍逐案批准",
+    "summary": "目標是 Windows-first 個人 AI 工作台與 Companion，減少人工搬運、管理工具、重述背景及維護負擔。後續自主研究、工程委派、通用長期記憶及主動 Companion 是產品方向。各階段尚須正式批准與驗收，不能以此方向直接執行。現階段維持 Plus 訂閱、零額外現金支出及重用成熟技術。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "mainline",
+    "title": "目前進度與下一步主線裁決",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-25",
+    "scope": "正式跨設備交接與工程暫停裁決",
+    "summary": "HL-05 已獲 TECHNICAL ACCEPTED 與 PRODUCT ACCEPTED，限實際交付。HL-06 保有 PARTIAL_WITH_EVIDENCE，進度停在實際診斷、待審收據及跨設備移交。現行主線暫停在此。未批准下一工程節點、模型動態目錄、通用工程寫入、自主研究或長期記憶。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "hl05-accepted",
+    "title": "HL-05 技術與產品接受",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-24",
+    "scope": "實際交付的真實專案知識與規劃",
+    "summary": "HL-05 已獲 TECHNICAL ACCEPTED 和 PRODUCT ACCEPTED，涵蓋核准知識查找、版本更新與撤回、規劃交付與重啟接續。",
+    "visibility": "shared"
+  },
+  {
+    "slug": "hl06-checkpoint",
+    "title": "HL-06 工程交接與待驗證結果",
+    "kind": "decision",
+    "source": "coordination",
+    "date": "2026-11-25",
+    "scope": "限定唯讀工程委派開發接續",
+    "summary": "HL-06 為 PARTIAL_WITH_EVIDENCE。首次原生委派終態 UNKNOWN。唯一一次修正後已保存真人核准的原生診斷，收據待審。後續分析未完成，跨對話重查仍待驗證。",
+    "visibility": "shared"
+  }
+]

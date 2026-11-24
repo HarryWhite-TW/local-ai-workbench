@@ -17,7 +17,7 @@
 數字鍵 1／2／3 切換檢視，Esc 收合，Tab 與 Enter 操作控制。
 右上角可切換三種主題、Reduced Motion 與表面光線品質。
 在啟動視窗按 Enter 可關閉測試服務。使用前可先開啟原本
-`C:\Users\harry\Desktop\LC-Interaction-01\index.html` 比較設計原型。
+`C:\Users\example-user\Desktop\LC-Interaction-01\index.html` 比較設計原型。
 
 正式 CodexRuntime 與既有認證入口未修改。本輪沒有驗證真實 AI 或
 Windows 精確讀取範圍（M2-C5 尚未解決）。產品品質仍待人類審查。

@@ -24,7 +24,7 @@ Do not use runner v0 for tasks that require file edits, staging, commits, pushes
 Open PowerShell at the repo root:
 
 ```text
-C:\Users\harry\OneDrive\文件\New project
+C:\Work\local-ai-workbench
 ```
 
 Run:

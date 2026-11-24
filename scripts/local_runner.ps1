@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 
 $RunnerName = "local-runner-v0"
 $Repo = "HarryWhite-TW/local-ai-workbench"
-$RepoPath = "C:\Users\harry\OneDrive\$([char]0x6587)$([char]0x4EF6)\New project"
+$RepoPath = Split-Path -Parent $PSScriptRoot
 $Gh = "C:\Program Files\GitHub CLI\gh.exe"
 $RunnerScriptPath = "scripts/local_runner.ps1"
 $MaxIssueBodyChars = 12000

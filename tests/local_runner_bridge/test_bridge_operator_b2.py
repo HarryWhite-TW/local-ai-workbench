@@ -24,7 +24,7 @@ from local_runner_bridge.bridge_operator_b2 import (
 
 NOW = datetime(2026, 6, 15, 1, 0, 0, tzinfo=timezone.utc)
 HEAD = "590bacc7e5f91c97a6ae427df56baff17ae716db"
-ROOT_PATH = r"C:\Users\harry\Desktop\project\local-ai-workbench"
+ROOT_PATH = r"C:\Users\example-user\Desktop\project\local-ai-workbench"
 
 
 def inbox_marker(**overrides):

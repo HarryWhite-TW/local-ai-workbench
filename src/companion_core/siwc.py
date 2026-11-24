@@ -70,7 +70,7 @@ def dpapi(data, decrypt=False):
 class Vault:
     """One DPAPI encrypted file, atomic replacement, one process owner."""
 
-    def __init__(self, directory, workspace):
+    def __init__(self, directory, workspace, *, local_owner=None):
         requested = Path(directory).absolute()
         self.directory = requested.resolve()
         if (requested != self.directory or self.directory.is_relative_to(Path(workspace).resolve())
@@ -100,7 +100,11 @@ class Vault:
             self.lease = None
             raise ChatError("另一個 Companion 已開啟此資料目錄。請先關閉它。") from None
         try:
-            if self.path.exists():
+            if local_owner is not None:
+                if self.path.exists():
+                    raise ChatError("隔離本機身分不可使用 SIWC 帳戶資料。")
+                self.data = {"active": local_owner, "accounts": {}}
+            elif self.path.exists():
                 self.data = json.loads(dpapi(self.path.read_bytes(), decrypt=True))
                 if self.data.get("version") != 1 or not isinstance(self.data.get("accounts"), dict):
                     raise ValueError()

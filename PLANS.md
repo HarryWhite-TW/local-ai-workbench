@@ -1,5 +1,11 @@
 # PLANS.md
 
+## NEXUS Windows 跨設備檢查點（2026-11-25）
+
+本分支為 HL-05 已接受穩定版。
+
+目前開發暫停於 HL-06 工程收束與跨設備移交。HL-05 為 TECHNICAL ACCEPTED 與 PRODUCT ACCEPTED，HL-06 為 PARTIAL_WITH_EVIDENCE。恢復方式、正式裁決及剩餘驗證見 [README](README.md)。下方為較早的歷史計畫。
+
 ## NEXUS MVP + fixed engineering pilot source publication — 2026-11-05
 
 The user explicitly authorizes one commit and non-force push to the existing

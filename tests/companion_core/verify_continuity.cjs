@@ -21,12 +21,13 @@ async function post(p,action,body){return p.evaluate(async({action,body})=>{cons
 (async()=>{try{
  fixture=await start();browser=await chromium.launch({channel:'chrome',headless:true,args:['--disable-gpu']});let {p,context}=await page();
  await p.goto(fixture.url+'/#chat?chat='+fixture.chat);await p.waitForFunction(id=>document.getElementById('chat-history').value===id,fixture.chat);
- await p.locator('.chat-answer>.chat-source-link').click();await p.locator('#work-preview').click();await p.locator('#work-confirm:not([disabled])').click();await p.waitForFunction(()=>document.querySelector('.chat-work-card')?.dataset.state==='RESULT_PENDING_REVIEW');
+ await p.locator('.chat-message-options summary').click();
+ await p.getByRole('button',{name:'建立唯讀 Codex 診斷',exact:true}).click();await p.locator('#work-preview').click();await p.locator('#work-confirm:not([disabled])').click();await p.waitForFunction(()=>document.querySelector('.chat-work-card')?.dataset.state==='RESULT_PENDING_REVIEW');
  const chat=fixture.chat,task=await p.locator('.chat-work-card').getAttribute('data-task'),oldURL=fixture.url;
  await p.locator('.chat-work-card .secondary-button').click();await p.locator('#companion-ask').click();await p.locator('#companion-window-mode').selectOption('split-right');await p.locator('#companion-close').click();
  await p.locator('#nexus-navigation [data-route="chat"]').click();await p.locator('#preferences').click();await p.locator('button[data-theme="porcelain"]').click();await p.locator('#settings-dialog [data-close]').click();
  await p.locator('#nexus-sidebar-toggle').click();await p.locator('#chat-question').fill('PUBLIC_DRAFT_BEFORE_RESTART');
- await p.locator('#chat-source-open').click();await p.locator('#chat-sources input').first().check();await p.locator('#chat-preview').click();await p.locator('#chat-knowledge-done:not([disabled])').click();await saved(p);
+ await p.locator('.chat-compose-tools summary').click();await p.locator('#chat-source-open').click();await p.locator('#chat-sources input').first().check();await p.locator('#chat-preview').click();await p.locator('#chat-knowledge-done:not([disabled])').click();await saved(p);
  check('confirmed local save is visible before shutdown',(await p.locator('#chat-save-status').textContent()).includes('草稿已加密保存'));
  check('browser stores no plaintext draft',await p.evaluate(()=>![...Object.values(sessionStorage),...Object.values(localStorage)].some(v=>v.includes('PUBLIC_DRAFT_BEFORE_RESTART'))));
  await context.close();await stop(fixture);fixture=await start();({p,context}=await page());

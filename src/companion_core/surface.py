@@ -222,6 +222,9 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
 
         def do_GET(self):
             if chat is not None and urlsplit(self.path).path == "/auth/callback":
+                if getattr(chat, "codex_agent", None):
+                    self._reply(404, {"error": "隔離試用使用本機身分。"})
+                    return
                 host = f"127.0.0.1:{self.server.server_port}"
                 if self.client_address[0] != "127.0.0.1" or self.headers.get("Host") != host:
                     self._reply(403, {"error": "登入回應來源不符。"})
@@ -235,6 +238,10 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                     chat.auth.callback({k: v[0] for k, v in query.items()})
                     with chat.lock:
                         chat.resources.handoff = None
+                        if chat.resources.web is not None:
+                            chat.resources.web.reset()
+                        if chat.resources.outputs is not None:
+                            chat.resources.outputs.reset()
                     self._reply(200, "登入已完成。請關閉此頁，回到 Companion。".encode("utf-8"), "text/plain; charset=utf-8")
                 except Exception:
                     self._reply(400, "登入未完成。請回到 Companion 查看狀態或重新登入。".encode("utf-8"), "text/plain; charset=utf-8")
@@ -262,12 +269,21 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                         content = content.replace(b'data-controlled-code="false"', b'data-controlled-code="true"', 1)
                     if name == "index.html" and chat is not None:
                         content = content.replace(b'data-chat-enabled="false"', b'data-chat-enabled="true"', 1)
+                        if chat.resources.web is not None:
+                            content = content.replace(b'data-web-enabled="false"', b'data-web-enabled="true"', 1)
+                        if chat.resources.outputs is not None:
+                            content = content.replace(b'data-outputs-enabled="false"', b'data-outputs-enabled="true"', 1)
+                        if getattr(chat, 'delegation', None):
+                            content = content.replace(b'data-delegation-enabled="false"', b'data-delegation-enabled="true"', 1)
                     if name == "index.html" and getattr(chat, "organizer", None) is not None:
                         content = content.replace(b'data-organize-enabled="false"', b'data-organize-enabled="true"', 1)
                     if name == "index.html" and work is not None:
                         content = content.replace(b'data-work-enabled="false"', b'data-work-enabled="true"', 1)
                     if name == "index.html" and getattr(chat, "engineering_pilot", None) is not None:
                         content = content.replace(b'data-pilot-enabled="false"', b'data-pilot-enabled="true"', 1)
+                        if getattr(chat.engineering_pilot, 'project', None):
+                            content = content.replace(b'data-pilot-enabled="true"',
+                                                      b'data-pilot-enabled="true" data-real-git-job="true"', 1)
                     if name == "index.html" and native_codex is not None:
                         content = content.replace(b'data-native-codex="false"', b'data-native-codex="true"', 1)
                     self._reply(200, content, mime + "; charset=utf-8")
@@ -339,6 +355,12 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                             result = chat.preview_project_link(body)
                         elif action == 'project-confirm':
                             result = chat.confirm_project_link(body)
+                        elif action.startswith('web-') and chat.resources.web is not None:
+                            result = chat.resources.web.respond(action.removeprefix('web-'), body)
+                        elif action == 'daily-action' and getattr(chat, 'delegation', None):
+                            result = chat.delegation.respond(body)
+                        elif action.startswith('outputs-') and chat.resources.outputs is not None:
+                            result = chat.resources.outputs.respond(action.removeprefix('outputs-'), body)
                         elif action.startswith('resource-'):
                             operations = {'resource-documents': chat.resources.documents,
                                 'resource-preview': chat.resources.preview, 'resource-links': chat.resources.links,
@@ -372,6 +394,15 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                                 result = work.confirm(body)
                             else:
                                 raise ChatError('工作操作格式不正確。')
+                        elif action == "git-context-share" and (
+                            getattr(chat, "codex_agent", None)
+                            or hasattr(getattr(chat, "engineering_pilot", None), "readback")
+                        ):
+                            result = chat.confirm_work_share(body)
+                        elif action.startswith("project-knowledge-") and getattr(chat, "knowledge", None):
+                            result = chat.knowledge.manage(action.removeprefix("project-knowledge-"), body)
+                        elif action == "cancel":
+                            result = chat.cancel(body)
                         elif action == "send":
                             result = chat.submit(body)
                         else:

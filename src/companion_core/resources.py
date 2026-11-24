@@ -140,6 +140,8 @@ def safe_url(value):
 class ProjectResources:
     def __init__(self, chat):
         self.chat = chat
+        self.web = None
+        self.outputs = None
         self.catalog = {}
         self.pending = None
         self.handoff = None

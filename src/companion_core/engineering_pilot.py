@@ -107,17 +107,29 @@ class EngineeringPilot:
     def preview(self, body):
         if set(body) != {'chat', 'question'} or not isinstance(body['question'], str) or not 1 <= len(body['question'].strip()) <= 2000:
             raise ChatError('請在目前對話輸入工程範例需求。')
-        conversation = self.chat.get(body['chat'])
         source = self.snapshot()
+        chat_id = body['chat']
+        new_chat = chat_id is None
+        if new_chat:
+            account = self.chat.auth.vault.data['active']
+            if not isinstance(account, str) or not account or self.chat.auth.pending:
+                raise ChatError('請先確認對話帳戶。')
+            chat_id = str(uuid4())
+        else:
+            account = self.chat.get(chat_id)['account']
         ident, turn = str(uuid4()), str(uuid4())
-        job = {'id': ident, 'chat': body['chat'], 'turn': turn, 'account': conversation['account'],
+        job = {'id': ident, 'chat': chat_id, 'turn': turn, 'account': account,
                'state': 'PREVIEW', 'goal': body['question'].strip(), 'root': str(self.root),
                'source': source, 'token': secrets.token_urlsafe(32), 'expires': time.time() + 600,
                'events': [], 'summary': '尚未執行；核對範例來源及寫入範圍後才可開始。'}
         with self.chat.connect() as db:
+            if new_chat:
+                # A local engineering conversation needs no SIWC model request.
+                db.execute('INSERT INTO chats VALUES (?,?,?,?,?)',
+                    (chat_id, self.chat.workspace, account, '工程範例：' + job['goal'][:50], now()))
             db.execute('INSERT INTO turns (id,chat,question,answer,sources,model,created,finished,status) VALUES (?,?,?,?,?,?,?,?,?)',
-                (turn, body['chat'], job['goal'], '以下為本機工程試點預覽，尚未交給 Codex 執行。', '[]', 'NEXUS · 工程試點', now(), now(), 'complete'))
-            db.execute('INSERT INTO engineering_pilot VALUES (?,?,?,?)', (ident, body['chat'], turn, json.dumps(job)))
+                (turn, chat_id, job['goal'], '以下為本機工程試點預覽，尚未交給 Codex 執行。', '[]', 'NEXUS · 工程試點', now(), now(), 'complete'))
+            db.execute('INSERT INTO engineering_pilot VALUES (?,?,?,?)', (ident, chat_id, turn, json.dumps(job)))
         return job
 
     def confirm(self, body):

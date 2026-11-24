@@ -1,0 +1,7 @@
+[
+  {"account":"demo","workspace":"studio","work_id":"W-31","name":"Reverb 尾音匯出","date":"2026-11-20","receipt":"R-81","status":"PENDING_REVIEW","detail":"合成測試觀察：匯出尾端保留 240 個取樣，審查者尚未簽收。"},
+  {"account":"demo","workspace":"studio","work_id":"W-18","name":"Reverb 預覽音量","date":"2026-11-16","receipt":"R-72","status":"ACCEPTED","detail":"合成審查收據：預覽峰值量測為 -3 dB，審查者已簽收。"},
+  {"account":"demo","workspace":"studio","work_id":"W-09","name":"字幕時間對齊","date":"2026-11-12","receipt":"R-63","status":"UNKNOWN","detail":"合成紀錄只留有一次匯出，沒有審查結論。"},
+  {"account":"demo","workspace":"archive","work_id":"W-50","name":"封存用合成樣本","date":"2026-11-21","receipt":"R-50","status":"ACCEPTED","detail":"archive-only canary"},
+  {"account":"guest","workspace":"studio","work_id":"W-60","name":"其他帳戶的合成樣本","date":"2026-11-22","receipt":"R-60","status":"ACCEPTED","detail":"guest-only canary"}
+]

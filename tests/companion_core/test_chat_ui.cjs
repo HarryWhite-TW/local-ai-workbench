@@ -19,7 +19,7 @@ test('conversation home, drafts, knowledge consent, failure and responsive contr
     if(req.url==='/api/chat/state')return reply({auth:{active:signedIn?'fixture-account':null,accounts:[{id:'fixture-account',label:'Synthetic account',signed_in:credentialReady}],pending,notice:'Synthetic sign-in'},models:signedIn&&credentialReady&&!pending?models:[],busy,chats:signedIn&&!pending?[...chats.keys()].map(id=>({id,title:'Synthetic '+id})):[],sources:[{id:'readme',label:'README.md'}]});
     if(req.url==='/api/chat/models'){
       if(catalogFails){res.statusCode=409;return reply({error:'Synthetic catalog unavailable'});}
-      models=[{slug:'gpt-6.1-sol',display_name:'Synthetic model'}];return reply(models);
+      models=[{slug:'gpt-6.1-sol',display_name:'Synthetic model',reasoning_efforts:['low','high']}];return reply(models);
     }
     if(req.url==='/api/chat/login'){signedIn=true;credentialReady=true;return reply({});}
     if(req.url==='/api/chat/logout'){signedIn=false;return reply({});}
@@ -58,6 +58,7 @@ test('conversation home, drafts, knowledge consent, failure and responsive contr
     assert.equal(await page.locator('#chat-space').isVisible(),true);
     assert.equal(await page.locator('#work-space').isVisible(),false);
     assert.equal(await page.locator('#chat-settings').isVisible(),false);
+    assert.equal(await page.locator('body').getAttribute('data-work-enabled'),'false');
     assert.equal(await page.locator('#chat-sources input:checked').count(),0);
     assert.equal(await page.locator('#chat-model').inputValue(),'gpt-6.1-sol');
     assert.equal(count('models'),1);assert.equal(count('preview'),0);assert.equal(count('send'),0);
@@ -71,10 +72,27 @@ test('conversation home, drafts, knowledge consent, failure and responsive contr
       Object.assign(chats.get(busy.chat).at(-1),{answer,status:'complete'});busy=null;
       await page.waitForFunction(()=>!document.getElementById('chat-send').disabled&&document.getElementById('chat-notice').textContent.includes('回答已保存'));
     }
+    assert.equal(await page.locator('#chat-model').evaluate(n=>!!n.closest('#chat-form')),true);
+    await page.locator('#chat-effort').selectOption('high');
     await send('Synthetic greeting',true);
     const first=calls.find(c=>c.url==='/api/chat/send').body;
+    assert.equal(first.effort,'high');assert.ok(first.request_id);
     assert.deepEqual(first.sources,[]);assert.equal(first.preview,null);
     await page.waitForFunction(()=>document.getElementById('chat-send').disabled);
+    Object.assign(chats.get(busy.chat).at(-1),{answer:'Progress before completion',delivery_state:'pending',requested_effort:'high'});
+    await page.waitForFunction(()=>document.getElementById('chat-messages').textContent.includes('Progress before completion'));
+    assert.equal(await page.locator('#chat-stop').isVisible(),true);
+    assert.equal(count('send'),1);
+    await page.reload();
+    // This minimal chat fixture has continuity disabled; select saved history
+    // through the visible UI instead of assuming automatic selection.
+    await page.locator('#chat-history option[value="chat-1"]').waitFor({state:'attached'});
+    await page.locator('#chat-history').selectOption('chat-1');
+    await page.waitForFunction(()=>document.getElementById('chat-messages').textContent.includes('Progress before completion'));
+    assert.match(await page.locator('.chat-answer>strong').textContent(),/正在回答/);
+    assert.equal(await page.locator('.chat-source-link').count(),0);
+    assert.equal(count('send'),1); // Reading/reconnecting never creates inference.
+    delete chats.get(busy.chat).at(-1).delivery_state;
     await page.locator('#chat-question').fill('Draft while waiting');
     await complete('Synthetic long discussion.\n\n'.repeat(160));
     assert.equal(await page.locator('#chat-question').inputValue(),'Draft while waiting');
@@ -117,6 +135,18 @@ test('conversation home, drafts, knowledge consent, failure and responsive contr
     await send('Synthetic project question');
     const sourced=calls.filter(c=>c.url==='/api/chat/send').at(-1).body;
     assert.deepEqual(sourced.sources,['readme']);assert.deepEqual(sourced.preview,{readme:'fixture-hash'});
+    Object.assign(chats.get(busy.chat).at(-1),{answer:'Saved sourced partial',delivery_state:'pending'});
+    await page.reload();
+    await page.locator('#chat-history option[value="chat-1"]').waitFor({state:'attached'});
+    await page.locator('#chat-history').selectOption('chat-1');
+    await page.waitForFunction(()=>document.getElementById('chat-messages').textContent.includes('Saved sourced partial'));
+    assert.match(await page.locator('[data-turn="turn-1"] .chat-answer>strong').textContent(),/正在回答/);
+    assert.equal(count('send'),2);
+    await page.locator('.chat-source-link').click();
+    assert.match(await page.locator('#chat-source-records').textContent(),/fixture-hash/);
+    assert.equal(await page.locator('#chat-source-records img').count(),0);
+    await close();
+    delete chats.get(busy.chat).at(-1).delivery_state;
     await complete('Synthetic sourced response [S1:L1]');
     assert.equal(await page.locator('#chat-sources input:checked').count(),0);
     await page.locator('.chat-source-link').click();

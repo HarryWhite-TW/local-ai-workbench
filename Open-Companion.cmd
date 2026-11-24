@@ -1,9 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if not defined NEXUS_PYTHON set "NEXUS_PYTHON=%~dp0.venv\Scripts\python.exe"
+for %%I in ("%~dp0..") do set "NEXUS_LOCAL=%%~fI"
+if not defined NEXUS_PYTHON set "NEXUS_PYTHON=%NEXUS_LOCAL%\.venv\Scripts\python.exe"
 if not exist "%NEXUS_PYTHON%" (
-  echo Create .venv and install requirements-companion.txt first. See README.md.
+  echo Prepare the task .venv beside candidate with requirements-companion.txt first.
   pause
   exit /b 1
 )
@@ -20,22 +21,44 @@ if not "%NEXUS_VERSION%"=="codex-cli 0.162.1" (
   pause
   exit /b 1
 )
-if not defined NEXUS_PORT set "NEXUS_PORT=56144"
+if not defined NEXUS_PORT (
+  if "%NEXUS_ENGINEERING_PILOT%"=="1" (
+    set "NEXUS_PORT=56144"
+  ) else (
+    rem Let Windows select an available loopback port for the daily entry.
+    set "NEXUS_PORT=0"
+  )
+)
 set "PYTHONPATH="
-set "NEXUS_LOCAL=%LOCALAPPDATA%\NEXUS\Daily"
+rem This independent candidate uses only sibling isolated test stores.
+set "NEXUS_DATA_DIR=%NEXUS_LOCAL%\isolated-data"
+set "NEXUS_REVIEW_DIR=%NEXUS_LOCAL%\isolated-reviews"
 if "%NEXUS_ENGINEERING_PILOT%"=="1" (
-  if not exist "%NEXUS_LOCAL%\fixture" (
-    mkdir "%NEXUS_LOCAL%\fixture"
+  set "NEXUS_DATA_DIR=%NEXUS_LOCAL%\fixed-pilot-20261117\state"
+  set "NEXUS_REVIEW_DIR=%NEXUS_LOCAL%\fixed-pilot-20261117\reviews"
+  set "NEXUS_PILOT_WORKSPACE=%NEXUS_LOCAL%\fixed-pilot-20261117\fixture"
+)
+set "NEXUS_BROWSER_OPTION="
+if "%NEXUS_NO_BROWSER%"=="1" set "NEXUS_BROWSER_OPTION=--no-browser"
+echo NEXUS TEST - isolated local data
+echo Data: %NEXUS_DATA_DIR%
+echo Reviews: %NEXUS_REVIEW_DIR%
+if "%NEXUS_ENGINEERING_PILOT%"=="1" (
+  if not exist "%NEXUS_PILOT_WORKSPACE%" (
+    mkdir "%NEXUS_PILOT_WORKSPACE%"
     if errorlevel 1 exit /b 1
-    copy /y "%~dp0examples\engineering-pilot\before\AGENTS.md" "%NEXUS_LOCAL%\fixture\AGENTS.md" >nul
+    copy /y "%~dp0examples\engineering-pilot\before\AGENTS.md" "%NEXUS_PILOT_WORKSPACE%\AGENTS.md" >nul
     if errorlevel 1 exit /b 1
-    copy /y "%~dp0examples\engineering-pilot\before\calculator.py" "%NEXUS_LOCAL%\fixture\calculator.py" >nul
+    copy /y "%~dp0examples\engineering-pilot\before\calculator.py" "%NEXUS_PILOT_WORKSPACE%\calculator.py" >nul
     if errorlevel 1 exit /b 1
-    copy /y "%~dp0examples\engineering-pilot\before\test_calculator.py" "%NEXUS_LOCAL%\fixture\test_calculator.py" >nul
+    copy /y "%~dp0examples\engineering-pilot\before\test_calculator.py" "%NEXUS_PILOT_WORKSPACE%\test_calculator.py" >nul
     if errorlevel 1 exit /b 1
   )
-  "%NEXUS_PYTHON%" -B -m src.companion_core.daily --workspace "%~dp0." --data-dir "%NEXUS_LOCAL%\state" --review-dir "%NEXUS_LOCAL%\reviews" --port "%NEXUS_PORT%" --codex "%NEXUS_CODEX%" --pilot-workspace "%NEXUS_LOCAL%\fixture"
+  "%NEXUS_PYTHON%" -B -m src.companion_core.daily --workspace "%~dp0." --data-dir "%NEXUS_DATA_DIR%" --review-dir "%NEXUS_REVIEW_DIR%" %NEXUS_BROWSER_OPTION% --port "%NEXUS_PORT%" --codex "%NEXUS_CODEX%" --pilot-workspace "%NEXUS_PILOT_WORKSPACE%"
 ) else (
-  "%NEXUS_PYTHON%" -B -m src.companion_core.daily --workspace "%~dp0." --data-dir "%NEXUS_LOCAL%\state" --review-dir "%NEXUS_LOCAL%\reviews" --port "%NEXUS_PORT%" --codex "%NEXUS_CODEX%"
+  "%NEXUS_PYTHON%" -B -m src.companion_core.daily --workspace "%~dp0." --data-dir "%NEXUS_DATA_DIR%" --review-dir "%NEXUS_REVIEW_DIR%" %NEXUS_BROWSER_OPTION% --port "%NEXUS_PORT%" --codex "%NEXUS_CODEX%"
 )
-if errorlevel 1 pause
+if errorlevel 1 (
+  pause
+  exit /b 1
+)

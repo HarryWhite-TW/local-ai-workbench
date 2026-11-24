@@ -204,7 +204,7 @@ On this reference host, current-user global `safe.directory` must contain the
 exact path:
 
 ```text
-C:/Users/harry/Desktop/local-ai-workbench-engineering
+C:/Users/example-user/Desktop/local-ai-workbench-engineering
 ```
 
 Review with:
@@ -228,7 +228,7 @@ The Bridge state root is:
 The optional routing file under that directory must use the exact schema:
 
 ```json
-{"protocol":"lawb.bridge_operator_local_routing.v1","repository":"HarryWhite-TW/local-ai-workbench","target_repo_root":"C:\\Users\\harry\\Desktop\\local-ai-workbench-engineering"}
+{"protocol":"lawb.bridge_operator_local_routing.v1","repository":"HarryWhite-TW/local-ai-workbench","target_repo_root":"C:\\Users\\example-user\\Desktop\\local-ai-workbench-engineering"}
 ```
 
 The launcher reads but does not create or modify this file. Remote Issue,

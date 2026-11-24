@@ -78,6 +78,8 @@ def env(tmp_path, monkeypatch):
                 if len(payload["input"]) > 1:
                     assert payload["input"][1]["role"] == "assistant"
                     answer += " Prior answer retained."
+                if payload.get("instructions", "").startswith("你是 NEXUS Companion。解讀"):
+                    answer = json.dumps({"intent":"chat", "reference":"","choice":0,"answer":answer})
                 events = [{"type": "response.created", "response": {"id": "resp_fixture"}},
                     {"type": "response.completed", "response": {"id": "resp_fixture", "status": "completed",
                      "output": [{"type": "message", "role": "assistant", "status": "completed",
@@ -89,6 +91,19 @@ def env(tmp_path, monkeypatch):
     http = httpx.Client(transport=httpx.MockTransport(handle))
     auth = SignIn(vault, http)
     monkeypatch.setattr("src.companion_core.siwc.webbrowser.open", lambda url: opened.append(url) or True)
+    import httpx2
+    from openai import OpenAI
+    from contextlib import contextmanager
+    @contextmanager
+    def sdk_fixture(token, request, factory=None):
+        def bridge(req):
+            response = handle(httpx.Request(req.method,str(req.url),headers=dict(req.headers),content=req.content))
+            return httpx2.Response(response.status_code,headers=dict(response.headers),content=response.content)
+        with httpx2.Client(transport=httpx2.MockTransport(bridge)) as transport:
+            with OpenAI(api_key=token,max_retries=0,http_client=transport) as client:
+                with client.responses.create(**request) as stream:
+                    yield stream
+    monkeypatch.setattr('src.companion_core.chat.sdk_stream',sdk_fixture)
     chat = Conversations(workspace, vault.directory, auth)
     value = dict(workspace=workspace, vault=vault, auth=auth, chat=chat, config=config, opened=opened, calls=calls, key=key)
     yield value
@@ -275,7 +290,8 @@ def test_stream_failure_never_becomes_answer(env, events):
     env["config"]["events"] = events
     result = send(env)
     assert result["turns"][0]["status"] == "failed"
-    assert result["turns"][0]["answer"] is None
+    assert result["turns"][0]["delivery_state"] != "complete"
+    assert "synthetic-access-only" not in (result["turns"][0]["answer"] or "")
     assert result["turns"][0]["error"]
 
 
@@ -460,7 +476,8 @@ def test_source_bound_completion_and_no_tool_dispatch(env):
             {"type": "response.completed", "response": {"id": "fixture", "status": "completed", "output": output}}]
         result = send(env)
         assert result["turns"][0]["status"] == "failed"
-        assert result["turns"][0]["answer"] is None
+        assert result["turns"][0]["delivery_state"] != "complete"
+    assert "synthetic-access-only" not in (result["turns"][0]["answer"] or "")
 
 
 def text_stream(answer="Public prototype [S1:L1]", *, terminal_output=False):
@@ -509,10 +526,11 @@ def test_stream_text_requires_matching_completed_identity_and_content(env, inval
     env["config"]["events"] = events
     result = send(env)
     assert result["turns"][0]["status"] == "failed"
-    assert result["turns"][0]["answer"] is None
+    assert result["turns"][0]["delivery_state"] != "complete"
+    assert "synthetic-access-only" not in (result["turns"][0]["answer"] or "")
 
 
-@pytest.mark.parametrize("answer,reason", [("", "空"), ("x" * 50_001, "長度"),
+@pytest.mark.parametrize("answer,reason", [("", "空"), ("x" * 8_000_001, "長度"),
     ("synthetic-access-only [S1:L1]", "憑證"), ("bad source [S9:L99]", "來源")],
     ids=["empty", "too-long", "credential", "invalid-source"])
 def test_stream_output_checks_remain_closed_and_distinguish_reason(env, answer, reason):
@@ -520,7 +538,8 @@ def test_stream_output_checks_remain_closed_and_distinguish_reason(env, answer, 
     env["config"]["events"] = text_stream(answer)
     result = send(env)
     assert result["turns"][0]["status"] == "failed"
-    assert result["turns"][0]["answer"] is None
+    assert result["turns"][0]["delivery_state"] != "complete"
+    assert "synthetic-access-only" not in (result["turns"][0]["answer"] or "")
     assert reason in result["turns"][0]["error"]
     assert "synthetic-access-only" not in result["turns"][0]["error"]
 
@@ -574,17 +593,19 @@ def test_optional_citations_still_require_current_source_and_exact_line(env, sel
     login(env)
     env["config"]["events"] = text_stream(answer)
     turn = send(env, selected=selected)["turns"][0]
-    assert turn["status"] == "failed" and turn["answer"] is None
+    assert turn["status"] == "failed" and turn["delivery_state"] != "complete"
+    assert "synthetic-access-only" not in (turn["answer"] or "")
     assert "來源" in turn["error"]
 
 
-@pytest.mark.parametrize("answer,reason", [("", "空"), ("x"*50_001, "長度"),
+@pytest.mark.parametrize("answer,reason", [("", "空"), ("x"*8_000_001, "長度"),
     ("synthetic-access-only", "憑證")], ids=["empty", "long", "credential"])
 def test_plain_chat_keeps_output_safety_checks(env, answer, reason):
     login(env)
     env["config"]["events"] = text_stream(answer)
     turn = send(env, selected=[])["turns"][0]
-    assert turn["status"] == "failed" and turn["answer"] is None
+    assert turn["status"] == "failed" and turn["delivery_state"] != "complete"
+    assert "synthetic-access-only" not in (turn["answer"] or "")
     assert reason in turn["error"]
 
 
@@ -592,7 +613,8 @@ def test_plain_chat_incomplete_stream_is_not_success(env):
     login(env)
     env["config"]["events"] = text_stream("Partial ordinary discussion")[:-1]
     turn = send(env, selected=[])["turns"][0]
-    assert turn["status"] == "failed" and turn["answer"] is None
+    assert turn["status"] == "failed" and turn["delivery_state"] != "complete"
+    assert "synthetic-access-only" not in (turn["answer"] or "")
 
 
 def test_old_sourced_turn_survives_plain_followup_and_restart(env):
@@ -616,6 +638,83 @@ def test_old_sourced_turn_survives_plain_followup_and_restart(env):
     assert third["turns"][2]["status"] == "complete"
     fourth = send(env, old["id"], "Back to ordinary conversation", selected=[])
     assert fourth["turns"][3]["status"] == "complete" and fourth["turns"][3]["sources"] == []
+
+
+def test_git_receipt_enters_only_confirmed_model_turn(env, monkeypatch):
+    from uuid import uuid4
+    from src.companion_core.real_git_job import RealGitJob
+
+    login(env)
+    home = env['workspace'].parent / 'real-git-job'
+    (home / 'state').mkdir(parents=True)
+    chat = Conversations(env['workspace'], home / 'state', env['auth'])
+    env['chat'] = chat
+    adapter = RealGitJob(chat, 'unused.exe')
+    chat.engineering_pilot = adapter
+    owner = chat._project_owner(None)
+    target = 'src/elysia_core/cli.py'
+    job = dict(id=str(uuid4()), state='PENDING_REVIEW', goal='Fix text output', targets=[target],
+               project={'id': str(uuid4()), 'name': 'Reverb Core', 'root': str(home/'candidate')},
+               verified={'head': 'c'*40, 'sha256': 'd'*64},
+               diff=f'--- a/{target}\n+++ b/{target}\n@@ -1 +1 @@\n-old\n+receipt-changed-line',
+               tests={'exitCode': 0, 'stdout': 'fixture-verifier', 'stderr': ''},
+               verification='Python syntax only', events=[{'kind':'host_verified', 'at':'2026-11-19T01:00:00Z'}])
+    with chat.connect() as db:
+        origin = adapter.link(db, job, owner, None, origin=True)
+        db.execute('INSERT INTO git_jobs VALUES (?,?,?,?)', (job['id'],owner,job['project']['id'],json.dumps(job)))
+        continued = adapter.link(db, job, owner, None)
+        other = str(uuid4())
+        db.execute('INSERT INTO chats VALUES (?,?,?,?,?)', (other,chat.workspace,owner,'Unrelated', 'now'))
+    key = 'git-work:'+job['id']
+    def no_scan(*args):
+        pytest.fail('Evidence flow rescanned the candidate')
+    monkeypatch.setattr(adapter, 'snapshot', no_scan)
+    plain = send(env, continued, 'What happened without selecting a receipt?', selected=[])
+    assert plain['turns'][-1]['sources'] == []
+    with pytest.raises(ChatError):
+        chat.selected_sources([key], other)
+    with pytest.raises(ChatError):
+        chat.selected_sources([key,'readme'], continued)
+    body = dict(chat=continued, question='What changed?', sources=[key], model='fixture-model', preview={key:'guessed'})
+    count = lambda: sum(r.url.path.endswith('/responses') for r in env['calls'])
+    before = count()
+    with pytest.raises(ChatError):
+        chat.submit(body)
+    assert count() == before
+    [receipt] = chat.selected_sources([key], continued)
+    assert '未取得近期核對結果' in receipt['text']
+    from time import monotonic
+    adapter.evidence_versions[job['id']] = ((job['verified']['head'], 'e'*64), monotonic())
+    body['preview'] = {key: receipt['sha256']}
+    with pytest.raises(ChatError):
+        chat.submit(body)
+    assert count() == before
+    [receipt] = chat.selected_sources([key], continued)
+    assert '候選已漂移' in receipt['text'] and '仍待獨立技術審查' in receipt['text']
+    body['preview'] = {key:receipt['sha256']}
+    env['config']['events'] = [
+        {'type':'response.created','response':{'id':'resp_git'}},
+        {'type':'response.completed','response':{'id':'resp_git','status':'completed','output':[
+            {'type':'message','role':'assistant','status':'completed','content':[
+                {'type':'output_text','text':'receipt-changed-line [S1:L11]'}]}]}}]
+    # Cite the exact diff line actually supplied.
+    line = next(i for i,s in enumerate(receipt['text'].splitlines(),1) if s=='+receipt-changed-line')
+    env['config']['events'][1]['response']['output'][0]['content'][0]['text'] = f'receipt-changed-line [S1:L{line}]'
+    result = chat.submit(body)
+    chat.worker.join(5)
+    payload = json.loads([r for r in env['calls'] if r.url.path.endswith('/responses')][-1].content)
+    assert count() == before+1 and f'L{line}: +receipt-changed-line' in payload['input'][-1]['content']
+    stored = chat.get(result['chat'])['turns'][-1]
+    assert stored['status'] == 'complete' and stored['sources'] == [receipt]
+    with pytest.raises(ChatError):
+        chat.submit(body)
+    env['config']['events'] = None
+    send(env, continued, 'Continue without sharing the receipt again', selected=[])
+    payload = json.loads([r for r in env['calls'] if r.url.path.endswith('/responses')][-1].content)
+    assert 'receipt-changed-line' not in json.dumps(payload)
+    reopened = Conversations(env['workspace'], home/'state', env['auth'])
+    assert reopened.get(origin)['turns'][0]['sources'] == []
+    assert reopened.get(continued)['turns'][-2]['sources'] == [receipt]
 
 
 def test_nonempty_sources_still_require_current_preview_before_inference(env):

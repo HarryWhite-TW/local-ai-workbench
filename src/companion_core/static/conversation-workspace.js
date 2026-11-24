@@ -28,9 +28,9 @@
   comparisonLink();window.addEventListener('companion-chat-selected',comparisonLink);options.append(compare);
   const parking=node('div');parking.hidden=true;parking.id='conversation-parking';parking.append(el('project-chat-strip'));
   const layout=node('div','','conversation-body');layout.id='conversation-body';
-  el('chat-messages').before(layout);
+  el('chat-reading').before(layout);
   const column=node('div','','conversation-column');
-  column.append(el('chat-messages'),el('document-chat-context'),el('work-chat-context'),el('chat-form'));layout.append(column);
+  column.append(el('chat-reading'),el('document-chat-context'),el('work-chat-context'),el('chat-form'));layout.append(column);
   const pane=node('aside','','conversation-reader');pane.id='conversation-reader';pane.hidden=true;pane.setAttribute('aria-label','情境閱讀區');
   const readerHeader=node('header'),readerTitle=node('h2'),readerSelect=node('select');readerSelect.setAttribute('aria-label','閱讀內容');
   const focus=button('專注閱讀',()=>{body.dataset.readerFocus=body.dataset.readerFocus==='true'?'false':'true';focus.setAttribute('aria-pressed',body.dataset.readerFocus);});focus.setAttribute('aria-pressed','false');
