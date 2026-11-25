@@ -1,21 +1,23 @@
 # Local Document-to-Knowledge Workbench
 
-## NEXUS Windows 跨設備檢查點（2026-11-25）
+## NEXUS Windows 已接受基準（2026-11-25）
 
-本分支為 HL-06 開發檢查點，狀態 PARTIAL_WITH_EVIDENCE。
+本分支保存 HL-06 Natural Engineering Collaboration 已接受基準。
 
 | GitHub 分支 | 用途 | Windows 啟動器 |
 | --- | --- | --- |
 | `nexus-hl05-accepted` | HL-05 技術與產品接受的穩定檢查點 | `Open-HL05-Project-Companion.cmd` |
-| `nexus-hl06-checkpoint` | HL-06 唯讀工程委派施工接續，保有待審結果與未完成驗證的狀態說明 | `Open-HL06-Engineering-Companion.cmd` |
+| `nexus-hl06-checkpoint` | HL-06 受控唯讀工程協作已接受基準 | `Open-HL06-Engineering-Companion.cmd` |
 
 ### 正式狀態
 
 HL-01 A 為技術與產品接受的限定研究參考，獨立程式與合成驗證在 [research/hl01](research/hl01/README.md)。HL-02 完成整合可行性審查。HL-03 的自然工作助手取得技術與核心產品接受。HL-04 的文件交付、長對話導航及限定模型切換取得技術與產品接受。HL-05 的真實專案知識、受控更新與規劃交付已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，限實際交付範圍。
 
-**HL-06 為 PARTIAL_WITH_EVIDENCE。** 第一輪真人批准的原生委派終態為 UNKNOWN。一次有界修正後，真人再次批准，原生程序完成、退出並保存唯讀診斷待審收據。診斷結果已回到原聊天。兩個後續 Companion 分析回合都失敗，代理稽核記錄 `UsageLimitExceeded`。其中一次詳文分享已批准，另一份分享確認已逾期。完成的分析與跨對話結果重查尚待驗證。正式接受以適用的獨立技術審查和真人體驗為準。
+**HL-06 已獲 TECHNICAL ACCEPTED + PRODUCT ACCEPTED。** 接受範圍涵蓋自然工程委託、限定唯讀 Codex 診斷、真人批准、受控執行、結果自動回傳、工作收據保存、當輪詳文分享、模型證據分析、自然追問、重啟保存及跨對話自主查找。純收據回答只取用當輪問題與獲准的收據。純專案與混合來源回答仍須符合相應的引用要求。複雜前文依賴與模型選擇證據模式仍有一般性限制。
 
-主線暫停於 HL-06 收束與跨設備移交。模型動態目錄、通用工程寫入、自主研究、長期記憶與 Companion 擴展未啟動。M1 與 SIWC 停止路徑維持停止，SIWC 工具能力仍未實測。 [2026-11-25 跨設備接續裁決](docs/hl05-project-knowledge.json)
+診斷收據仍為 `RESULT_PENDING_REVIEW`，報告中的技術建議仍須另行裁決。較早的 `PARTIAL_WITH_EVIDENCE` 保留為歷史狀態。首次原生終態 `UNKNOWN`、後續分析的 `UsageLimitExceeded`、詳文確認逾期及新設備的引用檢查失敗均保留為原觀測。最後在新設備完成真模型分析、真人分享與跨對話查找。
+
+HL-06 正式收束。HL-07 Model Capability Catalog 是下一個建議成果，技術方向及施工尚未啟動。動態模型目錄可行性、通用工程寫入、自主研究及長期記憶超出 HL-06 接受範圍。M1 與 SIWC 維持停止，SIWC 工具能力仍未實測。[2026-11-25 正式裁決](docs/hl06-decision.json)
 
 ### 另一台 Windows 電腦
 
@@ -49,9 +51,9 @@ git rev-parse HEAD
 
 試用前在新電腦使用自己的正常官方 Codex 登入。Windows 原生委派驗證的版本為 `codex-cli 0.162.1`，使用現有 Node.js/npm 的標準 Windows npm 路徑。需要重建時可執行 `npm install -g @openai/codex@0.162.1`、`codex --version`，再以 `codex login` 完成官方登入。HL-06 執行委派另要求相符的原生執行檔雜湊、可用的 MXC 及 Plus，並預覽本機 Codex 自動載入的非敏感全域 `AGENTS.md`。它須是正常檔案、UTF-8 且不超過 8 KiB，既有全域覆寫檔會使本次診斷停在前置檢查。可在新電腦使用自己的非敏感協作規則。新安裝的登入、MXC 和真人委派能力要在該電腦上另行確認。
 
-執行表中啟動器。穩定版頁面為 <http://127.0.0.1:47651/#chat>，資料在 `candidate` 旁的 `real-project`。開發版頁面為 <http://127.0.0.1:47661/#chat>，資料在同層 `engineering-project`。首次啟動會建立新的本機工作區、SQLite 和專案知識種子。保存的文件位於各自的 `state/outputs`。搬遷使用本機保全的離線依賴包與必要證據即可。私人對話、既有 SQLite、機器綁定憑證與活動批准保留在原電腦，完整私人狀態的遷移需要另案決定範圍及授權。
+執行表中啟動器。HL-05 頁面為 <http://127.0.0.1:47651/#chat>，資料在 `candidate` 旁的 `real-project`。HL-06 頁面為 <http://127.0.0.1:47661/#chat>，資料在同層 `engineering-project`。首次啟動會建立新的本機工作區、SQLite 和專案知識種子。保存的文件位於各自的 `state/outputs`。搬遷使用本機保全的離線依賴包與必要證據即可。私人對話、既有 SQLite、機器綁定憑證與活動批准保留在原電腦，完整私人狀態的遷移需要另案決定範圍及授權。
 
-本檢查點的 Windows 還原與本機啟動前提使用隔離乾淨副本驗證。實體第二台 Windows 尚待驗證，狀態為 **CROSS_DEVICE_RESTORE_PENDING**。
+跨設備程式與核心環境恢復已完成。實體第二台 Windows 已確認聊天介面正常，並實際完成真人批准的原生唯讀診斷。工作收據可在原有帳戶與工作區內持久保存及重新查找。舊工作區的收據無直接匯入功能。
 
 ### 歷史發行說明
 

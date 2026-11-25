@@ -1,10 +1,10 @@
 # PLANS.md
 
-## NEXUS Windows 跨設備檢查點（2026-11-25）
+## NEXUS HL-06 正式收束（2026-11-25）
 
-本分支為 HL-06 開發檢查點，狀態 PARTIAL_WITH_EVIDENCE。
+HL-01 至 HL-05 維持既有接受或完成狀態。HL-06 Natural Engineering Collaboration 已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，限已驗證的受控唯讀協作。跨設備程式與核心環境恢復已完成，第二台 Windows 的真人介面與原生委派已驗證。診斷收據維持 `RESULT_PENDING_REVIEW`。
 
-目前開發暫停於 HL-06 工程收束與跨設備移交。HL-05 為 TECHNICAL ACCEPTED 與 PRODUCT ACCEPTED，HL-06 為 PARTIAL_WITH_EVIDENCE。恢復方式、正式裁決及剩餘驗證見 [README](README.md)。下方為較早的歷史計畫。
+HL-06 已收束。下一個建議成果為 HL-07 Model Capability Catalog，技術方向及施工尚未啟動。動態模型目錄可行性、通用工程寫入、自主研究與長期記憶超出 HL-06 接受範圍。恢復方式及接受範圍見 [README](README.md) 與 [正式裁決](docs/hl06-decision.json)。下方為較早的歷史計畫。
 
 ## NEXUS MVP + fixed engineering pilot source publication — 2026-11-05
 

@@ -20,13 +20,23 @@
     "visibility": "shared"
   },
   {
-    "slug": "mainline",
-    "title": "目前進度與下一步主線裁決",
-    "kind": "decision",
-    "source": "coordination",
     "date": "2026-11-25",
-    "scope": "正式跨設備交接與工程暫停裁決",
-    "summary": "HL-05 已獲 TECHNICAL ACCEPTED 與 PRODUCT ACCEPTED，限實際交付。HL-06 保有 PARTIAL_WITH_EVIDENCE，進度停在實際診斷、待審收據及跨設備移交。現行主線暫停在此。未批准下一工程節點、模型動態目錄、通用工程寫入、自主研究或長期記憶。",
+    "kind": "decision",
+    "scope": "HL-06 正式收束與下一步規劃邊界",
+    "slug": "mainline",
+    "source": "coordination",
+    "summary": "HL-01 至 HL-05 維持既有接受或完成狀態。HL-06 已獲 TECHNICAL ACCEPTED + PRODUCT ACCEPTED，限已驗證的受控唯讀工程協作，並正式收束。HL-07 Model Capability Catalog 為下一個建議成果，其技術方向及施工尚未啟動。動態模型目錄可行性、通用工程寫入、自主研究與長期記憶超出本次接受範圍。",
+    "title": "目前進度與下一步主線裁決",
+    "visibility": "shared"
+  },
+  {
+    "date": "2026-11-25",
+    "kind": "decision",
+    "scope": "ChatGPT 獨立技術審查及新設備真人產品驗收",
+    "slug": "hl06-accepted",
+    "source": "coordination",
+    "summary": "HL-06 Natural Engineering Collaboration 已獲 TECHNICAL ACCEPTED + PRODUCT ACCEPTED。接受範圍為自然委託、限定唯讀 Codex 診斷、真人批准、受控執行、結果自動回傳、收據保存、當輪詳文分享、模型證據分析、自然追問、重啟保存及跨對話查找。跨設備程式與核心環境恢復完成，第二台 Windows 已驗證介面及原生執行。舊工作區收據無直接匯入功能，既有工作區仍可持久保存及重新查找。純收據回答取用當輪問題與已批准收據，純專案及混合來源維持引用要求。複雜前文依賴與模型證據模式選擇仍有限制。診斷收據維持 RESULT_PENDING_REVIEW，報告技術建議仍須另行裁決。",
+    "title": "HL-06 受控唯讀工程協作取得正式接受",
     "visibility": "shared"
   }
 ]

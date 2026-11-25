@@ -197,3 +197,109 @@ def test_core_approval_and_history_with_offline_stream(host, monkeypatch):
     assert (follow_up["model"], follow_up["requested_effort"]) == ("gpt-6.2-sol", "low")
     assert len(model_inputs) == 5
 
+
+def run_grounding_turn(host, monkeypatch, *, answer, receipt, receipt_only, share, withdrawn):
+    import hashlib
+    import json
+    from contextlib import asynccontextmanager
+    from time import monotonic, sleep
+
+    from pydantic_ai.messages import ToolReturnPart
+    from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+    from src.companion_core import codex_work_agent
+    from src.companion_core.project_knowledge import ProjectKnowledge
+
+    knowledge_canary = "GROUNDING-KNOWLEDGE-CANARY"
+    host.knowledge = ProjectKnowledge(host)
+    record = dict(slug="grounding-test", kind="test", source="validation", date="2026-11-25",
+                  title="grounding test", scope="測試", summary=knowledge_canary, visibility="shared")
+    with host.connect() as db:
+        host.knowledge.append(db, record, 1, "approved_seed")
+        if withdrawn:
+            host.knowledge.append(db, record | {"visibility": "withdrawn"}, 2, "test")
+    reference = "native_work#grounding-test"
+    source = {"id": "S1", "key": reference, "name": "診斷", "captured_at": now(),
+              "sha256": hashlib.sha256((receipt or "").encode()).hexdigest(), "text": receipt}
+    public = {"project": "NEXUS", "goal": "模型選項", "work_id": "grounding-test",
+              "status": "PENDING_REVIEW", "summary": "測試", "source": reference}
+    host.work = SimpleNamespace(
+        natural_only=True, receipts_for=lambda *_: {reference: (public, {})},
+        source_for=lambda *args: source if args[-1] == reference else None,
+    )
+    requests = []
+    async def stream(messages, _):
+        requests.append(messages)
+        call = len(requests)
+        if call == 1:
+            yield {0: DeltaToolCall("search_project_knowledge", '{"query":"grounding-test"}', tool_call_id="knowledge")}
+        elif call == 2:
+            assert (knowledge_canary in str(messages)) is not withdrawn
+            if receipt is None:
+                yield answer
+                return
+            args = {"work_id": reference, "receipt_only": receipt_only}
+            yield {0: DeltaToolCall("read_work_evidence", json.dumps(args), tool_call_id="evidence")}
+        else:
+            returned = next(part.content for part in messages[-1].parts if isinstance(part, ToolReturnPart))
+            assert returned["decision"] == ("allowed" if share else "denied")
+            if share and receipt_only:
+                assert len(messages) == 3 and knowledge_canary not in str(messages)
+                assert [part.tool_name for message in messages for part in message.parts
+                        if hasattr(part, "tool_name")] == ["read_work_evidence", "read_work_evidence"]
+            elif not withdrawn:
+                assert knowledge_canary in str(messages)
+            yield answer
+
+    class LocalStream(FunctionModel):
+        @asynccontextmanager
+        async def request_stream(self, *args, **kwargs):
+            async with super().request_stream(*args, **kwargs) as result:
+                result.provider_response_id = "grounding-test-response"
+                yield result
+
+    async def fake_build(_check, _record, model_name):
+        return LocalStream(stream_function=stream, model_name=model_name), None
+
+    monkeypatch.setattr(codex_work_agent, "build_model", fake_build)
+    host.catalog()
+    ids = host.submit({"chat": None, "question": "結果代表什麼？", "sources": [], "preview": None, "model": MODEL})
+    if receipt is not None:
+        deadline = monotonic() + 4
+        while monotonic() < deadline:
+            turn = host.get(ids["chat"])["turns"][-1]
+            if turn.get("work_share"):
+                break
+            sleep(0.02)
+        assert turn["work_share"] == source and turn["sources"] == []
+        action = {"action": "share", "sha256": source["sha256"]} if share else {"action": "decline"}
+        host.confirm_work_share(ids | action)
+    host.worker.join(4)
+    assert not host.worker.is_alive()
+    assert len(requests) == (2 if receipt is None else 3)
+    return host.get(ids["chat"])["turns"][-1]
+
+
+@pytest.mark.parametrize(("mode", "answer", "error"), [
+    ("receipt", "量測結果 [S1:L2]。", None),
+    ("receipt", "缺少工程來源。", "沒有引用本輪提供的證據"),
+    ("receipt", "錯誤行號 [S1:L3]。", "來源身分或行號不符"),
+    ("receipt", "量測結果 [S1:L2]，專案狀態 [K:grounding-test@1]。", "無法核對的專案知識版本"),
+    ("mixed", "量測結果 [S1:L2]，專案狀態 [K:grounding-test@1]。", None),
+    ("mixed", "量測結果 [S1:L2]，專案狀態未引證。", "缺少本輪可核對的知識來源"),
+    ("mixed", "量測結果 [S1:L2]，專案狀態 [K:grounding-test@9]。", "無法核對的專案知識版本"),
+    ("knowledge", "專案狀態 [K:grounding-test@1]。", None),
+    ("knowledge", "專案狀態未引證。", "缺少本輪可核對的知識來源"),
+    ("withdrawn", "引用已撤回 [K:grounding-test@1]。", "無法核對的專案知識版本"),
+    ("declined", "未授權的結果 [S1:L2]。", "來源身分或行號不符"),
+])
+def test_grounding_preserves_distinct_source_requirements(host, monkeypatch, mode, answer, error):
+    receipt = "報告\n量測結果" if mode in ("receipt", "mixed", "declined") else None
+    turn = run_grounding_turn(host, monkeypatch, answer=answer, receipt=receipt,
+                             receipt_only=mode in ("receipt", "declined"),
+                             share=mode != "declined", withdrawn=mode == "withdrawn")
+    if error is None:
+        assert turn["status"] == "complete" and turn["answer"] == answer
+    else:
+        assert turn["status"] == "failed" and error in turn["error"]
+    assert bool(turn["sources"]) == (receipt is not None and mode != "declined")
+
