@@ -1,5 +1,13 @@
 # PLANS.md
 
+## NEXUS HL-09C 正式收束（2026-11-26）
+
+HL-01 至 HL-07 與 HL-09A 維持既有接受或完成狀態。HL-08 維持 **CLOSED — PARTIAL_WITH_EVIDENCE**，工程寫入權限未恢復。HL-09B 曾為 `PARTIAL_WITH_EVIDENCE`，自然協作及工具能力對齊改善已整合至 HL-09C，無需獨立發布。
+
+HL-09C Trustworthy Engineering Workspace 已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，限自然討論、合適的受控唯讀提案、主機交付契約、舊提案失效、來源預覽、真人批准、對話內工單、可收合監控、成果回傳及瀏覽器重載讀回。原生唯讀診斷已完成並保存，既有收據仍為 `RESULT_PENDING_REVIEW`。持久事件、UI 觀測與自動化驗證的證據界線見[正式裁決](docs/hl09c-decision.json)。工程權限維持固定快照唯讀。
+
+HL-09C 已收束。下一個建議成果為 HL-09D Visual Collaboration，技術方向尚待 ChatGPT 裁決。完整物流式進度時間軸及整體視覺打磨留待 HL-09E。Windows-first 與本機、異地 Windows 和手機的混合使用方向延續，Codex Cloud 按需補充，GitHub 保存跨設備基準。下方各節保留當時的歷史計畫與觀察。
+
 ## NEXUS HL-09A 正式收束（2026-11-26）
 
 HL-01 至 HL-07 維持既有接受或完成狀態。HL-08 已 **CLOSED — PARTIAL_WITH_EVIDENCE**，保留隔離技術與原生工作失敗證據。HL-09A 從已接受的 HL-07 基準接續，維持現有唯讀工程委派邊界。

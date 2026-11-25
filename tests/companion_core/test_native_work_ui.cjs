@@ -24,6 +24,41 @@ function setup(){
   return {c,p,calls,edits,notices,card:()=>c.workCard(p)};
 }
 const button=(card,label)=>all(card).find(n=>n.tag==='button'&&n.textContent===label);
+
+test('host deliverable is shown separately from model discussion and superseded has no approval action',()=>{
+  const e=setup();
+  Object.assign(e.p,{goal:'Can we also know the current Git revision?',task_id:null,state:'AWAITING_AUTHORIZATION',
+    natural_offer:true,contract:{deliverable:'Findings with snapshot lines',limits:'Snapshot-only evidence'}});
+  const card=e.card();
+  assert.ok(all(card).some(n=>n.textContent==='討論目標：Can we also know the current Git revision?'));
+  assert.ok(all(card).some(n=>n.textContent==='唯讀可交付：Findings with snapshot lines'));
+  assert.ok(button(card,'預覽唯讀 Codex 診斷'));
+  e.p.state='SUPERSEDED';
+  assert.ok(all(e.card()).every(n=>n.tag!=='button'));
+});
+
+test('monitor scopes rows to the open conversation and projects saved phases without approval controls',()=>{
+  const source=fs.readFileSync(path.join(__dirname,'../../src/companion_core/static/conversation-workspace.js'),'utf8');
+  const methods=source.slice(source.indexOf('    workPhase(p){'),source.indexOf('    organizeOpened()'));
+  const list=new Element('ul');list.replaceChildren=(...items)=>{list.children=items;};
+  const c=vm.createContext({window:{},node:(tag,value)=>new Element(tag,value),
+    button:(value,onclick)=>({tag:'button',textContent:value,onclick,children:[]}),
+    monitorToggle:{hidden:true},monitorList:list,clearMonitor:()=>list.replaceChildren()});
+  vm.runInContext('window.NexusConversation={'+methods+'};',c);
+  const panel=c.window.NexusConversation;
+  const work={kind:'native_codex',id:'record',chat:'open',natural_offer:true,contract:{title:'現有診斷'}};
+  panel.workMonitor([work,{...work,chat:'other',contract:{title:'PRIVATE'}}],'open');
+  assert.equal(list.children.length,1);
+  assert.ok(all(list).every(n=>!String(n.textContent).includes('PRIVATE')));
+  for(const [phase,label] of [['AWAITING_AUTHORIZATION','等待你的批准'],['RECEIVING','正在收到模型內容'],
+      ['SAVING','主機正在保存成果'],['RESULT_PENDING_REVIEW','成果已保存 · 待技術審查'],
+      ['CANCEL_REQUESTED','已請求停止，等待終態'],['FAILED','執行失敗'],['UNKNOWN','終態未確認']]){
+    panel.workMonitor([{...work,phase}],'open');
+    assert.ok(all(list).some(n=>n.textContent===label));
+    assert.ok(all(list).filter(n=>n.tag==='button').every(n=>n.textContent==='查看工單'));
+  }
+});
+
 test('inline native stop and unknown reconciliation bind the exact proposal',async()=>{
   const e=setup();let card=e.card();
   await button(card,'停止這項診斷').onclick();

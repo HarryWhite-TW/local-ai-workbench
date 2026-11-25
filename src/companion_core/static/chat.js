@@ -691,6 +691,7 @@
   async function read() {
     const mine=++epoch,id=selected,account=state?.auth.active,scroller=el('chat-messages');
     if(!id) {
+      window.NexusConversation?.workMonitor?.([],id);
       if(renderedChat!==''||rendered!=='empty'){
         const empty=text('div','');empty.className='chat-empty';
         empty.append(text('span','A LITTLE ROOM TO THINK'),text('h2','從你想聊的開始。'),text('p','一個想法、一個問題，或只是聊聊今天。'));
@@ -715,6 +716,7 @@
     const codeJobs=window.NexusControlled?await window.NexusControlled.state(id):[];
     if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active||state?.auth.pending)return;
     const signature=JSON.stringify([conversation,proposals,organizations,pilots,codeJobs,proposals.map(p=>nativeResults.get(nativeResultKey(p)))]);if(signature===rendered&&renderedChat===id)return;
+    window.NexusConversation?.workMonitor?.(proposals,id);
     const same=renderedChat===id,top=scroller.scrollTop,nearEnd=scroller.scrollHeight-scroller.clientHeight-top<90;
     const hadOverflow=scroller.scrollHeight>scroller.clientHeight+6;
     const anchor=same&&!nearEnd&&Array.from(scroller.querySelectorAll('.chat-message')).find(
@@ -952,6 +954,7 @@
   async function action(work){try{await work();await refresh();}catch(e){notice(e.message);el('chat-auth-notice').textContent=e.message;}}
   function workCard(p) {
     const card=text('section','');card.className='chat-work-card';card.dataset.work=p.id;card.dataset.task=p.task_id||'';card.dataset.state=p.state;
+    card.tabIndex=-1;
     if(p.kind==='native_codex'&&p.draft_hidden&&p.can_hide_draft&&!p.task_id){
       const folded=text('details',''),restore=text('button','展開並繼續草稿');
       folded.append(text('summary','已收起的未執行草稿 · '+p.goal));
@@ -967,8 +970,13 @@
       folded.append(restore);card.append(folded);return card;
     }
     const names={AWAITING_AUTHORIZATION:'等待你的授權',CREATED:'準備中',RUNNING:'執行中',CANCEL_REQUESTED:'停止待確認',CANCELLED:'已取消',FAILED:'執行失敗／中斷',RESULT_PENDING_REVIEW:'執行完成 · 等待審查',ACCEPTED:'人類已接受成果',REJECTED:'人類已拒絕成果',REVISION_REQUESTED:'已記錄調整方向'};
-    card.append(text('strong',p.state==='DECLINED'?'已拒絕 · 未執行':names[p.state]||'狀態未確認'),text('p',p.goal));
-    if(p.state==='DECLINED')return card;
+    card.append(text('strong',window.NexusConversation?.workPhase?.(p)||
+      (p.state==='DECLINED'?'已拒絕 · 未執行':p.state==='SUPERSEDED'?'已有新訊息 · 舊提案已失效':names[p.state]||'狀態未確認')),
+      text('p',p.contract?'討論目標：'+p.goal:p.goal));
+    if(['DECLINED','SUPERSEDED'].includes(p.state))return card;
+    if(p.contract){
+      card.append(text('p','唯讀可交付：'+p.contract.deliverable),text('p',p.contract.limits));
+    }
     const details=text('details','');details.append(text('summary','技術與驗收資訊'),text('small',p.state+' · '+p.technical_acceptance));card.append(details);
     const button=text('button',p.task_id?'查看工作與證據':p.kind==='native_codex'?'設定並預覽診斷':'編輯提案與確認範圍');button.className='secondary-button';button.type='button';
     button.onclick=()=>p.task_id?action(async()=>{workOrigin=p;if(window.nexusOpenWork)await window.nexusOpenWork(p.task_id);else{showSpace('work');await window.openCompanionWork(p.task_id);}}):editProposal(p);
@@ -978,19 +986,21 @@
     if(p.kind==='native_codex'){
       details.append(text('p','原生 Codex · '+p.review_status+' · '+p.capability));
       card.append(text('p',p.result_id?'唯讀診斷已完成，尚待獨立技術審查。':p.task_id?'進度會在這裡更新，不需要切換頁面。':'先核對來源，再由你確認開始。'));
-      if(!p.task_id)card.append(text('p','設定目標與來源 → 預覽 → 確認 READ_ONLY 後啟動。'));
+      if(!p.task_id&&!p.contract)card.append(text('p','設定目標與來源 → 預覽 → 確認 READ_ONLY 後啟動。'));
       if(p.failure_summary){
-        const failure=text('p',(p.failure_stage||'啟動檢查')+' · '+p.failure_summary
+        const failure=text('p',(p.contract?'':(p.failure_stage||'啟動檢查')+' · ')+p.failure_summary
           +(p.failure_code!==null&&p.failure_code!==undefined?'（RPC '+p.failure_code+'）':''));
         failure.setAttribute('role','status');card.append(failure);
         card.append(text('small',p.start_outcome==='REJECTED'?'Codex 明確拒絕啟動；沒有自動重送。':
           p.start_outcome==='NOT_SENT'?'診斷尚未送出，前置階段已停止。':
+          p.contract?(p.state==='UNKNOWN'?'目前沒有可確認的終態。':'這項工作已停止。'):
           '請求可能已送出，不能推定未執行；請保留工作並對帳。'));
       }
       if(p.parent)card.append(text('small','本次為一次後續診斷；保留同一 thread 的先前已授權內容。'));
       const evidence=text('details','');
       evidence.append(text('summary','工作身分與實際事件'),text('p','Thread: '+(p.thread_id||'尚未取得')+' / Turn: '+(p.turn_id||'尚未取得')),
         text('p','來源指紋: '+(p.candidate_id||'尚未預覽')));
+      if(p.contract&&p.failure_stage)evidence.append(text('p','記錄階段：'+p.failure_stage));
       for(const e of p.events||[])evidence.append(text('p',e.at+' · '+({connecting:'正在連接原生 Codex',session_bound:'原生 thread 已回傳',
         turn_bound:'原生 turn 已回傳',receiving_result:'收到模型內容事件',cancel_requested:'已請求停止，等待終態',
         completed:'執行完成',failed:'執行失敗',cancelled:'已確認停止',unknown:'終態未確認',reconciled:'已嘗試核對原生紀錄'}[e.kind]||'事件')));
@@ -1096,7 +1106,9 @@
     window.NexusOrganize?.reset();
     proposal=p;proposalOwner=state?.auth.active;proposalVersion++;approval=null;el('work-goal').value=p.goal;el('work-expected').value=p.expected;
     el('work-goal').readOnly=el('work-expected').readOnly=!!p.natural_offer;
-    el('work-scope').textContent=p.workspace+' · '+p.capability;
+    el('work-scope').textContent=p.contract?p.contract.operation+' '+p.contract.limits+' '+p.capability:p.workspace+' · '+p.capability;
+    el('work-settings').querySelector('summary').textContent=p.contract?'查看主機交付契約與來源':'調整預期結果與可讀取的檔案';
+    el('work-settings').querySelector('label[for="work-expected"]').textContent=p.contract?'主機核定的交付範圍':'預期結果（可修改，不是執行證據）';
     el('work-files').replaceChildren(text('legend','允許讀取的程式檔案'));
     const choices=p.source_choices||['daily','chat','surface','core','runtime','review','work'].map(key=>({key,name:'src/companion_core/'+key+'.py'}));
     for(const {key,name} of choices){

@@ -42,6 +42,13 @@ SETTINGS = (
 ALLOWED = {"config/read", "account/read", "thread/start", "thread/resume", "thread/read",
            "thread/turns/list", "turn/start", "turn/interrupt"}
 
+TERMINAL_FAILURES = {
+    "usageLimitExceeded": "native_usage_limit",
+    "rateLimitExceeded": "native_rate_limit",
+    "contextWindowExceeded": "native_context_limit",
+    "serverOverloaded": "native_overloaded",
+}
+
 
 def policy(workspace):
     # Codex 0.162.1 declares only these readOnly policy fields. Source scope
@@ -244,6 +251,11 @@ def observe_turn(rpc, thread_id, turn_id, cancel, mark, timeout=180):
                         if not result.strip():
                             raise RuntimeFailure(Failure.PROTOCOL)
                         return "COMPLETED", result
+                    if status == "failed":
+                        error = terminal.get("error")
+                        info = error.get("codexErrorInfo") if isinstance(error, dict) else None
+                        reason = TERMINAL_FAILURES.get(info) if isinstance(info, str) else None
+                        mark(failure_stage="turn/observe", failure_kind=reason or "native_failure_unknown")
                     return ("CANCELLED" if status == "interrupted" else "FAILED"), None
             if params.get("turnId") == turn_id:
                 if method in ("item/started", "item/completed"):

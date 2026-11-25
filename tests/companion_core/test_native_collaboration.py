@@ -10,7 +10,7 @@ import pytest
 
 from src.companion_core.chat import Conversations, now
 from src.companion_core.codex_trial import LocalTrialIdentity, OWNER
-from src.companion_core.native_collaboration import MxcClient, NativeCollaboration, SCOPES
+from src.companion_core.native_collaboration import MxcClient, NativeCollaboration, SCOPES, scope_contract
 from src.companion_core.review import ReviewStore
 from src.companion_core.siwc import ChatError
 from src.companion_core.surface import Surface
@@ -40,7 +40,7 @@ def propose(host):
         db.execute("""INSERT INTO turns(id,chat,question,model,sources,created,status)
                       VALUES(?,?,?,?,?,?,?)""", (turn,ident,"回顧知識","gpt-6.1-terra","[]",now(),"pending"))
     chat.busy = {"chat":ident, "turn":turn}
-    pid = work.offer(ident, turn, "knowledge-lifecycle", "診斷知識版本流程", "檢查授權與來源")
+    pid = work.offer(ident, turn, "knowledge-lifecycle", "診斷知識版本流程")
     with chat.connect() as db:
         db.execute("UPDATE turns SET status='complete' WHERE id=?", (turn,))
     chat.busy = None
@@ -50,6 +50,30 @@ def propose(host):
 
 def confirm(work, p, token, authority="READ_ONLY"):
     return work.confirm({"id":p["id"],"approval":token,"authority":authority})
+
+
+def test_host_contract_and_new_turn_invalidate_preview(host, monkeypatch):
+    chat, work, _ = host
+    chat_id, p = propose(host)
+    calls = []
+    monkeypatch.setattr(work.surface, 'start', lambda *a, **k: calls.append(a))
+    contract = scope_contract('knowledge-lifecycle')
+    assert work.state(chat_id)[0]['contract'] == contract
+    assert p['expected'] == contract['deliverable']
+    with pytest.raises(ChatError):
+        work.preview(p | {'expected':'Return the working tree diff'})
+    ready = work.preview(p)
+    assert ready['contract'] == contract and ready['phase'] == 'AWAITING_AUTHORIZATION'
+    with chat.connect() as db:
+        db.execute("""INSERT INTO turns(id,chat,question,model,sources,created,status)
+                      VALUES(?,?,?,?,?,?,?)""",
+                   (str(uuid4()), chat_id, '我改變了範圍', 'gpt-6.1-terra', '[]', now(), 'pending'))
+    assert work.state(chat_id)[0]['phase'] == 'SUPERSEDED'
+    with pytest.raises(ChatError):
+        confirm(work, p, ready['approval'])
+    with pytest.raises(ChatError):
+        work.preview(p)
+    assert not calls
 
 
 def test_offer_preview_and_deny_never_start_subprocess(host, monkeypatch):

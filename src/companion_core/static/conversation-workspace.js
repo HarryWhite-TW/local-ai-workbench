@@ -32,19 +32,29 @@
   const column=node('div','','conversation-column');
   column.append(el('chat-reading'),el('document-chat-context'),el('work-chat-context'),el('chat-form'));layout.append(column);
   const pane=node('aside','','conversation-reader');pane.id='conversation-reader';pane.hidden=true;pane.setAttribute('aria-label','情境閱讀區');
+  const monitor=node('aside','','conversation-work-monitor');monitor.id='conversation-work-monitor';monitor.hidden=true;
+  monitor.setAttribute('aria-labelledby','conversation-monitor-title');
+  const monitorTitle=node('h2','工作進度');monitorTitle.id='conversation-monitor-title';
+  const monitorList=node('ul');monitorList.setAttribute('aria-live','polite');
+  monitor.append(monitorTitle,monitorList);layout.append(monitor);
+  const monitorToggle=button('工作進度',()=>{if(!current)showMonitor(monitor.hidden);});
+  monitorToggle.hidden=true;monitorToggle.setAttribute('aria-controls',monitor.id);monitorToggle.setAttribute('aria-expanded','false');
+  function showMonitor(show){monitor.hidden=!show;monitorToggle.setAttribute('aria-expanded',String(show));}
+  function clearMonitor(){showMonitor(false);monitorToggle.hidden=true;monitorList.replaceChildren();}
   const readerHeader=node('header'),readerTitle=node('h2'),readerSelect=node('select');readerSelect.setAttribute('aria-label','閱讀內容');
   const focus=button('專注閱讀',()=>{body.dataset.readerFocus=body.dataset.readerFocus==='true'?'false':'true';focus.setAttribute('aria-pressed',body.dataset.readerFocus);});focus.setAttribute('aria-pressed','false');
   const close=button('關閉閱讀',()=>closeReader(true),'text-button');close.setAttribute('aria-label','關閉情境閱讀區');
   readerHeader.append(readerTitle,focus,close);
   const readerBody=node('div','','conversation-reader-body'),readerFooter=node('footer');readerBody.tabIndex=0;
   pane.append(readerHeader,readerSelect,readerBody,readerFooter);layout.append(pane);
-  tools.append(button('專案情境',()=>openReader('專案情境',[{label:'目前對話的專案',mount:[el('project-chat-strip')]}],'project')),settings);
+  tools.append(button('專案情境',()=>openReader('專案情境',[{label:'目前對話的專案',mount:[el('project-chat-strip')]}],'project')),monitorToggle,settings);
   heading.append(tools);heading.after(options);el('chat-space').append(parking);
   let current=null,mounted=[],lastFocus=null;
   function restoreMounted(){for(const {element,placeholder}of mounted){if(placeholder.parentNode)placeholder.replaceWith(element);}mounted=[];}
   function mount(element,parent){const placeholder=document.createComment('conversation reading position');element.before(placeholder);mounted.push({element,placeholder});parent.append(element);}
   function closeReader(cancel=false){
     const mode=current?.mode;restoreMounted();current=null;pane.hidden=true;body.dataset.readerOpen='false';body.dataset.readerFocus='false';focus.setAttribute('aria-pressed','false');
+    monitorToggle.disabled=false;
     readerBody.replaceChildren();readerFooter.replaceChildren();
     if(cancel&&mode==='proposal')el('work-close').click();
     if(cancel&&mode==='organize')el('organize-close').click();
@@ -64,6 +74,7 @@
   }
   function openReader(title,sections,mode='read'){
     if(current)closeReader(current.mode==='proposal'||current.mode==='organize');lastFocus=document.activeElement;current={title,sections,mode};
+    showMonitor(false);monitorToggle.disabled=true;
     readerTitle.textContent=title;readerSelect.replaceChildren(...sections.map((s,i)=>{const o=node('option',s.label);o.value=String(i);return o;}));readerSelect.hidden=sections.length===1;
     pane.hidden=false;body.dataset.readerOpen='true';showSection(0);
     if(innerWidth<1100){body.dataset.readerFocus='true';focus.setAttribute('aria-pressed','true');}
@@ -81,7 +92,7 @@
   function fitInput(){const input=el('chat-question');input.style.height='auto';const expanded=body.dataset.composeExpanded==='true';input.style.height=Math.min(Math.max(input.scrollHeight,expanded?220:58),innerHeight*(expanded ? .46 : .26))+'px';return true;}
   function attachment(id,contentId,label){const b=button(label,()=>openReader(label,[{label:'下則訊息將分享的內容',text:el(contentId).textContent,kind:'code'}],'consent'),'text-button');el(id).append(b);}
   attachment('work-chat-context','work-chat-preview','閱讀待分享的診斷');attachment('document-chat-context','document-chat-content','閱讀本次文件節錄');
-  function resetForSelection(){const id=window.companionChatSelection?.()||'';if(resetForSelection.id!==undefined&&resetForSelection.id!==id)closeReader(false);resetForSelection.id=id;}
+  function resetForSelection(){const id=window.companionChatSelection?.()||'';if(resetForSelection.id!==id){clearMonitor();if(current)closeReader(false);}resetForSelection.id=id;}
   window.addEventListener('companion-chat-selected',resetForSelection);
   window.addEventListener('resize',()=>{
     if(current?.mode==='organize'){
@@ -92,7 +103,7 @@
   });
   window.NexusConversation={
     fitInput,
-    resetContext(){if(current)closeReader(true);},
+    resetContext(){clearMonitor();if(current)closeReader(true);},
     clearConsent(){if(current?.mode==='consent')closeReader(false);},
     openExisting(id){
       if(!['chat-knowledge','chat-source-dialog'].includes(id))return false;
@@ -100,6 +111,28 @@
     },
     proposalOpened(){openReader('這次唯讀診斷',[{label:'來源與授權確認',mount:[el('work-proposal')],footer:[el('work-confirm')]}],'proposal');return true;},
     proposalClosed(){if(current?.mode==='proposal')closeReader(false);},
+    workPhase(p){
+      return ({AWAITING_AUTHORIZATION:'等待你的批准',CREATED:'準備中',STARTING:'連接原生 Codex',
+        RUNNING:'原生診斷執行中',RECEIVING:'正在收到模型內容',SAVING:'主機正在保存成果',
+        CANCEL_REQUESTED:'已請求停止，等待終態',CANCELLED:'已確認停止',FAILED:'執行失敗',
+        UNKNOWN:'終態未確認',RESULT_PENDING_REVIEW:'成果已保存 · 待技術審查',
+        DECLINED:'已拒絕 · 未執行',SUPERSEDED:'已有新訊息 · 舊提案已失效'})[p.phase||p.state];
+    },
+    workMonitor(items,id){
+      const rows=items.filter(p=>p.chat===id&&p.natural_offer&&p.kind==='native_codex');
+      if(!rows.length){clearMonitor();return;}
+      monitorToggle.hidden=false;
+      monitorList.replaceChildren(...rows.map(p=>{
+        const item=node('li'),label=node('strong',p.contract?.title||'唯讀診斷');
+        const view=button('查看工單',()=>{
+          const card=[...el('chat-messages').querySelectorAll('[data-work]')].find(row=>row.dataset.work===p.id);
+          card?.focus({preventScroll:true});card?.scrollIntoView({block:'nearest'});
+        },'text-button');
+        item.append(label,node('p',window.NexusConversation.workPhase(p)||'狀態未確認'),view);
+        if(p.failure_summary)item.append(node('small',p.failure_summary));
+        return item;
+      }));
+    },
     organizeOpened(){openReader('整理選定文件',[{label:'選檔與分享確認',mount:[...(innerWidth<1100?[el('chat-question')]:[]),el('organize-panel')],footer:[el('organize-start')]}],'organize');},
     organizeClosed(){if(current?.mode==='organize')closeReader(false);},
     previewSources(p){

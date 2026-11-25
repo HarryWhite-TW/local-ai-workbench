@@ -2,7 +2,7 @@
 
 ## NEXUS Windows 已接受基準（2026-11-26）
 
-本分支保存 HL-09A Everyday Input & Image Understanding 已接受基準。
+本分支保存 HL-09C Trustworthy Engineering Workspace 已接受基準，包含 HL-09B 自然協作改善。
 
 | GitHub 分支 | 用途 | Windows 啟動器 |
 | --- | --- | --- |
@@ -10,6 +10,7 @@
 | `nexus-hl06-checkpoint` | HL-06 受控唯讀工程協作已接受基準 | `Open-HL06-Engineering-Companion.cmd` |
 | `nexus-hl07-accepted` | HL-07 模型能力目錄已接受基準 | `Open-HL07-Catalog-Companion.cmd` |
 | `nexus-hl09a-accepted` | HL-09A 日常輸入與圖片理解已接受基準 | `Open-HL09A-Companion.cmd` |
+| `nexus-hl09c-accepted` | HL-09C 可信工程工作區已接受基準 | `Open-HL09C-Companion.cmd` |
 
 ### 正式狀態
 
@@ -29,14 +30,22 @@ HL-01 A 為技術與產品接受的限定研究參考，獨立程式與合成驗
 
 GPT-6.2 Sol Medium 已完成圖片理解、同對話文字追問及重啟讀回。每則最多一張 PNG、JPEG 或 WebP，上限 4096 × 4096 與 4 MiB。後續文字回合保留對話文字，再次分析原圖需要明確重新附加。其他模型與推理強度的圖片能力尚未實測，圖片生成尚未實作。接受依據包含 121 項 Python 與 16 項 Node 測試。兩支舊 Playwright 腳本因缺少模組未執行。
 
-HL-09A 已正式收束。下一個建議成果為 HL-09B Natural Collaboration Behavior，技術方向尚待裁決。Windows-first 方向維持，本機與異地 Windows 為主要開發路徑，Codex Cloud 按需補充，GitHub 保存跨設備工程基準。M1 與 SIWC 維持停止，SIWC 工具能力仍未實測。[HL-09A 正式裁決](docs/hl09a-decision.json) · [HL-07 正式裁決](docs/hl07-decision.json) · [HL-06 正式裁決](docs/hl06-decision.json)
+**HL-09B Natural Collaboration Behavior** 曾為 `PARTIAL_WITH_EVIDENCE`。自然討論已有正向真模型證據，較早的提案承諾曾超出固定快照能力。自然協作及工具能力對齊改善已併入 HL-09C，HL-09B 無需獨立發布。
+
+**HL-09C 已獲 TECHNICAL ACCEPTED + PRODUCT ACCEPTED。** 接受範圍包含自然討論、適時工程提案、主機核定交付契約、舊提案失效、來源預覽、真人批准、對話內工單、可收合工作監控及結果回傳。原生唯讀診斷已 `COMPLETED`，MXC 投影經核對，程序已退出，成果已保存並回到原對話。ChatGPT 已唯讀核對診斷核心結論。完整快照行號未逐一重驗，原收據仍為 `RESULT_PENDING_REVIEW`。
+
+123 項 Python、18 項 Node 測試通過。中途執行階段由持久事件證明，瀏覽器直接核對批准前、完成後及重載。服務重啟未驗證，失敗、取消及 `UNKNOWN` 由自動化回歸驗證。工程能力限既有固定快照唯讀診斷，無即時 Git、Shell、測試或程式修改能力。
+
+HL-09C 已正式收束。下一個建議成果為 HL-09D Visual Collaboration，技術方向尚待 ChatGPT 裁決。完整物流式進度時間軸及整體視覺打磨留待 HL-09E。Windows-first 方向維持，本機與異地 Windows 為主要開發路徑，手機可使用 ChatGPT、Codex Cloud 按需補充，GitHub 保存跨設備工程基準。M1 與 SIWC 維持停止，SIWC 工具能力仍未實測。
+
+[HL-09C 正式裁決](docs/hl09c-decision.json) · [HL-09A 正式裁決](docs/hl09a-decision.json) · [HL-07 正式裁決](docs/hl07-decision.json) · [HL-06 正式裁決](docs/hl06-decision.json)
 
 ### 另一台 Windows 電腦
 
-需要 Git、Windows x64、Python **3.14.6 x64**。每個版本各用自己的父目錄，讓 `candidate`、`.venv` 與本機資料相鄰。HL-09A 可獨立恢復。
+需要 Git、Windows x64、Python **3.14.6 x64**。每個版本各用自己的父目錄，讓 `candidate`、`.venv` 與本機資料相鄰。HL-09C 可獨立恢復，使用該工作區自己的 Python 虛擬環境。
 
 ```powershell
-$branch = 'nexus-hl09a-accepted'
+$branch = 'nexus-hl09c-accepted'
 $destination = Join-Path (Get-Location).Path $branch
 New-Item -ItemType Directory -Path $destination -ErrorAction Stop
 git clone --single-branch --branch $branch https://github.com/HarryWhite-TW/local-ai-workbench.git (Join-Path $destination 'candidate')
@@ -63,7 +72,9 @@ git rev-parse HEAD
 
 試用前在新電腦使用自己的正常官方 Codex 登入。Windows 原生委派驗證的版本為 `codex-cli 0.162.1`，使用現有 Node.js/npm 的標準 Windows npm 路徑。需要重建時可執行 `npm install -g @openai/codex@0.162.1`、`codex --version`，再以 `codex login` 完成官方登入。HL-06 執行委派另要求相符的原生執行檔雜湊、可用的 MXC 及 Plus，並預覽本機 Codex 自動載入的非敏感全域 `AGENTS.md`。它須是正常檔案、UTF-8 且不超過 8 KiB，既有全域覆寫檔會使本次診斷停在前置檢查。可在新電腦使用自己的非敏感協作規則。新安裝的登入、MXC 和真人委派能力要在該電腦上另行確認。
 
-HL-09A 沿用 HL-07 的兩份需求檔，鎖定 39 個指定套件，內含 `openai==3.49.0` 與 `pydantic-ai-slim==2.71.0`。完成任一恢復方式後，在 HL-09A 的 `candidate` 內執行 `Open-HL09A-Companion.cmd`，開啟 <http://127.0.0.1:47691/#chat>。啟動器使用該候選父目錄的 `.venv`，資料位於同層 `engineering-project`。新版桌面目錄須符合程式核對的官方套件路徑及雜湊，無法使用時會回退至已核對的舊版目錄或歷史實測。
+HL-09C 沿用 HL-09A 的兩份需求檔，鎖定 39 個指定套件，內含 `openai==3.49.0` 與 `pydantic-ai-slim==2.71.0`。完成任一恢復方式後，在 HL-09C 的 `candidate` 內執行 `Open-HL09C-Companion.cmd`，開啟 <http://127.0.0.1:47711/#chat>。啟動器使用該候選父目錄的 `.venv`，資料位於同層 `engineering-project`。新版桌面目錄須符合程式核對的官方套件路徑及雜湊，無法使用時會回退至已核對的舊版目錄或歷史實測。
+
+HL-09A 的入口為 <http://127.0.0.1:47691/#chat>，由其各自 checkout 的 `Open-HL09A-Companion.cmd` 啟動。
 
 HL-07 的入口為 <http://127.0.0.1:47671/#chat>，由其各自 checkout 的 `Open-HL07-Catalog-Companion.cmd` 啟動。
 

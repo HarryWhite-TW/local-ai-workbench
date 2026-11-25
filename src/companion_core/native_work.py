@@ -13,7 +13,7 @@ from uuid import uuid4
 from .chat import now
 from .domain import Authority, Execution, Failure, Task
 from .native_codex import clean
-from .native_execution import NativeClient, RpcRejected, check_thread, observe_turn, policy, read_turn
+from .native_execution import NativeClient, RpcRejected, TERMINAL_FAILURES, check_thread, observe_turn, policy, read_turn
 from .presentation import safe_text
 from .runtime import EventKind, RuntimeEvent, RuntimeFailure
 from .siwc import ChatError
@@ -40,7 +40,7 @@ STAGES = {"preflight", "connection", "config/read", "thread/start", "thread/resu
 OUTCOMES = {"NOT_SENT", "SENT", "BOUND", "REJECTED", "UNKNOWN"}
 FAILURE_KINDS = {"invalid_request", "method_unavailable", "invalid_parameters",
                  "request_rejected", "windows_read_restriction_unsupported",
-                 "connection_or_protocol", "preflight"}
+                 "connection_or_protocol", "preflight", "native_failure_unknown"} | set(TERMINAL_FAILURES.values())
 FAILURE_LABELS = {
     "invalid_request": "Codex 明確拒絕請求格式。",
     "method_unavailable": "目前 Codex 不提供這項 RPC。",
@@ -49,6 +49,11 @@ FAILURE_LABELS = {
     "request_rejected": "Codex 回傳錯誤；是否開始執行仍依回覆類型判定。",
     "connection_or_protocol": "連線、協定或收尾未能確認。",
     "preflight": "來源或授權前置檢查未通過，未送出診斷。",
+    "native_failure_unknown": "Codex 回報此工作失敗。根因未知。",
+    "native_usage_limit": "Codex 終態明確回報使用額度已達上限。",
+    "native_rate_limit": "Codex 終態明確回報請求速率受限。",
+    "native_context_limit": "Codex 終態明確回報超過上下文容量。",
+    "native_overloaded": "Codex 終態明確回報服務忙碌。",
 }
 EVENTS = {"connecting", "session_bound", "turn_bound", "receiving_result",
           "cancel_requested", "completed", "failed", "cancelled", "unknown", "reconciled"}
@@ -374,17 +379,26 @@ class NativeWork(ProjectWork):
         if meta is None:
             return data
         # On restart an in-progress record is only historical, never live truth.
-        live = self.surface and self.surface.worker and self.surface.worker.is_alive()
-        if p["task_id"] and not data["result_id"] and not (
-                live and self.surface.active.task.id == p["task_id"]):
+        live = bool(self.surface and self.surface.worker and self.surface.worker.is_alive()
+                    and self.surface.active and self.surface.active.task.id == p["task_id"])
+        if p["task_id"] and not data["result_id"] and not live:
             data["state"] = meta["state"] if meta["state"] in ("FAILED", "CANCELLED") else "UNKNOWN"
+        events = json.loads(meta['events'])
+        phase = data['state']
+        if live and not data['result_id'] and phase not in ('CANCEL_REQUESTED','CANCELLED','FAILED','UNKNOWN'):
+            if meta['state'] == 'COMPLETED':
+                phase = 'SAVING'
+            elif events and events[-1]['kind'] == 'receiving_result':
+                phase = 'RECEIVING'
+            elif not meta['turn_id']:
+                phase = 'STARTING'
         with self.chat.connect() as db:
             revised = db.execute("SELECT 1 FROM native_work WHERE parent=?", (p["id"],)).fetchone()
         return data | {"kind": "native_codex", "thread_id": meta["thread_id"],
             "turn_id": meta["turn_id"], "execution_status": meta["state"],
             "review_status": "PENDING_REVIEW", "parent": meta["parent"],
             "can_revise": bool(data["result_id"] and meta["state"] == "COMPLETED" and not meta["parent"] and not revised),
-            "events": json.loads(meta["events"]), "candidate_id": self._identity(p),
+            "events": events, "candidate_id": self._identity(p), "phase":phase,
             "failure_stage": meta["failure_stage"], "failure_code": meta["failure_code"],
             "failure_kind": meta["failure_kind"], "start_outcome": meta["start_outcome"],
             "failure_summary": FAILURE_LABELS.get(meta["failure_kind"], ""),

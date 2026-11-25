@@ -88,6 +88,22 @@ class FakeRpc:
         return 99
 
 
+@pytest.mark.parametrize('info,kind', [('usageLimitExceeded','native_usage_limit'),
+                                      ({'other':{'details':'private'}},'native_failure_unknown'),
+                                      (None,'native_failure_unknown')])
+def test_matched_terminal_failure_retains_only_safe_classification(info, kind):
+    rpc = FakeRpc('fixture')
+    rpc.messages = [
+        {'method':'turn/completed','params':{'threadId':'unrelated','turn':{
+            'id':rpc.turn,'status':'failed','error':{'codexErrorInfo':'rateLimitExceeded'}}}},
+        {'method':'turn/completed','params':{'threadId':rpc.thread,'turn':{
+            'id':rpc.turn,'status':'failed','error':{'message':'private/raw/upstream','codexErrorInfo':info}}}},
+    ]
+    marks = []
+    assert observe_turn(rpc, rpc.thread, rpc.turn, threading.Event(), lambda **fields: marks.append(fields)) == ('FAILED',None)
+    assert marks == [{'failure_stage':'turn/observe','failure_kind':kind}]
+
+
 @pytest.fixture
 def env(tmp_path):
     root, data = tmp_path / "project", tmp_path / "state"
