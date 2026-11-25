@@ -1,5 +1,6 @@
 """Codex subscription agent for the isolated Companion work index."""
 import asyncio
+from base64 import b64encode
 from collections import defaultdict
 from dataclasses import replace
 import hashlib
@@ -8,6 +9,7 @@ import os
 from time import monotonic
 
 from .chat import CREDENTIAL_ERROR, MAX_OUTPUT_CHARS, OUTPUT_LIMIT_ERROR, now, validate_citations
+from .chat_images import PNG_PREFIX
 from .git_readback import normalize, receipts, text_line
 from .natural_work import current_grant, local_only
 from .real_git_job import SavedGitReceipts
@@ -168,7 +170,7 @@ class CodexWorkAgent:
         from pydantic_ai import Agent
         from pydantic_ai.capabilities import ProcessHistory
         from pydantic_ai.exceptions import ModelHTTPError
-        from pydantic_ai.messages import ModelRequest, ModelResponse, PartDeltaEvent, PartStartEvent
+        from pydantic_ai.messages import BinaryContent, ModelRequest, ModelResponse, PartDeltaEvent, PartStartEvent
         from pydantic_ai.messages import TextPart, TextPartDelta, ToolCallPart, ToolReturnPart, UserPromptPart
         from pydantic_ai.usage import UsageLimits
 
@@ -222,9 +224,20 @@ class CodexWorkAgent:
         project_refs = set()
         draft = None
         checkpoint_at = 0.0
+        image = inputs[-1].get('image')
+        prompt = inputs[-1]['content']
+        if image is not None:
+            prompt = [prompt, BinaryContent(data=image, media_type='image/png')]
+        image_sha = hashlib.sha256(image).hexdigest() if image is not None else None
 
         def receipt_history(messages):
             if not receipt_only_granted:
+                if image is not None and audit['wire']:
+                    # The attachment grants a single wire request. Subsequent tool
+                    # requests retain only the text and the model's own observations.
+                    return [replace(m, parts=[replace(p, content=inputs[-1]['content'])
+                              if isinstance(p, UserPromptPart) and isinstance(p.content, (list, tuple)) else p
+                              for p in m.parts]) if isinstance(m, ModelRequest) else m for m in messages]
                 return messages
             # Withhold project results, prior dialogue and intermediate model reasoning
             # from the next request. Keep the approved tool call and its matching return.
@@ -252,9 +265,18 @@ class CodexWorkAgent:
                 raise ChatError("模型請求超出本次工作範圍，未傳送。")
             if private_source and any(request["private"] for request in audit["wire"]):
                 raise ChatError("本輪已使用一次詳細收據；若要再分析，請重新確認。")
+            attachment_urls = [part.get('image_url') for item in data.get('input', [])
+                               if isinstance(item.get('content'), list) for part in item['content']
+                               if part.get('type') == 'input_image']
+            send_image = image is not None and not audit['wire']
+            expected_images = [PNG_PREFIX + b64encode(image).decode('ascii')] if send_image else []
+            if attachment_urls != expected_images:
+                raise ChatError('圖片與本輪授權不符，未送出。')
             audit["wire"].append({"method": "POST", "destination": ENDPOINT, "store": False,
                                   "stream": True, "previous_response": False, "private": bool(private_source),
                                   "model": model_name, "effort": effort})
+            if send_image:
+                audit['wire'][-1]['input_image_sha256'] = image_sha
 
         async def record_response(response):
             audit["wire"][-1]["status"] = response.status_code
@@ -356,7 +378,7 @@ class CodexWorkAgent:
                 event = {"tool": "read_work_evidence", "decision": "unavailable",
                          "source_reference": work_id.strip().startswith("git_jobs#")}
                 audit["tools"].append(event)
-                if detail_requested or chosen or local_only(turn["question"]):
+                if detail_requested or chosen or image is not None or local_only(turn["question"]):
                     event["decision"] = "denied"
                     return {"decision": "denied"}
                 try:
@@ -381,7 +403,7 @@ class CodexWorkAgent:
                 return {"decision": "allowed", "source": source["id"], "evidence": numbered,
                         "receipt_only": receipt_only_granted}
 
-            result = await agent.run(inputs[-1]["content"], message_history=history, conversation_id=ident,
+            result = await agent.run(prompt, message_history=history, conversation_id=ident,
                                      timeout=255, usage_limits=UsageLimits(request_limit=6, tool_calls_limit=8),
                                      event_stream_handler=stream)
             answer, response_id = result.output, result.response.provider_response_id
@@ -414,6 +436,8 @@ class CodexWorkAgent:
             raise ChatError("已取消；保留已收到的文字。") from None
         except Exception as error:
             audit.update(result="failed", error=type(error).__name__)
+            if image is not None and isinstance(error, ModelHTTPError) and error.status_code in (400, 413, 415, 422):
+                raise ChatError('服務未接受這張圖片。圖片已保存在本機對話，可縮小後重新附加。') from None
             if self.model_catalog and isinstance(error, ModelHTTPError):
                 body = error.body if isinstance(error.body, dict) else {}
                 details = body.get("error", body)

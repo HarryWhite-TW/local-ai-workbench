@@ -1,0 +1,32 @@
+[
+  {
+    "date": "2026-11-26",
+    "kind": "decision",
+    "scope": "HL-08 止損裁決與後續工程權限",
+    "slug": "hl08-closed",
+    "source": "coordination",
+    "summary": "HL-08 Controlled Engineering Implementation 為 CLOSED — PARTIAL_WITH_EVIDENCE。保留 Windows MXC 隔離實測及真人批准後的原生執行證據。工程終態 FAILED，候選無修改，根因未知。後續從 HL-07 基準接續，維持 HL-06 已接受的受控唯讀工程委派權限。",
+    "title": "HL-08 部分成果正式收束",
+    "visibility": "shared"
+  },
+  {
+    "date": "2026-11-26",
+    "kind": "decision",
+    "scope": "ChatGPT 獨立技術審查及 Windows 真人日常輸入驗收",
+    "slug": "hl09a-accepted",
+    "source": "coordination",
+    "summary": "HL-09A Everyday Input & Image Understanding 已獲 TECHNICAL ACCEPTED + PRODUCT ACCEPTED，限已驗證範圍。接受 Enter 傳送、Shift+Enter 換行、Ctrl/Cmd+Enter、中文 IME 防誤送與滑鼠傳送，以及圖片選取、貼上、拖放、預覽、移除及本機保存。GPT-6.2 Sol Medium 已完成真實圖片理解、文字追問及重啟讀回。每則一張 PNG、JPEG 或 WebP，上限 4096 × 4096、4 MiB。後續文字回合不自動重送圖片，再次分析原圖需要明確重新附加。其他模型與推理強度的圖片能力尚未實測，圖片生成尚未實作。121 項 Python、16 項 Node 測試通過，兩支舊 Playwright 腳本因缺少模組未執行。",
+    "title": "HL-09A 日常輸入與圖片理解正式接受",
+    "visibility": "shared"
+  },
+  {
+    "date": "2026-11-26",
+    "kind": "decision",
+    "scope": "HL-09A 正式收束與 HL-09B 規劃邊界",
+    "slug": "mainline",
+    "source": "coordination",
+    "summary": "HL-01 至 HL-07 維持各自接受或完成狀態。HL-08 已 CLOSED — PARTIAL_WITH_EVIDENCE，保留隔離技術與失敗證據。HL-09A 已獲 TECHNICAL ACCEPTED + PRODUCT ACCEPTED，並正式收束。下一個建議成果為 HL-09B Natural Collaboration Behavior，技術方向尚待裁決。維持 Windows-first 產品與開發方向，本機及異地 Windows 是主要開發路徑，Codex Cloud 按需補充，GitHub 作為跨設備工程基準。",
+    "title": "目前進度與下一步主線裁決",
+    "visibility": "shared"
+  }
+]

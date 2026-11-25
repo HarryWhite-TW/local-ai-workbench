@@ -1,6 +1,7 @@
 """Bounded text-only conversations, separate from engineering review receipts."""
 from datetime import datetime, timezone
 from contextlib import contextmanager
+from .chat_images import IMAGE_MODEL, IMAGE_EFFORT, LOCAL_IMAGE, decode_image
 import hashlib
 import json
 from pathlib import Path
@@ -140,6 +141,8 @@ class Conversations:
                     chat TEXT PRIMARY KEY REFERENCES chats(id),
                     workspace TEXT NOT NULL, account TEXT NOT NULL,
                     linked_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS chat_images (
+                    turn TEXT PRIMARY KEY REFERENCES turns(id), png BLOB NOT NULL);
             """)
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS turn_delivery (
@@ -184,6 +187,7 @@ class Conversations:
                       "sources": SOURCE_CHOICES, "continuity": self.continuity.available}
             if self.codex_agent:
                 result["provider"] = "openai-codex"
+                result["image_input"] = {"model":IMAGE_MODEL, "effort":IMAGE_EFFORT}
                 if self.codex_agent.model_catalog:
                     result["model_catalog"] = self.codex_agent.model_catalog.status(account)
                     if readable and self.models_account == account:
@@ -206,7 +210,9 @@ class Conversations:
                 raise ChatError("找不到目前帳戶與工作區可讀取的對話；請使用原本的帳戶。")
             result = dict(row)
             result["turns"] = []
-            for r in db.execute("SELECT * FROM turns WHERE chat=? ORDER BY created, rowid", (ident,)):
+            for r in db.execute("""SELECT turns.*,
+                    EXISTS(SELECT 1 FROM chat_images WHERE turn=turns.id) AS has_image
+                    FROM turns WHERE chat=? ORDER BY created, rowid""", (ident,)):
                 value = dict(r)
                 delivery = db.execute("SELECT state,effort,error_code,error_param FROM turn_delivery WHERE turn=?", (value['id'],)).fetchone()
                 if delivery:
@@ -226,6 +232,16 @@ class Conversations:
             if workspace != self.workspace or self._project_owner(db) != account:
                 raise ChatError('帳戶或工作區已變更，請重新讀取對話。')
             return result
+
+    def image(self, chat_id, turn_id):
+        with self.lock, getattr(self.auth, 'lock', self.lock), self.connect() as db:
+            owner = self._project_owner(db, chat_id, require_chat=True)
+            row = db.execute("""SELECT i.png FROM chat_images i JOIN turns t ON t.id=i.turn
+                JOIN chats c ON t.chat=c.id WHERE i.turn=? AND c.id=? AND c.workspace=? AND c.account=?""",
+                (turn_id, chat_id, self.workspace, owner)).fetchone()
+            if not row:
+                raise ChatError('找不到此對話的圖片。')
+            return row['png']
 
     def _project_owner(self, db, ident=None, *, require_chat=False):
         """New project entrypoints must not inherit the legacy chat-read gap."""
@@ -371,12 +387,22 @@ class Conversations:
     def submit(self, body):
         required = {"chat", "question", "sources", "model", "preview"}
         if not isinstance(body, dict) or not required <= set(body) or set(body) - required - {
-            "effort", "request_id", "web_markdown_preview"
+            "effort", "request_id", "web_markdown_preview", "image"
         }:
             raise ChatError("對話要求格式不正確。")
         question = body["question"]
-        if not isinstance(question, str) or not question.strip() or len(question) > 4000:
+        if not isinstance(question, str) or (not question.strip() and 'image' not in body) or len(question) > 4000:
             raise ChatError("問題需要 1 到 4000 個字元。")
+        image = None
+        if 'image' in body:
+            if not self.codex_agent or (body['model'], body.get('effort')) != (IMAGE_MODEL, IMAGE_EFFORT):
+                raise ChatError('圖片目前僅支援 GPT-6.2 Sol Medium。請切換後再送出。')
+            from .natural_work import local_only
+            if (body['sources'] != [] or body['preview'] is not None or body.get('web_markdown_preview')
+                    or local_only(question) or LOCAL_IMAGE.search(question)):
+                raise ChatError('圖片需與其他來源分享及本機操作分開送出。')
+            image = decode_image(body['image'])
+            question = question.strip() or '請說明這張圖片的內容。'
         handoff = body.get("web_markdown_preview", False)
         if not isinstance(handoff, bool):
             raise ChatError("Markdown 預覽選項格式不正確。")
@@ -418,6 +444,8 @@ class Conversations:
             if self.delegation:
                 from .daily_delegation import local_intent
                 if intent := local_intent(question):
+                    if image is not None:
+                        raise ChatError('這項本機操作不能同時分享圖片。')
                     if not self.codex_agent or intent["kind"] != "clarify":
                         return self.delegation.submit(body, account, digest, intent)
             account = self.auth.vault.data["active"]
@@ -489,6 +517,8 @@ class Conversations:
                                (chat_id, self.workspace, account, question.strip()[:60], now()))
                 db.execute("INSERT INTO turns (id,chat,question,sources,model,created,status) VALUES (?,?,?,?,?,?,?)",
                     (turn_id, chat_id, question.strip(), json.dumps(chosen, ensure_ascii=False), model, now(), "pending"))
+                if image is not None:
+                    db.execute('INSERT INTO chat_images(turn,png) VALUES (?,?)', (turn_id, image))
                 db.execute("INSERT INTO turn_delivery(turn,state,effort,request_key,request_hash,owner,workspace) VALUES (?,?,?,?,?,?,?)",
                            (turn_id,'pending',effort,request_key,digest,account,self.workspace))
                 if inherited_knowledge:
@@ -496,6 +526,8 @@ class Conversations:
                 if handoff:
                     self.delegation.insert(db, turn_id, "AWAITING_ANSWER",
                                            {"kind": "preview", "answer": turn_id, "e1": True})
+            if image is not None:
+                inputs[-1]['image'] = image
             self._start_worker(chat_id, turn_id, model, token, inputs, chosen, routing=routing)
             return {"chat": chat_id, "turn": turn_id}
 

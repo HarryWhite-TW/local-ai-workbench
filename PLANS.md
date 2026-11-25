@@ -1,5 +1,13 @@
 # PLANS.md
 
+## NEXUS HL-09A 正式收束（2026-11-26）
+
+HL-01 至 HL-07 維持既有接受或完成狀態。HL-08 已 **CLOSED — PARTIAL_WITH_EVIDENCE**，保留隔離技術與原生工作失敗證據。HL-09A 從已接受的 HL-07 基準接續，維持現有唯讀工程委派邊界。
+
+HL-09A Everyday Input & Image Understanding 已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**。已驗證一般鍵盤與中文 IME 輸入、圖片選取、貼上、拖放、預覽、移除、本機保存，以及 GPT-6.2 Sol Medium 的真實圖片理解及文字追問。其他模型與推理強度的圖片能力、圖片生成不屬本次接受範圍。詳細限制見[正式裁決](docs/hl09a-decision.json)。
+
+HL-09A 已收束。下一個建議成果為 HL-09B Natural Collaboration Behavior，技術方向尚待裁決。產品及主要開發路徑維持 Windows-first。本機和異地 Windows 為主要開發環境，Codex Cloud 按需補充，GitHub 作為跨設備工程基準。下方保留較早的計畫與裁決。
+
 ## NEXUS HL-07 正式收束（2026-11-26）
 
 HL-01 至 HL-06 維持各自的接受或完成狀態。HL-07 Model Capability Catalog 已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，包含 GPT-6.2 Sol 與 Astra 的正式目錄整合、推理強度、分層實測標記、可信回退、跨模型對話及重啟保存。接受範圍與限制見 [正式裁決](docs/hl07-decision.json)。

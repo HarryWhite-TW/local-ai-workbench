@@ -340,12 +340,21 @@
     }
     if(el('organize-open')){el('organize-open').hidden=!organizeEnabled;el('organize-open').disabled=!workspace||!connected||sending||authChanging||authPreparing||!!state?.busy||!state?.auth.active||!!state?.auth.pending||!!webRequest;}
     const hasSource=chosen().length>0;
+    if(imageScope!==imageContext())clearImage();
+    const hasImage=!!imageDraft;
     const model=state?.models.find(m=>m.slug===el('chat-model').value);
     const needsLogin=!state?.auth.active||state.auth.accounts.find(a=>a.id===state.auth.active)?.signed_in===false;
     const needsModel=(!delegationEnabled&&!gitReadbackEnabled)||hasSource||!!webRequest;
     const unavailable=state?.model_catalog&&(catalogLoading||!model?.reasoning_efforts.includes(el('chat-effort').value));
     el('chat-send').disabled=!connected||sending||authChanging||authPreparing||!!state?.busy||!state?.auth.active||state?.auth.pending||
-      needsLogin||unavailable||(needsModel&&(catalogLoading||!model))||(hasSource&&!preview)||(!!webRequest&&!webRecord)||!!window.NexusOrganize?.active();
+      needsLogin||unavailable||(needsModel&&(catalogLoading||!model))||(hasSource&&!preview)||(!!webRequest&&!webRecord)||!!window.NexusOrganize?.active()||
+      imageLoading||(hasImage&&(!imageModelSelected()||hasSource||!!webRequest));
+    el('chat-question').required=!hasImage;
+    el('chat-image-controls').hidden=!state?.image_input;
+    el('chat-image-pick').disabled=!canAttachImage();
+    el('chat-image-remove').disabled=sending;
+    el('chat-image-hint').textContent=hasImage&&!imageModelSelected()?'請切換至 GPT-6.2 Sol Medium 後送出。':
+      hasImage&&(hasSource||webRequest)?'請先移除其他分享來源，再送出圖片。':'也可貼上截圖或將圖片拖進輸入區';
     if(webEnabled){
       el('web-open').hidden=false;
       el('web-open').disabled=!connected||needsLogin||authChanging||authPreparing||sending||!!webRequest||!!window.NexusOrganize?.active();
@@ -717,6 +726,20 @@
       const box=document.createElement('article');box.className='chat-message';box.dataset.turn=turn.id;
       const question=text('div','');question.className='chat-user';
       question.append(text('strong','你'),text('p',turn.question));
+      if(turn.has_image){
+        const url='/chat-image/'+encodeURIComponent(id)+'/'+encodeURIComponent(turn.id);
+        const image=document.createElement('img');image.className='chat-sent-image';image.alt='此訊息附加的圖片';image.src=url;
+        const reuse=text('button','將此圖附加到下一則');reuse.type='button';reuse.className='text-button';
+        reuse.onclick=async()=>{
+          if(selected!==id||!canAttachImage())return;
+          await loadImage(async()=>{
+            const response=await fetch(url,{cache:'no-store'});
+            if(!response.ok)throw Error('無法讀取此對話的圖片。');
+            return response.blob();
+          });
+        };
+        question.append(image,reuse);
+      }
       const answer=text('div','');answer.className='chat-answer';
       const stamp=text('p',new Date(turn.created).toLocaleString()+' · '+turn.model);stamp.className='chat-time';
       if(turn.daily_work&&!turn.daily_work.e1&&!turn.daily_work.generated){
@@ -1289,13 +1312,72 @@
     syncReadingControls();
   };
   new ResizeObserver(queueReadingUpdate).observe(el('chat-messages'));
+  const imageLimit=4*1024*1024;
+  let imageDraft=null,imageScope=null,imageGeneration=0,imageLoading=false;
+  function imageContext(){return JSON.stringify([workspace,state?.auth.active,selected||null]);}
+  function imageModelSelected(){return state?.image_input?.model===el('chat-model').value&&state.image_input.effort===el('chat-effort').value;}
+  function canAttachImage(){return !!state?.image_input&&connected&&!!state?.auth.active&&!state?.auth.pending&&
+    !sending&&!authChanging&&!authPreparing&&!state.busy&&!window.NexusOrganize?.active();}
+  function imageStatus(message){const node=el('chat-image-status');node.textContent=message;node.hidden=!message;}
+  function clearImage(){
+    imageGeneration++;imageLoading=false;imageScope=imageContext();
+    if(imageDraft)URL.revokeObjectURL(imageDraft.url);
+    imageDraft=null;el('chat-image-preview').removeAttribute('src');el('chat-image-draft').hidden=true;imageStatus('');
+  }
+  async function loadImage(getFile){
+    if(!canAttachImage())return;
+    const scope=imageContext(),generation=++imageGeneration;
+    imageScope=scope;imageLoading=true;imageStatus('正在準備圖片…');updateSend();
+    try{
+      const file=await getFile();
+      if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('只支援 PNG、JPEG 或 WebP。');
+      if(file.size>imageLimit)throw Error('圖片超過 4 MiB，請縮小後重新選取。');
+      const bitmap=await createImageBitmap(file).catch(()=>{throw Error('無法解碼圖片，請重新選取。');});
+      let png;
+      try{
+        if(bitmap.width>4096||bitmap.height>4096)throw Error('圖片尺寸超過 4096 × 4096。');
+        const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;
+        canvas.getContext('2d').drawImage(bitmap,0,0);
+        png=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+      }finally{bitmap.close();}
+      if(!png||png.size>imageLimit)throw Error('圖片轉成 PNG 後超過 4 MiB，請縮小後重新選取。');
+      const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(Error('無法讀取圖片。'));reader.readAsDataURL(png);});
+      if(scope!==imageContext()||generation!==imageGeneration||!canAttachImage())return;
+      if(imageDraft)URL.revokeObjectURL(imageDraft.url);
+      imageDraft={data,url:URL.createObjectURL(png)};
+      el('chat-image-preview').src=imageDraft.url;el('chat-image-draft').hidden=false;imageStatus('');
+    }catch(error){if(scope===imageContext()&&generation===imageGeneration)imageStatus(error.message||'無法讀取圖片。');}
+    finally{if(generation===imageGeneration){imageLoading=false;updateSend();}}
+  }
+  function takeImageFiles(files){
+    if(!canAttachImage()||!files.length)return;
+    if(files.length!==1){imageStatus('每則訊息可附加一張圖片。');return;}
+    void loadImage(()=>files[0]);
+  }
+  el('chat-image-pick').onclick=()=>el('chat-image-file').click();
+  el('chat-image-file').onchange=event=>{takeImageFiles([...event.target.files]);event.target.value='';};
+  el('chat-image-remove').onclick=()=>{clearImage();updateSend();};
+  el('chat-question').addEventListener('paste',event=>{
+    const files=Array.from(event.clipboardData?.items||[]).filter(item=>item.kind==='file'&&item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);
+    if(files.length&&canAttachImage()){event.preventDefault();takeImageFiles(files);}
+  });
+  el('chat-form').addEventListener('dragover',event=>{if(event.dataTransfer.types.includes('Files'))event.preventDefault();});
+  el('chat-form').addEventListener('drop',event=>{
+    const files=Array.from(event.dataTransfer.files);
+    if(files.length){event.preventDefault();takeImageFiles(files);}
+  });
   el('chat-question').oninput=()=>{if(webRequest)clearSources();saveDraft();fitInput();};
+  let composingQuestion=false;
+  el('chat-question').addEventListener('compositionstart',()=>{composingQuestion=true;});
+  el('chat-question').addEventListener('compositionend',()=>{composingQuestion=false;});
   el('chat-question').onkeydown=e=>{
-    if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&!e.isComposing){
-      e.preventDefault();
-      if(window.NexusOrganize?.active()){if(!el('organize-start').disabled)void window.NexusOrganize.submit();}
-      else if(!el('chat-send').disabled)el('chat-form').requestSubmit();
-    }
+    if(e.defaultPrevented||e.key!=='Enter'||e.shiftKey||e.altKey||e.isComposing||e.keyCode===229||composingQuestion)return;
+    const organizing=window.NexusOrganize?.active();
+    if(organizing&&!e.ctrlKey&&!e.metaKey)return;
+    e.preventDefault();
+    if(e.repeat)return;
+    if(organizing){if(!el('organize-start').disabled)void window.NexusOrganize.submit();}
+    else if(!el('chat-send').disabled)el('chat-form').requestSubmit();
   };
   el('chat-sources').onchange=()=>{
     clearDocumentConsent();
@@ -1566,11 +1648,14 @@
   el('chat-form').onsubmit=async event=>{
     event.preventDefault();if(window.NexusOrganize?.active()){await window.NexusOrganize.submit();return;}
     const sharingWeb=event.submitter===el('web-share');
-    if(el('chat-send').disabled||(sharingWeb?!webRecord:!!webRequest))return;
+    if(sending||el('chat-send').disabled||(sharingWeb?!webRecord:!!webRequest))return;
     const origin=selected,question=el('chat-question').value;
+    const image=imageScope===imageContext()?imageDraft:null;
+    if(!question.trim()&&!image){notice('請輸入訊息或附加圖片。');return;}
     sending=true;saveDraft();updateSend();notice('正在提交訊息…');
     try{
       const payload={chat:origin||null,question,sources:chosen(),model:el('chat-model').value,preview,effort:el('chat-effort').value||null};
+      if(image)payload.image=image.data;
       if(sharingWeb&&delegationEnabled&&el('web-delivery').checked)payload.web_markdown_preview=true;
       const owner=state.auth.active,root=workspace;
       const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(payload))))].map(v=>v.toString(16).padStart(2,'0')).join('');
@@ -1581,6 +1666,7 @@
       sessionStorage.setItem(key,JSON.stringify(receipt));
       const result=await api('send',{...payload,request_id:receipt.id});
       sessionStorage.removeItem(key);
+      clearImage();
       drafts.delete(draftKey(origin));selected=result.chat;el('chat-question').value='';clearSources();fitInput();
       if(returnWork?.chat===origin)returnWork.chat=selected;
       persistChat();selectedChanged(true);

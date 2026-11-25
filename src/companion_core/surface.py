@@ -14,6 +14,7 @@ import threading
 from urllib.parse import parse_qs, urlsplit
 
 from .codex import CodexRuntime
+from .chat_images import IMAGE_SEND_LIMIT
 from .core import Companion
 from .domain import Authority, Execution
 from .presentation import FAILURES, HumanView, safe_text
@@ -193,6 +194,8 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
             if not isinstance(data, bytes):
                 data = json.dumps(data, ensure_ascii=False).encode("utf-8")
             csp = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            if getattr(chat, 'codex_agent', None):
+                csp += "; img-src 'self' blob:"
             if mime.startswith('text/html') and getattr(chat, 'controlled_code', None) is not None:
                 nonce = secrets.token_hex(24)
                 data = data.replace(b'<body ', ('<body data-demo-nonce="' + nonce + '" ').encode(), 1)
@@ -257,6 +260,14 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                     # and emission too, not just outside the database read.
                     with chat.lock, getattr(chat.auth, 'lock', chat.lock):
                         self._reply(200, chat.snapshot())
+                elif self.path.startswith('/chat-image/') and chat is not None and len(self.path) == 85:
+                    from .siwc import ChatError
+                    try:
+                        chat_id, turn_id = self.path.removeprefix('/chat-image/').split('/')
+                        png = chat.image(chat_id, turn_id)
+                        self._reply(200, png, 'image/png')
+                    except (ChatError, ValueError):
+                        self._reply(404, {'error':'找不到目前工作區可讀取的圖片。'})
                 elif self.path in ("/", "/surface.js", "/surface.css", "/chat.js", "/chat.css",
                                    "/organize.js", "/organize.css", "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css", "/engineering-pilot.js", "/controlled-code.js", "/conversation-mode.js", "/conversation-workspace.js", "/conversation-workspace.css"):
                     name = "index.html" if self.path == "/" else self.path[1:]
@@ -302,6 +313,11 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 limit = 1_100_000 if self.path in ('/api/chat/continuity-save', '/api/chat/organize-start') else 32768
+                if self.path == '/api/chat/send' and getattr(chat, 'codex_agent', None):
+                    limit = IMAGE_SEND_LIMIT
+                    if length > limit:
+                        self._reply(413, {'error':'圖片超過 4 MiB，未送出。'})
+                        return
                 if not 0 < length <= limit:
                     raise ReviewError()
                 def unique_fields(pairs):
