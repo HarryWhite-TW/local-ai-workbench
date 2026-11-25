@@ -90,6 +90,7 @@ class CodexWorkAgent:
     def __init__(self, audit_path):
         self.receipts = SavedGitReceipts()
         self.audit_path = audit_path
+        self.model_catalog = None
 
     @staticmethod
     def catalog():
@@ -100,6 +101,10 @@ class CodexWorkAgent:
     @staticmethod
     def owns_model(model):
         return any(model == slug for slug, *_ in VERIFIED_MODELS)
+
+    def choices(self, chat, owner):
+        baseline = self.catalog()
+        return self.model_catalog.choices(chat, owner, baseline) if self.model_catalog else baseline
 
     def jobs(self, chat, chat_id, owner):
         with chat.connect() as db:
@@ -162,6 +167,7 @@ class CodexWorkAgent:
     async def _run(self, chat, ident, inputs, chosen, effort):
         from pydantic_ai import Agent
         from pydantic_ai.capabilities import ProcessHistory
+        from pydantic_ai.exceptions import ModelHTTPError
         from pydantic_ai.messages import ModelRequest, ModelResponse, PartDeltaEvent, PartStartEvent
         from pydantic_ai.messages import TextPart, TextPartDelta, ToolCallPart, ToolReturnPart, UserPromptPart
         from pydantic_ai.usage import UsageLimits
@@ -172,12 +178,14 @@ class CodexWorkAgent:
             model_name = turn["model"]
             owner = chat._project_owner(db, chat_id, require_chat=True)
             previous = db.execute(
-                """SELECT sources,model FROM turns WHERE chat=? AND id<>? AND status='complete'
+                """SELECT sources,model,response_id FROM turns WHERE chat=? AND id<>? AND status='complete'
                    ORDER BY rowid DESC LIMIT 1""", (chat_id, ident)).fetchone()
-        if not any(model_name == slug and effort in efforts for slug, _, efforts, _ in VERIFIED_MODELS):
-            raise ChatError("此模型與推理強度組合尚未通過訂閱驗證。")
+        if not any(model_name == row["slug"] and effort in row["reasoning_efforts"]
+                   for row in self.choices(chat, owner)):
+            raise ChatError("所選模型與推理強度目前不可用，請重新讀取目錄。")
         instructions = RULES
-        previous_sources = json.loads(previous["sources"]) if previous and self.owns_model(previous["model"]) else []
+        previous_sources = (json.loads(previous["sources"])
+                            if previous and (previous["response_id"] or self.owns_model(previous["model"])) else [])
         if len(previous_sources) == 1 and previous_sources[0]["key"].startswith("git-work:"):
             work_id = previous_sources[0]["key"].removeprefix("git-work:")
             match = self.lookup(chat, chat_id, owner, work_id)
@@ -406,6 +414,16 @@ class CodexWorkAgent:
             raise ChatError("已取消；保留已收到的文字。") from None
         except Exception as error:
             audit.update(result="failed", error=type(error).__name__)
+            if self.model_catalog and isinstance(error, ModelHTTPError):
+                body = error.body if isinstance(error.body, dict) else {}
+                details = body.get("error", body)
+                code = details.get("code") if isinstance(details, dict) else None
+                param = details.get("param") if isinstance(details, dict) else None
+                if code == "model_not_found" or (code == "unsupported_value" and param == "reasoning.effort"):
+                    self.model_catalog.unavailable.add((model_name, effort))
+                    raise ChatError("訂閱服務拒絕所選模型與推理強度。既有對話已保留，請重新選擇。") from None
+                if error.status_code in (401, 403, 429):
+                    raise ChatError("訂閱服務暫時無法使用所選模型。請確認官方登入、資格或額度。") from None
             if chat.cancel_event.is_set() or isinstance(error, ChatError):
                 raise
             raise ChatError("Codex 訂閱回合未完成。請確認既有訂閱、登入及網路狀態。") from None

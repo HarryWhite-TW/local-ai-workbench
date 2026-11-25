@@ -184,6 +184,10 @@ class Conversations:
                       "sources": SOURCE_CHOICES, "continuity": self.continuity.available}
             if self.codex_agent:
                 result["provider"] = "openai-codex"
+                if self.codex_agent.model_catalog:
+                    result["model_catalog"] = self.codex_agent.model_catalog.status(account)
+                    if readable and self.models_account == account:
+                        result["models"] = self.codex_agent.choices(self, account)
             if self.knowledge and readable:
                 result["project_knowledge"] = True
             if (workspace != self.workspace or account != self.auth.vault.data['active']
@@ -304,8 +308,10 @@ class Conversations:
             self.models, self.models_account = [], None
             account = self.auth.vault.data["active"]
             if self.codex_agent:
-                self.models = self.codex_agent.catalog()
                 self.models_account = self._project_owner(None)
+                if self.codex_agent.model_catalog:
+                    self.codex_agent.model_catalog.refresh(self.workspace, self.models_account)
+                self.models = self.codex_agent.choices(self, self.models_account)
                 return list(self.models)
             try:
                 token = self.auth.access(account)
@@ -416,9 +422,11 @@ class Conversations:
                         return self.delegation.submit(body, account, digest, intent)
             account = self.auth.vault.data["active"]
             model = body["model"]
-            if self.models_account != account or model not in [m["slug"] for m in self.models]:
-                raise ChatError("請先讀取並選擇此帳戶的模型。")
-            metadata = next(m for m in self.models if m['slug'] == model)
+            available = (self.codex_agent.choices(self, account)
+                         if self.codex_agent and self.codex_agent.model_catalog else self.models)
+            metadata = next((row for row in available if row["slug"] == model), None)
+            if self.models_account != account or not metadata or (self.codex_agent and not metadata["reasoning_efforts"]):
+                raise ChatError("所選模型目前不可用，請重新讀取目錄或明確選擇其他模型。")
             if effort is not None and (not isinstance(effort,str) or effort not in metadata.get('reasoning_efforts', [])):
                 raise ChatError('此模型沒有可核實的所選思考強度；未送出請求。')
             if effort is None and self.codex_agent:
@@ -449,8 +457,8 @@ class Conversations:
                     from_revision = knowledge_turns.get(turn["id"])
                     if from_revision is not None and from_revision != knowledge_revision:
                         continue
-                    if self.codex_agent and (not self.codex_agent.owns_model(turn["model"]) or turn["status"] != "complete"
-                                             or turn["sources"]):
+                    if self.codex_agent and (turn["status"] != "complete" or turn["sources"]
+                                             or (not turn["response_id"] and not self.codex_agent.owns_model(turn["model"]))):
                         continue
                     if turn["id"] in routed_work:
                         # This user's question already went to the router. Neither

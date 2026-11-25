@@ -1,5 +1,11 @@
 # PLANS.md
 
+## NEXUS HL-07 正式收束（2026-11-26）
+
+HL-01 至 HL-06 維持各自的接受或完成狀態。HL-07 Model Capability Catalog 已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，包含 GPT-6.2 Sol 與 Astra 的正式目錄整合、推理強度、分層實測標記、可信回退、跨模型對話及重啟保存。接受範圍與限制見 [正式裁決](docs/hl07-decision.json)。
+
+HL-07 已收束。下一個建議成果為 HL-08 Controlled Engineering Implementation，技術方向與工程寫入授權尚未裁決。以下各節保留其當時的歷史計畫與觀察。
+
 ## NEXUS HL-06 正式收束（2026-11-25）
 
 HL-01 至 HL-05 維持既有接受或完成狀態。HL-06 Natural Engineering Collaboration 已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，限已驗證的受控唯讀協作。跨設備程式與核心環境恢復已完成，第二台 Windows 的真人介面與原生委派已驗證。診斷收據維持 `RESULT_PENDING_REVIEW`。

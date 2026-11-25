@@ -128,6 +128,8 @@ def main():
             "npm/node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe")
         if args.natural_engineering_collaboration:
             from .native_collaboration import NativeCollaboration
+            from .model_catalog import CodexCatalog
+            agent.model_catalog = CodexCatalog(codex, prefer_desktop=True)
             work = NativeCollaboration(chat, codex, directory)
         else:
             work = NativeWork(chat, executable=codex)

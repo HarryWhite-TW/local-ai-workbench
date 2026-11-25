@@ -118,7 +118,10 @@
     const signature=JSON.stringify(values);
     if(optionLists.get(node)!==signature) {
       node.replaceChildren();if(empty)node.append(new Option(empty,''));
-      for(const item of values)node.append(new Option(item.label,item.id));
+      for(const item of values){
+        const option=new Option(item.label,item.id);
+        option.disabled=!!item.disabled;node.append(option);
+      }
       optionLists.set(node,signature);
     }
     if([...node.options].some(o=>o.value===value))node.value=value;
@@ -290,10 +293,37 @@
       el('companion-start-new').hidden=false;el('companion-start-new').focus();
     }
   }
+  const catalogChoices=new Map();
+  const evidenceLabel={verified:'NEXUS 實測',provider_verified:'Provider 已實測，NEXUS 尚未實測',
+    unverified:'官方列出，尚未實測',unsupported:'服務拒絕此組合',sdk_unsupported:'目前 SDK 不支援'};
+  const catalogNotice={pending:'尚未讀取官方目錄。',fallback:'官方目錄讀取失敗，目前顯示歷史實測選項。',
+    expired:'官方目錄已過期。目前僅保留歷史實測選項，請重新讀取模型。',
+    fallback_current:'新版官方目錄不可用，目前使用已核對的舊版目錄與 NEXUS 實測選項。',
+    account_unavailable:'尚未確認官方 Codex Plus 登入。請確認帳戶後重新讀取。',
+    current:'目錄與實測狀態各自標示。可用一般訊息驗證尚未實測的組合。'};
+  function renderCatalogSelection() {
+    const models=state.models, modelNode=el('chat-model'), effortNode=el('chat-effort');
+    if(!selected&&!catalogChoices.has('')&&models.length){
+      const first=models.find(m=>m.default_effort);
+      if(first)catalogChoices.set('',{model:first.slug,effort:first.default_effort});
+    }
+    const pick=catalogChoices.get(selected), model=models.find(m=>m.slug===pick?.model);
+    const items=models.map(m=>({id:m.slug,label:m.display_name+(m.official_listed?' · 官方目錄':' · 歷史紀錄'),
+      disabled:!m.reasoning_efforts.length}));
+    if(pick?.model&&!model)items.push({id:pick.model,label:pick.model+' · 目前不可用',disabled:true});
+    options(modelNode,items,pick?.model||'','選擇模型');
+    const efforts=Object.entries(model?.effort_status||{}).map(([id,status])=>(
+      {id,label:id+' · '+evidenceLabel[status],disabled:!model.reasoning_efforts.includes(id)}));
+    if(pick?.effort&&!efforts.some(v=>v.id===pick.effort)){
+      efforts.push({id:pick.effort,label:pick.effort+' · 目前不可用',disabled:true});
+    }
+    options(effortNode,efforts,pick?.effort||'','選擇思考強度');
+  }
   function updateEffort() {
+    if(state?.model_catalog)renderCatalogSelection();
     const model=state?.models.find(m=>m.slug===el('chat-model').value);
     const key=JSON.stringify([state?.auth.active,model?.slug,model?.reasoning_efforts]);
-    if(el('chat-effort').dataset.model!==key){
+    if(!state?.model_catalog&&el('chat-effort').dataset.model!==key){
       el('chat-effort').dataset.model=key;
       const effort=model?.default_effort||'';
       options(el('chat-effort'),(model?.reasoning_efforts||[]).map(v=>({id:v,label:v})), effort, '由服務決定');
@@ -313,8 +343,9 @@
     const model=state?.models.find(m=>m.slug===el('chat-model').value);
     const needsLogin=!state?.auth.active||state.auth.accounts.find(a=>a.id===state.auth.active)?.signed_in===false;
     const needsModel=(!delegationEnabled&&!gitReadbackEnabled)||hasSource||!!webRequest;
+    const unavailable=state?.model_catalog&&(catalogLoading||!model?.reasoning_efforts.includes(el('chat-effort').value));
     el('chat-send').disabled=!connected||sending||authChanging||authPreparing||!!state?.busy||!state?.auth.active||state?.auth.pending||
-      needsLogin||(needsModel&&(catalogLoading||!model))||(hasSource&&!preview)||(!!webRequest&&!webRecord)||!!window.NexusOrganize?.active();
+      needsLogin||unavailable||(needsModel&&(catalogLoading||!model))||(hasSource&&!preview)||(!!webRequest&&!webRecord)||!!window.NexusOrganize?.active();
     if(webEnabled){
       el('web-open').hidden=false;
       el('web-open').disabled=!connected||needsLogin||authChanging||authPreparing||sending||!!webRequest||!!window.NexusOrganize?.active();
@@ -344,7 +375,10 @@
       gitReadbackEnabled&&!model?'可以查詢本機工程收據。':
       catalogLoading?'正在讀取可用模型…':!model?catalogError||'模型尚未就緒，請重新讀取模型。':
       state?.busy?'正在等待模型完整回答…':model.display_name+' · 可以開始聊天';
-    if(el('chat-ready').textContent!==ready)el('chat-ready').textContent=ready;
+    const catalogReady=state?.model_catalog&&connected&&!state.busy&&!catalogLoading?
+      (unavailable&&el('chat-model').value?'原選擇目前不可用，請重新讀取或選擇其他組合。 ': '')+
+      catalogNotice[state.model_catalog]:ready;
+    if(el('chat-ready').textContent!==catalogReady)el('chat-ready').textContent=catalogReady;
     saveStatus();
     updateContext();
     renderProjectBinding();
@@ -659,6 +693,11 @@
     const conversation=await api('get',{chat:id});
     const proposals=workEnabled?await api('work-state',{chat:id}):[];
     if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active||state?.auth.pending)return;
+    if(state?.model_catalog&&!catalogChoices.has(id)){
+      const last=conversation.turns.findLast(t=>t.requested_effort);
+      if(last)catalogChoices.set(id,{model:last.model,effort:last.requested_effort});
+      updateSend();
+    }
     const organizations=organizeEnabled?await api('organize-state',{chat:id}):[];
     if(mine!==epoch||id!==selected||authChanging||account!==state?.auth.active||state?.auth.pending)return;
     await Promise.all(proposals.filter(p=>p.kind==='native_codex'&&p.result_id).map(p=>loadNativeResult(p)));
@@ -810,7 +849,7 @@
     closeFloating(false);returnWork=null;++contextEpoch;
     saveDraft();epoch++;selected='';rendered='';renderedChat=null;positions.clear();
     if(sessionKey)try{sessionStorage.removeItem(sessionKey);}catch{}
-    drafts.clear();sessionKey='';sessionReady=false;requestedChat=state?.continuity?null:'';
+    drafts.clear();catalogChoices.clear();sessionKey='';sessionReady=false;requestedChat=state?.continuity?null:'';
     el('chat-messages').replaceChildren();accountChoice=account||'';catalogAttempt=null;catalogLoading=false;catalogError='';
     el('chat-source-records').replaceChildren();el('chat-question').value='';
     el('chat-history').replaceChildren(new Option('新對話',''));optionLists.delete(el('chat-history'));
@@ -876,7 +915,7 @@
       const current=el('chat-model').value;
       const model=(data.models.some(m=>m.slug===current)?current:'')||
         (data.provider!=='openai-codex'&&data.models.find(m=>m.slug==='gpt-6.1-sol')?.slug)||data.models[0]?.slug||'';
-      options(el('chat-model'),data.models.map(m=>({id:m.slug,label:m.display_name})),model,'選擇模型');
+      if(!data.model_catalog)options(el('chat-model'),data.models.map(m=>({id:m.slug,label:m.display_name})),model,'選擇模型');
       if(!el('chat-sources').children.length)for(const source of data.sources){
         const label=document.createElement('label'),input=document.createElement('input');
         input.type='checkbox';input.value=source.id;input.checked=false;
@@ -1209,7 +1248,17 @@
   el('chat-accounts').onchange=()=>{accountChoice=el('chat-accounts').value;if(accountChoice)changeAccount('select',{account:accountChoice});};
   el('chat-models-refresh').onclick=async()=>{await loadModels(state);await refresh();};
   el('chat-recover').onclick=async()=>{if(connected)await loadModels(state);await refresh();};
-  el('chat-model').onchange=updateSend;
+  el('chat-model').onchange=()=>{
+    if(state?.model_catalog){
+      const model=state.models.find(m=>m.slug===el('chat-model').value);
+      catalogChoices.set(selected,{model:model?.slug||'',effort:model?.default_effort||''});
+    }
+    updateSend();
+  };
+  el('chat-effort').onchange=()=>{
+    if(state?.model_catalog)catalogChoices.set(selected,{model:el('chat-model').value,effort:el('chat-effort').value});
+    updateSend();
+  };
   el('chat-stop').onclick=async()=>{
     const busy=state?.busy;if(!busy||busy.chat!==selected)return;
     el('chat-stop').disabled=true;

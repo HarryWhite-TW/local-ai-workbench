@@ -22,11 +22,11 @@
   {
     "date": "2026-11-25",
     "kind": "decision",
-    "scope": "HL-06 正式收束與下一步規劃邊界",
+    "scope": "2026-11-25 HL-06 收束時的主線，後續由 HL-07 正式裁決接續",
     "slug": "mainline",
     "source": "coordination",
     "summary": "HL-01 至 HL-05 維持既有接受或完成狀態。HL-06 已獲 TECHNICAL ACCEPTED + PRODUCT ACCEPTED，限已驗證的受控唯讀工程協作，並正式收束。HL-07 Model Capability Catalog 為下一個建議成果，其技術方向及施工尚未啟動。動態模型目錄可行性、通用工程寫入、自主研究與長期記憶超出本次接受範圍。",
-    "title": "目前進度與下一步主線裁決",
+    "title": "歷史主線裁決：HL-06 收束當日",
     "visibility": "shared"
   },
   {
