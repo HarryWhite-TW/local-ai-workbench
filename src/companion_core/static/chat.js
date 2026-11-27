@@ -644,6 +644,50 @@
     card.append(approve,reject,feedback);
     return card;
   }
+  function memoryApproval(chat, preview) {
+    const card=text('section','');
+    card.className='chat-work-card';
+    const withdrawing=preview.action==='withdraw';
+    const heading={create:'保存工作記憶',update:'更新工作記憶',withdraw:'撤回工作記憶'}[preview.action];
+    const explanation=withdrawing
+      ? '確認後，其他對話不再查找這份記憶。原始對話與歷史紀錄仍保留。'
+      : '確認後，同一帳戶與工作區的後續對話可以查找這份摘要。請核對並移除任何敏感內容。';
+    card.append(text('h3',heading),text('p',explanation),text('p',preview.kind+' · v'+preview.version));
+    const title=document.createElement('input'), summary=document.createElement('textarea');
+    if(withdrawing){
+      card.append(text('strong',preview.title),text('p',preview.summary));
+    }else{
+      title.type='text';title.maxLength=80;title.value=preview.title;
+      summary.maxLength=680;summary.rows=4;summary.value=preview.summary;
+      const titleLabel=text('label','標題'), summaryLabel=text('label','摘要');
+      titleLabel.append(title);summaryLabel.append(summary);
+      card.append(titleLabel,summaryLabel);
+    }
+    const approve=text('button',heading), reject=text('button','拒絕');
+    approve.type=reject.type='button';
+    approve.className='primary-button';reject.className='secondary-button';
+    const feedback=text('p','');feedback.setAttribute('role','status');
+    async function decide(choice){
+      approve.disabled=reject.disabled=true;
+      try {
+        const body={chat,approval:preview.approval,action:choice};
+        if(choice==='apply'&&!withdrawing)Object.assign(body,{title:title.value,summary:summary.value});
+        const result=await api('memory-confirm',body);
+        if(selected!==chat)return;
+        if(!result.updated&&!result.cancelled)throw Error('本機未確認記憶狀態。');
+        rendered='';
+        await read();
+        notice(result.cancelled?'已拒絕，記憶未變更。':heading+'已確認 · v'+result.version);
+      } catch(error) {
+        feedback.textContent=error.message;
+        approve.disabled=reject.disabled=false;
+      }
+    }
+    approve.onclick=()=>void decide('apply');
+    reject.onclick=()=>void decide('cancel');
+    card.append(approve,reject,feedback);
+    return card;
+  }
   function syncReadingControls() {
     const scroller=el('chat-messages');
     el('chat-jump-latest').hidden=scroller.scrollHeight-scroller.clientHeight-scroller.scrollTop<=6;
@@ -757,6 +801,7 @@
       const labels={pending:'正在回答',complete:'已完成',interrupted:'已中斷',failed:'未完成回答 · 失敗',cancelled:'已取消',awaiting_work_share:'等待分享決定'};
       answer.append(text('strong','Companion · '+(labels[delivery]||delivery)),stamp,body);
       stamp.textContent+=' · 思考：'+(turn.requested_effort||'由服務決定');
+      if(conversation.memory_preview?.turn===turn.id)answer.append(memoryApproval(id,conversation.memory_preview));
       if(turn.work_share){
         answer.append(receiptApproval(id,turn));
       }else if(delivery==='work_share_expired'){

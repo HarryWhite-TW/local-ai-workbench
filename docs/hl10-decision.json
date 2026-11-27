@@ -1,0 +1,32 @@
+[
+  {
+    "date": "2026-11-27",
+    "kind": "decision",
+    "scope": "ChatGPT 限定技術接受與使用者產品接受",
+    "slug": "hl10-accepted",
+    "source": "coordination",
+    "summary": "HL-10 Natural Context Capture & Recall 已 TECHNICAL ACCEPTED + PRODUCT ACCEPTED。範圍為明示保存意圖下的自然工作記憶形成、真人預覽與確認、持久保存、跨對話自主查找與具體建議、同一記憶身分版本更新、真人撤回、受測新舊對話排除，以及服務重啟後生命週期讀回。沿用 SQLite、Pydantic AI Core 與既有知識治理，未新增依賴。完整個人長期記憶、背景自動記憶、任意歷史聊天搜尋、一般私人生活記憶、跨設備私人資料同步及通用長期理解均未實現。",
+    "title": "HL-10 自然工作記憶正式接受",
+    "visibility": "shared"
+  },
+  {
+    "date": "2026-11-27",
+    "kind": "decision",
+    "scope": "受測工作記憶生命週期與自動上下文排除範圍",
+    "slug": "hl10-evidence-limits",
+    "source": "coordination",
+    "summary": "116 項 Python、18 項 Node targeted 測試通過。一項附件斷言在正式基準亦失敗，舊 Playwright 腳本缺少模組而未完整執行。首次跨對話查找因混合來源引用門檻被拒絕，一次 focused repair 後通過。真模型結論以受測自然工作記憶旅程為限。撤回後三個新舊對話共 14 次請求未帶入受測內容，觀測方式為實際輸入的特徵、結構及雜湊，未留完整原始 payload。全域知識版本變更可能連帶排除仍有用的部分歷史脈絡。原聊天保持可讀，撤回範圍為後續自動使用，未保證排除未標記的獨立重複文字。累計 11 個真模型回合、33 次請求、原生工程任務 0、支出 NT$0。",
+    "title": "HL-10 驗收證據及限制",
+    "visibility": "shared"
+  },
+  {
+    "date": "2026-11-27",
+    "kind": "decision",
+    "scope": "HL-10 正式收束與 HL-11 施工授權邊界",
+    "slug": "mainline",
+    "source": "coordination",
+    "summary": "HL-10 Natural Context Capture & Recall 已 TECHNICAL ACCEPTED + PRODUCT ACCEPTED，限驗收的工作記憶生命週期。HL-09 UI 投資維持正式收束，完整 UI 改版未實現。HL-08、HL-09D、HL-09D-R 與 M1／SIWC 維持既有收束狀態，工程權限限既有固定快照唯讀診斷。下一階段 HL-11 自主研究與外部知識由 ChatGPT 重新規劃，尚未授權施工。",
+    "title": "目前進度與下一步主線裁決",
+    "visibility": "shared"
+  }
+]

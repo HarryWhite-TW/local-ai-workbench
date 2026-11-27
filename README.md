@@ -1,5 +1,22 @@
 # Local Document-to-Knowledge Workbench
 
+## NEXUS HL-10 Natural Context Capture & Recall 已接受基準（2026-11-27）
+
+**HL-10 已獲限定 TECHNICAL ACCEPTED + PRODUCT ACCEPTED。** 使用者明示保存意圖後，NEXUS 形成工作記憶預覽，經真人確認才持久保存。已驗收跨對話自主查找與具體建議、同一身分的版本更新、真人撤回及重啟讀回。現有能力適用於受測工作記憶旅程，完整個人長期記憶、任意歷史搜尋與跨設備私人資料同步尚未實現。 [HL-10 正式裁決與驗收限制](docs/hl10-decision.json)
+
+### Windows 獨立恢復
+
+在新目錄將 nexus-hl10-accepted 複製為 candidate，使用 Python **3.14.6 x64** 與原有鎖定檔。離線還原前，將已保全的 runtime/site-packages.zip 與 runtime/runtime-lock.json 放在 candidate 同層的 runtime 目錄。一般安裝也可沿用下方鎖定環境說明。
+
+~~~powershell
+git clone --single-branch --branch nexus-hl10-accepted https://github.com/HarryWhite-TW/local-ai-workbench.git candidate
+Set-Location candidate
+.\Restore-HL05-Runtime.cmd
+.\Open-HL10-Companion.cmd
+~~~
+
+啟動器使用 candidate 父目錄的 .venv，預設開啟 <http://127.0.0.1:47741/#chat>。全新工作區會讀入正式知識種子，原有私人記憶、聊天及收據保存在其原工作區。Paper Shaders 0.0.82 材質仍由本機提供。既有工程權限限固定快照唯讀診斷。
+
 ## NEXUS HL-09E Trace Workspace 已接受基準（2026-11-27）
 
 **HL-09E 已獲 TECHNICAL ACCEPTED + PRODUCT ACCEPTED。** 接受範圍涵蓋 Presence、Focus、Trace、實際材質整合、日常輸入、工作事件呈現及既有可信唯讀工程旅程。原生工作已完成，診斷收據仍為 `RESULT_PENDING_REVIEW`，報告個別結論仍須獨立審查。使用者接受現有可用成果並結束 HL-09 UI 投資。下一階段核心 AI 能力主線尚待 ChatGPT 裁決。 [正式裁決與驗收限制](docs/hl09e-decision.json)

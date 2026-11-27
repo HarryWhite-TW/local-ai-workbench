@@ -1,5 +1,11 @@
 # PLANS.md
 
+## NEXUS HL-10 正式收束（2026-11-27）
+
+HL-10 Natural Context Capture & Recall 已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，限已驗收的自然工作記憶生命週期。撤回在受測新舊對話排除自動使用，原聊天仍可供真人閱讀。全域知識版本變更可能連帶排除部分仍有用的歷史脈絡。 [HL-10 正式裁決與驗收限制](docs/hl10-decision.json)
+
+HL-09 UI 投資維持正式收束，完整 UI 改版未實現。HL-08、HL-09D、HL-09D-R 與 M1／SIWC 維持既有收束狀態，工程權限限固定快照唯讀診斷。下一階段 HL-11 自主研究與外部知識由 ChatGPT 重新規劃，尚未授權施工。下列各節保留當時的歷史裁決。
+
 ## NEXUS HL-09E 與 HL-09 正式收束（2026-11-27）
 
 HL-09A 與 HL-09C 已接受及發布，HL-09B 自然協作改善一併整合接受於 HL-09C。HL-09D 維持 **CLOSED — PARTIAL_WITH_EVIDENCE**，安全視覺協作技術候選保留在獨立工作區。HL-09D-R 的成熟材質與上游介面研究已收束，保留 Paper Shaders、Three.js 與成熟互動設計經驗。複合介面未達美術期待，未批准全面 React 遷移。

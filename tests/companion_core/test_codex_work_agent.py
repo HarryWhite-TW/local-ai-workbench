@@ -198,7 +198,7 @@ def test_core_approval_and_history_with_offline_stream(host, monkeypatch):
     assert len(model_inputs) == 5
 
 
-def run_grounding_turn(host, monkeypatch, *, answer, receipt, receipt_only, share, withdrawn):
+def run_grounding_turn(host, monkeypatch, *, answer, receipt, receipt_only, share, withdrawn, with_memory=False):
     import hashlib
     import json
     from contextlib import asynccontextmanager
@@ -217,6 +217,11 @@ def run_grounding_turn(host, monkeypatch, *, answer, receipt, receipt_only, shar
         host.knowledge.append(db, record, 1, "approved_seed")
         if withdrawn:
             host.knowledge.append(db, record | {"visibility": "withdrawn"}, 2, "test")
+        if with_memory:
+            host.knowledge.append(db, record | {
+                "slug": "memory-receipt-canary", "kind": "preference", "source": "conversation",
+                "title": "receipt memory", "summary": "RECEIPT-MEMORY-CANARY",
+            }, 1, "synthetic_confirmed")
     reference = "native_work#grounding-test"
     source = {"id": "S1", "key": reference, "name": "診斷", "captured_at": now(),
               "sha256": hashlib.sha256((receipt or "").encode()).hexdigest(), "text": receipt}
@@ -232,7 +237,11 @@ def run_grounding_turn(host, monkeypatch, *, answer, receipt, receipt_only, shar
         call = len(requests)
         if call == 1:
             yield {0: DeltaToolCall("search_project_knowledge", '{"query":"grounding-test"}', tool_call_id="knowledge")}
-        elif call == 2:
+        elif call == 2 and with_memory:
+            yield {0: DeltaToolCall("search_work_memory", '{"query":"receipt memory"}', tool_call_id="memory")}
+        elif call == (3 if with_memory else 2):
+            if with_memory:
+                assert "RECEIPT-MEMORY-CANARY" in str(messages)
             assert (knowledge_canary in str(messages)) is not withdrawn
             if receipt is None:
                 yield answer
@@ -244,6 +253,8 @@ def run_grounding_turn(host, monkeypatch, *, answer, receipt, receipt_only, shar
             assert returned["decision"] == ("allowed" if share else "denied")
             if share and receipt_only:
                 assert len(messages) == 3 and knowledge_canary not in str(messages)
+                assert "RECEIPT-MEMORY-CANARY" not in str(messages)
+                assert "memory-receipt-canary" not in str(messages)
                 assert [part.tool_name for message in messages for part in message.parts
                         if hasattr(part, "tool_name")] == ["read_work_evidence", "read_work_evidence"]
             elif not withdrawn:
@@ -275,7 +286,7 @@ def run_grounding_turn(host, monkeypatch, *, answer, receipt, receipt_only, shar
         host.confirm_work_share(ids | action)
     host.worker.join(4)
     assert not host.worker.is_alive()
-    assert len(requests) == (2 if receipt is None else 3)
+    assert len(requests) == (2 if receipt is None else 3) + int(with_memory)
     return host.get(ids["chat"])["turns"][-1]
 
 
@@ -303,3 +314,10 @@ def test_grounding_preserves_distinct_source_requirements(host, monkeypatch, mod
         assert turn["status"] == "failed" and error in turn["error"]
     assert bool(turn["sources"]) == (receipt is not None and mode != "declined")
 
+
+
+def test_pure_approved_receipt_drops_memory_tool_result(host, monkeypatch):
+    turn = run_grounding_turn(host, monkeypatch, answer="依據量測 [S1:L2]。",
+                             receipt="報告\n量測結果",
+                             receipt_only=True, share=True, withdrawn=False, with_memory=True)
+    assert turn["status"] == "complete" and "CANARY" not in turn["answer"]

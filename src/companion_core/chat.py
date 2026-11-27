@@ -229,6 +229,8 @@ class Conversations:
                 if self.delegation and (work := self.delegation.for_turn(db, value)):
                     value["daily_work"] = work
                 result["turns"].append(value)
+            if self.knowledge:
+                result["memory_preview"] = self.knowledge.memory_preview(db, ident)
             if workspace != self.workspace or self._project_owner(db) != account:
                 raise ChatError('帳戶或工作區已變更，請重新讀取對話。')
             return result

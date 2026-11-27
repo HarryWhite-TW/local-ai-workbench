@@ -421,6 +421,8 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                             result = chat.confirm_work_share(body)
                         elif action.startswith("project-knowledge-") and getattr(chat, "knowledge", None):
                             result = chat.knowledge.manage(action.removeprefix("project-knowledge-"), body)
+                        elif action == "memory-confirm" and getattr(chat, "knowledge", None):
+                            result = chat.knowledge.confirm_memory(body)
                         elif action == "cancel":
                             result = chat.cancel(body)
                         elif action == "send":
