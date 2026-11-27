@@ -1,0 +1,13 @@
+ .experience{height:100dvh;display:flex;flex-direction:column}
+.demo-bar{display:flex;gap:14px;align-items:center;padding:10px 20px;border-bottom:1px solid var(--border);min-height:62px;background:var(--background);z-index:2}
+.demo-title{font-weight:650;white-space:nowrap}.demo-title small{font:10px ui-monospace,monospace;color:var(--muted-foreground);display:block;letter-spacing:.08em}
+.demo-actions{display:flex;gap:12px;align-items:center;margin-left:auto;flex-wrap:wrap;font-size:13px}
+.demo-actions label{display:flex;align-items:center;gap:5px}.demo-actions select{border:1px solid var(--border);border-radius:7px;padding:5px 7px;background:var(--card);color:var(--foreground)}
+.demo-actions a{color:var(--muted-foreground);text-decoration:underline;text-underline-offset:3px}
+.material-mark{display:grid;place-items:center;width:46px;height:42px;flex:none;overflow:hidden;border-radius:10px;position:relative;background:#efefef;color:#555}
+.material-mark canvas{position:absolute;inset:0}
+.work-panel{width:250px;height:100%;overflow:auto;background:var(--sidebar);border-right:1px solid var(--border);padding:24px 15px;display:flex;flex-direction:column;gap:20px}
+.work-panel h2{font-size:18px;font-weight:650;letter-spacing:-.02em}.work-panel h3{font-size:13px;font-weight:650}
+.work-panel header p{font-size:12px;color:var(--muted-foreground)}.work-panel .panel-label{font:10px ui-monospace,monospace;letter-spacing:.12em;margin-bottom:6px}
+.progress ol{list-style:none;padding:0;margin:.45rem 0}.progress li{font-size:12px;display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)}.progress li span:last-child{color:var(--muted-foreground);text-align:right}
+@media(max-width:900px){.demo-bar{align-items:flex-start}.work-panel{width:195px;padding:14px 10px}}

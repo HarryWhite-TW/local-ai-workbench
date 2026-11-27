@@ -1,5 +1,7 @@
 # Local Document-to-Knowledge Workbench
 
+本分支保存 2026-11-28 跨設備交接資訊。HL-10 為正式日用基準，HL-11 已收束，HL-12 待批准。 [跨設備保全與恢復](docs/cross-device-preservation-20261128.md)
+
 ## NEXUS HL-10 Natural Context Capture & Recall 已接受基準（2026-11-27）
 
 **HL-10 已獲限定 TECHNICAL ACCEPTED + PRODUCT ACCEPTED。** 使用者明示保存意圖後，NEXUS 形成工作記憶預覽，經真人確認才持久保存。已驗收跨對話自主查找與具體建議、同一身分的版本更新、真人撤回及重啟讀回。現有能力適用於受測工作記憶旅程，完整個人長期記憶、任意歷史搜尋與跨設備私人資料同步尚未實現。 [HL-10 正式裁決與驗收限制](docs/hl10-decision.json)

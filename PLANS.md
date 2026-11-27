@@ -1,5 +1,7 @@
 # PLANS.md
 
+本分支保存 2026-11-28 跨設備交接資訊。HL-10 為正式日用基準，HL-11 已收束，HL-12 待批准。 [跨設備保全與恢復](docs/cross-device-preservation-20261128.md)
+
 ## NEXUS HL-10 正式收束（2026-11-27）
 
 HL-10 Natural Context Capture & Recall 已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，限已驗收的自然工作記憶生命週期。撤回在受測新舊對話排除自動使用，原聊天仍可供真人閱讀。全域知識版本變更可能連帶排除部分仍有用的歷史脈絡。 [HL-10 正式裁決與驗收限制](docs/hl10-decision.json)
