@@ -43,10 +43,14 @@ def main():
                         help="Use the isolated NEXUS project summary index and existing Codex subscription.")
     parser.add_argument("--natural-engineering-collaboration", action="store_true",
                         help="Use the isolated HL-06 workspace and bounded native Codex diagnosis.")
+    parser.add_argument("--controlled-ui-implementation", action="store_true",
+                        help="Use an independent HL-08 workspace for human-approved chat presentation changes.")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--port", type=int, default=0,
                         help="Local preview port (0 chooses an available port).")
     args = parser.parse_args()
+    if args.controlled_ui_implementation and not args.natural_engineering_collaboration:
+        parser.error("--controlled-ui-implementation requires --natural-engineering-collaboration")
     knowledge_mode = args.real_project_intelligence or args.natural_engineering_collaboration
     if sum((args.codex_subscription_trial, args.real_project_intelligence,
             args.natural_engineering_collaboration)) > 1:
@@ -72,8 +76,9 @@ def main():
             if knowledge_mode:
                 from .project_knowledge import OWNER, ProjectKnowledge, prepare_project
                 if args.natural_engineering_collaboration:
-                    OWNER = "nexus-hl06-project"
-                    workspace, directory = prepare_project(Path(__file__).resolve().parents[3] / "engineering-project")
+                    OWNER = "nexus-hl08-project" if args.controlled_ui_implementation else "nexus-hl06-project"
+                    name = "implementation-project" if args.controlled_ui_implementation else "engineering-project"
+                    workspace, directory = prepare_project(Path(__file__).resolve().parents[3] / name)
                 else:
                     workspace, directory = prepare_project()
             else:
@@ -130,7 +135,11 @@ def main():
             from .native_collaboration import NativeCollaboration
             from .model_catalog import CodexCatalog
             agent.model_catalog = CodexCatalog(codex, prefer_desktop=True)
-            work = NativeCollaboration(chat, codex, directory)
+            if args.controlled_ui_implementation:
+                from .ui_implementation import NativeUiImplementation
+                work = NativeUiImplementation(chat, codex, directory)
+            else:
+                work = NativeCollaboration(chat, codex, directory)
         else:
             work = NativeWork(chat, executable=codex)
         surface = Surface(work, workspace, ReviewStore(args.review_dir, workspace=str(workspace)))

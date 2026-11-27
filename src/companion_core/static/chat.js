@@ -929,6 +929,7 @@
   async function action(work){try{await work();await refresh();}catch(e){notice(e.message);el('chat-auth-notice').textContent=e.message;}}
   function workCard(p) {
     const card=text('section','');card.className='chat-work-card';card.dataset.work=p.id;card.dataset.task=p.task_id||'';card.dataset.state=p.state;
+    const writing=p.authority==='ISOLATED_WRITE';
     if(p.kind==='native_codex'&&p.draft_hidden&&p.can_hide_draft&&!p.task_id){
       const folded=text('details',''),restore=text('button','展開並繼續草稿');
       folded.append(text('summary','已收起的未執行草稿 · '+p.goal));
@@ -949,13 +950,13 @@
     const details=text('details','');details.append(text('summary','技術與驗收資訊'),text('small',p.state+' · '+p.technical_acceptance));card.append(details);
     const button=text('button',p.task_id?'查看工作與證據':p.kind==='native_codex'?'設定並預覽診斷':'編輯提案與確認範圍');button.className='secondary-button';button.type='button';
     button.onclick=()=>p.task_id?action(async()=>{workOrigin=p;if(window.nexusOpenWork)await window.nexusOpenWork(p.task_id);else{showSpace('work');await window.openCompanionWork(p.task_id);}}):editProposal(p);
-    if(p.natural_offer&&!p.task_id)button.textContent='預覽唯讀 Codex 診斷';
+    if(p.natural_offer&&!p.task_id)button.textContent=writing?'預覽隔離工程寫入':'預覽唯讀 Codex 診斷';
     if(p.kind==='native_codex'&&p.task_id)details.append(button);else card.append(button);
 
     if(p.kind==='native_codex'){
       details.append(text('p','原生 Codex · '+p.review_status+' · '+p.capability));
-      card.append(text('p',p.result_id?'唯讀診斷已完成，尚待獨立技術審查。':p.task_id?'進度會在這裡更新，不需要切換頁面。':'先核對來源，再由你確認開始。'));
-      if(!p.task_id)card.append(text('p','設定目標與來源 → 預覽 → 確認 READ_ONLY 後啟動。'));
+      card.append(text('p',p.result_id?(writing?'隔離工程已完成，尚待獨立技術審查。':'唯讀診斷已完成，尚待獨立技術審查。'):p.task_id?'進度會在這裡更新，不需要切換頁面。':'先核對來源，再由你確認開始。'));
+      if(!p.task_id&&!writing)card.append(text('p','設定目標與來源 → 預覽 → 確認 READ_ONLY 後啟動。'));
       if(p.failure_summary){
         const failure=text('p',(p.failure_stage||'啟動檢查')+' · '+p.failure_summary
           +(p.failure_code!==null&&p.failure_code!==undefined?'（RPC '+p.failure_code+'）':''));
@@ -994,7 +995,7 @@
       if(p.can_hide_draft&&!p.task_id)control('收起未執行草稿',()=>api('work-draft-visibility',{id:p.id,hidden:true}));
       if(p.natural_offer&&!p.task_id)control('拒絕委託',()=>api('work-decline',{id:p.id}));
       if(['RUNNING','CANCEL_REQUESTED'].includes(p.state)){
-        const stop=control('停止這項診斷',()=>api('work-stop',{id:p.id}));
+        const stop=control(writing?'停止這項工程':'停止這項診斷',()=>api('work-stop',{id:p.id}));
         stop.disabled=p.state==='CANCEL_REQUESTED';
       }
       if(!p.natural_offer&&p.task_id&&p.state==='UNKNOWN')control('讀取原生狀態對帳',()=>api('work-reconcile',{id:p.id}),r=>{
@@ -1009,8 +1010,11 @@
       if(p.result_id){
         const cached=nativeResults.get(nativeResultKey(p));
         if(cached?.data)renderNativeResult(card,cached.data);
-        else card.append(text('p',cached?.error||'正在讀取已保存的診斷結果，不會重新執行。'));
-        const reload=control('在此讀取診斷結果',async()=>{await loadNativeResult(p,true);});
+        else card.append(text('p',cached?.error||(writing?'正在讀取已保存的工程成果。':'正在讀取已保存的診斷結果，不會重新執行。')));
+        if(writing&&p.preview_href==='/engineering-preview/'+p.id){
+          const preview=text('a','體驗隔離候選');preview.href=p.preview_href;preview.target='_blank';preview.rel='noopener noreferrer';card.append(preview);
+        }
+        const reload=control(writing?'重新讀取工程成果':'在此讀取診斷結果',async()=>{await loadNativeResult(p,true);});
         details.append(reload);
       }
       if(p.can_revise){
@@ -1074,7 +1078,9 @@
     proposal=p;proposalOwner=state?.auth.active;proposalVersion++;approval=null;el('work-goal').value=p.goal;el('work-expected').value=p.expected;
     el('work-goal').readOnly=el('work-expected').readOnly=!!p.natural_offer;
     el('work-scope').textContent=p.workspace+' · '+p.capability;
-    el('work-files').replaceChildren(text('legend','允許讀取的程式檔案'));
+    const writing=p.authority==='ISOLATED_WRITE';
+    el('work-confirm').textContent=writing?'批准這次隔離工程寫入':'確認來源並開始診斷';
+    el('work-files').replaceChildren(text('legend',writing?'工程來源與獨立檢查':'允許讀取的程式檔案'));
     const choices=p.source_choices||['daily','chat','surface','core','runtime','review','work'].map(key=>({key,name:'src/companion_core/'+key+'.py'}));
     for(const {key,name} of choices){
       const label=text('label',''),input=document.createElement('input');input.type='checkbox';input.value=key;input.checked=p.selection.includes(key);
@@ -1095,7 +1101,9 @@
     try{
       const p=await api('work-preview',body);
       if(!proposalCurrent()||proposal.id!==origin||mine!==proposalVersion||el('work-goal').value!==body.goal||el('work-expected').value!==body.expected||JSON.stringify([...el('work-files').querySelectorAll('input:checked')].map(n=>n.value))!==JSON.stringify(body.selection))return;
+      const writing=p.authority==='ISOLATED_WRITE';
       el('work-manifest').replaceChildren(text('p','本次只分享 '+p.manifest.length+' 份來源快照：'));
+      if(writing)el('work-manifest').append(text('p','起始版本 '+p.base_version),text('p','候選 '+p.id),text('p','核准可寫範圍 '+p.writable_files.join('、')));
       for(const r of p.manifest){
         const source=text('details','');source.append(text('summary',r.name+' · '+r.bytes+' bytes'));
         const snapshot=p.source_snapshots?.find(s=>s.key===r.key&&s.sha256===r.sha256);
@@ -1104,7 +1112,8 @@
       }
       window.NexusConversation?.previewSources(p);
       approval=p.approval;el('work-confirm').disabled=false;
-      el('work-notice').textContent='可展開核對程式碼。按確認才送出上述快照做唯讀診斷；來源變更會要求重新預覽。';rendered='';
+      el('work-notice').textContent=writing?'請核對方案、快照及可寫範圍。批准才會建立隔離候選並啟動原生工程。':
+        '可展開核對程式碼。按確認才送出上述快照做唯讀診斷；來源變更會要求重新預覽。';rendered='';
     }catch(e){if(proposalCurrent()&&mine===proposalVersion)el('work-notice').textContent=e.message;}
     finally{if(proposalCurrent()&&proposal.id===origin)el('work-preview').disabled=false;}
   };
@@ -1112,7 +1121,7 @@
     if(!proposalCurrent()||!approval||el('work-confirm').disabled)return;
     const ident=proposal.id,ticket=approval,mine=proposalVersion;approval=null;el('work-confirm').disabled=true;
     try{
-      await api('work-confirm',{id:ident,approval:ticket,authority:'READ_ONLY'});
+      await api('work-confirm',{id:ident,approval:ticket,authority:proposal.authority||'READ_ONLY'});
       if(!proposalCurrent()||proposal.id!==ident||mine!==proposalVersion)return;
       dismissProposal();rendered='';await refresh();
     }catch(e){if(proposalCurrent()&&proposal.id===ident)el('work-notice').textContent=e.message+' 請重新核對來源；不會自動重送。';}

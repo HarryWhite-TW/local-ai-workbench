@@ -117,7 +117,8 @@ class NativeWork(ProjectWork):
             columns = {row[1] for row in db.execute("PRAGMA table_info(native_work)")}
             for name, sql_type in (("failure_stage", "TEXT"), ("failure_code", "INTEGER"),
                     ("failure_kind", "TEXT"), ("start_outcome", "TEXT"),
-                    ("draft_hidden", "INTEGER NOT NULL DEFAULT 0")):
+                    ("draft_hidden", "INTEGER NOT NULL DEFAULT 0"),
+                    ("authority", "TEXT NOT NULL DEFAULT 'READ_ONLY'")):
                 if name not in columns:
                     db.execute("ALTER TABLE native_work ADD COLUMN " + name + " " + sql_type)
 
@@ -240,13 +241,17 @@ class NativeWork(ProjectWork):
     def completed_report(self, proposal, records, result):
         return self._report(proposal, self._meta(proposal["id"]), result)
 
+    def observe(self, proposal, rpc, thread_id, turn_id, cancel, mark):
+        return observe_turn(rpc, thread_id, turn_id, cancel, mark)
+
     def run(self, request):
         with self.lock:
             grant, self.grant = self.grant, None
-        if not grant or request.authority is not Authority.READ_ONLY:
+        if not grant:
             raise RuntimeFailure(Failure.POLICY)
         p, manifest, task_id = grant
-        if request.workspace != self.chat.workspace or request.intent != p["goal"]:
+        if (request.authority is not self.authority_for(p) or
+                request.workspace != self.chat.workspace or request.intent != p["goal"]):
             raise RuntimeFailure(Failure.POLICY)
         self._conversation(p["chat"])
         records = self.capture(self.chat.workspace, p["selection"])
@@ -323,8 +328,7 @@ class NativeWork(ProjectWork):
                         request.cancel_requested.set()
                     self._mark(p["id"], **fields)
                 stage = "turn/observe"
-                state, result = observe_turn(rpc, thread_id, turn_id,
-                                            request.cancel_requested, mark)
+                state, result = self.observe(p, rpc, thread_id, turn_id, request.cancel_requested, mark)
                 stage = "host/cleanup"
             # A failed host cleanup cannot yield a confirmed result/cancellation.
             report = self.completed_report(p, records, result) if state == "COMPLETED" else None

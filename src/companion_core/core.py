@@ -39,8 +39,10 @@ class Companion:
         with self._lock:
             if self._notifying or self.task.execution != Execution.CREATED:
                 raise ValueError("Task is not executable")
-            if self.task.authority is not Authority.READ_ONLY:
-                raise PermissionError("Read-only authority must be explicitly granted")
+            write_allowed = (self.task.authority is Authority.ISOLATED_WRITE
+                             and getattr(self._runtime, "supports_isolated_write", False) is True)
+            if self.task.authority is not Authority.READ_ONLY and not write_allowed:
+                raise PermissionError("The matching execution authority must be explicitly granted")
             self._update(execution=Execution.RUNNING)
 
         def notify(stage):

@@ -13,7 +13,7 @@ from time import monotonic
 from uuid import uuid4
 
 from .chat import now, validate_citations
-from .domain import Failure
+from .domain import Authority, Failure
 from .native_codex import normalized
 from .native_execution import NativeClient, check_thread
 from .native_work import NativeWork, capture_sources, diagnosis_presentation
@@ -135,11 +135,14 @@ class MxcClient(NativeClient):
     def __init__(self, root, executable):
         self.events_seen = Counter()
         self.initial_delta_seen = False
-        settings = (f'default_permissions="{PROFILE}"',
-                    f'permissions.{PROFILE}.filesystem={{":root"="deny",":minimal"="read",'
-                    + json.dumps(root.as_posix()) + '="read"}',
-                    f"permissions.{PROFILE}.network.enabled=false")
+        settings = self.profile_settings(root)
         super().__init__(str(root), executable, settings=settings)
+
+    def profile_settings(self, root):
+        return (f'default_permissions="{PROFILE}"',
+                f'permissions.{PROFILE}.filesystem={{":root"="deny",":minimal"="read",'
+                + json.dumps(root.as_posix()) + '="read"}',
+                f"permissions.{PROFILE}.network.enabled=false")
 
     def keep_message(self, message):
         method = message.get("method") if isinstance(message, dict) else None
@@ -198,7 +201,12 @@ class NativeCollaboration(NativeWork):
             return records + [instruction_record(stream.read(INSTRUCTION_LIMIT + 1))]
 
     def offer(self, chat_id, turn_id, scope, goal, expected):
-        if scope not in SCOPES or self.chat.busy != {"chat":chat_id, "turn":turn_id}:
+        if scope not in SCOPES:
+            raise ChatError("此回合不能建立這項診斷。")
+        return self._offer(chat_id, turn_id, SCOPES[scope], goal, expected, Authority.READ_ONLY)
+
+    def _offer(self, chat_id, turn_id, selection, goal, expected, authority):
+        if self.chat.busy != {"chat":chat_id, "turn":turn_id}:
             raise ChatError("此回合不能建立這項診斷。")
         goal, expected = self._text(goal, 1200), self._text(expected, 2000)
         if any(PRIVATE.search(s) or SENSITIVE_TEXT.search(s) for s in (goal, expected)):
@@ -210,8 +218,9 @@ class NativeCollaboration(NativeWork):
                 raise ChatError("此回合已有工程預覽。")
             db.execute("""INSERT INTO work_proposals(id,chat,turn,goal,expected,selection,created)
                         VALUES(?,?,?,?,?,?,?)""", (ident, chat_id, turn_id, goal, expected,
-                                                   json.dumps(SCOPES[scope]), now()))
-            db.execute("INSERT INTO native_work(proposal,state,updated) VALUES(?,?,?)", (ident,"CREATED",now()))
+                                                   json.dumps(selection), now()))
+            db.execute("INSERT INTO native_work(proposal,state,updated,authority) VALUES(?,?,?,?)",
+                       (ident,"CREATED",now(),authority.value))
         return ident
 
     def create(self, body):
@@ -236,10 +245,12 @@ class NativeCollaboration(NativeWork):
                    for t in self._conversation(p["chat"])["turns"])
 
     def confirm(self, body):
-        if set(body) != {"id", "approval", "authority"} or body["authority"] != "READ_ONLY":
+        if set(body) != {"id", "approval", "authority"}:
             return self._invalid()
         with self.lock:
             p = self._get(body["id"])
+            if body["authority"] != self.authority_for(p).value:
+                return self._invalid()
             grant = self.pending.get(p["id"])
             if (p["stopped"] or not grant or grant[0] != body["approval"] or grant[1] <= monotonic()
                     or not self.turn_complete(p)):
@@ -273,8 +284,11 @@ class NativeCollaboration(NativeWork):
         return data | {
             "natural_offer":True, "state":"DECLINED" if p["stopped"] == "DECLINED" else data["state"],
             "can_revise":False, "can_hide_draft":False, "capability":DESCRIPTION,
-            "source_choices":[{"key":k, "name":SOURCE_FILES[k]} for k in p["selection"]],
+            "source_choices":[{"key":k, "name":self.sources_for(p)[k]} for k in p["selection"]],
         }
+
+    def sources_for(self, proposal):
+        return SOURCE_FILES
 
     @contextmanager
     def execution_environment(self, p, records):
@@ -406,5 +420,7 @@ class NativeCollaboration(NativeWork):
         report = target["result"]
         captured = next(line.removeprefix("擷取時間：") for line in report.splitlines()
                         if line.startswith("擷取時間："))
-        return {"id":"S1", "key":reference, "name":"Codex 唯讀工程診斷",
+        title = ("Codex 隔離介面工程收據" if target["authority"] == Authority.ISOLATED_WRITE.value
+                 else "Codex 唯讀工程診斷")
+        return {"id":"S1", "key":reference, "name":title,
                 "captured_at":captured, "sha256":sha256(report.encode()).hexdigest(), "text":report}

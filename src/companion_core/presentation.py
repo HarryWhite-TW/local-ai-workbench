@@ -51,7 +51,7 @@ class HumanView:
 
     def progress(self, event: Progress):
         messages = {
-            "task_created": "工作已建立，正在準備。權限：唯讀 READ_ONLY。",
+            "task_created": "工作已建立，正在準備。",
             "working": "正在執行唯讀工作…",
             "inspecting_repository": "正在檢視 repository 內容…",
             "receiving_result": "正在接收與整理結果…",

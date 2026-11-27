@@ -121,11 +121,17 @@ class ProjectWork:
                            (goal, expected, json.dumps(body['selection']), json.dumps(manifest), approval, p['id']))
             return {**self.describe(self._get(p['id'])), 'approval': approval, 'manifest': manifest}
 
+    def authority_for(self, proposal):
+        return Authority.READ_ONLY
+
     def confirm(self, body):
-        if set(body) != {'id', 'approval', 'authority'} or body['authority'] != 'READ_ONLY':
-            raise ChatError("必須明確確認此提案的唯讀權限。")
+        if set(body) != {'id', 'approval', 'authority'}:
+            raise ChatError("必須明確確認此提案的權限。")
         with self.lock:
             p = self._get(body['id'])
+            authority = self.authority_for(p)
+            if body['authority'] != authority.value:
+                raise ChatError("確認權限與此提案不符。")
             if p['task_id'] or not p['approval'] or p['approval'] != body['approval']:
                 raise ChatError("授權預覽已失效或已使用，請重新讀取提案。")
             if self.surface is None or self.surface.runtime is not self:
@@ -141,7 +147,8 @@ class ProjectWork:
                 self.grant = (p, manifest, task_id)
 
             try:
-                result = self.surface.start(p['goal'], bind=bind, finished=self._finished)
+                options = {'authority': authority} if authority is Authority.ISOLATED_WRITE else {}
+                result = self.surface.start(p['goal'], bind=bind, finished=self._finished, **options)
             except Exception:
                 self.grant = None
                 raise ChatError("工作未確認啟動；請重新讀取狀態，不會自動重試。") from None

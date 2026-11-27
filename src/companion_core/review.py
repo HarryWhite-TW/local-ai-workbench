@@ -120,12 +120,12 @@ class ReviewStore:
                 pass
 
     def publish(self, task: Task) -> ReviewTarget:
-        if (task.state != "RESULT_PENDING_REVIEW" or task.authority is not Authority.READ_ONLY
+        if (task.state != "RESULT_PENDING_REVIEW" or task.authority not in (Authority.READ_ONLY, Authority.ISOLATED_WRITE)
                 or task.reviewer is not None or task.failure is not None):
             raise ReviewError()
         payload = {"id": _uuid(task.id), "intent": _text(task.intent),
             "workspace": _text(task.workspace), "provider": _text(task.provider),
-            "authority": "READ_ONLY", "session_id": _text(task.session_id),
+            "authority": task.authority.value, "session_id": _text(task.session_id),
             "result": _text(task.result)}
         if self.directory.is_relative_to(Path(task.workspace).resolve()):
             raise ReviewError()
@@ -142,14 +142,14 @@ class ReviewStore:
                 raise ReviewError()
             payload = record["task"]
             if (set(payload) != {"id", "intent", "workspace", "provider", "authority", "session_id", "result"}
-                    or payload["id"] != task_id or payload["authority"] != "READ_ONLY"
+                    or payload["id"] != task_id or payload["authority"] not in ("READ_ONLY", "ISOLATED_WRITE")
                     or record["result_id"] != _digest(payload)):
                 raise ReviewError()
             for value in payload.values():
                 _text(value)
             if self.directory.is_relative_to(Path(payload["workspace"]).resolve()):
                 raise ReviewError()
-            task = Task(**{**payload, "authority": Authority.READ_ONLY}, execution=Execution.COMPLETED)
+            task = Task(**{**payload, "authority": Authority(payload["authority"])}, execution=Execution.COMPLETED)
             decision_path = self._path(task_id, "decision")
             if not decision_path.exists() and not decision_path.is_symlink():
                 return ReviewTarget(task, record["result_id"])
@@ -163,6 +163,8 @@ class ReviewStore:
             task = replace(task, acceptance=state, reviewer=_text(decision["reviewer"]))
             revision = None
             if state == Acceptance.REVISION_REQUESTED:
+                if task.authority is not Authority.READ_ONLY:
+                    raise ReviewError()
                 child = decision["revision"]
                 if set(child) != {"id", "intent"} or _uuid(child["id"]) == task_id:
                     raise ReviewError()
@@ -191,6 +193,8 @@ class ReviewStore:
             raise ReviewError()
         child = None
         if action == "revise":
+            if target.task.authority is not Authority.READ_ONLY:
+                raise ReviewError()
             child = {"id": str(uuid4()), "intent": _text(revision_intent)}
         elif revision_intent is not None:
             raise ReviewError()

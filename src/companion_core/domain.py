@@ -5,6 +5,7 @@ from enum import Enum
 class Authority(str, Enum):
     NONE = "NONE"
     READ_ONLY = "READ_ONLY"
+    ISOLATED_WRITE = "ISOLATED_WRITE"
 
 
 class Execution(str, Enum):

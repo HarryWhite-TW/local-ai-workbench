@@ -221,7 +221,7 @@ def answer_from(items):
     return result
 
 
-def observe_turn(rpc, thread_id, turn_id, cancel, mark, timeout=180):
+def observe_turn(rpc, thread_id, turn_id, cancel, mark, timeout=180, *, observe_item=None):
     deadline, interrupted, messages = time.monotonic() + timeout, False, {}
     while time.monotonic() < deadline:
         try:
@@ -248,7 +248,8 @@ def observe_turn(rpc, thread_id, turn_id, cancel, mark, timeout=180):
             if params.get("turnId") == turn_id:
                 if method in ("item/started", "item/completed"):
                     item = params.get("item", {})
-                    answer_from([item])  # Reject unexpected tool activity.
+                    if not (observe_item and observe_item(item, method == "item/completed")):
+                        answer_from([item])  # Reject unexpected tool activity.
                     if method == "item/completed" and item.get("type") == "agentMessage":
                         ident = item.get("id")
                         if not isinstance(ident, str) or len(messages) >= 32:

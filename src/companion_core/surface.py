@@ -25,7 +25,7 @@ from .review import ReviewError, ReviewStore
 OBSERVATIONS = {
     "execution_unknown": ("狀態未確認", "缺少可信終態；不會自動重送，請對帳。"),
     "unknown": ("狀態未確認", "連線或執行證據不足，不能視為成功、失敗或已取消。"),
-    "task_created": ("工作已建立", "Core 已建立唯讀工作。"),
+    "task_created": ("工作已建立", "Core 已建立獲准的工作。"),
     "working": ("執行已開始", "Core 已開始執行；完成比例未提供。"),
     "session_bound": ("執行連線已建立", "執行端已回報連線身分；不公開原始連線資料。"),
     "inspecting_repository": ("檢視階段已回報", "有檢視操作回報；工具名稱、命令、輸出與完成狀態未提供。"),
@@ -80,13 +80,15 @@ class Surface:
             self._event(core, event.stage)
             view.progress(event)
 
-    def start(self, intent, *, bind=None, finished=None):
+    def start(self, intent, *, bind=None, finished=None, authority=Authority.READ_ONLY):
         if not isinstance(intent, str) or not intent.strip() or len(intent) > 4000 or safe_text(intent) != intent:
             raise ReviewError()
         with self.lock:
             if self.worker and self.worker.is_alive():
                 raise ReviewError()
-            core = Companion(self.runtime, intent.strip(), self.workspace, Authority.READ_ONLY)
+            if authority is Authority.ISOLATED_WRITE and not bind:
+                raise ReviewError()
+            core = Companion(self.runtime, intent.strip(), self.workspace, authority)
             if bind:
                 bind(core.task.id)
             self.active, self.lines, self.notice = core, [], ""
@@ -189,11 +191,12 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
         def log_message(self, *args):
             pass  # Never log intents, identities, request bodies or provider errors.
 
-        def _reply(self, code, data, mime="application/json; charset=utf-8"):
+        def _reply(self, code, data, mime="application/json; charset=utf-8", *, csp=None):
             if not isinstance(data, bytes):
                 data = json.dumps(data, ensure_ascii=False).encode("utf-8")
-            csp = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-            if mime.startswith('text/html') and getattr(chat, 'controlled_code', None) is not None:
+            standard = csp is None
+            csp = csp or "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            if standard and mime.startswith('text/html') and getattr(chat, 'controlled_code', None) is not None:
                 nonce = secrets.token_hex(24)
                 data = data.replace(b'<body ', ('<body data-demo-nonce="' + nonce + '" ').encode(), 1)
                 csp = csp.replace("script-src 'self'", "script-src 'self' 'nonce-" + nonce + "'") + "; frame-src 'self'"
@@ -257,6 +260,12 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                     # and emission too, not just outside the database read.
                     with chat.lock, getattr(chat.auth, 'lock', chat.lock):
                         self._reply(200, chat.snapshot())
+                elif (self.path.startswith('/engineering-preview/') and len(self.path) == len('/engineering-preview/') + 36
+                        and getattr(work, 'supports_isolated_write', False) is True):
+                    from .ui_implementation import POLICY
+                    with chat.lock, getattr(chat.auth, 'lock', chat.lock):
+                        content = work.preview_document(self.path.removeprefix('/engineering-preview/'))
+                    self._reply(200, content, 'text/html; charset=utf-8', csp=POLICY)
                 elif self.path in ("/", "/surface.js", "/surface.css", "/chat.js", "/chat.css",
                                    "/organize.js", "/organize.css", "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css", "/engineering-pilot.js", "/controlled-code.js", "/conversation-mode.js", "/conversation-workspace.js", "/conversation-workspace.css"):
                     name = "index.html" if self.path == "/" else self.path[1:]
