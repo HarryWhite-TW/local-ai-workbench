@@ -76,6 +76,7 @@
     if(current)closeReader(current.mode==='proposal'||current.mode==='organize');lastFocus=document.activeElement;current={title,sections,mode};
     showMonitor(false);monitorToggle.disabled=true;
     readerTitle.textContent=title;readerSelect.replaceChildren(...sections.map((s,i)=>{const o=node('option',s.label);o.value=String(i);return o;}));readerSelect.hidden=sections.length===1;
+    pane.classList.toggle('trace-result-reader',mode==='diagnosis');
     pane.hidden=false;body.dataset.readerOpen='true';showSection(0);
     if(innerWidth<1100){body.dataset.readerFocus='true';focus.setAttribute('aria-pressed','true');}
     readerBody.focus({preventScroll:true});
@@ -122,16 +123,26 @@
       const rows=items.filter(p=>p.chat===id&&p.natural_offer&&p.kind==='native_codex');
       if(!rows.length){clearMonitor();return;}
       monitorToggle.hidden=false;
+      const previousFocus=monitorList.contains(document.activeElement)?document.activeElement.dataset.traceWork:null;
       monitorList.replaceChildren(...rows.map(p=>{
         const item=node('li'),label=node('strong',p.contract?.title||'唯讀診斷');
         const view=button('查看工單',()=>{
           const card=[...el('chat-messages').querySelectorAll('[data-work]')].find(row=>row.dataset.work===p.id);
           card?.focus({preventScroll:true});card?.scrollIntoView({block:'nearest'});
         },'text-button');
-        item.append(label,node('p',window.NexusConversation.workPhase(p)||'狀態未確認'),view);
+        view.dataset.traceWork=p.id;
+        item.append(label,node('p',p.goal,'trace-goal'),
+          node('p',window.NexusConversation.workPhase(p)||'狀態未確認','trace-state'));
+        if(p.contract)item.append(node('small','授權範圍 · '+p.contract.authority+' · '+p.contract.title));
+        if(p.result_id)item.append(node('small','主機已保存收據 · 待獨立技術審查'));
         if(p.failure_summary)item.append(node('small',p.failure_summary));
+        const events=window.NexusTrace?.timeline(p.events);
+        if(events)item.append(events);
+        item.append(view);
         return item;
       }));
+      if(previousFocus)[...monitorList.querySelectorAll('[data-trace-work]')]
+        .find(button=>button.dataset.traceWork===previousFocus)?.focus({preventScroll:true});
     },
     organizeOpened(){openReader('整理選定文件',[{label:'選檔與分享確認',mount:[...(innerWidth<1100?[el('chat-question')]:[]),el('organize-panel')],footer:[el('organize-start')]}],'organize');},
     organizeClosed(){if(current?.mode==='organize')closeReader(false);},
@@ -150,9 +161,10 @@
         const section=node('section'),content=node('div');section.append(node('h4',label));window.CompanionReading.markdown(content,value);section.append(content);summary.append(section);
       }
       card.append(summary);
+      summary.prepend(node('p','保存成果 · 待獨立技術審查','trace-work-meta'));
       const full=result.result.startsWith('Codex 唯讀工程診斷（模型輸出，未經獨立技術審查）\n')?result.result.split('\n\n').slice(1).join('\n\n'):result.result;
       const sections=[{label:'完整診斷',text:full},{label:'程式碼依據',text:result.presentation?.evidence||'請在完整診斷內核對來源引用。'},{label:'原始保存紀錄',text:result.result,kind:'code'}];
-      card.append(button('閱讀依據與完整診斷',()=>openReader('診斷閱讀',sections)));
+      card.append(button('閱讀依據與完整診斷',()=>openReader('診斷成果 · 待審查',sections,'diagnosis')));
       return true;
     },
     workCard(card,p){

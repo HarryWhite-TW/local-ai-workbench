@@ -695,7 +695,10 @@
       if(renderedChat!==''||rendered!=='empty'){
         const empty=text('div','');empty.className='chat-empty';
         empty.append(text('span','A LITTLE ROOM TO THINK'),text('h2','從你想聊的開始。'),text('p','一個想法、一個問題，或只是聊聊今天。'));
-        scroller.replaceChildren(empty);rendered='empty';renderedChat='';
+        scroller.replaceChildren();
+        if(window.NexusTrace)window.NexusTrace.renderPresence(scroller);
+        else scroller.append(empty);
+        rendered='empty';renderedChat='';
         renderTurnMarkers([]);
       }
       return;
@@ -1001,7 +1004,8 @@
       evidence.append(text('summary','工作身分與實際事件'),text('p','Thread: '+(p.thread_id||'尚未取得')+' / Turn: '+(p.turn_id||'尚未取得')),
         text('p','來源指紋: '+(p.candidate_id||'尚未預覽')));
       if(p.contract&&p.failure_stage)evidence.append(text('p','記錄階段：'+p.failure_stage));
-      for(const e of p.events||[])evidence.append(text('p',e.at+' · '+({connecting:'正在連接原生 Codex',session_bound:'原生 thread 已回傳',
+      if(window.NexusTrace)evidence.append(window.NexusTrace.timeline(p.events));
+      else for(const e of p.events||[])evidence.append(text('p',e.at+' · '+({connecting:'正在連接原生 Codex',session_bound:'原生 thread 已回傳',
         turn_bound:'原生 turn 已回傳',receiving_result:'收到模型內容事件',cancel_requested:'已請求停止，等待終態',
         completed:'執行完成',failed:'執行失敗',cancelled:'已確認停止',unknown:'終態未確認',reconciled:'已嘗試核對原生紀錄'}[e.kind]||'事件')));
       card.append(evidence);

@@ -269,7 +269,8 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                     except (ChatError, ValueError):
                         self._reply(404, {'error':'找不到目前工作區可讀取的圖片。'})
                 elif self.path in ("/", "/surface.js", "/surface.css", "/chat.js", "/chat.css",
-                                   "/organize.js", "/organize.css", "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css", "/engineering-pilot.js", "/controlled-code.js", "/conversation-mode.js", "/conversation-workspace.js", "/conversation-workspace.css"):
+                                   "/organize.js", "/organize.css", "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css", "/engineering-pilot.js", "/controlled-code.js", "/conversation-mode.js", "/conversation-workspace.js", "/conversation-workspace.css",
+                                   "/trace-workspace.js", "/trace-workspace.css", "/trace-liquid-metal.js"):
                     name = "index.html" if self.path == "/" else self.path[1:]
                     mime = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}[Path(name).suffix]
                     content = (assets / name).read_bytes()

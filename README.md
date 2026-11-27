@@ -1,8 +1,27 @@
 # Local Document-to-Knowledge Workbench
 
+## NEXUS HL-09E Trace Workspace 已接受基準（2026-11-27）
+
+**HL-09E 已獲 TECHNICAL ACCEPTED + PRODUCT ACCEPTED。** 接受範圍涵蓋 Presence、Focus、Trace、實際材質整合、日常輸入、工作事件呈現及既有可信唯讀工程旅程。原生工作已完成，診斷收據仍為 `RESULT_PENDING_REVIEW`，報告個別結論仍須獨立審查。使用者接受現有可用成果並結束 HL-09 UI 投資。下一階段核心 AI 能力主線尚待 ChatGPT 裁決。 [正式裁決與驗收限制](docs/hl09e-decision.json)
+
+### Windows 獨立恢復
+
+在新目錄將 `nexus-hl09e-accepted` 複製為 `candidate`，讓 `.venv`、`runtime` 及各自的本機資料與 `candidate` 相鄰。沿用下方的一般安裝或離線還原方式，使用 Python **3.14.6 x64** 及原有鎖定檔。
+
+```powershell
+git clone --single-branch --branch nexus-hl09e-accepted https://github.com/HarryWhite-TW/local-ai-workbench.git candidate
+Set-Location candidate
+.\Restore-HL05-Runtime.cmd
+.\Open-HL09E-Companion.cmd
+```
+
+離線還原須事先放置已保全的 `runtime/site-packages.zip` 與 `runtime/runtime-lock.json`。啟動器使用父目錄的 `.venv`，預設開啟 <http://127.0.0.1:47731/#chat>。工作資料在同層 `engineering-project`，新目錄會自行建立工作區及讀入正式知識種子。原工作區的私人資料與登入留在原處。
+
+材質使用隨程式發行的 Paper Shaders 0.0.82 Liquid Metal 子集，執行時由本機提供。第三方程式適用 Apache-2.0，原始 LICENSE 與 NOTICE 隨附，自有整合的來源與建置方式另有記載。 [Paper Shaders 來源與授權](src/companion_core/third_party/paper-shaders/README.md)
+
 ## NEXUS Windows 已接受基準（2026-11-26）
 
-本分支保存 HL-09C Trustworthy Engineering Workspace 已接受基準，包含 HL-09B 自然協作改善。
+此節保留 HL-09C Trustworthy Engineering Workspace 的歷史發行說明。其接受範圍包含 HL-09B 自然協作改善。
 
 | GitHub 分支 | 用途 | Windows 啟動器 |
 | --- | --- | --- |

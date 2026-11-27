@@ -41,8 +41,9 @@ test('monitor scopes rows to the open conversation and projects saved phases wit
   const source=fs.readFileSync(path.join(__dirname,'../../src/companion_core/static/conversation-workspace.js'),'utf8');
   const methods=source.slice(source.indexOf('    workPhase(p){'),source.indexOf('    organizeOpened()'));
   const list=new Element('ul');list.replaceChildren=(...items)=>{list.children=items;};
-  const c=vm.createContext({window:{},node:(tag,value)=>new Element(tag,value),
-    button:(value,onclick)=>({tag:'button',textContent:value,onclick,children:[]}),
+  list.contains=node=>all(list).includes(node);
+  const c=vm.createContext({window:{},document:{activeElement:null},node:(tag,value)=>new Element(tag,value),
+    button:(value,onclick)=>Object.assign(new Element('button',value),{onclick}),
     monitorToggle:{hidden:true},monitorList:list,clearMonitor:()=>list.replaceChildren()});
   vm.runInContext('window.NexusConversation={'+methods+'};',c);
   const panel=c.window.NexusConversation;

@@ -1,0 +1,32 @@
+[
+  {
+    "date": "2026-11-27",
+    "kind": "decision",
+    "scope": "安全視覺協作候選及成熟上游實測",
+    "slug": "hl09d-closed",
+    "source": "coordination",
+    "summary": "HL-09D 維持 CLOSED — PARTIAL_WITH_EVIDENCE。安全視覺協作技術候選保留，未併入正式版本。HL-09D-R 成熟材質與上游介面研究已收束，保留 Paper Shaders、Three.js 與成熟互動設計經驗。複合介面未達美術期待，未批准全面 React 遷移。",
+    "title": "HL-09D 與 HL-09D-R 研究收束",
+    "visibility": "shared"
+  },
+  {
+    "date": "2026-11-27",
+    "kind": "decision",
+    "scope": "ChatGPT 獨立技術審查與使用者產品驗收",
+    "slug": "hl09e-accepted",
+    "source": "coordination",
+    "summary": "HL-09E 已 TECHNICAL ACCEPTED + PRODUCT ACCEPTED，涵蓋 Presence、Focus、Trace、實際材質整合、日常輸入、工作事件呈現及既有可信唯讀工程旅程。原生工作 COMPLETED，診斷收據維持 RESULT_PENDING_REVIEW，報告的個別分析結論仍須另行審查。121 項 Python 與 18 項 Node targeted 測試通過，一項 Python 附件斷言在基準同樣失敗，舊 Playwright 腳本因缺依賴未完整執行。獨立圖片理解通過，混合圖片與文件產出仍受單次圖片分享限制。時間軸由完成後的持久事件證明，未取得逐階段即時畫面。WebGL 強制失效回退、背景分頁資源釋放及可歸因 GPU 成本尚未完整實測。",
+    "title": "HL-09E Trace Workspace 正式接受",
+    "visibility": "shared"
+  },
+  {
+    "date": "2026-11-27",
+    "kind": "decision",
+    "scope": "HL-09 全階段收束與後續授權邊界",
+    "slug": "mainline",
+    "source": "coordination",
+    "summary": "HL-09A 與 HL-09C 已接受及發布，HL-09B 自然協作改善由 HL-09C 整合接受。HL-09D 維持 CLOSED — PARTIAL_WITH_EVIDENCE，HL-09D-R 研究收束。HL-09E 已 TECHNICAL ACCEPTED + PRODUCT ACCEPTED。美術仍未完全達到原期待，使用者接受現有可用成果並停止 HL-09 UI 投資。HL-09 全部收束，下一階段核心 AI 能力主線由 ChatGPT 重新裁決，尚未批准新工程。HL-08 維持收束，工程能力維持既有固定快照唯讀診斷。",
+    "title": "目前進度與下一步主線裁決",
+    "visibility": "shared"
+  }
+]

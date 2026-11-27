@@ -13,12 +13,14 @@
   <script src="/organize.js" defer></script>
   <script src="/engineering-pilot.js" defer></script>
   <script src="/controlled-code.js" defer></script>
+  <script src="/trace-workspace.js" defer></script>
   <script src="/chat.js" defer></script>
   <link rel="stylesheet" href="/nexus.css">
   <script src="/nexus.js" defer></script>
   <link rel="stylesheet" href="/native-codex.css">
   <script src="/native-codex.js" defer></script>
   <link rel="stylesheet" href="/conversation-workspace.css">
+  <link rel="stylesheet" href="/trace-workspace.css">
   <script src="/conversation-workspace.js" defer></script>
 </head>
 <body data-controlled-code="false" data-pilot-enabled="false" data-theme="obsidian" data-view="glance" data-motion="full" data-quality="high" data-chat-enabled="false" data-organize-enabled="false" data-work-enabled="false" data-native-codex="false" data-web-enabled="false" data-outputs-enabled="false" data-delegation-enabled="false" data-space="chat">
@@ -192,6 +194,20 @@
     <div class="chat-history-bar"><label for="chat-history">對話紀錄</label><select id="chat-history" aria-label="已保存對話"><option value="">新對話</option></select><button id="chat-new" class="secondary-button" type="button">新對話</button></div>
     <section id="document-chat-context" class="document-chat-context" hidden aria-label="本次文件來源"><strong id="document-chat-name"></strong><p id="document-chat-scope"></p><details id="document-chat-excerpt"><summary>查看待送出的內容</summary><pre id="document-chat-content" class="chat-source-text" tabindex="0"></pre></details><p class="source-send-note">隨下一則訊息送出</p><div><button id="document-chat-return" class="text-button" type="button">定位原文</button><button id="document-chat-clear" class="text-button" type="button">移除這次的來源</button></div></section>
     <div id="chat-signin" class="chat-signin" hidden><span id="chat-recovery-copy">登入 ChatGPT 後即可開始對話。</span><button id="chat-signin-open" class="primary-button" type="button">登入 ChatGPT</button><button id="chat-recover" class="secondary-button" type="button" hidden>重新讀取模型</button></div>
+  <template id="trace-presence-template">
+    <section class="trace-presence" aria-labelledby="trace-presence-title">
+      <div class="trace-presence-copy">
+        <p class="trace-kicker">NEXUS / COMPANION</p>
+        <h2 id="trace-presence-title">從你想聊的開始。</h2>
+        <p>聊一個想法，或一起看一件工作。需要核對的來源與成果，都可以留在同一段對話。</p>
+      </div>
+      <div class="trace-stage">
+        <span class="trace-orbit" aria-hidden="true">N</span>
+        <div class="trace-material" aria-hidden="true"></div>
+        <button type="button" class="trace-material-toggle" aria-pressed="true">材質</button>
+      </div>
+    </section>
+  </template>
     <div id="chat-reading">
       <div id="chat-messages" tabindex="0" role="region" aria-label="對話訊息，使用方向鍵或 Page Down 閱讀"></div>
       <aside id="chat-reading-controls" hidden>

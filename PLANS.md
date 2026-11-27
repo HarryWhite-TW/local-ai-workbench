@@ -1,5 +1,11 @@
 # PLANS.md
 
+## NEXUS HL-09E 與 HL-09 正式收束（2026-11-27）
+
+HL-09A 與 HL-09C 已接受及發布，HL-09B 自然協作改善一併整合接受於 HL-09C。HL-09D 維持 **CLOSED — PARTIAL_WITH_EVIDENCE**，安全視覺協作技術候選保留在獨立工作區。HL-09D-R 的成熟材質與上游介面研究已收束，保留 Paper Shaders、Three.js 與成熟互動設計經驗。複合介面未達美術期待，未批准全面 React 遷移。
+
+HL-09E Trace Workspace 已獲 **TECHNICAL ACCEPTED + PRODUCT ACCEPTED**，範圍與驗收限制見正式裁決。使用者接受現有可用成果，原美術期待尚未完全達到。HL-09 UI 投資至此收束。下一階段核心 AI 能力主線由 ChatGPT 重新裁決，尚未批准新工程。 [HL-09E 正式裁決](docs/hl09e-decision.json)
+
 ## NEXUS HL-09C 正式收束（2026-11-26）
 
 HL-01 至 HL-07 與 HL-09A 維持既有接受或完成狀態。HL-08 維持 **CLOSED — PARTIAL_WITH_EVIDENCE**，工程寫入權限未恢復。HL-09B 曾為 `PARTIAL_WITH_EVIDENCE`，自然協作及工具能力對齊改善已整合至 HL-09C，無需獨立發布。
