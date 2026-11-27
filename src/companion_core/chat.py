@@ -210,6 +210,8 @@ class Conversations:
                 raise ChatError("找不到目前帳戶與工作區可讀取的對話；請使用原本的帳戶。")
             result = dict(row)
             result["turns"] = []
+            if getattr(self, "visuals", None):
+                result["visual_prototypes"] = self.visuals.list(db, ident, account)
             for r in db.execute("""SELECT turns.*,
                     EXISTS(SELECT 1 FROM chat_images WHERE turn=turns.id) AS has_image
                     FROM turns WHERE chat=? ORDER BY created, rowid""", (ident,)):
@@ -814,6 +816,8 @@ class Conversations:
                         self.work_share = grant
                     db.execute("UPDATE turns SET status=?,error=?,finished=? WHERE id=?",
                                ('complete' if completed else 'failed', error, now(), ident))
+                    if getattr(self, "visuals", None):
+                        self.visuals.finish(db, ident, completed)
                     db.execute('UPDATE turn_delivery SET state=?,error_code=?,error_param=? WHERE turn=?',
                                (state, code, param, ident))
                 self.active_stream = None

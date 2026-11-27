@@ -190,13 +190,15 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
         def log_message(self, *args):
             pass  # Never log intents, identities, request bodies or provider errors.
 
-        def _reply(self, code, data, mime="application/json; charset=utf-8"):
+        def _reply(self, code, data, mime="application/json; charset=utf-8", *, preview_csp=None):
             if not isinstance(data, bytes):
                 data = json.dumps(data, ensure_ascii=False).encode("utf-8")
             csp = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
             if getattr(chat, 'codex_agent', None):
                 csp += "; img-src 'self' blob:"
-            if mime.startswith('text/html') and getattr(chat, 'controlled_code', None) is not None:
+            if mime.startswith('text/html') and getattr(chat, 'visuals', None):
+                csp += "; frame-src 'self'"
+            elif mime.startswith('text/html') and getattr(chat, 'controlled_code', None) is not None:
                 nonce = secrets.token_hex(24)
                 data = data.replace(b'<body ', ('<body data-demo-nonce="' + nonce + '" ').encode(), 1)
                 csp = csp.replace("script-src 'self'", "script-src 'self' 'nonce-" + nonce + "'") + "; frame-src 'self'"
@@ -206,7 +208,7 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("Content-Security-Policy", csp)
+            self.send_header("Content-Security-Policy", preview_csp or csp)
             self.end_headers()
             try:
                 self.wfile.write(data)
@@ -268,8 +270,19 @@ def make_server(surface, chat=None, work=None, *, port=0, native_codex=None):
                         self._reply(200, png, 'image/png')
                     except (ChatError, ValueError):
                         self._reply(404, {'error':'找不到目前工作區可讀取的圖片。'})
+                elif self.path.startswith("/chat-visual/") and getattr(chat, "visuals", None):
+                    from .siwc import ChatError
+                    from .visual_prototypes import CSP, InvalidPrototype
+                    try:
+                        if len(self.path) != 86 or self.headers.get("Sec-Fetch-Dest") != "iframe":
+                            raise ValueError()
+                        chat_id, turn_id = self.path.removeprefix("/chat-visual/").split("/")
+                        html = chat.visuals.document(chat_id, turn_id)
+                        self._reply(200, html, "text/html; charset=utf-8", preview_csp=CSP)
+                    except (ChatError, ValueError, InvalidPrototype):
+                        self._reply(404, {"error": "找不到此對話的視覺原型。"})
                 elif self.path in ("/", "/surface.js", "/surface.css", "/chat.js", "/chat.css",
-                                   "/organize.js", "/organize.css", "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css", "/engineering-pilot.js", "/controlled-code.js", "/conversation-mode.js", "/conversation-workspace.js", "/conversation-workspace.css"):
+                                   "/organize.js", "/organize.css", "/reading.js", "/nexus.js", "/nexus.css", "/native-codex.js", "/native-codex.css", "/engineering-pilot.js", "/controlled-code.js", "/conversation-mode.js", "/conversation-workspace.js", "/conversation-workspace.css", "/visual-prototype.js", "/visual-prototype.css"):
                     name = "index.html" if self.path == "/" else self.path[1:]
                     mime = {".html": "text/html", ".js": "text/javascript", ".css": "text/css"}[Path(name).suffix]
                     content = (assets / name).read_bytes()

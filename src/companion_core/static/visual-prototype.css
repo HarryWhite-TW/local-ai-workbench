@@ -1,0 +1,50 @@
+.visual-prototype-card {
+  margin: 1rem 0;
+  border: 1px solid var(--line, #536268);
+  border-radius: 1rem;
+  padding: 1rem;
+  min-width: 0;
+}
+.visual-prototype-header, .visual-prototype-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.visual-prototype-header h2, .visual-prototype-header h3 { margin: 0; }
+.visual-prototype-card > p, .visual-prototype-dialog > p {
+  font-size: .875rem;
+  margin: .7rem 0;
+}
+.visual-prototype-frame {
+  display: block;
+  width: 100%;
+  height: 27rem;
+  border: 1px solid #607177;
+  border-radius: .75rem;
+  background: #f2f3f4;
+}
+.visual-prototype-dialog {
+  width: min(94vw, 92rem);
+  max-width: none;
+  max-height: 94vh;
+  padding: clamp(.8rem, 2vw, 1.5rem);
+  overflow: auto;
+}
+.visual-prototype-dialog .visual-prototype-controls { justify-content: flex-start; }
+.visual-prototype-controls [hidden] { display: none; }
+.visual-prototype-controls select { max-width: min(58vw, 34ch); }
+.visual-prototype-previews {
+  display: grid;
+  gap: .8rem;
+  margin-top: .8rem;
+}
+.visual-prototype-previews.visual-compare { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.visual-prototype-version { min-width: 0; margin: 0; }
+.visual-prototype-version figcaption { margin: 0 0 .5rem; overflow-wrap: anywhere; }
+.visual-prototype-dialog .visual-prototype-frame { height: min(68vh, 50rem); }
+.visual-compact .visual-prototype-frame { max-width: 390px; margin-inline: auto; }
+@media (max-width: 720px) {
+  .visual-prototype-previews.visual-compare { grid-template-columns: minmax(0, 1fr); }
+}

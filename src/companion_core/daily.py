@@ -129,7 +129,9 @@ def main():
         if args.natural_engineering_collaboration:
             from .native_collaboration import NativeCollaboration
             from .model_catalog import CodexCatalog
+            from .visual_prototypes import VisualPrototypes
             agent.model_catalog = CodexCatalog(codex, prefer_desktop=True)
+            chat.visuals = VisualPrototypes(chat)
             work = NativeCollaboration(chat, codex, directory)
         else:
             work = NativeWork(chat, executable=codex)

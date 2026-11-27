@@ -592,6 +592,7 @@
     persistChat();
   }
   function switchConversation(next,replace=false) {
+    window.NexusVisual?.close();
     window.NexusConversation?.resetContext();
     dismissProposal();
     window.NexusOrganize?.reset();
@@ -754,6 +755,8 @@
       const labels={pending:'正在回答',complete:'已完成',interrupted:'已中斷',failed:'未完成回答 · 失敗',cancelled:'已取消',awaiting_work_share:'等待分享決定'};
       answer.append(text('strong','Companion · '+(labels[delivery]||delivery)),stamp,body);
       stamp.textContent+=' · 思考：'+(turn.requested_effort||'由服務決定');
+      const visual=conversation.visual_prototypes?.find(value=>value.turn===turn.id);
+      if(visual&&delivery==='complete')answer.append(window.NexusVisual.card(id,visual,conversation.visual_prototypes));
       if(turn.work_share){
         answer.append(receiptApproval(id,turn));
       }else if(delivery==='work_share_expired'){
@@ -862,6 +865,7 @@
     else if(last)notice(last.status==='complete'?(last.sources.some(s=>s.scope)?'回答與當時的來源已保存。追問可沿用對話；核對文件目前內容時，請重新選取與預覽。':'回答已保存，可以繼續聊。'):last.status==='pending'?'正在等待模型完整回答…':last.error||'未取得完整回答，可重新提問。');
   }
   function invalidateAccount(account) {
+    window.NexusVisual?.close();
     window.NexusConversation?.resetContext();
     dismissProposal();nativeResults.clear();nativeLoading.clear();
     window.NexusOrganize?.reset();
